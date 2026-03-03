@@ -1,4 +1,4 @@
-from . import hl2ss
+import hl2ss
 
 import numpy as np
 import os

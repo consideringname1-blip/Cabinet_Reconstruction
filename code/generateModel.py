@@ -4,7 +4,6 @@ import os
 import uuid
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify, send_from_directory
-from Hololens2.DepthConvertToRGB import DepthConvertToRGB
 
 from config import (
     UPLOAD_FOLDER,
@@ -12,6 +11,9 @@ from config import (
     INSTANTMESH_OUTPUT_IMAGES,
     BLENDER_FBX_DIR,
     FOLDER_MAP,
+    HOLOLENS2_PY,
+    HOLOLENS2_CONVERT,
+    HOLOLENS2_CONVERT_DIR,
 )
 from pose_utils import rotate_vec_by_quat
 from task_worker import (
@@ -24,7 +26,7 @@ from task_worker import (
 )
 
 import base64
-from pathlib import Path
+import subprocess
 
 app = Flask(__name__)
 
@@ -180,7 +182,11 @@ def generate_model():
         # =========================
         # 5) 处理 hololens2深度图对齐
         # =========================
-        DepthConvertToRGB(meta_path)
+        subprocess.run(
+            [HOLOLENS2_PY, str(HOLOLENS2_CONVERT), str(meta_path)],
+            cwd=str(HOLOLENS2_CONVERT_DIR),
+            check=True,
+        )
         #断点，注意现在还没有读取json文件内容
 
 

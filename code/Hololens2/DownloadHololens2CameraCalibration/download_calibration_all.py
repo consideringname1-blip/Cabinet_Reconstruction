@@ -4,9 +4,12 @@ import hl2ss
 import hl2ss_lnm
 import hl2ss_3dcv
 
-#只需要修改host
-host = "10.40.1.132"
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+from config import HOLOLENS2_HOST
 
+host = HOLOLENS2_HOST
 
 sockopt = None
 

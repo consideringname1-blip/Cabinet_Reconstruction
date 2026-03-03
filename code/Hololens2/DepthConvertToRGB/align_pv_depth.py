@@ -1,10 +1,12 @@
 import numpy as np
-from . import hl2ss, hl2ss_3dcv
+import hl2ss, hl2ss_3dcv
 import os
 import json
 import cv2
-import json
 
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 from config import (
     CALIBRATION_DIR,
     UPLOAD_FOLDER,
@@ -113,13 +115,13 @@ def DepthConvertToRGB(json_path,calibration_base_path = CALIBRATION_DIR,data_bas
     print('Depth type: %s, shape : %s, max : %s' % (type(pv_z), str(pv_z.shape), np.max(pv_z)))
 
     align_depth = (pv_z * 1000).astype(np.uint16)
-    align_depth_name = f"{data["task_name"]}_align_depth.png"
+    align_depth_name = f"{data['task_name']}_align_depth.png"
     data["DepthCamera"]["align_depth_name"] = align_depth_name
     cv2.imwrite(os.path.join(HOLOLENS2_OUTPUT_DEPTH_IMAGES, align_depth_name), align_depth)
 
     align_depth_turbo = (pv_z * 256).astype(np.uint8)
     align_depth_turbo = cv2.applyColorMap(align_depth_turbo, cv2.COLORMAP_TURBO)
-    align_depth_turbo_name = f"{data["task_name"]}_align_depth_turbo.png"
+    align_depth_turbo_name = f"{data['task_name']}_align_depth_turbo.png"
     data["DepthCamera"]["align_depth_turbo_name"] = align_depth_turbo_name
     cv2.imwrite(os.path.join(HOLOLENS2_OUTPUT_DEPTH_IMAGES, align_depth_turbo_name), align_depth_turbo)
 
@@ -127,3 +129,11 @@ def DepthConvertToRGB(json_path,calibration_base_path = CALIBRATION_DIR,data_bas
         json.dump(data, f, indent=2)
 
     print('depth saved!')
+
+if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("meta_path", type=str)
+    args = ap.parse_args()
+
+    DepthConvertToRGB(args.meta_path)

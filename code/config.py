@@ -1,6 +1,12 @@
 # config.py
 from pathlib import Path
 
+# ========================= 从Hololens2下载数据时设备的ip(使用前修改) =========================
+HOLOLENS2_HOST = "10.40.1.132"
+
+# ========================= 从Hololens2下载数据时设备的ip(使用前修改) =========================
+IS_RUN_FLASK_SERVER = True
+
 # ========================= 项目根目录 =========================
 # config.py 位于 /workspace/code
 BASE_DIR = Path(__file__).resolve().parent       # /workspace/code
@@ -16,6 +22,10 @@ HOLOLENS_ROOT = CODE_ROOT / "Hololens2"          # /workspace/code/Hololens2
 # ===== 每个 conda 环境对应的 python 解释器 =====
 IMESH_PY    = "/opt/miniconda/envs/imesh/bin/python"      # InstantMesh 用
 SERVER_PY    = "/opt/miniconda/envs/server/bin/python"    # Flask / API 用
+HOLOLENS2_PY    = "/opt/miniconda/envs/hololens2/bin/python"    # hololens2 用 （还未实装）
+
+# ========================= 入口flask程序 =========================
+FLASK_SERVER = CODE_ROOT / "generateModel.py"
 
 # ========================= InstantMesh 路径 =========================
 INSTANTMESH_DIR = RECON_ROOT / "InstantMesh"
@@ -23,7 +33,12 @@ INSTANTMESH_CONFIG = INSTANTMESH_DIR / "configs" / "instant-mesh-large.yaml"
 INSTANTMESH_RUN_PY = INSTANTMESH_DIR / "run.py"
 
 # ========================= Hololens2 路径 =========================
-CALIBRATION_DIR = HOLOLENS_ROOT / "DownloadHololens2CameraCalibration/hl2ss_calib"
+HOLOLENS2_DOWNLOAD_DIR = HOLOLENS_ROOT / "DownloadHololens2CameraCalibration"
+CALIBRATION_DIR = HOLOLENS2_DOWNLOAD_DIR / "hl2ss_calib"
+HOLOLENS2_DOWNLOAD = HOLOLENS2_DOWNLOAD_DIR / "download_calibration_all.py"
+
+HOLOLENS2_CONVERT_DIR = HOLOLENS_ROOT / "DepthConvertToRGB"
+HOLOLENS2_CONVERT = HOLOLENS2_CONVERT_DIR / "align_pv_depth.py"
 
 # ========================= 上传目录 =========================
 UPLOAD_FOLDER = DATA_ROOT / "upload"             # /workspace/data/upload
