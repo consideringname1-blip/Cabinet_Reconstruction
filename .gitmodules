@@ -1,0 +1,6 @@
+[submodule "code/reconstruction/sam3"]
+	path = code/reconstruction/sam3
+	url = https://github.com/facebookresearch/sam3.git
+[submodule "code/reconstruction/InstantMesh"]
+	path = code/reconstruction/InstantMesh
+	url = https://github.com/TencentARC/InstantMesh.git
