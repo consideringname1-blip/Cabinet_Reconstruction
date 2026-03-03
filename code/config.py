@@ -11,21 +11,28 @@ CODE_ROOT = PROJECT_ROOT / "code"                # /workspace/code
 RECON_ROOT = CODE_ROOT / "reconstruction"        # /workspace/code/reconstruction
 DATA_ROOT = PROJECT_ROOT / "data"                # /workspace/data
 MODELS_ROOT = PROJECT_ROOT / "models"            # /workspace/models
+HOLOLENS_ROOT = CODE_ROOT / "Hololens2"          # /workspace/code/Hololens2
 
 # ===== 每个 conda 环境对应的 python 解释器 =====
 IMESH_PY    = "/opt/miniconda/envs/imesh/bin/python"      # InstantMesh 用
-SERVER_PY    = "/opt/miniconda/envs/server/bin/python"    # Flask / API 用（只给你参考）
+SERVER_PY    = "/opt/miniconda/envs/server/bin/python"    # Flask / API 用
 
 # ========================= InstantMesh 路径 =========================
 INSTANTMESH_DIR = RECON_ROOT / "InstantMesh"
 INSTANTMESH_CONFIG = INSTANTMESH_DIR / "configs" / "instant-mesh-large.yaml"
 INSTANTMESH_RUN_PY = INSTANTMESH_DIR / "run.py"
 
+# ========================= Hololens2 路径 =========================
+CALIBRATION_DIR = HOLOLENS_ROOT / "DownloadHololens2CameraCalibration/hl2ss_calib"
+
 # ========================= 上传目录 =========================
 UPLOAD_FOLDER = DATA_ROOT / "upload"             # /workspace/data/upload
 
 # ========================= 输出目录（未来多个模型共用） =========================
 OUTPUT_ROOT = DATA_ROOT / "output"               # /workspace/data/output
+
+# Hololens2 输出
+HOLOLENS2_OUTPUT_DEPTH_IMAGES = OUTPUT_ROOT / "hololens2"
 
 # InstantMesh 输出
 INSTANTMESH_OUTPUT = OUTPUT_ROOT / "instant-mesh-large"
@@ -60,5 +67,6 @@ for p in [
     INSTANTMESH_OUTPUT_VIDEOS,
     BLENDER_FBX_DIR,
     SAM2_OUTPUT_ROOT,
+    HOLOLENS2_OUTPUT_DEPTH_IMAGES,
 ]:
     p.mkdir(parents=True, exist_ok=True)

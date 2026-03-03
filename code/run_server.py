@@ -14,7 +14,7 @@ def main():
 
     print(">>> 使用 server 环境启动 generateModel.py")
     print(">>> CMD:", " ".join(cmd))
-    subprocess.run(cmd)
+    subprocess.run(cmd, cwd=base_dir)
 
 if __name__ == "__main__":
     main()

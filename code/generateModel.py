@@ -4,6 +4,7 @@ import os
 import uuid
 from datetime import datetime, timezone
 from flask import Flask, request, jsonify, send_from_directory
+from Hololens2.DepthConvertToRGB import DepthConvertToRGB
 
 from config import (
     UPLOAD_FOLDER,
@@ -74,15 +75,6 @@ def generate_model():
         print("[RECV] form keys:", list(request.form.keys()))
         print("[RECV] files:", list(request.files.keys()))
 
-        def _unique_path(p: Path) -> Path:
-            if not p.exists():
-                return p
-            for i in range(1, 1000):
-                q = p.with_name(p.stem + f"_{i}" + p.suffix)
-                if not q.exists():
-                    return q
-            return p.with_name(p.stem + "_" + uuid.uuid4().hex[:6] + p.suffix)
-
         def _parse_json_field(field_name: str) -> dict:
             raw = request.form.get(field_name, type=str)
             if not raw:
@@ -130,7 +122,7 @@ def generate_model():
         # 3) 保存 PV / Depth 图片（base64 -> png）
         # =========================
         pv_png_bytes = _b64_to_bytes(pvj.get("image", ""))
-        color_path = _unique_path(UPLOAD_FOLDER / f"{base}_color.png")
+        color_path = UPLOAD_FOLDER / f"{base}_color.png"
         with open(color_path, "wb") as f:
             f.write(pv_png_bytes)
 
@@ -138,7 +130,7 @@ def generate_model():
         depth_b64 = dj.get("image", "")
         if isinstance(depth_b64, str) and len(depth_b64) > 0:
             depth_png_bytes = _b64_to_bytes(depth_b64)
-            depth_path = _unique_path(UPLOAD_FOLDER / f"{base}_depth.png")
+            depth_path = UPLOAD_FOLDER / f"{base}_depth.png"
             with open(depth_path, "wb") as f:
                 f.write(depth_png_bytes)
 
@@ -148,6 +140,7 @@ def generate_model():
         out_json = {
             "task_id": task_id,
             "server_received_utc": server_received_utc,
+            "task_name": base,
 
             "device": {
                 "type": devj.get("type", ""),
@@ -158,7 +151,7 @@ def generate_model():
             },
 
             "PVCamera": {
-                "image_path": str(color_path),
+                "name": str(color_path.name),
                 "width": pvj.get("width", 0),
                 "height": pvj.get("height", 0),
                 "k": pvj.get("k", None),
@@ -166,7 +159,7 @@ def generate_model():
             },
 
             "DepthCamera": {
-                "image_path": str(depth_path) if depth_path else None,
+                "name": str(depth_path.name) if depth_path else None,
                 "pose": dj.get("pose", None),
                 "sensor": "AHAT",
             },
@@ -179,12 +172,20 @@ def generate_model():
         }
 
         # 保存 meta（建议也存一份，方便你调试/复现）
-        meta_path = _unique_path(UPLOAD_FOLDER / f"{base}_meta.json")
+        meta_path = UPLOAD_FOLDER / f"{base}_meta.json"
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(out_json, f, ensure_ascii=False, indent=2)
 
+
         # =========================
-        # 5) 入队 worker（InstantMesh 用 PV 彩图）
+        # 5) 处理 hololens2深度图对齐
+        # =========================
+        DepthConvertToRGB(meta_path)
+        #断点，注意现在还没有读取json文件内容
+
+
+        # =========================
+        # 6) 入队 worker（InstantMesh 用 PV 彩图）
         # =========================
         center_depth = 1.0  # 你现在协议没给，就先默认；后面你可改成从 Depth 推/算
         create_task(
