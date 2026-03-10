@@ -18,6 +18,8 @@ public class HoloLensPVAquirer : MonoBehaviour
     private hl2da.pv_captureformat pvcf;
 
     private Texture2D tex_pv;
+    private Texture2D tex_pv_publish;
+    private byte[] publish_flip_buffer;
 
     //public HoloLensPVPublisher _publisher;
     public ShuJuQingQiu _publisher;
@@ -36,7 +38,13 @@ public class HoloLensPVAquirer : MonoBehaviour
 
         tex_pv = new Texture2D(pvcf.width, pvcf.height, TextureFormat.BGRA32, false);
         //pv_image.GetComponent<Renderer>().material.mainTexture = tex_pv;
-        pv_image.texture = tex_pv;
+        
+
+        // 传出专用纹理（做上下翻转后再发）
+        tex_pv_publish = new Texture2D(pvcf.width, pvcf.height, TextureFormat.BGRA32, false);
+        publish_flip_buffer = new byte[pvcf.width * pvcf.height * 4];
+
+        pv_image.texture = tex_pv_publish;
 #endif
         _enable_sensor_update = true;////
     }
@@ -56,6 +64,30 @@ public class HoloLensPVAquirer : MonoBehaviour
     {
         if (_enable_sensor_update) { _enable_sensor_update = false; }
         else { _enable_sensor_update = true; }
+    }
+
+    private void FlipTextureVertically(Texture2D src, Texture2D dst, byte[] flipBuffer)
+    {
+        int width = src.width;
+        int height = src.height;
+        int bytesPerPixel = 4; // BGRA32
+        int rowBytes = width * bytesPerPixel;
+
+        var srcRaw = src.GetRawTextureData<byte>();
+
+        for (int y = 0; y < height; y++)
+        {
+            int srcOffset = y * rowBytes;
+            int dstOffset = (height - 1 - y) * rowBytes;
+
+            for (int i = 0; i < rowBytes; i++)
+            {
+                flipBuffer[dstOffset + i] = srcRaw[srcOffset + i];
+            }
+        }
+
+        dst.LoadRawTextureData(flipBuffer);
+        dst.Apply(false);
     }
 
     void UpdateFrame()
@@ -100,9 +132,11 @@ public class HoloLensPVAquirer : MonoBehaviour
     public bool PublishStatus = true;
     void Publish(Texture2D tex_pv_P, ushort width, ushort height, float[,] k, float[,] pose)
     {
-        if (PublishStatus)
-        {
-            _publisher.PublishPVMessage(tex_pv_P, width, height, k, pose);
-        }
+        if (!PublishStatus) return;
+
+        // 只在传出前做一次上下翻转
+        FlipTextureVertically(tex_pv_P, tex_pv_publish, publish_flip_buffer);
+
+        _publisher.PublishPVMessage(tex_pv_publish, width, height, k, pose);
     }
 }

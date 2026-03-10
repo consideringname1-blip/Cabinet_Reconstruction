@@ -28,7 +28,10 @@ public class HoloLensDepthAquirer : MonoBehaviour
     //public Shader grayscale_shader;
 
     private Texture2D tex_grayscale;
-    
+
+    private Texture2D tex_grayscale_publish;
+    private byte[] publish_flip_buffer_depth;
+
     //private RenderTexture tex_color;
 
     //private Material colormap_mat;
@@ -66,6 +69,9 @@ public class HoloLensDepthAquirer : MonoBehaviour
             hl2da.user.SetEnable(hl2da.SENSOR_ID.RM_DEPTH_AHAT, true);
 
             tex_grayscale = new Texture2D(512, 512, TextureFormat.R16, false);
+
+            tex_grayscale_publish = new Texture2D(512, 512, TextureFormat.R16, false);
+            publish_flip_buffer_depth = new byte[512 * 512 * 2];
             //tex_color = new RenderTexture(512, 512, 0, RenderTextureFormat.BGRA32);
 
             //if (_enablePreview)
@@ -117,6 +123,29 @@ public class HoloLensDepthAquirer : MonoBehaviour
     {
         if (_enable_sensor_update) { _enable_sensor_update = false; }
         else { _enable_sensor_update = true; }
+    }
+
+    private void FlipTextureVerticallyR16(Texture2D src, Texture2D dst, byte[] flipBuffer)
+    {
+        int width = src.width;
+        int height = src.height;
+        int rowBytes = width * 2;
+
+        var srcRaw = src.GetRawTextureData<byte>();
+
+        for (int y = 0; y < height; y++)
+        {
+            int srcOffset = y * rowBytes;
+            int dstOffset = (height - 1 - y) * rowBytes;
+
+            for (int i = 0; i < rowBytes; i++)
+            {
+                flipBuffer[dstOffset + i] = srcRaw[srcOffset + i];
+            }
+        }
+
+        dst.LoadRawTextureData(flipBuffer);
+        dst.Apply(false);
     }
 
     /// <summary>
@@ -312,9 +341,9 @@ public class HoloLensDepthAquirer : MonoBehaviour
 
     void Publish(Texture2D image, float[,] pose)
     {
-        if (PublishStatus)
-        {
-            _publisher.PublishDPMessage(image, pose);
-        }
+        if (!PublishStatus) return;
+        FlipTextureVerticallyR16(image, tex_grayscale_publish, publish_flip_buffer_depth);
+        _publisher.PublishDPMessage(image, pose);
+
     }
 }

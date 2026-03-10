@@ -61,7 +61,14 @@ def DepthConvertToRGB(json_path,calibration_base_path = CALIBRATION_DIR,data_bas
 
     # Update PV intrinsics ------------------------------------------------
     # PV intrinsics may change between frames due to autofocus
-    pv_intrinsics = hl2ss_3dcv.pv_update_intrinsics(pv_intrinsics, [color_intrinsics_data['k'][0], color_intrinsics_data['k'][4]], [color_intrinsics_data['k'][2], color_intrinsics_data['k'][5]])
+    k = color_intrinsics_data['k']
+
+    pv_intrinsics = hl2ss_3dcv.pv_update_intrinsics(
+        pv_intrinsics,
+        [k[0][0], k[1][1]],
+        [k[0][2], k[1][2]]
+    )
+    
     color_intrinsics, color_extrinsics = hl2ss_3dcv.pv_fix_calibration(pv_intrinsics, pv_extrinsics)
 
     lt_to_world    = np.linalg.inv(calibration_lt.extrinsics) @ np.array(data["DepthCamera"]["pose"]).reshape(4, 4)

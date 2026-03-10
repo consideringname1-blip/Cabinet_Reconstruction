@@ -2,3 +2,8 @@
 1.实装后的深度图像校准部分，未实际安装conda运行环境，也未对环境进行备份
 2.程序执行后，json文件被修改，但是未重新读取（暂时问题不大）
 3.新实装的HoloLens2数据下载和深度图像校准部分代码未执行验证过
+
+260309
+server环境需要安装
+pip install numpy opencv-python av requests
+pip install pyzdepth

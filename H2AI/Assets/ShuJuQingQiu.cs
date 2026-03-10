@@ -7,6 +7,7 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.XR;
 using UnityEngine.XR.OpenXR.Input;
+using System.Collections;
 
 /// <summary>
 /// 数据请求
@@ -21,6 +22,8 @@ public class ShuJuQingQiu : MonoBehaviour
 
     public HoloLensPVAquirer PV_controler;
     public HoloLensDepthAquirer DP_controler;
+
+    [SerializeField] private SelectionPanelManager selectionPanelManager;
 
     void Start()
     {
@@ -125,37 +128,14 @@ public class ShuJuQingQiu : MonoBehaviour
     /// 上传图片
     /// </summary>
     // 上传图片
+
     public void ShangChuanTuPian()
     {
+        StartCoroutine(ShangChuanTuPianCoroutine());
+    }
+    private IEnumerator ShangChuanTuPianCoroutine()
+    {
         Game_M.initialize.XianShi("shangchuan");
-        string url = "http://10.40.1.122:7355/generate";
-        var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnRequestFinished);
-
-        PV_controler.PublishStatus = false;
-        DP_controler.PublishStatus = false;
-        //request.AddHeader("Content-Type", "multipart/form-data");
-        // ==========================================================
-        // PV图片存储与转换
-        // ==========================================================
-        Game_M.initialize.XianShi("shangchuan_PV");
-        byte[] tex_pv_P_C_F = ImageConversion.EncodeToPNG(tex_pv_P_C);
-        ushort width_pv_C_F = width_pv_C;
-        ushort height_pv_C_F = height_pv_C;
-        float[,] k_pv_C_F = k_pv_C;
-        float[,] pose_pv_C_F = pose_pv_C;
-
-
-        // ==========================================================
-        // DP图片存储与转换
-        // ==========================================================
-        Game_M.initialize.XianShi("shangchuan_DP");
-        if (image_dp_P_C == null) { Game_M.initialize.XianShi("shangchuan_image_dp_P_C_ISNULL"); }
-        byte[] image_dp_P_C_F = ImageConversion.EncodeToPNG(image_dp_P_C);
-        float[,] pose_dp_C_F = pose_dp_C;
-        const string SENSOR_TYPE = "AHAT";
-
-        PV_controler.PublishStatus = true;
-        DP_controler.PublishStatus = true;
 
         // ==========================================================
         // 设备相关信息
@@ -175,9 +155,77 @@ public class ShuJuQingQiu : MonoBehaviour
             dev.TryGetFeatureValue(CommonUsages.deviceRotation, out headRot);
         }
 
+        PV_controler.PublishStatus = false;
+        DP_controler.PublishStatus = false;
+        //request.AddHeader("Content-Type", "multipart/form-data");
+        // ==========================================================
+        // PV图片存储与转换
+        // ==========================================================
+        Game_M.initialize.XianShi("shangchuan_PV");
+        byte[] tex_pv_P_C_F = ImageConversion.EncodeToPNG(tex_pv_P_C);
+        ushort width_pv_C_F = width_pv_C;
+        ushort height_pv_C_F = height_pv_C;
+        float[,] k_pv_C_F = k_pv_C;
+        float[,] pose_pv_C_F = pose_pv_C;
+
+
+        // ==========================================================
+        // DP图片存储与转换
+        // ==========================================================
+        Game_M.initialize.XianShi("shangchuan_DP");
+        if (image_dp_P_C == null)
+        {
+            Game_M.initialize.XianShi("shangchuan_image_dp_P_C_ISNULL");
+            PV_controler.PublishStatus = true;
+            DP_controler.PublishStatus = true;
+            yield break;
+        }
+        byte[] image_dp_P_C_F = ImageConversion.EncodeToPNG(image_dp_P_C);
+        float[,] pose_dp_C_F = pose_dp_C;
+        const string SENSOR_TYPE = "AHAT";
+        // ==========================================================
+        // PV框选，先弹出框选窗口，等待用户确认/取消
+        // ==========================================================
+        Game_M.initialize.XianShi("select_box_open");
+
+        // 这里会：
+        // 1. 打开 Canvas Selection box
+        // 2. 显示 tex_pv_P_C
+        // 3. 初始化两个 handle
+        // 4. 等用户点 Confirm / Cancel
+        // 5. 自动关闭面板
+        yield return StartCoroutine(
+            selectionPanelManager.RequestSelection(tex_pv_P_C, headPos, headRot)
+        );
+
+        // 用户取消
+        if (!selectionPanelManager.LastConfirmed)
+        {
+            Game_M.initialize.XianShi("select_box_cancel");
+
+            PV_controler.PublishStatus = true;
+            DP_controler.PublishStatus = true;
+            yield break;
+        }
+
+        // 用户确认后的框选结果
+        Vector2 boxTL = selectionPanelManager.LastTopLeftNormalized;
+        Vector2 boxBR = selectionPanelManager.LastBottomRightNormalized;
+
+        Game_M.initialize.XianShi(
+            $"select_box_ok_TL({boxTL.x:F3},{boxTL.y:F3})_BR({boxBR.x:F3},{boxBR.y:F3})"
+        );
+
+        PV_controler.PublishStatus = true;
+        DP_controler.PublishStatus = true;
+
+
         // ==========================================================
         // 打包
         // ==========================================================
+        string url = "http://10.40.1.122:7355/generate";
+        var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnRequestFinished);
+
         Game_M.initialize.XianShi("shangchuan_Dabao");
         JObject PVCameraJ = new JObject
         {
@@ -203,6 +251,16 @@ public class ShuJuQingQiu : MonoBehaviour
             ["pose"] = new JArray(headPos.x, headPos.y, headPos.z),
             ["rotation"] = new JArray(headRot.x, headRot.y, headRot.z, headRot.w),
         };
+
+        // ==========================================================
+        // 新增：框选框结果（按 Python 风格：左上原点，x右，y下，0~1）
+        // ==========================================================
+        JObject selectionBoxJ = new JObject
+        {
+            ["top_left"] = new JArray(boxTL.x, boxTL.y),
+            ["bottom_right"] = new JArray(boxBR.x, boxBR.y)
+        };
+        request.AddField("SelectionBoxJ", selectionBoxJ.ToString(Formatting.None));
 
         request.AddField("deviceJ", deviceJ.ToString(Formatting.None));
         request.Send();

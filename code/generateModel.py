@@ -101,11 +101,24 @@ def generate_model():
                 raise ValueError(f"invalid base64 image: {e}")
 
         # =========================
-        # 1) 读取三段 JSON
+        # 1) 读取四段 JSON
         # =========================
         pvj = _parse_json_field("PVCameraJ")
         dj = _parse_json_field("DepthCameraJ")
         devj = _parse_json_field("deviceJ")
+        sbj = _parse_json_field("SelectionBoxJ")
+
+        # =========================
+        # 1) 简单检查SelectionBoxJ
+        # =========================
+        top_left = sbj.get("top_left", None)
+        bottom_right = sbj.get("bottom_right", None)
+
+        if not (isinstance(top_left, list) and len(top_left) == 2):
+            raise ValueError("SelectionBoxJ.top_left must be a list of length 2")
+
+        if not (isinstance(bottom_right, list) and len(bottom_right) == 2):
+            raise ValueError("SelectionBoxJ.bottom_right must be a list of length 2")
 
         # =========================
         # 2) 服务器接收时间：用于 JSON 字段 & 文件命名
@@ -166,11 +179,17 @@ def generate_model():
                 "sensor": "AHAT",
             },
 
+            "SelectionBox": {
+                "top_left": top_left,
+                "bottom_right": bottom_right,
+            },
+
             "object": {
                 "position": [0, 0, 0],
                 "rotation": [0, 0, 0, 0],
                 "scale": [1.0, 1.0, 1.0],
             },
+
         }
 
         # 保存 meta（建议也存一份，方便你调试/复现）

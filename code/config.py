@@ -4,7 +4,7 @@ from pathlib import Path
 # ========================= 从Hololens2下载数据时设备的ip(使用前修改) =========================
 HOLOLENS2_HOST = "10.40.1.132"
 
-# ========================= 从Hololens2下载数据时设备的ip(使用前修改) =========================
+# ========================= 现在是flask客户端(模型生成客户端) =========================
 IS_RUN_FLASK_SERVER = True
 
 # ========================= 项目根目录 =========================
@@ -16,13 +16,14 @@ PROJECT_ROOT = BASE_DIR.parent                   # /workspace
 CODE_ROOT = PROJECT_ROOT / "code"                # /workspace/code
 RECON_ROOT = CODE_ROOT / "reconstruction"        # /workspace/code/reconstruction
 DATA_ROOT = PROJECT_ROOT / "data"                # /workspace/data
+ENV_CONFIG_ROOT = DATA_ROOT / "config"           # /workspace/data/config
 MODELS_ROOT = PROJECT_ROOT / "models"            # /workspace/models
 HOLOLENS_ROOT = CODE_ROOT / "Hololens2"          # /workspace/code/Hololens2
 
 # ===== 每个 conda 环境对应的 python 解释器 =====
-IMESH_PY    = "/opt/miniconda/envs/imesh/bin/python"      # InstantMesh 用
-SERVER_PY    = "/opt/miniconda/envs/server/bin/python"    # Flask / API 用
-HOLOLENS2_PY    = "/opt/miniconda/envs/hololens2/bin/python"    # hololens2 用 （还未实装）
+IMESH_PY = "/opt/miniconda/envs/imesh/bin/python"      # InstantMesh 用
+SERVER_PY  = "/opt/miniconda/envs/server/bin/python"    # Flask / API 用
+HOLOLENS2_PY = SERVER_PY    # hololens2 用，和server用一个 （还未实装）
 
 # ========================= 入口flask程序 =========================
 FLASK_SERVER = CODE_ROOT / "generateModel.py"
@@ -77,6 +78,7 @@ FOLDER_MAP = {
 # ========================= 自动创建目录 =========================
 for p in [
     UPLOAD_FOLDER,
+    ENV_CONFIG_ROOT,
     INSTANTMESH_OUTPUT_MESHES,
     INSTANTMESH_OUTPUT_IMAGES,
     INSTANTMESH_OUTPUT_VIDEOS,
