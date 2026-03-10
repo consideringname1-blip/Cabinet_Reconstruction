@@ -34,33 +34,6 @@ public class ShuJuQingQiu : MonoBehaviour
         // =========================
         //StartPoseSampling();
     }
-    // =========================
-    // 获取pv相机数据
-    // =========================
-    Texture2D tex_pv_P_C;
-    ushort width_pv_C;
-    ushort height_pv_C;
-    float[,] k_pv_C;
-    float[,] pose_pv_C;
-    public void PublishPVMessage(Texture2D tex_pv_P, ushort width_pv, ushort height_pv, float[,] k_pv, float[,] pose_pv)
-    {
-        tex_pv_P_C = tex_pv_P;
-        width_pv_C = width_pv;
-        height_pv_C = height_pv;
-        k_pv_C = k_pv;
-        pose_pv_C = pose_pv;
-    }
-
-    // =========================
-    // 获取dp相机数据
-    // =========================
-    Texture2D image_dp_P_C;
-    float[,] pose_dp_C;
-    public void PublishDPMessage(Texture2D image_dp_P, float[,] pose_dp)
-    {
-        image_dp_P_C = image_dp_P;
-        pose_dp_C = pose_dp;
-    }
 
     // =========================
     // 新增：拍照时写入（captureTicks / photoTime）
@@ -131,6 +104,11 @@ public class ShuJuQingQiu : MonoBehaviour
 
     public void ShangChuanTuPian()
     {
+        if (selectionPanelManager != null && selectionPanelManager.IsBusy)
+        {
+            Game_M.initialize.XianShi("shangchuan_ERR_selection_busy");
+            return;
+        }
         StartCoroutine(ShangChuanTuPianCoroutine());
     }
     private IEnumerator ShangChuanTuPianCoroutine()
@@ -141,52 +119,69 @@ public class ShuJuQingQiu : MonoBehaviour
         // 设备相关信息
         // ==========================================================
         Game_M.initialize.XianShi("shangchuan_Device");
+        PV_controler.FreezeCurrentFrame();
+        DP_controler.FreezeCurrentFrame();
+
 
         string ip = GetDeviceIpCached();
         string photoTimeUtc = DateTime.UtcNow.ToString("o");
-        var dev = InputDevices.GetDeviceAtXRNode(XRNode.Head);
 
-        Vector3 headPos = Vector3.zero;
-        Quaternion headRot = Quaternion.identity;
-
-        if (dev.isValid)
+        Camera cam = Camera.main;
+        if (cam == null)
         {
-            dev.TryGetFeatureValue(CommonUsages.devicePosition, out headPos);
-            dev.TryGetFeatureValue(CommonUsages.deviceRotation, out headRot);
+            Game_M.initialize.XianShi("select_box_no_main_camera");
+            yield break;
         }
-
-        PV_controler.PublishStatus = false;
-        DP_controler.PublishStatus = false;
+        Vector3 camPos = cam.transform.position;
+        Quaternion camRot = cam.transform.rotation;
         //request.AddHeader("Content-Type", "multipart/form-data");
         // ==========================================================
         // PV图片存储与转换
         // ==========================================================
         Game_M.initialize.XianShi("shangchuan_PV");
-        byte[] tex_pv_P_C_F = ImageConversion.EncodeToPNG(tex_pv_P_C);
-        ushort width_pv_C_F = width_pv_C;
-        ushort height_pv_C_F = height_pv_C;
-        float[,] k_pv_C_F = k_pv_C;
-        float[,] pose_pv_C_F = pose_pv_C;
+        byte[] tex_pv_P_C_F = ImageConversion.EncodeToPNG(PV_controler.tex_pv_frozen);
+        ushort width_pv_C_F = PV_controler.width_pv_frozen;
+        ushort height_pv_C_F = PV_controler.height_pv_frozen;
+        float[,] k_pv_C_F = PV_controler.k_pv_frozen;
+        float[,] pose_pv_C_F = PV_controler.pose_pv_frozen;
 
 
         // ==========================================================
         // DP图片存储与转换
         // ==========================================================
         Game_M.initialize.XianShi("shangchuan_DP");
-        if (image_dp_P_C == null)
+        if (DP_controler.tex_grayscale_publish == null)
         {
             Game_M.initialize.XianShi("shangchuan_image_dp_P_C_ISNULL");
-            PV_controler.PublishStatus = true;
-            DP_controler.PublishStatus = true;
             yield break;
         }
-        byte[] image_dp_P_C_F = ImageConversion.EncodeToPNG(image_dp_P_C);
-        float[,] pose_dp_C_F = pose_dp_C;
+        byte[] image_dp_P_C_F = ImageConversion.EncodeToPNG(DP_controler.tex_grayscale_publish);
+        float[,] pose_dp_C_F = DP_controler.pose_publish;
         const string SENSOR_TYPE = "AHAT";
         // ==========================================================
         // PV框选，先弹出框选窗口，等待用户确认/取消
         // ==========================================================
-        Game_M.initialize.XianShi("select_box_open");
+        Game_M.initialize.XianShi("select_box_open_before_call");
+
+        if (selectionPanelManager == null)
+        {
+            Game_M.initialize.XianShi("select_box_ERR_mgr_null");
+            yield break;
+        }
+
+        if (PV_controler.tex_pv_frozen == null)
+        {
+            Game_M.initialize.XianShi("select_box_ERR_tex_null");
+            yield break;
+        }
+
+        if (cam == null)
+        {
+            Game_M.initialize.XianShi("select_box_ERR_cam_null_2");
+            yield break;
+        }
+
+        Game_M.initialize.XianShi("select_box_02_before_startcoroutine");
 
         // 这里会：
         // 1. 打开 Canvas Selection box
@@ -195,16 +190,15 @@ public class ShuJuQingQiu : MonoBehaviour
         // 4. 等用户点 Confirm / Cancel
         // 5. 自动关闭面板
         yield return StartCoroutine(
-            selectionPanelManager.RequestSelection(tex_pv_P_C, headPos, headRot)
+            selectionPanelManager.RequestSelection(PV_controler.tex_pv_frozen, cam.transform)
         );
+
+        Game_M.initialize.XianShi("select_box_03_after_startcoroutine");
 
         // 用户取消
         if (!selectionPanelManager.LastConfirmed)
         {
             Game_M.initialize.XianShi("select_box_cancel");
-
-            PV_controler.PublishStatus = true;
-            DP_controler.PublishStatus = true;
             yield break;
         }
 
@@ -215,9 +209,6 @@ public class ShuJuQingQiu : MonoBehaviour
         Game_M.initialize.XianShi(
             $"select_box_ok_TL({boxTL.x:F3},{boxTL.y:F3})_BR({boxBR.x:F3},{boxBR.y:F3})"
         );
-
-        PV_controler.PublishStatus = true;
-        DP_controler.PublishStatus = true;
 
 
         // ==========================================================
@@ -248,10 +239,10 @@ public class ShuJuQingQiu : MonoBehaviour
             ["type"] = "DEVICE_TYPE",
             ["ip"] = string.IsNullOrEmpty(ip) ? "" : ip,
             ["time"] = photoTimeUtc,
-            ["pose"] = new JArray(headPos.x, headPos.y, headPos.z),
-            ["rotation"] = new JArray(headRot.x, headRot.y, headRot.z, headRot.w),
+            ["pose"] = new JArray(camPos.x, camPos.y, camPos.z),
+            ["rotation"] = new JArray(camRot.x, camRot.y, camRot.z, camRot.w),
         };
-
+        request.AddField("deviceJ", deviceJ.ToString(Formatting.None));
         // ==========================================================
         // 新增：框选框结果（按 Python 风格：左上原点，x右，y下，0~1）
         // ==========================================================
@@ -262,7 +253,6 @@ public class ShuJuQingQiu : MonoBehaviour
         };
         request.AddField("SelectionBoxJ", selectionBoxJ.ToString(Formatting.None));
 
-        request.AddField("deviceJ", deviceJ.ToString(Formatting.None));
         request.Send();
         Game_M.initialize.XianShi("generate");
     }

@@ -15,11 +15,20 @@ public class HoloLensPVAquirer : MonoBehaviour
     public ushort pv_width = 640;
     public ushort pv_height = 360;
     public byte pv_fps = 30;
+
+    public Texture2D tex_pv_frozen;
+    public float[,] pose_pv_frozen;
+    public float[,] k_pv_frozen;
+    public ushort width_pv_frozen;
+    public ushort height_pv_frozen;
+    private float[,] pose_latest;
+    private float[,] k_latest;
+
     private hl2da.pv_captureformat pvcf;
 
     private Texture2D tex_pv;
-    private Texture2D tex_pv_publish;
-    private byte[] publish_flip_buffer;
+    private byte[] pv_raw_buffer;
+    private byte[] pv_flip_buffer;
 
     //public HoloLensPVPublisher _publisher;
     public ShuJuQingQiu _publisher;
@@ -37,14 +46,9 @@ public class HoloLensPVAquirer : MonoBehaviour
         hl2da.user.SetEnable(hl2da.SENSOR_ID.PV, true);
 
         tex_pv = new Texture2D(pvcf.width, pvcf.height, TextureFormat.BGRA32, false);
-        //pv_image.GetComponent<Renderer>().material.mainTexture = tex_pv;
-        
-
-        // 传出专用纹理（做上下翻转后再发）
-        tex_pv_publish = new Texture2D(pvcf.width, pvcf.height, TextureFormat.BGRA32, false);
-        publish_flip_buffer = new byte[pvcf.width * pvcf.height * 4];
-
-        pv_image.texture = tex_pv_publish;
+        pv_raw_buffer = new byte[pvcf.width * pvcf.height * 4];
+        pv_flip_buffer = new byte[pvcf.width * pvcf.height * 4];
+        pv_image.texture = tex_pv;
 #endif
         _enable_sensor_update = true;////
     }
@@ -66,29 +70,19 @@ public class HoloLensPVAquirer : MonoBehaviour
         else { _enable_sensor_update = true; }
     }
 
-    private void FlipTextureVertically(Texture2D src, Texture2D dst, byte[] flipBuffer)
+    void FlipVertical(byte[] src, byte[] dst, int width, int height)
     {
-        int width = src.width;
-        int height = src.height;
-        int bytesPerPixel = 4; // BGRA32
-        int rowBytes = width * bytesPerPixel;
-
-        var srcRaw = src.GetRawTextureData<byte>();
+        int rowBytes = width * 4;
 
         for (int y = 0; y < height; y++)
         {
             int srcOffset = y * rowBytes;
             int dstOffset = (height - 1 - y) * rowBytes;
 
-            for (int i = 0; i < rowBytes; i++)
-            {
-                flipBuffer[dstOffset + i] = srcRaw[srcOffset + i];
-            }
+            System.Buffer.BlockCopy(src, srcOffset, dst, dstOffset, rowBytes);
         }
-
-        dst.LoadRawTextureData(flipBuffer);
-        dst.Apply(false);
     }
+
 
     void UpdateFrame()
     {
@@ -101,16 +95,43 @@ public class HoloLensPVAquirer : MonoBehaviour
 
         if (stride != pvcf.width)
         {
-            byte[,,] image = hl2da.coprocessor.Crop<byte>(fc.Buffer, (int)stride, pvcf.height, 4, 0, 0, pvcf.width, pvcf.height);
+            byte[,,] image = hl2da.coprocessor.Crop<byte>(
+                fc.Buffer,
+                (int)stride,
+                pvcf.height,
+                4,
+                0,
+                0,
+                pvcf.width,
+                pvcf.height
+            );
+
             using hl2da.pointer p = hl2da.pointer.get(image);
-            tex_pv.LoadRawTextureData(p.value, pvcf.width * pvcf.height * 4);
+
+            System.Runtime.InteropServices.Marshal.Copy(
+                p.value,
+                pv_raw_buffer,
+                0,
+                pv_raw_buffer.Length
+            );
         }
         else
         {
-            tex_pv.LoadRawTextureData(fc.Buffer, fc.Length);
+            System.Runtime.InteropServices.Marshal.Copy(
+                fc.Buffer,
+                pv_raw_buffer,
+                0,
+                pv_raw_buffer.Length
+            );
         }
 
-        tex_pv.Apply();
+        // 上下翻转
+        FlipVertical(pv_raw_buffer, pv_flip_buffer, pvcf.width, pvcf.height);
+
+        // 写入 texture
+        tex_pv.LoadRawTextureData(pv_flip_buffer);
+
+        tex_pv.Apply(false);
 
         var metadata = hl2da.user.Unpack<hl2da.pv_metadata>(fb.Buffer(2));
         float[,] pose = hl2da.user.Unpack2D<float>(fb.Buffer(3), hl2da.user.POSE_ROWS, hl2da.user.POSE_COLS);
@@ -121,22 +142,65 @@ public class HoloLensPVAquirer : MonoBehaviour
         // encode image to png
         //byte[] frameData = ImageConversion.EncodeToPNG(tex_pv);
         //Publish(frameData, pv_width, pv_height, k_matrix, pose);
-        Publish(tex_pv, pv_width, pv_height, k_matrix, pose);
+        pose_latest = CloneFloat2D(pose);
+        k_latest = CloneFloat2D(k_matrix);
     }
+
+    private float[,] CloneFloat2D(float[,] src)
+    {
+        if (src == null) return null;
+
+        int rows = src.GetLength(0);
+        int cols = src.GetLength(1);
+        float[,] dst = new float[rows, cols];
+
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < cols; c++)
+            {
+                dst[r, c] = src[r, c];
+            }
+        }
+
+        return dst;
+    }
+    public void SetPVUpdateEnabled(bool enabled)
+    {
+        _enable_sensor_update = enabled;
+    }
+
 
     //void Publish(byte[] image, ushort width, ushort height, float[,] k, float[,] pose)
     //{
     //    //_publisher.PublishMessage(image, width, height, k, pose);
     //}
 
-    public bool PublishStatus = true;
-    void Publish(Texture2D tex_pv_P, ushort width, ushort height, float[,] k, float[,] pose)
+    public bool FreezeCurrentFrame()
     {
-        if (!PublishStatus) return;
+        if (tex_pv == null)
+        {
+            Game_M.initialize.XianShi("pv_freeze_ERR_tex_pv_null");
+            return false;
+        }
 
-        // 只在传出前做一次上下翻转
-        FlipTextureVertically(tex_pv_P, tex_pv_publish, publish_flip_buffer);
+        if (tex_pv_frozen == null ||
+            tex_pv_frozen.width != tex_pv.width ||
+            tex_pv_frozen.height != tex_pv.height ||
+            tex_pv_frozen.format != tex_pv.format)
+        {
+            tex_pv_frozen = new Texture2D(tex_pv.width, tex_pv.height, tex_pv.format, false);
+            Game_M.initialize.XianShi("pv_freeze_01_create_tex");
+        }
 
-        _publisher.PublishPVMessage(tex_pv_publish, width, height, k, pose);
+        tex_pv_frozen.LoadRawTextureData(tex_pv.GetRawTextureData());
+        tex_pv_frozen.Apply(false);
+
+        pose_pv_frozen = CloneFloat2D(pose_latest);
+        k_pv_frozen = CloneFloat2D(k_latest);
+        width_pv_frozen = (ushort)tex_pv.width;
+        height_pv_frozen = (ushort)tex_pv.height;
+
+        Game_M.initialize.XianShi("pv_freeze_02_done");
+        return true;
     }
 }

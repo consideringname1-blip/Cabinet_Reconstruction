@@ -28,10 +28,13 @@ public class HoloLensDepthAquirer : MonoBehaviour
     //public Shader grayscale_shader;
 
     private Texture2D tex_grayscale;
+    private byte[] depth_raw_buffer;
+    private byte[] depth_flip_buffer;
 
-    private Texture2D tex_grayscale_publish;
-    private byte[] publish_flip_buffer_depth;
-
+    private float[,] pose_latest;
+    public Texture2D tex_grayscale_publish;
+    public float[,] pose_publish;
+    
     //private RenderTexture tex_color;
 
     //private Material colormap_mat;
@@ -70,8 +73,9 @@ public class HoloLensDepthAquirer : MonoBehaviour
 
             tex_grayscale = new Texture2D(512, 512, TextureFormat.R16, false);
 
-            tex_grayscale_publish = new Texture2D(512, 512, TextureFormat.R16, false);
-            publish_flip_buffer_depth = new byte[512 * 512 * 2];
+            depth_raw_buffer = new byte[512 * 512 * 2];
+            depth_flip_buffer = new byte[512 * 512 * 2];
+
             //tex_color = new RenderTexture(512, 512, 0, RenderTextureFormat.BGRA32);
 
             //if (_enablePreview)
@@ -90,6 +94,9 @@ public class HoloLensDepthAquirer : MonoBehaviour
             hl2da.user.SetEnable(hl2da.SENSOR_ID.RM_DEPTH_LONGTHROW, true);
 
             tex_grayscale = new Texture2D(320, 288, TextureFormat.R16, false);
+
+            depth_raw_buffer = new byte[320 * 288 * 2];
+            depth_flip_buffer = new byte[320 * 288 * 2];
             //tex_color = new RenderTexture(320, 288, 0, RenderTextureFormat.BGRA32);
 
             //if (_enablePreview)
@@ -125,27 +132,17 @@ public class HoloLensDepthAquirer : MonoBehaviour
         else { _enable_sensor_update = true; }
     }
 
-    private void FlipTextureVerticallyR16(Texture2D src, Texture2D dst, byte[] flipBuffer)
+    private void FlipRawBufferVerticallyR16(byte[] src, byte[] dst, int width, int height)
     {
-        int width = src.width;
-        int height = src.height;
-        int rowBytes = width * 2;
-
-        var srcRaw = src.GetRawTextureData<byte>();
+        int rowBytes = width * 2; // R16 = 2 bytes per pixel
 
         for (int y = 0; y < height; y++)
         {
             int srcOffset = y * rowBytes;
             int dstOffset = (height - 1 - y) * rowBytes;
 
-            for (int i = 0; i < rowBytes; i++)
-            {
-                flipBuffer[dstOffset + i] = srcRaw[srcOffset + i];
-            }
+            System.Buffer.BlockCopy(src, srcOffset, dst, dstOffset, rowBytes);
         }
-
-        dst.LoadRawTextureData(flipBuffer);
-        dst.Apply(false);
     }
 
     /// <summary>
@@ -292,39 +289,111 @@ public class HoloLensDepthAquirer : MonoBehaviour
     {
         if (invalidate_depth) { hl2da.IMT_ZHTInvalidate(fb.Buffer(0), fb.Buffer(0)); }
 
-        // Load frame data into textures
-        tex_grayscale.LoadRawTextureData(fb.Buffer(0), fb.Length(0) * sizeof(ushort));  // Depth is u16
-        //tex_grayscale.LoadRawTextureData(fb.Buffer(0), fb.Length(0));  // Depth is u16
-        tex_grayscale.Apply();
+        int byteCount = fb.Length(0) * sizeof(ushort);
 
-        // encode image to png
-        //byte[] frameData = ImageConversion.EncodeToPNG(tex_grayscale);
+        // 先把原始深度数据从 IntPtr 拷到 byte[]
+        Marshal.Copy(fb.Buffer(0), depth_raw_buffer, 0, byteCount);
 
-        //Graphics.Blit(tex_grayscale, tex_color, colormap_mat); // Apply color map to Depth
+        // 在 Apply() 之前做上下翻转
+        FlipRawBufferVerticallyR16(depth_raw_buffer, depth_flip_buffer, tex_grayscale.width, tex_grayscale.height);
+
+        // 把翻转后的数据写入纹理
+        tex_grayscale.LoadRawTextureData(depth_flip_buffer);
+        tex_grayscale.Apply(false);
 
         // Display pose
         float[,] pose = hl2da.user.Unpack2D<float>(fb.Buffer(3), hl2da.user.POSE_ROWS, hl2da.user.POSE_COLS);
-        //tmp_ht_pose.text = sensor_names[fb.Id] + " Pose: " + PoseToString(pose);
 
-        //byte[] frameData = new byte[fb.Length(0) * sizeof(ushort) * 2];
-        //Marshal.Copy(fb.Buffer(0), frameData, 0, fb.Length(0) * sizeof(ushort) * 2);
-
-        //_previewController.UpdateFPSText();
-        Publish(tex_grayscale, pose);
+        pose_latest = CloneFloat2D(pose);
+        // 回退方案：如果以后想重新发 PNG，就保留这两行
+        // byte[] frameData = ImageConversion.EncodeToPNG(tex_grayscale);
+        // Publish(frameData, pose);
     }
 
     void Update_RM_Depth_Longthrow(hl2da.framebuffer fb)
     {
         if (invalidate_depth) { hl2da.IMT_ZLTInvalidate(fb.Buffer(2), fb.Buffer(0), fb.Buffer(0)); }
 
-        // Load frame data into textures
-        tex_grayscale.LoadRawTextureData(fb.Buffer(0), fb.Length(0) * sizeof(ushort)); // Depth is u16
-        tex_grayscale.Apply();
-        //Graphics.Blit(tex_grayscale, tex_color, colormap_mat); // Apply color map to Depth
+        int byteCount = fb.Length(0) * sizeof(ushort);
+
+        // 先复制原始深度数据
+        Marshal.Copy(fb.Buffer(0), depth_raw_buffer, 0, byteCount);
+
+        // 在 Apply() 之前做上下翻转
+        FlipRawBufferVerticallyR16(depth_raw_buffer, depth_flip_buffer, tex_grayscale.width, tex_grayscale.height);
+
+        // 把翻转后的数据写入纹理
+        tex_grayscale.LoadRawTextureData(depth_flip_buffer);
+        tex_grayscale.Apply(false);
 
         // Display pose
         float[,] pose = hl2da.user.Unpack2D<float>(fb.Buffer(3), hl2da.user.POSE_ROWS, hl2da.user.POSE_COLS);
-        //tmp_lt_pose.text = sensor_names[fb.Id] + " Pose: " + PoseToString(pose);
+        pose_latest = CloneFloat2D(pose);
+
+        // 如果 Longthrow 也要发，就在这里保留同样结构
+        // byte[] frameData = ImageConversion.EncodeToPNG(tex_grayscale);
+        // Publish(frameData, pose);
+    }
+
+    private float[,] CloneFloat2D(float[,] src)
+    {
+        if (src == null) return null;
+
+        int rows = src.GetLength(0);
+        int cols = src.GetLength(1);
+        float[,] dst = new float[rows, cols];
+
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < cols; c++)
+            {
+                dst[r, c] = src[r, c];
+            }
+        }
+
+        return dst;
+    }
+
+    public bool FreezeCurrentFrame()
+    {
+        if (tex_grayscale == null)
+        {
+            Game_M.initialize.XianShi("dp_freeze_ERR_tex_null");
+            return false;
+        }
+
+        if (pose_latest == null)
+        {
+            Game_M.initialize.XianShi("dp_freeze_ERR_pose_null");
+            return false;
+        }
+
+        if (tex_grayscale_publish == null ||
+            tex_grayscale_publish.width != tex_grayscale.width ||
+            tex_grayscale_publish.height != tex_grayscale.height ||
+            tex_grayscale_publish.format != tex_grayscale.format)
+        {
+            tex_grayscale_publish = new Texture2D(
+                tex_grayscale.width,
+                tex_grayscale.height,
+                tex_grayscale.format,
+                false
+            );
+            Game_M.initialize.XianShi("dp_freeze_01_create_tex");
+        }
+
+        tex_grayscale_publish.LoadRawTextureData(tex_grayscale.GetRawTextureData());
+        tex_grayscale_publish.Apply(false);
+
+        pose_publish = CloneFloat2D(pose_latest);
+
+        Game_M.initialize.XianShi("dp_freeze_02_done");
+        return true;
+    }
+
+    public void SetDepthUpdateEnabled(bool enabled)
+    {
+        _enable_sensor_update = enabled;
     }
 
     string PoseToString(float[,] pose)
@@ -332,18 +401,4 @@ public class HoloLensDepthAquirer : MonoBehaviour
         return string.Format("[[{0}, {1}, {2}, {3}], [{4}, {5}, {6}, {7}], [{8}, {9}, {10}, {11}], [{12}, {13}, {14}, {15}]]", pose[0, 0], pose[0, 1], pose[0, 2], pose[0, 3], pose[1, 0], pose[1, 1], pose[1, 2], pose[1, 3], pose[2, 0], pose[2, 1], pose[2, 2], pose[2, 3], pose[3, 0], pose[3, 1], pose[3, 2], pose[3, 3]);
     }
 
-    //void Publish(byte[] image, float[,] pose)
-    //{
-    //    //_publisher.PublishMessage(image, pose);
-    //}
-
-    public bool PublishStatus = true;
-
-    void Publish(Texture2D image, float[,] pose)
-    {
-        if (!PublishStatus) return;
-        FlipTextureVerticallyR16(image, tex_grayscale_publish, publish_flip_buffer_depth);
-        _publisher.PublishDPMessage(image, pose);
-
-    }
 }
