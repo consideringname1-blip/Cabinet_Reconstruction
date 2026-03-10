@@ -40,7 +40,7 @@ public class HoloLensPVAquirer : MonoBehaviour
         //pv_image.GetComponent<Renderer>().material.mainTexture = tex_pv;
         
 
-        // ´«³ö×¨ÓÃÎÆÀí£¨×öÉÏÏÂ·­×ªºóÔÙ·¢£©
+        // ä¼ å‡ºä¸“ç”¨çº¹ç†ï¼ˆåšä¸Šä¸‹ç¿»è½¬åå†å‘ï¼‰
         tex_pv_publish = new Texture2D(pvcf.width, pvcf.height, TextureFormat.BGRA32, false);
         publish_flip_buffer = new byte[pvcf.width * pvcf.height * 4];
 
@@ -134,7 +134,7 @@ public class HoloLensPVAquirer : MonoBehaviour
     {
         if (!PublishStatus) return;
 
-        // Ö»ÔÚ´«³öÇ°×öÒ»´ÎÉÏÏÂ·­×ª
+        // åªåœ¨ä¼ å‡ºå‰åšä¸€æ¬¡ä¸Šä¸‹ç¿»è½¬
         FlipTextureVertically(tex_pv_P, tex_pv_publish, publish_flip_buffer);
 
         _publisher.PublishPVMessage(tex_pv_publish, width, height, k, pose);

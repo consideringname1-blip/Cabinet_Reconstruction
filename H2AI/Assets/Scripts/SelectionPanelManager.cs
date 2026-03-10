@@ -15,17 +15,17 @@ public class SelectionPanelManager : MonoBehaviour
 
     [Header("Options")]
     [SerializeField] private bool hidePanelOnStart = true;
-    [SerializeField] private float panelDistance = 1.0f;            // Ãæ°å·ÅÔÚÏà»úË®Æ½Ç°·½ 1m
-    [SerializeField] private float panelVerticalOffset = 0.15f;   // ÍùÉÏÌ§ 15 cm
-    [SerializeField] private float panelHorizontalOffset = 0.0f;  // ÏòÓÒÎªÕı£¬Ïò×óÎª¸º
+    [SerializeField] private float panelDistance = 1.0f;            // é¢æ¿æ”¾åœ¨ç›¸æœºæ°´å¹³å‰æ–¹ 1m
+    [SerializeField] private float panelVerticalOffset = 0.15f;   // å¾€ä¸ŠæŠ¬ 15 cm
+    [SerializeField] private float panelHorizontalOffset = 0.0f;  // å‘å³ä¸ºæ­£ï¼Œå‘å·¦ä¸ºè´Ÿ
 
     public bool IsBusy => isBusy;
 
-    // Ğ­³Ì½áÊøºó£¬ÓÉÍâ²¿¶ÁÈ¡Õâ¼¸¸ö½á¹û
+    // åç¨‹ç»“æŸåï¼Œç”±å¤–éƒ¨è¯»å–è¿™å‡ ä¸ªç»“æœ
     public bool LastConfirmed { get; private set; } = false;
 
-    // ×óÉÏ½Ç / ÓÒÏÂ½Ç£¬¶¼ÊÇÏà¶ÔÍ¼Æ¬×óÉÏ½ÇµÄ¹éÒ»»¯±ÈÀı×ø±ê
-    // x ÏòÓÒÔö´ó£¬y ÏòÏÂÔö´ó£¬·¶Î§ 0~1
+    // å·¦ä¸Šè§’ / å³ä¸‹è§’ï¼Œéƒ½æ˜¯ç›¸å¯¹å›¾ç‰‡å·¦ä¸Šè§’çš„å½’ä¸€åŒ–æ¯”ä¾‹åæ ‡
+    // x å‘å³å¢å¤§ï¼Œy å‘ä¸‹å¢å¤§ï¼ŒèŒƒå›´ 0~1
     public Vector2 LastTopLeftNormalized { get; private set; } = Vector2.zero;
     public Vector2 LastBottomRightNormalized { get; private set; } = Vector2.zero;
 
@@ -104,7 +104,7 @@ public class SelectionPanelManager : MonoBehaviour
     {
         LastConfirmed = confirmed;
 
-        // ÕâÀïÖ±½ÓÈ¡¡°Ïà¶ÔÓÚÍ¼Æ¬×óÉÏ½ÇµÄ¹éÒ»»¯×ø±ê¡±
+        // è¿™é‡Œç›´æ¥å–â€œç›¸å¯¹äºå›¾ç‰‡å·¦ä¸Šè§’çš„å½’ä¸€åŒ–åæ ‡â€
         selectionBoxController.GetNormalizedTLBR(
             out Vector2 topLeft,
             out Vector2 bottomRight
@@ -115,9 +115,9 @@ public class SelectionPanelManager : MonoBehaviour
     }
 
     /// <summary>
-    /// ¼ò»¯µ÷ÓÃ°æ£º
-    /// Ö±½Ó´«Ïà»ú Transform¡£
-    /// Ãæ°å»á±»·Åµ½Ïà»úË®Æ½·½ÏòÇ°·½ panelDistance Ã×´¦¡£
+    /// ç®€åŒ–è°ƒç”¨ç‰ˆï¼š
+    /// ç›´æ¥ä¼ ç›¸æœº Transformã€‚
+    /// é¢æ¿ä¼šè¢«æ”¾åˆ°ç›¸æœºæ°´å¹³æ–¹å‘å‰æ–¹ panelDistance ç±³å¤„ã€‚
     /// </summary>
     public IEnumerator RequestSelection(Texture2D texture, Transform cameraTransform)
     {
@@ -133,15 +133,15 @@ public class SelectionPanelManager : MonoBehaviour
     }
 
     /// <summary>
-    /// Ö÷Ğ­³Ì£º
-    /// ´«ÈëÍ¼Æ¬ + Ïà»úÎ»×Ë¡£
-    /// µ÷ÓÃºó»á£º
-    /// 1. ´ò¿ªÃæ°å
-    /// 2. ÏÔÊ¾Í¼Æ¬
-    /// 3. ³õÊ¼»¯¿ò
-    /// 4. µÈ´ıÓÃ»§µã»÷ Confirm / Cancel
-    /// 5. ±£´æ½á¹ûµ½ LastConfirmed / LastTopLeftNormalized / LastBottomRightNormalized
-    /// 6. ¹Ø±ÕÃæ°å
+    /// ä¸»åç¨‹ï¼š
+    /// ä¼ å…¥å›¾ç‰‡ + ç›¸æœºä½å§¿ã€‚
+    /// è°ƒç”¨åä¼šï¼š
+    /// 1. æ‰“å¼€é¢æ¿
+    /// 2. æ˜¾ç¤ºå›¾ç‰‡
+    /// 3. åˆå§‹åŒ–æ¡†
+    /// 4. ç­‰å¾…ç”¨æˆ·ç‚¹å‡» Confirm / Cancel
+    /// 5. ä¿å­˜ç»“æœåˆ° LastConfirmed / LastTopLeftNormalized / LastBottomRightNormalized
+    /// 6. å…³é—­é¢æ¿
     /// </summary>
     public IEnumerator RequestSelection(Texture2D texture, Vector3 cameraPosition, Quaternion cameraRotation)
     {
@@ -161,39 +161,39 @@ public class SelectionPanelManager : MonoBehaviour
         waitFinished = false;
         ResetResultState();
 
-        // 1. ¸ù¾İÏà»úÎ»×Ë°Ú·ÅÃæ°å
+        // 1. æ ¹æ®ç›¸æœºä½å§¿æ‘†æ”¾é¢æ¿
         PlacePanelInFrontOfCamera(cameraPosition, cameraRotation, panelDistance);
 
-        // 2. ´ò¿ªÃæ°å
+        // 2. æ‰“å¼€é¢æ¿
         panelRoot.SetActive(true);
 
-        // 3. ÉèÖÃÍ¼Æ¬
+        // 3. è®¾ç½®å›¾ç‰‡
         previewRawImage.texture = texture;
 
-        // 4. µÈÒ»Ö¡£¬ÈÃÃæ°å¼¤»î¡¢×ÓÎïÌåºÍ²¼¾ÖÎÈ¶¨
+        // 4. ç­‰ä¸€å¸§ï¼Œè®©é¢æ¿æ¿€æ´»ã€å­ç‰©ä½“å’Œå¸ƒå±€ç¨³å®š
         yield return null;
 
-        // 5. Ã¿´Îµ÷ÓÃ¶¼ÖØĞÂ³õÊ¼»¯Ñ¡¿òºÍÁ½¸ö handle
+        // 5. æ¯æ¬¡è°ƒç”¨éƒ½é‡æ–°åˆå§‹åŒ–é€‰æ¡†å’Œä¸¤ä¸ª handle
         selectionBoxController.PrepareForReuse();
 
-        // 6. µÈ´ıÓÃ»§µã»÷
+        // 6. ç­‰å¾…ç”¨æˆ·ç‚¹å‡»
         yield return new WaitUntil(() => waitFinished);
 
-        // 7. ¹Ø±ÕÃæ°å
+        // 7. å…³é—­é¢æ¿
         panelRoot.SetActive(false);
 
         isBusy = false;
     }
 
     /// <summary>
-    /// ½« panelRoot ·Åµ½¡°Ïà»úË®Æ½·½ÏòÇ°·½ distance Ã×´¦¡±£¬²¢Ë®Æ½³¯ÏòÏà»ú¡£
-    /// ºöÂÔÏà»úÌ§Í·/µÍÍ·´øÀ´µÄÉÏÏÂ·ÖÁ¿¡£
+    /// å°† panelRoot æ”¾åˆ°â€œç›¸æœºæ°´å¹³æ–¹å‘å‰æ–¹ distance ç±³å¤„â€ï¼Œå¹¶æ°´å¹³æœå‘ç›¸æœºã€‚
+    /// å¿½ç•¥ç›¸æœºæŠ¬å¤´/ä½å¤´å¸¦æ¥çš„ä¸Šä¸‹åˆ†é‡ã€‚
     /// </summary>
     private void PlacePanelInFrontOfCamera(Vector3 cameraPosition, Quaternion cameraRotation, float distance)
     {
         if (panelRoot == null) return;
 
-        // Ïà»ú forward Í¶Ó°µ½Ë®Æ½Ãæ
+        // ç›¸æœº forward æŠ•å½±åˆ°æ°´å¹³é¢
         Vector3 flatForward = Vector3.ProjectOnPlane(cameraRotation * Vector3.forward, Vector3.up);
 
         if (flatForward.sqrMagnitude < 1e-6f)
@@ -208,17 +208,17 @@ public class SelectionPanelManager : MonoBehaviour
 
         flatForward.Normalize();
 
-        // Ë®Æ½ÓÒ·½Ïò£¨ÓÃÓÚ×óÓÒÎ¢µ÷£©
+        // æ°´å¹³å³æ–¹å‘ï¼ˆç”¨äºå·¦å³å¾®è°ƒï¼‰
         Vector3 flatRight = Vector3.Cross(Vector3.up, flatForward).normalized;
 
-        // Ãæ°åÎ»ÖÃ£ºÕıÇ°·½ + ÉÏÒÆ + ×óÓÒÎ¢µ÷
+        // é¢æ¿ä½ç½®ï¼šæ­£å‰æ–¹ + ä¸Šç§» + å·¦å³å¾®è°ƒ
         Vector3 panelPosition =
             cameraPosition
             + flatForward * distance
             + Vector3.up * panelVerticalOffset
             + flatRight * panelHorizontalOffset;
 
-        // Ãæ°å³¯ÏòÏà»ú£¨ÔÊĞíÉÏÏÂ¿´ÏòÏà»ú£¬¾Í²»Òª°Ñ y ÇåÁã£©
+        // é¢æ¿æœå‘ç›¸æœºï¼ˆå…è®¸ä¸Šä¸‹çœ‹å‘ç›¸æœºï¼Œå°±ä¸è¦æŠŠ y æ¸…é›¶ï¼‰
         Vector3 lookDir = cameraPosition - panelPosition;
 
         if (lookDir.sqrMagnitude < 1e-6f)

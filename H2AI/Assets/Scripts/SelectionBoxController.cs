@@ -41,7 +41,7 @@ public class SelectionBoxController : MonoBehaviour
     private ActiveHandle activeHandle = ActiveHandle.None;
     private bool subscribed = false;
 
-    // ¹Ì¶¨Á½¸öhandleËùÔÚµÄ±¾µØZÆ½Ãæ£¬±ÜÃâÆ¯³öÍ¼Æ¬Æ½Ãæ
+    // å›ºå®šä¸¤ä¸ªhandleæ‰€åœ¨çš„æœ¬åœ°Zå¹³é¢ï¼Œé¿å…æ¼‚å‡ºå›¾ç‰‡å¹³é¢
     private float tlPlaneZ = 0f;
     private float brPlaneZ = 0f;
 
@@ -220,9 +220,9 @@ public class SelectionBoxController : MonoBehaviour
     }
 
     /// <summary>
-    /// Ê¹ÓÃ¡°Ïà¶ÔÓÚÍ¼Æ¬×óÉÏ½Ç¡±µÄ¹éÒ»»¯×ø±ê³õÊ¼»¯/ÉèÖÃ¿ò¡£
-    /// left/top/right/bottom ¶¼ÊÇ 0~1¡£
-    /// top ÍùÏÂÔö´ó£¬left ÍùÓÒÔö´ó¡£
+    /// ä½¿ç”¨â€œç›¸å¯¹äºå›¾ç‰‡å·¦ä¸Šè§’â€çš„å½’ä¸€åŒ–åæ ‡åˆå§‹åŒ–/è®¾ç½®æ¡†ã€‚
+    /// left/top/right/bottom éƒ½æ˜¯ 0~1ã€‚
+    /// top å¾€ä¸‹å¢å¤§ï¼Œleft å¾€å³å¢å¤§ã€‚
     /// </summary>
     public void SetFromNormalized(float left, float top, float right, float bottom)
     {
@@ -256,19 +256,19 @@ public class SelectionBoxController : MonoBehaviour
         float minW = Mathf.Clamp01(minWidthNormalized);
         float minH = Mathf.Clamp01(minHeightNormalized);
 
-        // ±£Ö¤ right >= left + minW
+        // ä¿è¯ right >= left + minW
         if (right < left + minW)
         {
             right = left + minW;
         }
 
-        // ±£Ö¤ bottom >= top + minH
+        // ä¿è¯ bottom >= top + minH
         if (bottom < top + minH)
         {
             bottom = top + minH;
         }
 
-        // ³¬½çºóÕûÌåÍù»ØÍÆ
+        // è¶…ç•Œåæ•´ä½“å¾€å›æ¨
         if (right > 1f)
         {
             float overflow = right - 1f;
@@ -283,7 +283,7 @@ public class SelectionBoxController : MonoBehaviour
             top = Mathf.Max(0f, top - overflow);
         }
 
-        // ÔÙ±£ÏÕÒ»´Î
+        // å†ä¿é™©ä¸€æ¬¡
         left = Mathf.Clamp01(left);
         top = Mathf.Clamp01(top);
         right = Mathf.Clamp(right, left + minW, 1f);
@@ -306,14 +306,14 @@ public class SelectionBoxController : MonoBehaviour
         tl.z = tlPlaneZ;
         br.z = brPlaneZ;
 
-        // ÏÈ¸÷×ÔÏŞÖÆÔÚÍ¼Æ¬·¶Î§ÄÚ
+        // å…ˆå„è‡ªé™åˆ¶åœ¨å›¾ç‰‡èŒƒå›´å†…
         tl.x = Mathf.Clamp(tl.x, r.xMin, r.xMax);
         tl.y = Mathf.Clamp(tl.y, r.yMin, r.yMax);
 
         br.x = Mathf.Clamp(br.x, r.xMin, r.xMax);
         br.y = Mathf.Clamp(br.y, r.yMin, r.yMax);
 
-        // ÔÙ¸ù¾İµ±Ç°×¥µÄÊÇË­£¬·ÀÖ¹½»²æ
+        // å†æ ¹æ®å½“å‰æŠ“çš„æ˜¯è°ï¼Œé˜²æ­¢äº¤å‰
         switch (activeHandle)
         {
             case ActiveHandle.TopLeft:
@@ -328,7 +328,7 @@ public class SelectionBoxController : MonoBehaviour
 
             case ActiveHandle.None:
             default:
-                // Ã»ÓĞÕıÔÚÍÏ×§Ê±£¬Ò²×öÒ»´ÎÎÈ¶¨»¯Ô¼Êø
+                // æ²¡æœ‰æ­£åœ¨æ‹–æ‹½æ—¶ï¼Œä¹Ÿåšä¸€æ¬¡ç¨³å®šåŒ–çº¦æŸ
                 tl.x = Mathf.Min(tl.x, br.x - minWidthLocal);
                 tl.y = Mathf.Max(tl.y, br.y + minHeightLocal);
 
@@ -387,7 +387,7 @@ public class SelectionBoxController : MonoBehaviour
         Rect r = imageArea.rect;
 
         float x = Mathf.Lerp(r.xMin, r.xMax, x01);
-        float y = Mathf.Lerp(r.yMax, r.yMin, y01); // top-left origin£¬ÏòÏÂÔö´ó
+        float y = Mathf.Lerp(r.yMax, r.yMin, y01); // top-left originï¼Œå‘ä¸‹å¢å¤§
 
         return new Vector3(x, y, z);
     }
@@ -403,7 +403,7 @@ public class SelectionBoxController : MonoBehaviour
     }
 
     /// <summary>
-    /// ·µ»Ø TL / BR Á½¸öµãµÄ¹éÒ»»¯×ø±ê£¨Ïà¶ÔÓÚÍ¼Æ¬×óÉÏ½Ç£©
+    /// è¿”å› TL / BR ä¸¤ä¸ªç‚¹çš„å½’ä¸€åŒ–åæ ‡ï¼ˆç›¸å¯¹äºå›¾ç‰‡å·¦ä¸Šè§’ï¼‰
     /// </summary>
     public void GetNormalizedTLBR(out Vector2 topLeft, out Vector2 bottomRight)
     {
@@ -420,7 +420,7 @@ public class SelectionBoxController : MonoBehaviour
     }
 
     /// <summary>
-    /// ·µ»Ø (left, top, right, bottom)£¬·¶Î§ 0~1£¬Ô­µãÔÚÍ¼Æ¬×óÉÏ½Ç
+    /// è¿”å› (left, top, right, bottom)ï¼ŒèŒƒå›´ 0~1ï¼ŒåŸç‚¹åœ¨å›¾ç‰‡å·¦ä¸Šè§’
     /// </summary>
     public Vector4 GetNormalizedLTRB()
     {
@@ -429,7 +429,7 @@ public class SelectionBoxController : MonoBehaviour
     }
 
     /// <summary>
-    /// ·µ»Ø Rect(x=left, y=top, width, height)£¬·¶Î§ 0~1£¬Ô­µãÔÚÍ¼Æ¬×óÉÏ½Ç
+    /// è¿”å› Rect(x=left, y=top, width, height)ï¼ŒèŒƒå›´ 0~1ï¼ŒåŸç‚¹åœ¨å›¾ç‰‡å·¦ä¸Šè§’
     /// </summary>
     public Rect GetNormalizedRect()
     {
