@@ -7,3 +7,13 @@
 server环境需要安装
 pip install numpy opencv-python av requests
 pip install pyzdepth
+
+260315
+1.模型生成已写道sam3，未完成环境相关config的内容填写，可能未搭建完环境
+2.需要把除了最初的json写入外的所有流程放到task_worker.py里
+3.生成taskid或许不用这么多东西
+4.taskid的列表和状态或许可以写到本地文件里，最少需要taskid，对应json，状态
+
+260315-2
+1.未完成sam相关环境配置，blender不知晓
+2.缺少重定位和大小缩放相关代码

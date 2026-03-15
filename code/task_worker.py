@@ -1,185 +1,283 @@
-# task_worker.py
-import os
+import json
 import subprocess
+import sys
 import threading
 import time
+import uuid
 from collections import deque
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 from config import (
-    IMESH_PY,
-    INSTANTMESH_DIR,
-    INSTANTMESH_CONFIG,
-    INSTANTMESH_RUN_PY,
-    OUTPUT_ROOT,
-    INSTANTMESH_OUTPUT_MESHES,
-    INSTANTMESH_OUTPUT_IMAGES,
-    BLENDER_BIN,
-    CONVERT_SCRIPT,
-    BLENDER_FBX_DIR,
+    BLENDER_STAGE_PY,
+    BLENDER_STAGE_RUN,
+    HOLOLENS2_CONVERT_DIR,
+    HOLOLENS2_CONVERT_RUN,
+    HOLOLENS2_PY,
+    INSTANTMESH_STAGE_PY,
+    INSTANTMESH_STAGE_RUN,
+    SAM3_BOX_MASK_RUN,
+    SAM3_DIR,
+    SAM3_PY,
+)
+from task_db import (
+    create_task as create_task_record,
+    get_task_by_task_id,
+    get_unfinished_tasks,
+    initialize_task_table,
+    update_task_status,
 )
 
-# 任务状态存储
-tasks: Dict[str, Dict[str, Any]] = {}
-task_queue = deque()
-task_lock = threading.Lock()
+
+STAGE_ORDER = [
+    "hololens2depth",
+    "sam3mask",
+    "instantmesh",
+    "relocationresize",
+    "blender",
+]
+
+_task_queue = deque()
+_task_lock = threading.Lock()
 _current_task_id: Optional[str] = None
+_worker_thread: Optional[threading.Thread] = None
 
 
-def find_task_file(folder: Path, task_id: str, ext: str) -> Optional[Path]:
-    """根据 task_id 在指定目录中查找最新的某类型文件。"""
-    files = list(folder.glob(f"{task_id}*.{ext}"))
-    return max(files, key=lambda p: p.stat().st_ctime) if files else None
+def _resolve_python(python_path: str) -> str:
+    return python_path or sys.executable
 
 
-def _process_tasks_loop():
-    """后台线程循环，从队列中取任务执行 InstantMesh + Blender。"""
+def _load_task_json(json_path: Path) -> Dict[str, Any]:
+    with json_path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _save_task_json(json_path: Path, data: Dict[str, Any]) -> None:
+    with json_path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+
+def _ensure_task_id_in_json(json_path: Path, task_id: str) -> None:
+    data = _load_task_json(json_path)
+    if data.get("task_id") == task_id:
+        return
+    data["task_id"] = task_id
+    _save_task_json(json_path, data)
+
+
+def _queue_snapshot_no_lock() -> list[str]:
+    return list(reversed(_task_queue))
+
+
+def _restore_unfinished_tasks() -> None:
+    unfinished_tasks = get_unfinished_tasks()
+    with _task_lock:
+        queued = set(_task_queue)
+        for task in unfinished_tasks:
+            task_id = task["task_id"]
+            if task_id == _current_task_id:
+                continue
+            if task_id in queued:
+                continue
+            _task_queue.append(task_id)
+            queued.add(task_id)
+
+
+def _run_python_script(python_path: str, script_path: Path, json_path: Path, cwd: Path) -> None:
+    result = subprocess.run(
+        [_resolve_python(python_path), str(script_path), str(json_path)],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    if result.stdout:
+        print(result.stdout)
+    if result.stderr:
+        print(result.stderr)
+
+
+def _run_hololens2depth(json_path: Path) -> None:
+    _run_python_script(
+        python_path=HOLOLENS2_PY,
+        script_path=HOLOLENS2_CONVERT_RUN,
+        json_path=json_path,
+        cwd=HOLOLENS2_CONVERT_DIR,
+    )
+
+
+def _run_sam3mask(json_path: Path) -> None:
+    _run_python_script(
+        python_path=SAM3_PY,
+        script_path=SAM3_BOX_MASK_RUN,
+        json_path=json_path,
+        cwd=SAM3_DIR,
+    )
+
+
+def _run_instantmesh(json_path: Path) -> None:
+    _run_python_script(
+        python_path=INSTANTMESH_STAGE_PY,
+        script_path=INSTANTMESH_STAGE_RUN,
+        json_path=json_path,
+        cwd=INSTANTMESH_STAGE_RUN.parent,
+    )
+
+
+def _run_relocationresize(json_path: Path) -> None:
+    return
+
+
+def _run_blender(json_path: Path) -> None:
+    _run_python_script(
+        python_path=BLENDER_STAGE_PY,
+        script_path=BLENDER_STAGE_RUN,
+        json_path=json_path,
+        cwd=BLENDER_STAGE_RUN.parent,
+    )
+
+
+STAGE_RUNNERS = {
+    "hololens2depth": _run_hololens2depth,
+    "sam3mask": _run_sam3mask,
+    "instantmesh": _run_instantmesh,
+    "relocationresize": _run_relocationresize,
+    "blender": _run_blender,
+}
+
+
+def _process_one_task(task_id: str) -> None:
+    task_record = get_task_by_task_id(task_id)
+    if task_record is None:
+        raise ValueError(f"Task not found in database: {task_id}")
+
+    json_path = Path(task_record["json_path"]).expanduser().resolve()
+    if not json_path.is_file():
+        raise FileNotFoundError(f"JSON file not found: {json_path}")
+
+    _ensure_task_id_in_json(json_path, task_id)
+
+    current_status = str(task_record["status"])
+    if current_status == "pending":
+        current_status = STAGE_ORDER[0]
+        update_task_status(task_id, current_status)
+
+    if current_status not in STAGE_RUNNERS:
+        raise ValueError(f"Task {task_id} has unsupported status: {current_status}")
+
+    start_index = STAGE_ORDER.index(current_status)
+
+    for index in range(start_index, len(STAGE_ORDER)):
+        stage_name = STAGE_ORDER[index]
+        update_task_status(task_id, stage_name)
+        STAGE_RUNNERS[stage_name](json_path)
+
+        next_status = "completed"
+        if index + 1 < len(STAGE_ORDER):
+            next_status = STAGE_ORDER[index + 1]
+        update_task_status(task_id, next_status)
+
+
+def _process_tasks_loop() -> None:
     global _current_task_id
+
     while True:
         task_id = None
-        with task_lock:
-            if task_queue:
-                task_id = task_queue.pop()
-                _current_task_id = task_id
-                task_data = tasks[task_id]
 
-        if not task_id:
+        with _task_lock:
+            if _task_queue:
+                task_id = _task_queue.pop()
+                _current_task_id = task_id
+
+        if task_id is None:
+            _restore_unfinished_tasks()
             time.sleep(1)
             continue
 
         try:
-            print(f"Processing task {task_id}")
-            # 你原来的缩放公式，后面可以按需要再改
-            scale = 1.5 + 4.5 * task_data["center_depth"]
-
-            # ==== 调用 InstantMesh ====
-            cmd = [
-                IMESH_PY,
-                str(INSTANTMESH_RUN_PY),
-                str(INSTANTMESH_CONFIG),
-                str(task_data["upload_path"]),
-                "--output_path",
-                str(OUTPUT_ROOT),
-                "--save_video",
-                "--export_texmap",
-                # "--scale", str(scale),
-                # "--real_scale", str(task_data["center_depth"]),
-            ]
-            print(">>> InstantMesh CMD:", " ".join(cmd))
-
-            # 关键：给子进程单独准备 env，把 imesh 的 bin 加到 PATH 前面
-            env = os.environ.copy()
-            env["PATH"] = "/opt/miniconda/envs/imesh/bin:" + env.get("PATH", "")
-
-            result = subprocess.run(
-                cmd,
-                check=True,
-                capture_output=True,
-                text=True,
-                cwd=str(INSTANTMESH_DIR),  # 在 InstantMesh 目录下跑
-                env=env,                   # 使用带有 ninja 的 PATH
-            )
-            print(f"Command output: {result.stdout}")
-
-            # 查找 InstantMesh 输出
-            mesh_path = find_task_file(INSTANTMESH_OUTPUT_MESHES, task_id, "obj")
-            mtl_path = find_task_file(INSTANTMESH_OUTPUT_MESHES, task_id, "mtl")
-            image_path = find_task_file(INSTANTMESH_OUTPUT_IMAGES, task_id, "png")
-
-            if not mesh_path or not mtl_path or not image_path:
-                raise RuntimeError(f"Output files not found for task {task_id}")
-
-            # ==== 调用 Blender 转 FBX ====
-            fbx_path = BLENDER_FBX_DIR / (mesh_path.stem + ".fbx")
-            fbx_generated = False
+            print(f"[worker] start task: {task_id}")
+            _process_one_task(task_id)
+            print(f"[worker] completed task: {task_id}")
+        except Exception as exc:
+            if isinstance(exc, subprocess.CalledProcessError):
+                error_message = exc.stderr or exc.stdout or str(exc)
+            else:
+                error_message = str(exc)
+            print(f"[worker] failed task {task_id}: {error_message}")
             try:
-                result = subprocess.run(
-                    [
-                        BLENDER_BIN,
-                        "--background",
-                        "--python",
-                        str(CONVERT_SCRIPT),
-                        "--",
-                        str(mesh_path),
-                        str(image_path),
-                        str(fbx_path),
-                    ],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                print(f"FBX生成成功: {result.stdout}")
-                if os.path.exists(fbx_path):
-                    fbx_generated = True
-                else:
-                    print("FBX文件未生成。")
-            except subprocess.CalledProcessError as e:
-                print(f"FBX生成失败: {e.stderr}")
-
-            # 写回任务状态
-            with task_lock:
-                tasks[task_id]["status"] = "completed"
-                tasks[task_id]["result"] = {
-                    "mesh_path": mesh_path,
-                    "mtl_path": mtl_path,
-                    "image_path": image_path,
-                    "fbx_path": fbx_path if fbx_generated else None,
-                }
-            print(f"Task {task_id} completed")
-
-        except subprocess.CalledProcessError as e:
-            error_msg = e.stderr or str(e)
-            print(f"Task {task_id} failed: {error_msg}")
-            with task_lock:
-                tasks[task_id]["status"] = "failed"
-                tasks[task_id]["error"] = error_msg
-        except Exception as e:
-            print(f"Task {task_id} failed: {e}")
-            with task_lock:
-                tasks[task_id]["status"] = "failed"
-                tasks[task_id]["error"] = str(e)
+                update_task_status(task_id, "failed", error_message=error_message)
+            except Exception as db_exc:
+                print(f"[worker] failed to write error to database: {db_exc}")
         finally:
-            with task_lock:
+            with _task_lock:
                 _current_task_id = None
 
         time.sleep(1)
 
 
-def start_worker():
-    """在 Flask 启动时调用，启动后台线程。"""
-    t = threading.Thread(target=_process_tasks_loop, daemon=True)
-    t.start()
-    return t
+def start_worker() -> threading.Thread:
+    """启动后台任务线程；重复调用时复用同一个线程。"""
+    global _worker_thread
+
+    initialize_task_table()
+    _restore_unfinished_tasks()
+
+    if _worker_thread is not None and _worker_thread.is_alive():
+        return _worker_thread
+
+    _worker_thread = threading.Thread(target=_process_tasks_loop, daemon=True)
+    _worker_thread.start()
+    return _worker_thread
 
 
-def create_task(task_id, upload_path: Path, center_depth: float,
-                device_pose: Optional[dict], object_pose: Optional[dict]):
-    """由 Flask 接口创建一个新任务并入队。"""
-    with task_lock:
-        tasks[task_id] = {
-            "status": "pending",
-            "upload_path": upload_path,
-            "center_depth": center_depth,
-            "created_at": time.time(),
-            "device_pose": device_pose,
-            "object_pose": object_pose,
-        }
-        task_queue.append(task_id)
+def create_task(json_path: Path | str) -> str:
+    """创建任务记录并加入内存队列。"""
+    task_json_path = Path(json_path).expanduser().resolve()
+    if not task_json_path.is_file():
+        raise FileNotFoundError(f"JSON file not found: {task_json_path}")
+
+    data = _load_task_json(task_json_path)
+    task_id = str(data.get("task_id") or uuid.uuid4())
+
+    data["task_id"] = task_id
+    _save_task_json(task_json_path, data)
+
+    create_task_record(task_id=task_id, json_path=task_json_path)
+
+    with _task_lock:
+        _task_queue.append(task_id)
+
+    return task_id
 
 
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
-    """根据 task_id 获取任务信息。"""
-    with task_lock:
-        return tasks.get(task_id)
+    """根据 task_id 查询数据库记录，并附带 json 内容。"""
+    task_record = get_task_by_task_id(task_id)
+    if task_record is None:
+        return None
+
+    json_path = Path(task_record["json_path"])
+    if json_path.is_file():
+        task_json = _load_task_json(json_path)
+    else:
+        task_json = {}
+
+    task_record["task_json"] = task_json
+    task_record["error"] = task_record.get("error_message")
+    task_record["outputs"] = {
+        "instantmesh": task_json.get("InstantMesh") or {},
+        "blender": task_json.get("Blender") or {},
+    }
+    return task_record
 
 
 def get_current_task_id() -> Optional[str]:
-    with task_lock:
+    with _task_lock:
         return _current_task_id
 
 
-def get_queue_snapshot():
-    """返回当前队列的一个快照（list），供接口查询排队位置用。"""
-    with task_lock:
-        return list(task_queue)
+def get_queue_snapshot() -> list[str]:
+    """返回当前等待队列，列表第一个元素就是下一个任务。"""
+    with _task_lock:
+        return _queue_snapshot_no_lock()

@@ -1,89 +1,146 @@
-import bpy
+import json
 import sys
-import os
-import shutil
-import traceback
+from pathlib import Path
 
-def clean_scene():
-    bpy.ops.object.select_all(action='SELECT')
+import bpy
+
+
+CODE_ROOT = Path(__file__).resolve().parent
+if str(CODE_ROOT) not in sys.path:
+    sys.path.append(str(CODE_ROOT))
+
+from config import BLENDER_FBX_DIR, INSTANTMESH_OUTPUT_MESHES
+
+
+def load_json(json_path: Path) -> dict:
+    with json_path.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_json(json_path: Path, data: dict) -> None:
+    with json_path.open("w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+
+def clean_scene() -> None:
+    bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
 
-def fix_mtl(mtl_path, tex_name):
-    print(f"修正MTL: {mtl_path} 贴图名: {tex_name}")
-    try:
-        lines = []
-        with open(mtl_path, 'r') as f:
-            for line in f:
-                if line.strip().startswith("map_Kd"):
-                    lines.append(f"map_Kd {tex_name}\n")
-                else:
-                    lines.append(line)
-        with open(mtl_path, 'w') as f:
-            f.writelines(lines)
-    except Exception as e:
-        print(f"修正MTL文件失败: {e}")
-        traceback.print_exc()
 
-def ensure_tex_in_obj_dir(obj_path, tex_path):
-    obj_dir = os.path.dirname(obj_path)
-    tex_name = os.path.basename(tex_path)
-    dst_tex = os.path.join(obj_dir, tex_name)
-    if not os.path.exists(dst_tex):
-        try:
-            shutil.copy(tex_path, dst_tex)
-            print(f"贴图已复制到: {dst_tex}")
-        except Exception as e:
-            print(f"贴图复制失败: {e}")
-            traceback.print_exc()
-    else:
-        print(f"贴图已存在于: {dst_tex}")
-    return dst_tex
-
-def main():
-    try:
-        argv = sys.argv
-        argv = argv[argv.index('--')+1:] if '--' in argv else []
-        if len(argv) < 3:
-            print("Usage: blender --background --python convert_obj_to_fbx.py -- input.obj input.png output.fbx")
-            sys.exit(1)
-        obj_path, tex_path, fbx_path = argv[:3]
-        mtl_path = os.path.splitext(obj_path)[0]+".mtl"
-        tex_name = os.path.basename(tex_path)
-        print(f"OBJ路径: {obj_path}, 存在: {os.path.exists(obj_path)}")
-        print(f"MTL路径: {mtl_path}, 存在: {os.path.exists(mtl_path)}")
-        print(f"PNG路径: {tex_path}, 存在: {os.path.exists(tex_path)}")
-        print(f"目标FBX路径: {fbx_path}")
-
-        tex_in_obj_dir = ensure_tex_in_obj_dir(obj_path, tex_path)
-        fix_mtl(mtl_path, tex_name)
-
-        clean_scene()
-        print("开始导入OBJ...")
-        bpy.ops.import_scene.obj(filepath=obj_path, use_image_search=True)
-        print("OBJ导入完成。")
-
-        # ★★★ 你的真实缩放系数 ★★★
-        # ==== ★ 在这里插入模型缩放 ★ ====
-        scale_factor = 0.1   # TODO: 由服务器 depth 计算
-        for obj in bpy.data.objects:
-            if obj.type == 'MESH':
-                obj.scale = (scale_factor, scale_factor, scale_factor)
-        print(f"模型缩放完成: factor = {scale_factor}")
+def ensure_file(path: Path, label: str) -> Path:
+    if not path.is_file():
+        raise FileNotFoundError(f"{label} not found: {path}")
+    return path
 
 
-        print("开始导出FBX...")
-        bpy.ops.export_scene.fbx(
-            filepath=fbx_path,
-            embed_textures=True,
-            path_mode='COPY',
-            axis_forward='-Z',
-            axis_up='Y',
-            bake_space_transform=True,
+def fix_mtl_texture_name(mtl_path: Path, texture_name: str) -> None:
+    lines = []
+    with mtl_path.open("r", encoding="utf-8") as f:
+        for line in f:
+            if line.strip().startswith("map_Kd"):
+                lines.append(f"map_Kd {texture_name}\n")
+            else:
+                lines.append(line)
+
+    with mtl_path.open("w", encoding="utf-8") as f:
+        f.writelines(lines)
+
+
+def get_imported_mesh_objects() -> list:
+    return [obj for obj in bpy.context.selected_objects if obj.type == "MESH"]
+
+
+def apply_object_transform(objects: list, object_info: dict) -> None:
+    position = object_info.get("position") or [0.0, 0.0, 0.0]
+    rotation = object_info.get("rotation") or [0.0, 0.0, 0.0, 1.0]
+    scale = object_info.get("scale") or [1.0, 1.0, 1.0]
+
+    if len(position) != 3:
+        raise ValueError("object.position must have 3 values")
+    if len(rotation) != 4:
+        raise ValueError("object.rotation must have 4 values")
+    if len(scale) != 3:
+        raise ValueError("object.scale must have 3 values")
+
+    x, y, z = [float(v) for v in position]
+    qx, qy, qz, qw = [float(v) for v in rotation]
+    sx, sy, sz = [float(v) for v in scale]
+
+    for obj in objects:
+        obj.location = (x, y, z)
+        obj.rotation_mode = "QUATERNION"
+        obj.rotation_quaternion = (qw, qx, qy, qz)
+        obj.scale = (sx, sy, sz)
+
+
+def export_fbx_from_json(json_path: Path) -> Path:
+    task = load_json(json_path)
+    instantmesh_info = task.get("InstantMesh") or {}
+    object_info = task.get("object") or {}
+
+    mesh_name = instantmesh_info.get("mesh")
+    mtl_name = instantmesh_info.get("mtl")
+    image_name = instantmesh_info.get("image")
+
+    if not mesh_name or not mtl_name or not image_name:
+        raise ValueError("InstantMesh.mesh / mtl / image is missing")
+
+    mesh_path = ensure_file(INSTANTMESH_OUTPUT_MESHES / mesh_name, "InstantMesh obj")
+    mtl_path = ensure_file(INSTANTMESH_OUTPUT_MESHES / mtl_name, "InstantMesh mtl")
+    ensure_file(INSTANTMESH_OUTPUT_MESHES / image_name, "InstantMesh texture image")
+
+    fbx_path = BLENDER_FBX_DIR / f"{mesh_path.stem}.fbx"
+    BLENDER_FBX_DIR.mkdir(parents=True, exist_ok=True)
+
+    fix_mtl_texture_name(mtl_path, image_name)
+
+    clean_scene()
+    bpy.ops.import_scene.obj(filepath=str(mesh_path), use_image_search=True)
+
+    imported_objects = get_imported_mesh_objects()
+    if not imported_objects:
+        raise RuntimeError("No mesh object was imported into Blender")
+
+    apply_object_transform(imported_objects, object_info)
+
+    bpy.ops.export_scene.fbx(
+        filepath=str(fbx_path),
+        embed_textures=True,
+        path_mode="COPY",
+        axis_forward="-Z",
+        axis_up="Y",
+        bake_space_transform=True,
+    )
+
+    if not fbx_path.is_file():
+        raise RuntimeError(f"FBX export failed: {fbx_path}")
+
+    task["Blender"] = {"fbx": fbx_path.name}
+    save_json(json_path, task)
+    return fbx_path
+
+
+def main() -> int:
+    argv = sys.argv
+    argv = argv[argv.index("--") + 1 :] if "--" in argv else []
+
+    if len(argv) != 1:
+        print(
+            "Usage: blender --background --python convert_obj_to_fbx.py -- /path/to/task.json",
+            file=sys.stderr,
         )
-        print(f"FBX导出完成: {fbx_path}, 存在: {os.path.exists(fbx_path)}")
-    except Exception as e:
-        print(f"Blender FBX转换流程异常: {e}")
-        traceback.print_exc()
+        return 2
 
-if __name__ == '__main__':
-    main()
+    json_path = Path(argv[0]).expanduser().resolve()
+    ensure_file(json_path, "JSON file")
+    try:
+        export_fbx_from_json(json_path)
+        return 0
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

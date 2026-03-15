@@ -5,7 +5,7 @@ from config import (
     IS_RUN_FLASK_SERVER,
     HOLOLENS2_PY,
     SERVER_PY,
-    HOLOLENS2_DOWNLOAD,
+    HOLOLENS2_DOWNLOAD_RUN,
     HOLOLENS2_DOWNLOAD_DIR,
 )
 from pathlib import Path
@@ -23,7 +23,7 @@ def main():
     else:
         cmd = [
             HOLOLENS2_PY,          # 从 config.py 读取 hololens2 的 server 环境 python
-            str(HOLOLENS2_DOWNLOAD) # 运行 download_calibration_all.py
+            str(HOLOLENS2_DOWNLOAD_RUN) # 运行 download_calibration_all.py
         ]
 
         print(">>> 使用 hololens2 server 环境启动 download_calibration_all.py")
