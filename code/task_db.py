@@ -11,7 +11,7 @@ ALLOWED_STATUSES = (
     "hololens2depth",
     "sam3mask",
     "instantmesh",
-    "relocationresize",
+    "objectalignment",
     "blender",
     "completed",
     "failed",

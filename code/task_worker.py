@@ -33,7 +33,7 @@ STAGE_ORDER = [
     "hololens2depth",
     "sam3mask",
     "instantmesh",
-    "relocationresize",
+    "objectalignment",
     "blender",
 ]
 
@@ -125,7 +125,7 @@ def _run_instantmesh(json_path: Path) -> None:
     )
 
 
-def _run_relocationresize(json_path: Path) -> None:
+def _run_objectalignment(json_path: Path) -> None:
     return
 
 
@@ -142,7 +142,7 @@ STAGE_RUNNERS = {
     "hololens2depth": _run_hololens2depth,
     "sam3mask": _run_sam3mask,
     "instantmesh": _run_instantmesh,
-    "relocationresize": _run_relocationresize,
+    "objectalignment": _run_objectalignment,
     "blender": _run_blender,
 }
 

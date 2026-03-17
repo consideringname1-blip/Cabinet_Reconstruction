@@ -17,3 +17,6 @@ pip install pyzdepth
 260315-2
 1.未完成sam相关环境配置，blender不知晓
 2.缺少重定位和大小缩放相关代码
+
+260317
+在该文件中，使用probreg，写一个获得可以把模型缩放到正确大小和旋转姿势，并且有正确位置的代码，该代码接受task_worker管理，在objectalignment步骤中被使用。该代码接受json地址，使用"PVCamera""k"获取将要使用的，用于深度图投影的相机内参矩阵，"PVCamera""pose"是设备位姿
