@@ -24,7 +24,7 @@ DATABASE_ROOT = DATA_ROOT / "database"          # /workspace/data/database
 # ===== 每个 conda 环境对应的 python 解释器 =====
 IMESH_PY = "/opt/miniconda/envs/imesh/bin/python"      # InstantMesh 用
 SERVER_PY  = "/opt/miniconda/envs/server/bin/python"    # Flask / API 用
-SAM3_PY = ""    # sam3 用
+SAM3_PY = "/opt/miniconda/envs/sam3/bin/python"    # sam3 用
 HOLOLENS2_PY = SERVER_PY    # hololens2 用，和server用一个
 
 # ========================= 入口flask程序 =========================
@@ -49,11 +49,10 @@ HOLOLENS2_CONVERT_RUN = HOLOLENS2_CONVERT_DIR / "align_pv_depth.py"
 SAM3_ROOT = RECON_ROOT / "sam3"
 SAM3_DIR = SAM3_ROOT / "sam3"
 SAM3_BEP = SAM3_DIR / "assets/bpe_simple_vocab_16e6.txt.gz"
-SAM3_CHECKPOINTS = ""
 SAM3_BOX_MASK_RUN = CODE_ROOT / "run_sam3_boxmask_from_json.py"
 
 # ========================= sam3 路径 =========================
-DATABASE_PATH = DATA_ROOT / "tasks.db"          # /workspace/data/database
+DATABASE_PATH = DATABASE_ROOT / "tasks.db"          # /workspace/data/database
 
 # ========================= 上传目录 =========================
 UPLOAD_FOLDER = DATA_ROOT / "upload"             # /workspace/data/upload

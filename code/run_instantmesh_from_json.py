@@ -63,9 +63,16 @@ def run_instantmesh(json_path: Path) -> None:
     )
 
     try:
+        import os
+        imesh_python = _resolve_python(IMESH_PY)
+        imesh_bin = str(Path(imesh_python).resolve().parent)
+
+        env = os.environ.copy()
+        env["PATH"] = imesh_bin + os.pathsep + env.get("PATH", "")
+
         result = subprocess.run(
             [
-                _resolve_python(IMESH_PY),
+                imesh_python,
                 str(INSTANTMESH_RUN_PY),
                 str(INSTANTMESH_CONFIG),
                 str(prepared_input_path),
@@ -73,9 +80,10 @@ def run_instantmesh(json_path: Path) -> None:
                 str(OUTPUT_ROOT),
                 "--save_video",
                 "--export_texmap",
-                "--no_rembg",
+                # "--no_rembg",
             ],
             cwd=str(INSTANTMESH_DIR),
+            env=env,
             check=True,
             capture_output=True,
             text=True,

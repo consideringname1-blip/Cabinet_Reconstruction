@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any
+
+os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import config
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 
 def _eprint(*args: Any) -> None:
@@ -67,7 +70,6 @@ def build_box_from_selection(
     u0, v0 = float(tl[0]), float(tl[1])
     u1, v1 = float(br[0]), float(br[1])
 
-    # Clamp ratios first.
     u0 = min(max(u0, 0.0), 1.0)
     v0 = min(max(v0, 0.0), 1.0)
     u1 = min(max(u1, 0.0), 1.0)
@@ -91,7 +93,8 @@ def build_box_from_selection(
     if y1 <= y0:
         y1 = min(json_height - 1, y0 + 1)
 
-    return np.array([[x0, y0, x1, y1]], dtype=np.float32)
+    # 新版调用内部统一使用 shape=(4,)；推理时再 box[None, :]
+    return np.array([x0, y0, x1, y1], dtype=np.float32)
 
 
 def squeeze_mask(mask: np.ndarray) -> np.ndarray:
@@ -104,24 +107,46 @@ def squeeze_mask(mask: np.ndarray) -> np.ndarray:
 
 
 def make_mask_png(mask_bool: np.ndarray) -> np.ndarray:
-    return (mask_bool.astype(np.uint8) * 255)
+    return mask_bool.astype(np.uint8) * 255
 
 
 def make_masked_rgba(color_rgb: np.ndarray, mask_bool: np.ndarray) -> np.ndarray:
-    alpha = (mask_bool.astype(np.uint8) * 255)
+    alpha = mask_bool.astype(np.uint8) * 255
     return np.dstack([color_rgb, alpha])
 
 
 def make_masked_depth(depth: np.ndarray, mask_bool: np.ndarray) -> np.ndarray:
+    masked = depth.copy()
     if depth.ndim == 2:
-        masked = depth.copy()
         masked[~mask_bool] = 0
         return masked
     if depth.ndim == 3:
-        masked = depth.copy()
         masked[~mask_bool] = 0
         return masked
     raise ValueError(f"Unsupported depth image shape: {depth.shape}")
+
+
+def make_overlay_image(
+    color_rgb: np.ndarray,
+    mask_bool: np.ndarray,
+    box_xyxy: np.ndarray,
+    alpha: float = 0.5,
+) -> np.ndarray:
+    mask_png = make_mask_png(mask_bool)
+    mask_rgb = np.repeat(mask_png[..., None], 3, axis=2)
+
+    base = color_rgb.astype(np.float32)
+    overlay = mask_rgb.astype(np.float32)
+    blended = np.clip((1.0 - alpha) * base + alpha * overlay, 0, 255).astype(np.uint8)
+
+    out = Image.fromarray(blended, mode="RGB")
+    draw = ImageDraw.Draw(out)
+
+    x0, y0, x1, y1 = [int(round(v)) for v in np.asarray(box_xyxy).reshape(-1)[:4]]
+
+    # 近似原 show_box 的绿色框，线宽 2
+    draw.rectangle([x0, y0, x1, y1], outline=(0, 255, 0), width=2)
+    return np.array(out)
 
 
 def save_array_png(arr: np.ndarray, path: Path) -> None:
@@ -129,6 +154,46 @@ def save_array_png(arr: np.ndarray, path: Path) -> None:
     if arr.dtype == bool:
         arr = arr.astype(np.uint8) * 255
     Image.fromarray(arr).save(path)
+
+
+def resolve_bpe_path() -> Path:
+    if hasattr(config, "SAM3_BEP") or hasattr(config, "SAM3_BPE"):
+        return ensure_file(
+            Path(require_attr(config, "SAM3_BEP", "SAM3_BPE")).expanduser().resolve(),
+            "SAM3_BEP/SAM3_BPE",
+        )
+
+    import sam3
+
+    sam3_root = Path(sam3.__file__).resolve().parent.parent
+    auto_bpe = sam3_root / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
+    return ensure_file(auto_bpe, "SAM3 package BPE")
+
+
+def resolve_device(torch_module: Any) -> Any:
+    device_name = str(getattr(config, "SAM3_DEVICE", "auto")).strip().lower()
+
+    if device_name == "auto":
+        if torch_module.cuda.is_available():
+            return torch_module.device("cuda")
+        if torch_module.backends.mps.is_available():
+            return torch_module.device("mps")
+        return torch_module.device("cpu")
+
+    if device_name == "cuda":
+        if not torch_module.cuda.is_available():
+            raise RuntimeError("config.SAM3_DEVICE='cuda' but CUDA is not available")
+        return torch_module.device("cuda")
+
+    if device_name == "mps":
+        if not torch_module.backends.mps.is_available():
+            raise RuntimeError("config.SAM3_DEVICE='mps' but MPS is not available")
+        return torch_module.device("mps")
+
+    if device_name == "cpu":
+        return torch_module.device("cpu")
+
+    raise ValueError("config.SAM3_DEVICE must be one of: auto / cuda / mps / cpu")
 
 
 def main() -> int:
@@ -142,9 +207,6 @@ def main() -> int:
     upload_folder = Path(require_attr(config, "UPLOAD_FOLDER")).expanduser().resolve()
     depth_root = Path(require_attr(config, "HOLOLENS2_OUTPUT_DEPTH_IMAGES")).expanduser().resolve()
     output_root = Path(require_attr(config, "SAM3_OUTPUT_ROOT")).expanduser().resolve()
-    bpe_path = Path(require_attr(config, "SAM3_BEP", "SAM3_BPE")).expanduser().resolve()
-    checkpoint_path = Path(require_attr(config, "SAM3_CHECKPOINTS")).expanduser().resolve()
-
     output_root.mkdir(parents=True, exist_ok=True)
 
     task = load_json(json_path)
@@ -167,21 +229,23 @@ def main() -> int:
 
     color_path = ensure_file(upload_folder / pv_name, "PVCamera image")
     depth_path = ensure_file(depth_root / align_depth_name, "Aligned depth image")
-    ensure_file(bpe_path, "SAM3_BEP/SAM3_BPE")
-    ensure_file(checkpoint_path, "SAM3_CHECKPOINTS")
 
-    device = "cuda"
     try:
         import torch
     except Exception as e:
         raise RuntimeError(f"Failed to import torch: {e}")
 
-    if not torch.cuda.is_available():
-        raise RuntimeError("CUDA is required by this script, but torch.cuda.is_available() is False")
-
-    # Import SAM3 only after cwd / env are ready in the caller.
+    import sam3
     from sam3 import build_sam3_image_model
     from sam3.model.sam3_image_processor import Sam3Processor
+
+    bpe_path = resolve_bpe_path()
+    device = resolve_device(torch)
+
+    if device.type == "cuda":
+        if torch.cuda.get_device_properties(0).major >= 8:
+            torch.backends.cuda.matmul.allow_tf32 = True
+            torch.backends.cudnn.allow_tf32 = True
 
     color_pil = read_image_rgb(color_path)
     color_np = np.array(color_pil)
@@ -193,36 +257,41 @@ def main() -> int:
         json_height=json_height,
     )
 
-    print(f"[INFO] JSON       : {json_path}")
-    print(f"[INFO] Color image: {color_path}")
-    print(f"[INFO] Depth image: {depth_path}")
-    print(f"[INFO] Output dir : {output_root}")
-    print(f"[INFO] SAM3 BPE   : {bpe_path}")
-    print(f"[INFO] Checkpoint : {checkpoint_path}")
-    print(f"[INFO] Box (xyxy) : {input_box.tolist()}")
+    print(f"[INFO] JSON         : {json_path}")
+    print(f"[INFO] Color image  : {color_path}")
+    print(f"[INFO] Depth image  : {depth_path}")
+    print(f"[INFO] Output dir   : {output_root}")
+    print(f"[INFO] Device       : {device}")
+    print(f"[INFO] SAM3 BPE     : {bpe_path}")
+    print(f"[INFO] Box (xyxy)   : {input_box.tolist()}")
 
     model = build_sam3_image_model(
         bpe_path=str(bpe_path),
-        device=device,
-        eval_mode=True,
-        checkpoint_path=str(checkpoint_path),
-        load_from_HF=False,
-        enable_segmentation=True,
+        device=str(device),
         enable_inst_interactivity=True,
-        compile=False,
     )
 
     processor = Sam3Processor(model)
+    inference_state = processor.set_image(color_pil)
 
     with torch.inference_mode():
-        inference_state = processor.set_image(color_pil)
-        masks, scores, _ = model.predict_inst(
-            inference_state,
-            point_coords=None,
-            point_labels=None,
-            box=input_box,
-            multimask_output=False,
-        )
+        if device.type == "cuda":
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                masks, scores, _ = model.predict_inst(
+                    inference_state,
+                    point_coords=None,
+                    point_labels=None,
+                    box=input_box[None, :],
+                    multimask_output=False,
+                )
+        else:
+            masks, scores, _ = model.predict_inst(
+                inference_state,
+                point_coords=None,
+                point_labels=None,
+                box=input_box[None, :],
+                multimask_output=False,
+            )
 
     if len(masks) < 1:
         raise RuntimeError("SAM3 returned no masks")
@@ -231,27 +300,31 @@ def main() -> int:
     mask_png = make_mask_png(mask_bool)
     masked_color_rgba = make_masked_rgba(color_np, mask_bool)
     masked_depth = make_masked_depth(depth_np, mask_bool)
+    overlay_rgb = make_overlay_image(color_np, mask_bool, input_box, alpha=0.5)
 
     task_name = str(task.get("task_name") or "task")
-    task_id = str(task.get("task_id") or json_path.stem)
-    prefix = safe_name(f"{task_name}_{task_id[:8]}")
+    prefix = safe_name(task_name)
 
     mask_name = f"{prefix}_sam3_mask.png"
     color_name = f"{prefix}_sam3_color.png"
     depth_name = f"{prefix}_sam3_depth.png"
+    overlay_name = f"{prefix}_sam3_overlay.png"
 
     mask_out = output_root / mask_name
     color_out = output_root / color_name
     depth_out = output_root / depth_name
+    overlay_out = output_root / overlay_name
 
     save_array_png(mask_png, mask_out)
     save_array_png(masked_color_rgba, color_out)
     save_array_png(masked_depth, depth_out)
+    save_array_png(overlay_rgb, overlay_out)
 
     task["sam3Name"] = {
         "mask": mask_name,
         "color": color_name,
         "depth": depth_name,
+        "overlay": overlay_name,
     }
     save_json(json_path, task)
 
@@ -262,9 +335,10 @@ def main() -> int:
     except Exception:
         best_score = None
 
-    print(f"[OK] mask  -> {mask_out}")
-    print(f"[OK] color -> {color_out}")
-    print(f"[OK] depth -> {depth_out}")
+    print(f"[OK] mask    -> {mask_out}")
+    print(f"[OK] color   -> {color_out}")
+    print(f"[OK] depth   -> {depth_out}")
+    print(f"[OK] overlay -> {overlay_out}")
     if best_score is not None:
         print(f"[INFO] score -> {best_score:.6f}")
     print(f"[OK] JSON updated -> {json_path}")
