@@ -301,6 +301,26 @@ public class ShuJuQingQiu : MonoBehaviour
     [Header("图片")]
     public Texture2D texture2DTuPian;
 
+    void ApplyJson(string jsonString)
+    {
+        JObject jo = JObject.Parse(jsonString);
+
+        JArray pos = (JArray)jo["object"]["position"];
+        JArray rot = (JArray)jo["object"]["rotation"];
+
+        serverObjectPosition = new Vector3(
+            (float)pos[0],
+            (float)pos[1],
+            (float)pos[2]
+        );
+
+        serverObjectRotation = new Quaternion(
+            (float)rot[0],
+            (float)rot[1],
+            (float)rot[2],
+            (float)rot[3]
+        );
+    }
     private void OnRequestJieGuo(HTTPRequest request, HTTPResponse response)
     {
         if (response.IsSuccess)
@@ -311,9 +331,11 @@ public class ShuJuQingQiu : MonoBehaviour
                 JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
                 urlModel = jo["fbx_url"].ToString();//
                 image_url = jo["image_url"].ToString();
+                ApplyJson("object");
                 Game_M.initialize.XianShi(urlModel);
                 print(urlModel);
                 print(image_url);
+
                 //关闭检测
                 CancelInvoke();
                 //下载模型

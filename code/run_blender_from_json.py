@@ -3,7 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from config import BLENDER_BIN, BLENDER_FBX_DIR, CONVERT_SCRIPT
+from config import BLENDER_FBX_DIR, CONVERT_SCRIPT
+from object_alignment_common import resolve_blender_path
 
 
 def load_json(json_path: Path) -> dict:
@@ -18,13 +19,12 @@ def ensure_file(path: Path, label: str) -> Path:
 
 
 def run_blender(json_path: Path) -> None:
-    if not BLENDER_BIN:
-        raise ValueError("BLENDER_BIN is empty")
+    blender_bin = resolve_blender_path()
 
     try:
         result = subprocess.run(
             [
-                BLENDER_BIN,
+                str(blender_bin),
                 "--background",
                 "--python",
                 str(CONVERT_SCRIPT),

@@ -168,7 +168,7 @@ def check_task(task_id):
             fbx_name = blender_info.get("fbx")
 
             object_info = task_json.get("object")
-            response["pose"] = object_info if object_info else None
+            response["object"] = object_info if object_info else None
 
             mesh_path = INSTANTMESH_OUTPUT_MESHES / mesh_name if mesh_name else None
             mtl_path = INSTANTMESH_OUTPUT_MESHES / mtl_name if mtl_name else None

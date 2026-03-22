@@ -11,11 +11,19 @@ from typing import Any, Dict, Optional
 from config import (
     BLENDER_STAGE_PY,
     BLENDER_STAGE_RUN,
+    DEPTHPOINTCLOUD_STAGE_PY,
+    DEPTHPOINTCLOUD_STAGE_RUN,
     HOLOLENS2_CONVERT_DIR,
     HOLOLENS2_CONVERT_RUN,
     HOLOLENS2_PY,
+    ICPALIGNMENT_STAGE_PY,
+    ICPALIGNMENT_STAGE_RUN,
     INSTANTMESH_STAGE_PY,
     INSTANTMESH_STAGE_RUN,
+    MODELSCALE_STAGE_PY,
+    MODELSCALE_STAGE_RUN,
+    POSE_STAGE_PY,
+    POSE_STAGE_RUN,
     SAM3_BOX_MASK_RUN,
     SAM3_DIR,
     SAM3_PY,
@@ -34,6 +42,10 @@ STAGE_ORDER = [
     "sam3mask",
     "instantmesh",
     "objectalignment",
+    "depthpointcloud",
+    "modelscale",
+    "icpalignment",
+    "pose",
     "blender",
 ]
 
@@ -129,6 +141,42 @@ def _run_objectalignment(json_path: Path) -> None:
     return
 
 
+def _run_depthpointcloud(json_path: Path) -> None:
+    _run_python_script(
+        python_path=DEPTHPOINTCLOUD_STAGE_PY,
+        script_path=DEPTHPOINTCLOUD_STAGE_RUN,
+        json_path=json_path,
+        cwd=DEPTHPOINTCLOUD_STAGE_RUN.parent,
+    )
+
+
+def _run_modelscale(json_path: Path) -> None:
+    _run_python_script(
+        python_path=MODELSCALE_STAGE_PY,
+        script_path=MODELSCALE_STAGE_RUN,
+        json_path=json_path,
+        cwd=MODELSCALE_STAGE_RUN.parent,
+    )
+
+
+def _run_icpalignment(json_path: Path) -> None:
+    _run_python_script(
+        python_path=ICPALIGNMENT_STAGE_PY,
+        script_path=ICPALIGNMENT_STAGE_RUN,
+        json_path=json_path,
+        cwd=ICPALIGNMENT_STAGE_RUN.parent,
+    )
+
+
+def _run_pose(json_path: Path) -> None:
+    _run_python_script(
+        python_path=POSE_STAGE_PY,
+        script_path=POSE_STAGE_RUN,
+        json_path=json_path,
+        cwd=POSE_STAGE_RUN.parent,
+    )
+
+
 def _run_blender(json_path: Path) -> None:
     _run_python_script(
         python_path=BLENDER_STAGE_PY,
@@ -143,6 +191,10 @@ STAGE_RUNNERS = {
     "sam3mask": _run_sam3mask,
     "instantmesh": _run_instantmesh,
     "objectalignment": _run_objectalignment,
+    "depthpointcloud": _run_depthpointcloud,
+    "modelscale": _run_modelscale,
+    "icpalignment": _run_icpalignment,
+    "pose": _run_pose,
     "blender": _run_blender,
 }
 

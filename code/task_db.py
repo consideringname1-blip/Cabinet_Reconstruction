@@ -12,6 +12,10 @@ ALLOWED_STATUSES = (
     "sam3mask",
     "instantmesh",
     "objectalignment",
+    "depthpointcloud",
+    "modelscale",
+    "icpalignment",
+    "pose",
     "blender",
     "completed",
     "failed",
@@ -32,26 +36,87 @@ def _row_to_dict(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
     return dict(row)
 
 
+def _status_list_sql() -> str:
+    return ", ".join(f"'{status}'" for status in ALLOWED_STATUSES)
+
+
+def _create_table_sql() -> str:
+    return f"""
+        CREATE TABLE {TABLE_NAME} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ({_status_list_sql()})),
+            json_path TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            started_at TEXT,
+            completed_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            error_message TEXT
+        )
+    """
+
+
+def _table_sql(conn: sqlite3.Connection) -> Optional[str]:
+    row = conn.execute(
+        """
+        SELECT sql
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        """,
+        (TABLE_NAME,),
+    ).fetchone()
+    return row["sql"] if row else None
+
+
+def _table_needs_status_migration(conn: sqlite3.Connection) -> bool:
+    sql = _table_sql(conn)
+    if not sql:
+        return False
+    return any(f"'{status}'" not in sql for status in ALLOWED_STATUSES)
+
+
+def _migrate_task_table(conn: sqlite3.Connection) -> None:
+    legacy_table = f"{TABLE_NAME}_legacy"
+    conn.execute(f"DROP TABLE IF EXISTS {legacy_table}")
+    conn.execute(f"ALTER TABLE {TABLE_NAME} RENAME TO {legacy_table}")
+    conn.execute(_create_table_sql())
+    conn.execute(
+        f"""
+        INSERT INTO {TABLE_NAME} (
+            id,
+            task_id,
+            status,
+            json_path,
+            created_at,
+            started_at,
+            completed_at,
+            updated_at,
+            error_message
+        )
+        SELECT
+            id,
+            task_id,
+            status,
+            json_path,
+            created_at,
+            started_at,
+            completed_at,
+            updated_at,
+            error_message
+        FROM {legacy_table}
+        """
+    )
+    conn.execute(f"DROP TABLE {legacy_table}")
+
+
 def initialize_task_table() -> None:
     """初始化任务表；如果表不存在则自动创建。"""
-    status_list = ", ".join(f"'{status}'" for status in ALLOWED_STATUSES)
     with _get_connection() as conn:
-        conn.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id TEXT NOT NULL UNIQUE,
-                status TEXT NOT NULL DEFAULT 'pending'
-                    CHECK (status IN ({status_list})),
-                json_path TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                started_at TEXT,
-                completed_at TEXT,
-                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                error_message TEXT
-            )
-            """
-        )
+        if _table_sql(conn) is None:
+            conn.execute(_create_table_sql())
+        elif _table_needs_status_migration(conn):
+            _migrate_task_table(conn)
         conn.commit()
 
 
