@@ -2,23 +2,22 @@ from __future__ import annotations
 
 import sys
 
+from _bootstrap import CODE_ROOT
 import numpy as np
 
 from object_alignment_common import (
     build_depth_pointcloud,
     compute_front_view_extents,
     compute_real_measurements,
-    load_json,
     object_alignment_output_path,
     read_depth_image,
     read_mask,
     render_front_view_points,
-    resolve_json_path,
     resolve_task_paths,
-    save_json,
     task_prefix,
     write_binary_ply,
 )
+from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
 def remove_legacy_outputs(prefix: str) -> None:
@@ -33,11 +32,11 @@ def remove_legacy_outputs(prefix: str) -> None:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("Usage: python code/run_depthpointcloud_from_json.py <task_meta.json or filename>", file=sys.stderr)
+        print("Usage: python code/stages/run_depthpointcloud_from_json.py <task_meta.json or filename>", file=sys.stderr)
         return 2
 
-    json_path = resolve_json_path(argv[1])
-    task = load_json(json_path)
+    json_path = resolve_task_json_path(argv[1])
+    task = load_task_json(json_path)
     paths = resolve_task_paths(task)
 
     k = np.asarray((task.get("PVCamera") or {}).get("k"), dtype=np.float32)
@@ -90,7 +89,7 @@ def main(argv: list[str]) -> int:
         "valid_depth_ratio": measurements["valid_ratio"],
     }
     task["depthpointcloud"] = depthpointcloud
-    save_json(json_path, task)
+    save_task_json(json_path, task)
 
     print(f"[INFO] JSON            : {json_path}")
     print(f"[INFO] Pointcloud      : {pointcloud_path}")

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import sys
 
+from _bootstrap import CODE_ROOT
 import numpy as np
 from scipy.spatial.transform import Rotation
 
-from object_alignment_common import load_json, resolve_json_path, save_json
+from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
 def compute_world_pose(task: dict) -> dict[str, list[float]]:
@@ -50,11 +51,11 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("Usage: python code/run_pose_from_json.py <task_meta.json or filename>", file=sys.stderr)
+        print("Usage: python code/stages/run_pose_from_json.py <task_meta.json or filename>", file=sys.stderr)
         return 2
 
-    json_path = resolve_json_path(argv[1])
-    task = load_json(json_path)
+    json_path = resolve_task_json_path(argv[1])
+    task = load_task_json(json_path)
 
     if "object_alignment" not in task:
         raise ValueError("object_alignment is missing. Run ICP alignment stage first.")
@@ -63,7 +64,7 @@ def main(argv: list[str]) -> int:
     object_info.update(compute_world_pose(task))
     object_info["coordinate_basis"] = "unity_world_x_right_y_up_z_forward"
     task["object"] = object_info
-    save_json(json_path, task)
+    save_task_json(json_path, task)
 
     print(f"[INFO] JSON            : {json_path}")
     print(f"[INFO] Object position : {object_info['position']}")

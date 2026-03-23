@@ -1,6 +1,8 @@
 import requests
 import json
 from pathlib import Path
+
+from _bootstrap import CODE_ROOT
 from config import DATA_ROOT  # 使用你的 config.py 里定义的路径
 
 # 服务器的接口地址

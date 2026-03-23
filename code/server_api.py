@@ -1,3 +1,5 @@
+"""Flask API entrypoint for task creation and status polling."""
+
 import base64
 import json
 from datetime import datetime, timezone
@@ -17,6 +19,7 @@ from task_worker import (
     get_task,
     start_worker,
 )
+from task_json import save_task_json
 
 
 app = Flask(__name__)
@@ -134,9 +137,7 @@ def generate_model():
         }
 
         meta_path = UPLOAD_FOLDER / f"{base}_meta.json"
-        with open(meta_path, "w", encoding="utf-8") as f:
-            json.dump(out_json, f, ensure_ascii=False, indent=2)
-            f.write("\n")
+        save_task_json(meta_path, out_json)
 
         task_id = create_task(meta_path)
 

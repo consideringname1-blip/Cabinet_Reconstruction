@@ -1,15 +1,11 @@
-import json
 import subprocess
 import sys
 from pathlib import Path
 
+from _bootstrap import CODE_ROOT
 from config import BLENDER_FBX_DIR, CONVERT_SCRIPT
 from object_alignment_common import resolve_blender_path
-
-
-def load_json(json_path: Path) -> dict:
-    with json_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
+from task_json import load_task_json, resolve_task_json_path
 
 
 def ensure_file(path: Path, label: str) -> Path:
@@ -43,7 +39,7 @@ def run_blender(json_path: Path) -> None:
     if result.stderr:
         print(result.stderr)
 
-    task = load_json(json_path)
+    task = load_task_json(json_path)
     blender_info = task.get("Blender") or {}
     fbx_name = blender_info.get("fbx")
     if not fbx_name:
@@ -54,10 +50,10 @@ def run_blender(json_path: Path) -> None:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("Usage: python run_blender_from_json.py /path/to/task.json", file=sys.stderr)
+        print("Usage: python code/stages/run_blender_from_json.py <task_meta.json or filename>", file=sys.stderr)
         return 2
 
-    json_path = Path(sys.argv[1]).expanduser().resolve()
+    json_path = resolve_task_json_path(sys.argv[1])
     ensure_file(json_path, "JSON file")
     try:
         run_blender(json_path)

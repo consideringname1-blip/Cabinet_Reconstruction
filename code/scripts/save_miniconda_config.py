@@ -5,6 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from _bootstrap import CODE_ROOT
 from config import ENV_CONFIG_ROOT
 
 

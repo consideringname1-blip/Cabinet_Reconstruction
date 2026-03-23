@@ -2,17 +2,16 @@ from __future__ import annotations
 
 import sys
 
+from _bootstrap import CODE_ROOT
 from object_alignment_common import (
     compute_front_view_extents,
-    load_json,
     object_alignment_output_path,
     obj_vertices_to_unity,
     read_obj_vertices,
-    resolve_json_path,
     resolve_task_paths,
-    save_json,
     task_prefix,
 )
+from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
 def remove_legacy_outputs(prefix: str) -> None:
@@ -28,11 +27,11 @@ def remove_legacy_outputs(prefix: str) -> None:
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("Usage: python code/run_model_scale_from_json.py <task_meta.json or filename>", file=sys.stderr)
+        print("Usage: python code/stages/run_model_scale_from_json.py <task_meta.json or filename>", file=sys.stderr)
         return 2
 
-    json_path = resolve_json_path(argv[1])
-    task = load_json(json_path)
+    json_path = resolve_task_json_path(argv[1])
+    task = load_task_json(json_path)
 
     if "depthpointcloud" not in task:
         raise ValueError("depthpointcloud is missing. Run pointcloud stage first.")
@@ -71,7 +70,7 @@ def main(argv: list[str]) -> int:
         "overall_scale": overall_scale,
     }
     task["model"] = model_info
-    save_json(json_path, task)
+    save_task_json(json_path, task)
     remove_legacy_outputs(prefix)
 
     print(f"[INFO] JSON            : {json_path}")

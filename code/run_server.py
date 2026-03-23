@@ -1,9 +1,9 @@
 import subprocess
 from config import (
     CODE_ROOT,
-    FLASK_SERVER,
     IS_RUN_FLASK_SERVER,
     HOLOLENS2_PY,
+    SERVER_API_RUN,
     SERVER_PY,
     HOLOLENS2_DOWNLOAD_RUN,
     HOLOLENS2_DOWNLOAD_DIR,
@@ -14,10 +14,10 @@ def main():
     if(IS_RUN_FLASK_SERVER):
         cmd = [
             SERVER_PY,          # 从 config.py 读取 server 环境 python
-            str(FLASK_SERVER) # 运行 generateModel.py
+            str(SERVER_API_RUN) # 运行 server_api.py
         ]
 
-        print(">>> 使用 server 环境启动 generateModel.py")
+        print(">>> 使用 server 环境启动 server_api.py")
         print(">>> CMD:", " ".join(cmd))
         subprocess.run(cmd, cwd=CODE_ROOT)
     else:

@@ -1,8 +1,8 @@
-import json
 import subprocess
 import sys
 from pathlib import Path
 
+from _bootstrap import CODE_ROOT
 from PIL import Image
 
 from config import (
@@ -15,21 +15,11 @@ from config import (
     OUTPUT_ROOT,
     SAM3_OUTPUT_ROOT,
 )
+from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
 def _resolve_python(python_path: str) -> str:
     return python_path or sys.executable
-
-
-def load_json(json_path: Path) -> dict:
-    with json_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_json(json_path: Path, data: dict) -> None:
-    with json_path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
 
 
 def ensure_file(path: Path, label: str) -> Path:
@@ -49,7 +39,7 @@ def create_white_background_image(source_path: Path, target_path: Path) -> Path:
 
 
 def run_instantmesh(json_path: Path) -> None:
-    task = load_json(json_path)
+    task = load_task_json(json_path)
     sam3_name = task.get("sam3Name") or {}
 
     sam3_color_name = sam3_name.get("color")
@@ -110,15 +100,15 @@ def run_instantmesh(json_path: Path) -> None:
         "mtl": mtl_name,
         "image": image_name,
     }
-    save_json(json_path, task)
+    save_task_json(json_path, task)
 
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("Usage: python run_instantmesh_from_json.py /path/to/task.json", file=sys.stderr)
+        print("Usage: python code/stages/run_instantmesh_from_json.py <task_meta.json or filename>", file=sys.stderr)
         return 2
 
-    json_path = Path(sys.argv[1]).expanduser().resolve()
+    json_path = resolve_task_json_path(sys.argv[1])
     ensure_file(json_path, "JSON file")
     try:
         run_instantmesh(json_path)

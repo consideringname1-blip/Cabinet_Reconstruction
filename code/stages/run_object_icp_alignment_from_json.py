@@ -4,6 +4,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from _bootstrap import CODE_ROOT
 import numpy as np
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
@@ -12,7 +13,6 @@ from object_alignment_common import (
     annotate_rendered_image,
     annotate_rendered_model_front_view,
     compute_front_view_extents,
-    load_json,
     obj_vertices_to_unity,
     object_alignment_output_path,
     pointcloud_export_to_unity,
@@ -20,13 +20,12 @@ from object_alignment_common import (
     read_obj_vertices,
     render_front_view_points,
     resolve_blender_path,
-    resolve_json_path,
     resolve_task_paths,
     rotation_unity_to_blender_world,
-    save_json,
     task_prefix,
     unity_to_blender_world_vector,
 )
+from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
 HELPER_SCRIPT = Path(__file__).resolve().with_name("blender_render_measure.py")
@@ -414,13 +413,13 @@ def remove_legacy_outputs(prefix: str) -> None:
 def main(argv: list[str]) -> int:
     if len(argv) not in (2, 3):
         print(
-            "Usage: python code/run_object_icp_alignment_from_json.py <task_meta.json or filename> [blender_path]",
+            "Usage: python code/stages/run_object_icp_alignment_from_json.py <task_meta.json or filename> [blender_path]",
             file=sys.stderr,
         )
         return 2
 
-    json_path = resolve_json_path(argv[1])
-    task = load_json(json_path)
+    json_path = resolve_task_json_path(argv[1])
+    task = load_task_json(json_path)
 
     if "depthpointcloud" not in task:
         raise ValueError("depthpointcloud is missing. Run pointcloud stage first.")
@@ -589,7 +588,7 @@ def main(argv: list[str]) -> int:
         )
         object_alignment["preview_image_name"] = None
 
-    save_json(json_path, task)
+    save_task_json(json_path, task)
     remove_legacy_outputs(prefix)
 
     print(f"[INFO] JSON            : {json_path}")

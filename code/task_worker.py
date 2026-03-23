@@ -1,4 +1,3 @@
-import json
 import subprocess
 import sys
 import threading
@@ -35,6 +34,12 @@ from task_db import (
     initialize_task_table,
     update_task_status,
 )
+from task_json import (
+    ensure_task_id_in_json,
+    load_task_json,
+    resolve_task_json_path,
+    save_task_json,
+)
 
 
 STAGE_ORDER = [
@@ -57,25 +62,6 @@ _worker_thread: Optional[threading.Thread] = None
 
 def _resolve_python(python_path: str) -> str:
     return python_path or sys.executable
-
-
-def _load_task_json(json_path: Path) -> Dict[str, Any]:
-    with json_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def _save_task_json(json_path: Path, data: Dict[str, Any]) -> None:
-    with json_path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
-
-
-def _ensure_task_id_in_json(json_path: Path, task_id: str) -> None:
-    data = _load_task_json(json_path)
-    if data.get("task_id") == task_id:
-        return
-    data["task_id"] = task_id
-    _save_task_json(json_path, data)
 
 
 def _queue_snapshot_no_lock() -> list[str]:
@@ -208,7 +194,7 @@ def _process_one_task(task_id: str) -> None:
     if not json_path.is_file():
         raise FileNotFoundError(f"JSON file not found: {json_path}")
 
-    _ensure_task_id_in_json(json_path, task_id)
+    ensure_task_id_in_json(json_path, task_id)
 
     current_status = str(task_record["status"])
     if current_status == "pending":
@@ -285,15 +271,15 @@ def start_worker() -> threading.Thread:
 
 def create_task(json_path: Path | str) -> str:
     """创建任务记录并加入内存队列。"""
-    task_json_path = Path(json_path).expanduser().resolve()
+    task_json_path = resolve_task_json_path(json_path)
     if not task_json_path.is_file():
         raise FileNotFoundError(f"JSON file not found: {task_json_path}")
 
-    data = _load_task_json(task_json_path)
+    data = load_task_json(task_json_path)
     task_id = str(data.get("task_id") or uuid.uuid4())
 
     data["task_id"] = task_id
-    _save_task_json(task_json_path, data)
+    save_task_json(task_json_path, data)
 
     create_task_record(task_id=task_id, json_path=task_json_path)
 
@@ -311,7 +297,7 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
 
     json_path = Path(task_record["json_path"])
     if json_path.is_file():
-        task_json = _load_task_json(json_path)
+        task_json = load_task_json(json_path)
     else:
         task_json = {}
 

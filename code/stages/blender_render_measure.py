@@ -293,7 +293,7 @@ def main() -> int:
     if mode == "front_model":
         if len(argv) != 9:
             print(
-                "Usage: blender --background --python blender_render_measure.py -- "
+                "Usage: blender --background --python code/stages/blender_render_measure.py -- "
                 "front_model <mesh.obj> <render.png> <tx> <ty> <tz> <rx> <ry> <rz> <scale>",
                 file=sys.stderr,
             )
@@ -316,7 +316,7 @@ def main() -> int:
 
     if len(argv) != 10:
         print(
-            "Usage: blender --background --python blender_render_measure.py -- "
+            "Usage: blender --background --python code/stages/blender_render_measure.py -- "
             "overlay_preview <mesh.obj> <pointcloud.ply> <render.png> <tx> <ty> <tz> <rx> <ry> <rz> <scale>",
             file=sys.stderr,
         )

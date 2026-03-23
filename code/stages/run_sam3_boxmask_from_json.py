@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import sys
@@ -9,9 +8,11 @@ from typing import Any
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
+from _bootstrap import CODE_ROOT
 import config
 import numpy as np
 from PIL import Image, ImageDraw
+from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
 def _eprint(*args: Any) -> None:
@@ -30,17 +31,6 @@ def safe_name(text: str) -> str:
     text = re.sub(r"[^0-9A-Za-z._-]+", "_", text)
     text = text.strip("._")
     return text or "sam3_task"
-
-
-def load_json(json_path: Path) -> dict:
-    with json_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_json(json_path: Path, data: dict) -> None:
-    with json_path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
 
 
 def ensure_file(path: Path, label: str) -> Path:
@@ -198,10 +188,10 @@ def resolve_device(torch_module: Any) -> Any:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        _eprint("Usage: python run_sam3_boxmask_from_json.py /path/to/task.json")
+        _eprint("Usage: python code/stages/run_sam3_boxmask_from_json.py <task_meta.json or filename>")
         return 2
 
-    json_path = Path(sys.argv[1]).expanduser().resolve()
+    json_path = resolve_task_json_path(sys.argv[1])
     ensure_file(json_path, "JSON file")
 
     upload_folder = Path(require_attr(config, "UPLOAD_FOLDER")).expanduser().resolve()
@@ -209,7 +199,7 @@ def main() -> int:
     output_root = Path(require_attr(config, "SAM3_OUTPUT_ROOT")).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
 
-    task = load_json(json_path)
+    task = load_task_json(json_path)
 
     pv_info = task.get("PVCamera") or {}
     depth_info = task.get("DepthCamera") or {}
@@ -234,6 +224,10 @@ def main() -> int:
         import torch
     except Exception as e:
         raise RuntimeError(f"Failed to import torch: {e}")
+
+    sam3_root = Path(require_attr(config, "SAM3_ROOT")).expanduser().resolve()
+    if str(sam3_root) not in sys.path:
+        sys.path.insert(0, str(sam3_root))
 
     import sam3
     from sam3 import build_sam3_image_model
@@ -326,7 +320,7 @@ def main() -> int:
         "depth": depth_name,
         "overlay": overlay_name,
     }
-    save_json(json_path, task)
+    save_task_json(json_path, task)
 
     best_score = None
     try:

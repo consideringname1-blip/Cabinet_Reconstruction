@@ -1,4 +1,3 @@
-import json
 import math
 import sys
 from pathlib import Path
@@ -6,27 +5,13 @@ from pathlib import Path
 import bpy
 from mathutils import Matrix, Quaternion
 
-
-CODE_ROOT = Path(__file__).resolve().parent
-if str(CODE_ROOT) not in sys.path:
-    sys.path.append(str(CODE_ROOT))
-
+from _bootstrap import CODE_ROOT
 from config import BLENDER_FBX_DIR, INSTANTMESH_OUTPUT_MESHES
+from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
 UNITY_TO_BLENDER_WORLD = Matrix(((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0)))
 MODEL_IMPORT_ROTATION_BLENDER = Matrix.Rotation(math.radians(-90.0), 3, "Z")
-
-
-def load_json(json_path: Path) -> dict:
-    with json_path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_json(json_path: Path, data: dict) -> None:
-    with json_path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
 
 
 def clean_scene() -> None:
@@ -111,7 +96,7 @@ def apply_object_transform(objects: list, task: dict) -> None:
 
 
 def export_fbx_from_json(json_path: Path) -> Path:
-    task = load_json(json_path)
+    task = load_task_json(json_path)
     instantmesh_info = task.get("InstantMesh") or {}
 
     mesh_name = instantmesh_info.get("mesh")
@@ -152,7 +137,7 @@ def export_fbx_from_json(json_path: Path) -> Path:
         raise RuntimeError(f"FBX export failed: {fbx_path}")
 
     task["Blender"] = {"fbx": fbx_path.name}
-    save_json(json_path, task)
+    save_task_json(json_path, task)
     return fbx_path
 
 
@@ -162,12 +147,12 @@ def main() -> int:
 
     if len(argv) != 1:
         print(
-            "Usage: blender --background --python convert_obj_to_fbx.py -- /path/to/task.json",
+            "Usage: blender --background --python code/stages/convert_obj_to_fbx.py -- <task_meta.json or filename>",
             file=sys.stderr,
         )
         return 2
 
-    json_path = Path(argv[0]).expanduser().resolve()
+    json_path = resolve_task_json_path(argv[0])
     ensure_file(json_path, "JSON file")
     try:
         export_fbx_from_json(json_path)

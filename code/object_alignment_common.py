@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import struct
@@ -15,6 +14,11 @@ from config import (
     OBJECT_ALIGNMENT_OUTPUT_ROOT,
     SAM3_OUTPUT_ROOT,
     UPLOAD_FOLDER,
+)
+from task_json import (
+    load_task_json as load_json,
+    resolve_task_json_path as resolve_json_path,
+    save_task_json as save_json,
 )
 
 
@@ -32,29 +36,6 @@ UNITY_TO_BLENDER_WORLD = np.array(
     dtype=np.float32,
 )
 BLENDER_WORLD_TO_UNITY = UNITY_TO_BLENDER_WORLD.copy()
-
-
-def resolve_json_path(arg: str) -> Path:
-    candidate = Path(arg).expanduser()
-    if candidate.is_file():
-        return candidate.resolve()
-
-    upload_candidate = (UPLOAD_FOLDER / arg).resolve()
-    if upload_candidate.is_file():
-        return upload_candidate
-
-    raise FileNotFoundError(f"JSON file not found: {arg}")
-
-
-def load_json(path: Path) -> dict:
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def save_json(path: Path, data: dict) -> None:
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
 
 
 def ensure_file(path: Path, label: str) -> Path:
