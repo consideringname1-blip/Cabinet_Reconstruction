@@ -6,6 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from scipy import ndimage as ndi
+
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 from _bootstrap import CODE_ROOT
@@ -95,6 +97,48 @@ def squeeze_mask(mask: np.ndarray) -> np.ndarray:
         raise ValueError(f"Unexpected mask shape: {mask.shape}")
     return mask > 0
 
+def clip_mask_to_box(mask_bool: np.ndarray, box_xyxy: np.ndarray) -> np.ndarray:
+    mask = np.asarray(mask_bool, dtype=bool)
+    x0, y0, x1, y1 = [int(round(v)) for v in np.asarray(box_xyxy).reshape(-1)[:4]]
+
+    h, w = mask.shape
+    x0 = max(0, min(x0, w - 1))
+    x1 = max(0, min(x1, w - 1))
+    y0 = max(0, min(y0, h - 1))
+    y1 = max(0, min(y1, h - 1))
+
+    if x1 < x0:
+        x0, x1 = x1, x0
+    if y1 < y0:
+        y0, y1 = y1, y0
+
+    clipped = np.zeros_like(mask, dtype=bool)
+    clipped[y0:y1 + 1, x0:x1 + 1] = mask[y0:y1 + 1, x0:x1 + 1]
+    return clipped
+
+
+def refine_mask(mask_bool: np.ndarray) -> np.ndarray:
+    mask = np.asarray(mask_bool, dtype=bool)
+
+    mask = ndi.binary_opening(
+        mask,
+        structure=np.ones((3, 3), dtype=bool),
+        iterations=1,
+    )
+    mask = ndi.binary_closing(
+        mask,
+        structure=np.ones((3, 3), dtype=bool),
+        iterations=1,
+    )
+    mask = ndi.binary_fill_holes(mask)
+
+    labeled, num = ndi.label(mask)
+    if num > 1:
+        sizes = ndi.sum(mask, labeled, index=np.arange(1, num + 1))
+        largest_label = int(np.argmax(sizes)) + 1
+        mask = labeled == largest_label
+
+    return mask.astype(bool)
 
 def make_mask_png(mask_bool: np.ndarray) -> np.ndarray:
     return mask_bool.astype(np.uint8) * 255
@@ -263,6 +307,7 @@ def main() -> int:
         bpe_path=str(bpe_path),
         device=str(device),
         enable_inst_interactivity=True,
+        compile=False,
     )
 
     processor = Sam3Processor(model)
@@ -291,6 +336,9 @@ def main() -> int:
         raise RuntimeError("SAM3 returned no masks")
 
     mask_bool = squeeze_mask(np.asarray(masks[0]))
+    mask_bool = clip_mask_to_box(mask_bool, input_box)
+    mask_bool = refine_mask(mask_bool)
+
     mask_png = make_mask_png(mask_bool)
     masked_color_rgba = make_masked_rgba(color_np, mask_bool)
     masked_depth = make_masked_depth(depth_np, mask_bool)

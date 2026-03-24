@@ -34,8 +34,6 @@ def import_obj(mesh_path: Path) -> list[bpy.types.Object]:
     before = {obj.name for obj in bpy.data.objects}
     try:
         bpy.ops.wm.obj_import(filepath=str(mesh_path), forward_axis="NEGATIVE_X", up_axis="Z")
-    except Exception:
-        bpy.ops.import_scene.obj(filepath=str(mesh_path), axis_forward="-X", axis_up="Z")
 
     imported = [obj for obj in bpy.data.objects if obj.name not in before and obj.type == "MESH"]
     if not imported:
@@ -96,6 +94,9 @@ def assign_material(objects: list[bpy.types.Object], material: bpy.types.Materia
         else:
             obj.data.materials.append(material)
 
+def set_object_color(objects: list[bpy.types.Object], rgba: tuple[float, float, float, float]) -> None:
+    for obj in objects:
+        obj.color = rgba
 
 def apply_group_transform(
     objects: list[bpy.types.Object],
@@ -164,7 +165,7 @@ def setup_preview_camera(center: Vector, spans: Vector) -> None:
 
 def configure_scene(render_path: Path, transparent: bool) -> None:
     scene = bpy.context.scene
-    scene.render.engine = "BLENDER_EEVEE"
+    scene.render.engine = "BLENDER_WORKBENCH"
     scene.render.film_transparent = transparent
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
@@ -173,7 +174,16 @@ def configure_scene(render_path: Path, transparent: bool) -> None:
     scene.render.resolution_percentage = 100
     scene.render.filepath = str(render_path)
 
-    world = bpy.data.worlds.new(name="RenderWorld")
+    scene.display.shading.light = 'STUDIO'
+    scene.display.shading.color_type = 'OBJECT'
+    scene.display.shading.show_object_outline = True
+    scene.display.shading.show_backface_culling = False
+    scene.display.shading.show_shadows = False
+    scene.display.shading.show_cavity = True
+
+    world = bpy.data.worlds.get("RenderWorld")
+    if world is None:
+        world = bpy.data.worlds.new(name="RenderWorld")
     scene.world = world
     world.use_nodes = True
     bg = world.node_tree.nodes.get("Background")
@@ -229,7 +239,9 @@ def render_front_model(
     uniform_scale: float,
 ) -> None:
     objects = import_obj(mesh_path)
-    assign_material(objects, build_emission_material("AlignedWhite", (0.92, 0.92, 0.92), alpha=0.65))
+    front_material = build_emission_material("AlignedBlueFront", (0.25, 0.55, 1.00), alpha=0.55)
+    assign_material(objects, front_material)
+    set_object_color(objects, (0.25, 0.55, 1.00, 0.55))
     apply_group_transform(objects, location, rotation_deg, uniform_scale)
 
     vertices = collect_world_vertices(objects, evaluated=False)
@@ -258,12 +270,14 @@ def render_overlay_preview(
     pointcloud_objects = import_ply(pointcloud_path)
     point_vertices = collect_world_vertices(pointcloud_objects, evaluated=False)
 
-    point_material = build_emission_material("PointCloudDark", (0.08, 0.08, 0.08), alpha=1.0)
-    add_point_instances(pointcloud_objects, radius=0.0020, material=point_material)
+    point_material = build_emission_material("PointCloudRed", (1.00, 0.28, 0.10), alpha=1.0)
+    add_point_instances(pointcloud_objects, radius=0.0035, material=point_material)
+    set_object_color(pointcloud_objects, (1.00, 0.28, 0.10, 1.0))
 
     model_objects = import_obj(mesh_path)
-    model_material = build_emission_material("AlignedWhite", (0.93, 0.93, 0.93), alpha=0.58)
+    model_material = build_emission_material("AlignedBlue", (0.25, 0.55, 1.00), alpha=0.42)
     assign_material(model_objects, model_material)
+    set_object_color(model_objects, (0.25, 0.55, 1.00, 0.42))
     apply_group_transform(model_objects, location, rotation_deg, uniform_scale)
     model_vertices = collect_world_vertices(model_objects, evaluated=False)
 

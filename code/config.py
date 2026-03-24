@@ -89,7 +89,7 @@ OBJECT_ALIGNMENT_OUTPUT_ROOT = OUTPUT_ROOT / "object_alignment"
 
 BLENDER_OUTPUT_ROOT = OUTPUT_ROOT / "blender"
 BLENDER_FBX_DIR = BLENDER_OUTPUT_ROOT / "fbx"
-BLENDER_BIN = "/usr/bin/blender"
+BLENDER_BIN = "/usr/local/bin/blender"
 
 
 # HTTP file serving

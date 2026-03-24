@@ -5,10 +5,17 @@ from pathlib import Path
 import bpy
 from mathutils import Matrix, Quaternion
 
-from _bootstrap import CODE_ROOT
+THIS_FILE = Path(__file__).resolve()
+STAGES_DIR = THIS_FILE.parent
+CODE_ROOT = STAGES_DIR.parent
+
+if str(STAGES_DIR) not in sys.path:
+    sys.path.insert(0, str(STAGES_DIR))
+if str(CODE_ROOT) not in sys.path:
+    sys.path.insert(0, str(CODE_ROOT))
+
 from config import BLENDER_FBX_DIR, INSTANTMESH_OUTPUT_MESHES
 from task_json import load_task_json, resolve_task_json_path, save_task_json
-
 
 UNITY_TO_BLENDER_WORLD = Matrix(((1.0, 0.0, 0.0), (0.0, 0.0, 1.0), (0.0, 1.0, 0.0)))
 MODEL_IMPORT_ROTATION_BLENDER = Matrix.Rotation(math.radians(-90.0), 3, "Z")
@@ -116,7 +123,7 @@ def export_fbx_from_json(json_path: Path) -> Path:
     fix_mtl_texture_name(mtl_path, image_name)
 
     clean_scene()
-    bpy.ops.import_scene.obj(filepath=str(mesh_path), use_image_search=True)
+    bpy.ops.wm.obj_import(filepath=str(mesh_path))
 
     imported_objects = get_imported_mesh_objects()
     if not imported_objects:

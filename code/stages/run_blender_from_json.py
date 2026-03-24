@@ -17,27 +17,25 @@ def ensure_file(path: Path, label: str) -> Path:
 def run_blender(json_path: Path) -> None:
     blender_bin = resolve_blender_path()
 
+    command = [
+        str(blender_bin),
+        "--background",
+        "--python",
+        str(CONVERT_SCRIPT),
+        "--",
+        str(json_path),
+    ]
+
+    print("[DEBUG] running:", " ".join(command), flush=True)
+
     try:
-        result = subprocess.run(
-            [
-                str(blender_bin),
-                "--background",
-                "--python",
-                str(CONVERT_SCRIPT),
-                "--",
-                str(json_path),
-            ],
+        subprocess.run(
+            command,
             check=True,
-            capture_output=True,
             text=True,
         )
     except subprocess.CalledProcessError as exc:
-        raise RuntimeError(exc.stderr or exc.stdout or str(exc)) from exc
-
-    if result.stdout:
-        print(result.stdout)
-    if result.stderr:
-        print(result.stderr)
+        raise RuntimeError(f"Blender stage failed with return code {exc.returncode}") from exc
 
     task = load_task_json(json_path)
     blender_info = task.get("Blender") or {}
