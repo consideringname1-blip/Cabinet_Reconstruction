@@ -32,9 +32,7 @@ def clean_scene() -> None:
 
 def import_obj(mesh_path: Path) -> list[bpy.types.Object]:
     before = {obj.name for obj in bpy.data.objects}
-    try:
-        bpy.ops.wm.obj_import(filepath=str(mesh_path), forward_axis="NEGATIVE_X", up_axis="Z")
-
+    bpy.ops.wm.obj_import(filepath=str(mesh_path), forward_axis="NEGATIVE_X", up_axis="Z")
     imported = [obj for obj in bpy.data.objects if obj.name not in before and obj.type == "MESH"]
     if not imported:
         imported = [obj for obj in bpy.context.selected_objects if obj.type == "MESH"]
