@@ -323,35 +323,56 @@ public class ShuJuQingQiu : MonoBehaviour
     }
     private void OnRequestJieGuo(HTTPRequest request, HTTPResponse response)
     {
-        if (response.IsSuccess)
+        if (!response.IsSuccess)
         {
-            Debug.Log("Response: " + System.Text.Encoding.UTF8.GetString(response.Data));
-            try
-            {
-                JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
-                urlModel = jo["fbx_url"].ToString();//
-                image_url = jo["image_url"].ToString();
-                ApplyJson("object");
-                Game_M.initialize.XianShi(urlModel);
-                print(urlModel);
-                print(image_url);
+            Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
+            return;
+        }
 
-                //关闭检测
-                CancelInvoke();
-                //下载模型
-                XiaZaiModel();
-                // XiaZaiImage();
-            }
-            catch (Exception)
-            {
-                throw;
-            }
+        JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
+        string status = jo["status"]?.ToString();
 
+        // 任务失败
+        if (status == "failed")
+        {
+            string err = jo["error"]?.ToString();
+            Debug.LogError("[CHECK] task failed: " + err);
+            CancelInvoke();
+            return;
+        }
+
+        // 还没完成，继续等下一次轮询
+        if (status != "completed")
+        {
+            Debug.Log("[CHECK] still processing... status = " + status);
+            return;
+        }
+
+        // completed 了，但结果字段还要继续检查
+        string fbxUrl = jo["fbx_url"]?.ToString();
+        string imgUrl = jo["image_url"]?.ToString();
+        JToken objectToken = jo["object"];
+
+        if (string.IsNullOrEmpty(fbxUrl))
+        {
+            Debug.LogWarning("[CHECK] completed but fbx_url is missing, keep waiting...");
+            return;
+        }
+
+        urlModel = fbxUrl;
+        image_url = imgUrl;
+
+        if (objectToken != null && objectToken.Type != JTokenType.Null)
+        {
+            ApplyJson(jo.ToString());
         }
         else
         {
-            Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
+            Debug.LogWarning("[CHECK] completed but object is missing.");
         }
+
+        CancelInvoke();
+        XiaZaiModel();
     }
 
     /// <summary>
