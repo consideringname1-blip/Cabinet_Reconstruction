@@ -1,0 +1,49 @@
+初次初始化（已有git仓库）：
+conda create -n dvc python=3.10 -y
+conda activate dvc
+python -m pip install --upgrade pip
+pip install "dvc[gdrive]"
+
+cd YOUR_GIT_PROJECT_PATH
+
+dvc init
+git add .dvc .dvcignore
+git commit -m "init dvc"
+
+dvc remote add -d gdrive gdrive://YOUR_FOLDER_ID
+dvc remote modify gdrive gdrive_acknowledge_abuse true
+dvc remote modify --local gdrive gdrive_client_id YOUR_ID
+dvc remote modify --local gdrive gdrive_client_secret YOUR_SECRET
+dvc remote list
+
+dvc add YOUR_ADD_FOLDER_PATH
+git add .
+git commit -m "track data with dvc"
+dvc push
+
+二次初始化：
+conda create -n dvc python=3.10 -y
+conda activate dvc
+python -m pip install --upgrade pip
+python -m pip install "dvc[gdrive]"
+dvc version
+
+cd YOUR_GIT_PROJECT_PATH
+
+dvc remote modify gdrive gdrive_acknowledge_abuse true
+dvc remote modify --local gdrive gdrive_client_id YOUR_ID
+dvc remote modify --local gdrive gdrive_client_secret YOUR_SECRET
+dvc remote list
+
+日常流程：
+上传：
+conda activate dvc
+dvc add data
+git add .
+git commit -m "update data"
+dvc push
+git push
+下载：
+conda activate dvc
+git pull
+dvc pull
