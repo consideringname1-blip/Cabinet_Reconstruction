@@ -3,8 +3,7 @@ param(
     [string]$PythonVersion = "3.10",
     [string]$ProjectPath = ".",
     [string]$RemoteName = "gdrive",
-    [Parameter(Mandatory = $true)]
-    [string]$GDriveFolderId,
+    [string]$GDriveFolderId = "",
     [string]$TrackPath = "",
     [switch]$RunFirstPush,
     [string]$GDriveClientId = "",
@@ -17,9 +16,40 @@ function Write-Step($msg) {
     Write-Host "`n==== $msg ====" -ForegroundColor Cyan
 }
 
+function Write-WarnMsg($msg) {
+    Write-Host "[WARN] $msg" -ForegroundColor Yellow
+}
+
+function Write-InfoMsg($msg) {
+    Write-Host "[INFO] $msg" -ForegroundColor Gray
+}
+
 function Require-Command($name) {
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
         throw "Command not found: $name. Please install it first and make sure it is available in PATH."
+    }
+}
+
+function Invoke-Safe($scriptBlock, $errorMessage) {
+    try {
+        & $scriptBlock
+        return $true
+    }
+    catch {
+        Write-WarnMsg "$errorMessage"
+        Write-WarnMsg $_.Exception.Message
+        return $false
+    }
+}
+
+function Test-RemoteExists($envName, $remoteName) {
+    try {
+        $remoteList = conda run -n $envName dvc remote list 2>$null
+        if (-not $remoteList) { return $false }
+        return ($remoteList -match "(?m)^$([regex]::Escape($remoteName))\s")
+    }
+    catch {
+        return $false
     }
 }
 
@@ -40,7 +70,7 @@ $envsText = conda env list
 if ($envsText -notmatch "(?m)^\s*$([regex]::Escape($EnvName))\s") {
     conda create -y -n $EnvName "python=$PythonVersion"
 } else {
-    Write-Host "Environment $EnvName already exists. Skipping creation."
+    Write-InfoMsg "Environment $EnvName already exists. Skipping creation."
 }
 
 Write-Step "Upgrade pip and install DVC with Google Drive support"
@@ -59,53 +89,102 @@ try {
     if (-not (Test-Path ".dvc")) {
         conda run -n $EnvName dvc init
         git add .dvc .dvcignore 2>$null
-        git commit -m "init dvc" 2>$null
+        try {
+            git commit -m "init dvc" 2>$null
+        }
+        catch {
+            Write-WarnMsg "Git commit for DVC initialization was skipped."
+        }
     } else {
-        Write-Host ".dvc already exists. Skipping dvc init."
+        Write-InfoMsg ".dvc already exists. Skipping dvc init."
     }
 
-    Write-Step "Configure Google Drive remote"
-    $existingRemotes = conda run -n $EnvName dvc remote list
-    if ($existingRemotes -notmatch "(?m)^$([regex]::Escape($RemoteName))\s") {
-        conda run -n $EnvName dvc remote add --default $RemoteName "gdrive://$GDriveFolderId"
-    } else {
-        Write-Host "Remote $RemoteName already exists. Updating URL and setting it as default."
-        conda run -n $EnvName dvc remote modify $RemoteName url "gdrive://$GDriveFolderId"
-        conda run -n $EnvName dvc remote default $RemoteName
+    Write-Step "Optionally configure Google Drive remote"
+    if ([string]::IsNullOrWhiteSpace($GDriveFolderId)) {
+        Write-InfoMsg "No Google Drive folder ID was provided. Remote configuration is skipped."
+        Write-InfoMsg "You can configure it later with:"
+        Write-Host "  dvc remote add -d $RemoteName `"gdrive://YOUR_FOLDER_ID`""
     }
+    else {
+        Write-InfoMsg "A Google Drive folder ID was provided. The script will try to configure the remote."
 
-    conda run -n $EnvName dvc remote modify $RemoteName gdrive_acknowledge_abuse true
-
-    if ($GDriveClientId -and $GDriveClientSecret) {
-        Write-Step "Write custom Google Cloud OAuth credentials to local private config"
-        conda run -n $EnvName dvc remote modify --local $RemoteName gdrive_client_id $GDriveClientId
-        conda run -n $EnvName dvc remote modify --local $RemoteName gdrive_client_secret $GDriveClientSecret
-    } else {
-        Write-Host "No custom client_id or client_secret provided. The default authorization flow will be used."
-    }
-
-    if ($TrackPath) {
-        Write-Step "Track data path: $TrackPath"
-        if (-not (Test-Path $TrackPath)) {
-            throw "TrackPath does not exist: $TrackPath"
+        if (Test-RemoteExists $EnvName $RemoteName) {
+            Write-InfoMsg "Remote $RemoteName already exists. Skipping removal."
+        }
+        else {
+            Write-InfoMsg "Remote $RemoteName does not exist yet."
         }
 
-        conda run -n $EnvName dvc add $TrackPath
-        git add . 2>$null
-        Write-Host "dvc add has been executed. Please review the changes before committing."
+        $addedRemote = Invoke-Safe {
+            conda run -n $EnvName dvc remote remove $RemoteName 2>$null
+            conda run -n $EnvName dvc remote add -d $RemoteName "gdrive://$GDriveFolderId"
+        } "Failed to add or reset Google Drive remote."
+
+        if ($addedRemote) {
+            Invoke-Safe {
+                conda run -n $EnvName dvc remote modify $RemoteName gdrive_acknowledge_abuse true
+            } "Failed to set gdrive_acknowledge_abuse. This can be configured later."
+
+            if (-not [string]::IsNullOrWhiteSpace($GDriveClientId) -and -not [string]::IsNullOrWhiteSpace($GDriveClientSecret)) {
+                Invoke-Safe {
+                    conda run -n $EnvName dvc remote modify --local $RemoteName gdrive_client_id $GDriveClientId
+                    conda run -n $EnvName dvc remote modify --local $RemoteName gdrive_client_secret $GDriveClientSecret
+                } "Failed to write custom Google OAuth credentials. You can configure them later."
+            }
+            else {
+                Write-InfoMsg "No custom Google OAuth credentials were provided. Default authorization flow will be used later."
+            }
+        }
+        else {
+            Write-WarnMsg "Google Drive remote configuration was skipped due to an error."
+        }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($TrackPath)) {
+        Write-Step "Track data path: $TrackPath"
+        if (-not (Test-Path $TrackPath)) {
+            Write-WarnMsg "TrackPath does not exist: $TrackPath"
+            Write-WarnMsg "Skipping dvc add for the track path."
+        }
+        else {
+            conda run -n $EnvName dvc add $TrackPath
+            git add . 2>$null
+            Write-InfoMsg "dvc add has been executed. Please review the changes before committing."
+        }
+    }
+    else {
+        Write-InfoMsg "No TrackPath was provided. Skipping dvc add."
     }
 
     if ($RunFirstPush) {
-        Write-Step "Run the first dvc push"
-        Write-Host "The first push or pull may open a browser window for Google authorization."
-        conda run -n $EnvName dvc push
+        Write-Step "Optionally run the first dvc push"
+        if ([string]::IsNullOrWhiteSpace($GDriveFolderId)) {
+            Write-WarnMsg "RunFirstPush was requested, but no Google Drive folder ID was provided."
+            Write-WarnMsg "Skipping dvc push."
+        }
+        elseif (-not (Test-RemoteExists $EnvName $RemoteName)) {
+            Write-WarnMsg "RunFirstPush was requested, but the remote is not configured correctly."
+            Write-WarnMsg "Skipping dvc push."
+        }
+        else {
+            Write-InfoMsg "The first push or pull may open a browser window for Google authorization."
+            Invoke-Safe {
+                conda run -n $EnvName dvc push
+            } "The first dvc push failed. You can retry it later manually."
+        }
     }
 
     Write-Step "Done"
     Write-Host "Project path: $ProjectPath"
     Write-Host "Conda environment: $EnvName"
     Write-Host "Remote name: $RemoteName"
-    Write-Host "Google Drive Folder ID: $GDriveFolderId"
+
+    if ([string]::IsNullOrWhiteSpace($GDriveFolderId)) {
+        Write-Host "Google Drive folder ID: <not configured>"
+    }
+    else {
+        Write-Host "Google Drive folder ID: <provided>"
+    }
 
     Write-Host "`nCommon commands to use later:"
     Write-Host "  conda activate $EnvName"
@@ -115,6 +194,12 @@ try {
     Write-Host "  git add ."
     Write-Host '  git commit -m "update dvc config/data"'
     Write-Host "  git push"
+
+    Write-Host "`nManual Google Drive setup later:"
+    Write-Host "  dvc remote add -d $RemoteName `"gdrive://YOUR_FOLDER_ID`""
+    Write-Host "  dvc remote modify $RemoteName gdrive_acknowledge_abuse true"
+    Write-Host "  dvc remote modify --local $RemoteName gdrive_client_id `"YOUR_CLIENT_ID`""
+    Write-Host "  dvc remote modify --local $RemoteName gdrive_client_secret `"YOUR_CLIENT_SECRET`""
 }
 finally {
     Pop-Location
