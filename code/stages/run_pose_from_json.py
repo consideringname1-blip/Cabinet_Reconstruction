@@ -4,18 +4,12 @@ import sys
 
 from _bootstrap import CODE_ROOT
 import numpy as np
-from scipy.spatial.transform import Rotation
 
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
 def compute_world_pose(task: dict) -> dict[str, list[float]]:
-    pv_info = task.get("PVCamera") or {}
     alignment = task.get("object_alignment") or {}
-
-    pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
-    if pv_pose.shape != (4, 4):
-        raise ValueError(f"PVCamera.pose must be 4x4, got {pv_pose.shape}")
 
     model_position = np.asarray(alignment.get("model_unity_position"), dtype=np.float64)
     if model_position.shape != (3,):
@@ -29,22 +23,10 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     if model_scale <= 0:
         raise ValueError("object_alignment.model_real_scale must be positive")
 
-    # HoloLens poses in this project use row-vector transforms:
-    # p_world = p_camera @ R + t
-    camera_rotation_row = pv_pose[:3, :3]
-    camera_translation = pv_pose[3, :3]
-    world_position = model_position @ camera_rotation_row + camera_translation
-
-    # Alignment rotations are stored in the standard scipy convention.
-    camera_rotation = camera_rotation_row.T
-    model_rotation = Rotation.from_quat(model_quat).as_matrix()
-    world_rotation = camera_rotation @ model_rotation
-    world_quat = Rotation.from_matrix(world_rotation).as_quat()
-
     uniform_scale = [float(model_scale), float(model_scale), float(model_scale)]
     return {
-        "position": [float(v) for v in world_position],
-        "rotation": [float(v) for v in world_quat],
+        "position": [float(v) for v in model_position],
+        "rotation": [float(v) for v in model_quat],
         "scale": uniform_scale,
     }
 
