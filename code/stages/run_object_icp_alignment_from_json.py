@@ -13,6 +13,7 @@ from object_alignment_common import (
     annotate_rendered_image,
     annotate_rendered_model_front_view,
     compute_front_view_extents,
+    model_pose_unity_to_pointcloud_input,
     obj_vertices_to_unity,
     object_alignment_output_path,
     pointcloud_export_to_unity,
@@ -29,7 +30,6 @@ from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
 HELPER_SCRIPT = Path(__file__).resolve().with_name("blender_render_measure.py")
-MODEL_IMPORT_ROTATION_BLENDER = Rotation.from_euler("xyz", [0.0, 0.0, -90.0], degrees=True)
 
 
 def downsample_points(points: np.ndarray, max_points: int, seed: int) -> np.ndarray:
@@ -516,14 +516,16 @@ def main(argv: list[str]) -> int:
 
     best = best_result
 
-    unity_euler_deg = Rotation.from_matrix(best["rotation"]).as_euler("xyz", degrees=True)
-    unity_quat_xyzw = Rotation.from_matrix(best["rotation"]).as_quat()
+    pointcloud_rotation, pointcloud_translation = model_pose_unity_to_pointcloud_input(
+        best["rotation"],
+        best["translation"],
+    )
+    pointcloud_euler_deg = Rotation.from_matrix(pointcloud_rotation).as_euler("xyz", degrees=True)
+    pointcloud_quat_xyzw = Rotation.from_matrix(pointcloud_rotation).as_quat()
 
     blender_rotation = rotation_unity_to_blender_world(best["rotation"])
     blender_translation = unity_to_blender_world_vector(best["translation"])
     blender_delta_euler_deg = Rotation.from_matrix(blender_rotation).as_euler("xyz", degrees=True)
-    blender_panel_rotation = Rotation.from_matrix(blender_rotation) * MODEL_IMPORT_ROTATION_BLENDER
-    blender_panel_euler_deg = blender_panel_rotation.as_euler("xyz", degrees=True)
 
     confidence = compute_confidence(task, best)
     aligned_model_image_name = f"{prefix}_aligned_model_front.png"
@@ -532,15 +534,15 @@ def main(argv: list[str]) -> int:
     overlay_preview_path = object_alignment_output_path(overlay_preview_name)
 
     object_alignment = {
-        "coordinate_basis": "unity_x_right_y_up_z_forward",
-        "model_unity_position": [float(v) for v in best["translation"]],
-        "model_unity_rotation_euler_deg": [float(v) for v in unity_euler_deg],
-        "model_unity_rotation_quaternion_xyzw": [float(v) for v in unity_quat_xyzw],
-        "model_blender_position": [float(v) for v in blender_translation],
-        "model_blender_rotation_euler_deg": [float(v) for v in blender_panel_euler_deg],
-        "model_blender_delta_position": [float(v) for v in blender_translation],
-        "model_blender_delta_rotation_euler_deg": [float(v) for v in blender_delta_euler_deg],
-        "model_blender_import_rotation_euler_deg": [0.0, 0.0, -90.0],
+        "coordinate_basis": "pointcloud_input_pre_blender_import",
+        "coordinate_basis_axes_relative_to_unity": {
+            "x": "-Z",
+            "y": "+Y",
+            "z": "-X",
+        },
+        "model_position": [float(v) for v in pointcloud_translation],
+        "model_rotation_euler_deg": [float(v) for v in pointcloud_euler_deg],
+        "model_rotation_quaternion_xyzw": [float(v) for v in pointcloud_quat_xyzw],
         "model_real_scale": float(best["scale"]),
         "front_view_image_name": aligned_model_image_name,
         "preview_image_name": overlay_preview_name,
@@ -598,9 +600,9 @@ def main(argv: list[str]) -> int:
     print(f"[INFO] Preview         : {overlay_preview_path if object_alignment.get('preview_image_name') else 'not-generated'}")
     print(f"[INFO] Blender         : {blender_label}")
     print(
-        f"[INFO] Unity pose      : "
-        f"pos={object_alignment['model_unity_position']}, "
-        f"rot={object_alignment['model_unity_rotation_euler_deg']}"
+        f"[INFO] Output pose     : "
+        f"pos={object_alignment['model_position']}, "
+        f"rot={object_alignment['model_rotation_euler_deg']}"
     )
     print(
         f"[INFO] Final scale     : {object_alignment['model_real_scale']:.6f}, "

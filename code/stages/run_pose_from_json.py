@@ -4,6 +4,7 @@ import sys
 import numpy as np
 
 from _bootstrap import CODE_ROOT
+from object_alignment_common import model_pose_pointcloud_input_to_unity
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
@@ -13,20 +14,6 @@ def normalize_quat_xyzw(q: np.ndarray) -> np.ndarray:
     if n <= 0:
         raise ValueError("zero-length quaternion")
     return q / n
-
-
-def quat_mul_xyzw(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
-    # Hamilton product, xyzw order
-    x1, y1, z1, w1 = normalize_quat_xyzw(q1)
-    x2, y2, z2, w2 = normalize_quat_xyzw(q2)
-
-    q = np.array([
-        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-    ], dtype=np.float64)
-    return normalize_quat_xyzw(q)
 
 
 def rotation_matrix_to_quat_xyzw(R: np.ndarray) -> np.ndarray:
@@ -67,17 +54,47 @@ def rotation_matrix_to_quat_xyzw(R: np.ndarray) -> np.ndarray:
     return normalize_quat_xyzw(np.array([x, y, z, w], dtype=np.float64))
 
 
+def quat_xyzw_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
+    x, y, z, w = normalize_quat_xyzw(q)
+    xx, yy, zz = x * x, y * y, z * z
+    xy, xz, yz = x * y, x * z, y * z
+    wx, wy, wz = w * x, w * y, w * z
+
+    return np.array([
+        [1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)],
+        [2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)],
+        [2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)],
+    ], dtype=np.float64)
+
+
+def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
+    alignment = task.get("object_alignment") or {}
+    coordinate_basis = str(alignment.get("coordinate_basis") or "")
+    if coordinate_basis != "pointcloud_input_pre_blender_import":
+        raise ValueError(
+            "object_alignment.coordinate_basis must be pointcloud_input_pre_blender_import"
+        )
+
+    pointcloud_position = np.asarray(alignment.get("model_position"), dtype=np.float64)
+    pointcloud_quat = np.asarray(alignment.get("model_rotation_quaternion_xyzw"), dtype=np.float64)
+    if pointcloud_position.shape != (3,):
+        raise ValueError("object_alignment.model_position must have 3 values")
+    if pointcloud_quat.shape != (4,):
+        raise ValueError("object_alignment.model_rotation_quaternion_xyzw must have 4 values")
+
+    pointcloud_rotation = quat_xyzw_to_rotation_matrix(pointcloud_quat)
+    unity_rotation, unity_translation = model_pose_pointcloud_input_to_unity(
+        pointcloud_rotation,
+        pointcloud_position,
+    )
+    return unity_translation.astype(np.float64), unity_rotation.astype(np.float64)
+
+
 def compute_world_pose(task: dict) -> dict[str, list[float]]:
     alignment = task.get("object_alignment") or {}
     pv = task.get("PVCamera") or {}
 
-    local_position = np.asarray(alignment.get("model_unity_position"), dtype=np.float64)
-    if local_position.shape != (3,):
-        raise ValueError("object_alignment.model_unity_position must have 3 values")
-
-    local_quat = np.asarray(alignment.get("model_unity_rotation_quaternion_xyzw"), dtype=np.float64)
-    if local_quat.shape != (4,):
-        raise ValueError("object_alignment.model_unity_rotation_quaternion_xyzw must have 4 values")
+    local_position, local_rotation = resolve_local_camera_pose(task)
 
     model_scale = float(alignment.get("model_real_scale") or 0.0)
     if model_scale <= 0:
@@ -87,16 +104,14 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     if pv_pose.shape != (4, 4):
         raise ValueError("PVCamera.pose must be a 4x4 matrix")
 
-    # 你的 JSON 里平移在最后一行，所以按 row-vector 约定读：
+    # JSON pose stores translation in the last row and uses a row-vector convention.
     # p_world = p_local @ R_cam + t_cam
     R_cam = pv_pose[:3, :3]
     t_cam = pv_pose[3, :3]
 
     world_position = local_position @ R_cam + t_cam
-
-    # 世界旋转 = 拍摄相机世界旋转 * 物体相对相机旋转
-    cam_quat = rotation_matrix_to_quat_xyzw(R_cam)
-    world_quat = quat_mul_xyzw(cam_quat, local_quat)
+    world_rotation = local_rotation @ R_cam
+    world_quat = rotation_matrix_to_quat_xyzw(world_rotation)
 
     uniform_scale = [float(model_scale), float(model_scale), float(model_scale)]
     return {
@@ -104,3 +119,28 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
         "rotation": [float(v) for v in world_quat],
         "scale": uniform_scale,
     }
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 2:
+        print("Usage: python code/stages/run_pose_from_json.py <task_meta.json or filename>", file=sys.stderr)
+        return 2
+
+    json_path = resolve_task_json_path(argv[1])
+    task = load_task_json(json_path)
+
+    world_pose = compute_world_pose(task)
+    world_pose["coordinate_basis"] = "unity_world_x_right_y_up_z_forward"
+    task["object"] = world_pose
+    save_task_json(json_path, task)
+
+    print(f"[INFO] JSON            : {json_path}")
+    print(f"[INFO] World position  : {world_pose['position']}")
+    print(f"[INFO] World rotation  : {world_pose['rotation']}")
+    print(f"[INFO] World scale     : {world_pose['scale']}")
+    print("[OK] Pose stage completed")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

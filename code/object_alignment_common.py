@@ -27,6 +27,26 @@ MAX_DEPTH_MM = 1200
 
 # Canonical internal basis for measurement / alignment / JSON output:
 # X = right, Y = up, Z = forward
+POINTCLOUD_INPUT_TO_UNITY_BASIS = np.array(
+    [
+        [0.0, 0.0, -1.0],
+        [0.0, 1.0, 0.0],
+        [-1.0, 0.0, 0.0],
+    ],
+    dtype=np.float32,
+)
+UNITY_TO_POINTCLOUD_INPUT_BASIS = POINTCLOUD_INPUT_TO_UNITY_BASIS.T
+
+MODEL_INPUT_TO_UNITY_BASIS = np.array(
+    [
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [-1.0, 0.0, 0.0],
+    ],
+    dtype=np.float32,
+)
+UNITY_TO_MODEL_INPUT_BASIS = MODEL_INPUT_TO_UNITY_BASIS.T
+
 UNITY_TO_BLENDER_WORLD = np.array(
     [
         [1.0, 0.0, 0.0],
@@ -179,20 +199,38 @@ def build_depth_pointcloud(
 
 def pointcloud_export_to_unity(points: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float32)
-    transformed = np.empty_like(points)
-    transformed[:, 0] = -points[:, 2]
-    transformed[:, 1] = points[:, 1]
-    transformed[:, 2] = -points[:, 0]
-    return transformed
+    return (points @ POINTCLOUD_INPUT_TO_UNITY_BASIS.T).astype(np.float32)
 
 
 def obj_vertices_to_unity(points: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float32)
-    transformed = np.empty_like(points)
-    transformed[:, 0] = points[:, 1]
-    transformed[:, 1] = points[:, 2]
-    transformed[:, 2] = -points[:, 0]
-    return transformed
+    return (points @ MODEL_INPUT_TO_UNITY_BASIS.T).astype(np.float32)
+
+
+def model_pose_unity_to_pointcloud_input(
+    rotation_unity: np.ndarray,
+    translation_unity: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    # Convert the final ICP pose from the internal Unity basis to:
+    # raw model input basis -> raw pointcloud input basis.
+    rotation_unity = np.asarray(rotation_unity, dtype=np.float32)
+    translation_unity = np.asarray(translation_unity, dtype=np.float32)
+    rotation_pointcloud = UNITY_TO_POINTCLOUD_INPUT_BASIS @ rotation_unity @ MODEL_INPUT_TO_UNITY_BASIS
+    translation_pointcloud = translation_unity @ POINTCLOUD_INPUT_TO_UNITY_BASIS
+    return rotation_pointcloud.astype(np.float32), translation_pointcloud.astype(np.float32)
+
+
+def model_pose_pointcloud_input_to_unity(
+    rotation_pointcloud: np.ndarray,
+    translation_pointcloud: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    # Inverse of model_pose_unity_to_pointcloud_input for downstream consumers
+    # that still expect the internal Unity basis.
+    rotation_pointcloud = np.asarray(rotation_pointcloud, dtype=np.float32)
+    translation_pointcloud = np.asarray(translation_pointcloud, dtype=np.float32)
+    rotation_unity = POINTCLOUD_INPUT_TO_UNITY_BASIS @ rotation_pointcloud @ UNITY_TO_MODEL_INPUT_BASIS
+    translation_unity = translation_pointcloud @ UNITY_TO_POINTCLOUD_INPUT_BASIS
+    return rotation_unity.astype(np.float32), translation_unity.astype(np.float32)
 
 
 def unity_to_blender_world_points(points: np.ndarray) -> np.ndarray:
