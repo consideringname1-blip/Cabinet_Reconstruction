@@ -365,6 +365,7 @@ public class ShuJuQingQiu : MonoBehaviour
         if (objectToken != null && objectToken.Type != JTokenType.Null)
         {
             ApplyJson(jo.ToString());
+            hasServerPose = true;
         }
         else
         {
