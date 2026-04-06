@@ -10,6 +10,7 @@ import numpy as np
 
 from config import (
     BLENDER_BIN,
+    ICP_DEPTH_BORDER_CROP_RATIO,
     INSTANTMESH_OUTPUT_MESHES,
     OBJECT_ALIGNMENT_OUTPUT_ROOT,
     SAM3_OUTPUT_ROOT,
@@ -131,6 +132,48 @@ def read_color_image(path: Path) -> np.ndarray:
     return image
 
 
+def get_depth_border_crop_ratio() -> float:
+    ratio = float(ICP_DEPTH_BORDER_CROP_RATIO)
+    if not 0.0 <= ratio < 0.5:
+        raise ValueError("config.ICP_DEPTH_BORDER_CROP_RATIO must be in [0.0, 0.5)")
+    return ratio
+
+
+def depth_border_crop_margins(
+    image_shape: tuple[int, int],
+    border_ratio: float | None = None,
+) -> tuple[int, int]:
+    h, w = image_shape
+    ratio = get_depth_border_crop_ratio() if border_ratio is None else float(border_ratio)
+    if not 0.0 <= ratio < 0.5:
+        raise ValueError("Depth border crop ratio must be in [0.0, 0.5)")
+
+    margin_y = int(np.floor(h * ratio))
+    margin_x = int(np.floor(w * ratio))
+    if (margin_y * 2) >= h or (margin_x * 2) >= w:
+        raise ValueError("Depth border crop leaves no pixels in the image center")
+    return margin_x, margin_y
+
+
+def build_depth_border_keep_mask(
+    image_shape: tuple[int, int],
+    border_ratio: float | None = None,
+) -> np.ndarray:
+    h, w = image_shape
+    margin_x, margin_y = depth_border_crop_margins(image_shape, border_ratio=border_ratio)
+    if margin_x == 0 and margin_y == 0:
+        return np.ones((h, w), dtype=bool)
+
+    keep = np.zeros((h, w), dtype=bool)
+    keep[margin_y:h - margin_y, margin_x:w - margin_x] = True
+    return keep
+
+
+def apply_depth_border_crop(mask_bool: np.ndarray, border_ratio: float | None = None) -> np.ndarray:
+    mask = np.asarray(mask_bool, dtype=bool)
+    return mask & build_depth_border_keep_mask(mask.shape, border_ratio=border_ratio)
+
+
 def mask_bbox(mask_bool: np.ndarray) -> tuple[int, int, int, int]:
     ys, xs = np.where(mask_bool)
     if len(xs) == 0:
@@ -141,14 +184,17 @@ def mask_bbox(mask_bool: np.ndarray) -> tuple[int, int, int, int]:
 def compute_real_measurements(mask_bool: np.ndarray, depth_mm: np.ndarray, k: np.ndarray) -> dict:
     fx = float(k[0, 0])
     fy = float(k[1, 1])
+    crop_ratio = get_depth_border_crop_ratio()
+    crop_margin_x, crop_margin_y = depth_border_crop_margins(depth_mm.shape, border_ratio=crop_ratio)
 
     x0, y0, x1, y1 = mask_bbox(mask_bool)
     width_px = x1 - x0 + 1
     height_px = y1 - y0 + 1
 
-    valid_depth = mask_bool & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
+    usable_mask = apply_depth_border_crop(mask_bool, border_ratio=crop_ratio)
+    valid_depth = usable_mask & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
     if not np.any(valid_depth):
-        raise ValueError("No mask pixels remain within 20-120 cm")
+        raise ValueError("No mask pixels remain within 20-120 cm after edge crop")
 
     mean_depth_m = float(depth_mm[valid_depth].mean()) / 1000.0
     real_width_m = width_px * mean_depth_m / fx
@@ -160,10 +206,15 @@ def compute_real_measurements(mask_bool: np.ndarray, depth_mm: np.ndarray, k: np
         "height_px": int(height_px),
         "valid_depth_pixels": int(valid_depth.sum()),
         "mask_pixels": int(mask_bool.sum()),
+        "usable_mask_pixels": int(usable_mask.sum()),
+        "cropped_mask_pixels": int(mask_bool.sum() - usable_mask.sum()),
         "valid_ratio": float(valid_depth.sum() / max(mask_bool.sum(), 1)),
         "mean_depth_m": mean_depth_m,
         "real_width_m": real_width_m,
         "real_height_m": real_height_m,
+        "depth_border_crop_ratio": crop_ratio,
+        "depth_border_crop_margin_x_px": int(crop_margin_x),
+        "depth_border_crop_margin_y_px": int(crop_margin_y),
     }
 
 
@@ -180,9 +231,9 @@ def build_depth_pointcloud(
     h, w = depth_mm.shape
     uu, vv = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
 
-    valid = mask_bool & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
+    valid = apply_depth_border_crop(mask_bool) & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
     if not np.any(valid):
-        raise ValueError("No valid depth points remain for pointcloud generation")
+        raise ValueError("No valid depth points remain for pointcloud generation after edge crop")
 
     z_m = depth_mm.astype(np.float32) / 1000.0
     x_cam = (uu - cx) * z_m / fx

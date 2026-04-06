@@ -67,6 +67,7 @@ def main(argv: list[str]) -> int:
             f"Real width  : {measurements['real_width_m']:.4f} m",
             f"Real height : {measurements['real_height_m']:.4f} m",
             f"Mean depth  : {measurements['mean_depth_m']:.4f} m",
+            f"Edge crop   : {measurements['depth_border_crop_ratio'] * 100.0:.0f}% per side",
             f"Point count : {len(export_points)}",
         ],
     )
@@ -87,6 +88,11 @@ def main(argv: list[str]) -> int:
         "mean_depth_measured": measurements["mean_depth_m"],
         "point_count": int(len(export_points)),
         "valid_depth_ratio": measurements["valid_ratio"],
+        "depth_border_crop_ratio": measurements["depth_border_crop_ratio"],
+        "depth_border_crop_margin_x_px": measurements["depth_border_crop_margin_x_px"],
+        "depth_border_crop_margin_y_px": measurements["depth_border_crop_margin_y_px"],
+        "usable_mask_pixels": measurements["usable_mask_pixels"],
+        "cropped_mask_pixels": measurements["cropped_mask_pixels"],
     }
     task["depthpointcloud"] = depthpointcloud
     save_task_json(json_path, task)

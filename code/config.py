@@ -5,6 +5,11 @@ from pathlib import Path
 HOLOLENS2_HOST = "10.40.1.132"
 IS_RUN_FLASK_SERVER = True
 
+# Depth / alignment tuning
+# Fraction cropped from each image edge before depth->pointcloud conversion.
+# Set to 0.0 to disable.
+ICP_DEPTH_BORDER_CROP_RATIO = 0.15
+
 
 # Project roots
 BASE_DIR = Path(__file__).resolve().parent
