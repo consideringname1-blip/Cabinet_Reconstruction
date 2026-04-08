@@ -32,6 +32,38 @@ from task_json import load_task_json, resolve_task_json_path, save_task_json
 HELPER_SCRIPT = Path(__file__).resolve().with_name("blender_render_measure.py")
 
 
+def normalize_quat_xyzw(q: np.ndarray) -> np.ndarray:
+    q = np.asarray(q, dtype=np.float64)
+    n = np.linalg.norm(q)
+    if n <= 0:
+        raise ValueError("zero-length quaternion")
+    return q / n
+
+
+def make_row_transform_matrix(rotation: np.ndarray, translation: np.ndarray) -> np.ndarray:
+    rotation = np.asarray(rotation, dtype=np.float64)
+    translation = np.asarray(translation, dtype=np.float64)
+    matrix = np.eye(4, dtype=np.float64)
+    matrix[:3, :3] = rotation
+    matrix[3, :3] = translation
+    return matrix
+
+
+def serialize_pose(rotation: np.ndarray, translation: np.ndarray, coordinate_basis: str) -> dict:
+    rotation = np.asarray(rotation, dtype=np.float64)
+    translation = np.asarray(translation, dtype=np.float64)
+    quat_xyzw = normalize_quat_xyzw(Rotation.from_matrix(rotation).as_quat())
+    euler_deg = Rotation.from_matrix(rotation).as_euler("xyz", degrees=True)
+    matrix = make_row_transform_matrix(rotation, translation)
+    return {
+        "coordinate_basis": coordinate_basis,
+        "position": [float(v) for v in translation],
+        "rotation_euler_deg": [float(v) for v in euler_deg],
+        "rotation_quaternion_xyzw": [float(v) for v in quat_xyzw],
+        "transform_matrix": [[float(v) for v in row] for row in matrix],
+    }
+
+
 def downsample_points(points: np.ndarray, max_points: int, seed: int) -> np.ndarray:
     if len(points) <= max_points:
         return points
@@ -455,6 +487,7 @@ def main(argv: list[str]) -> int:
 
     candidate_scales = np.linspace(0.97, 1.03, 7, dtype=np.float32) * overall_scale
     best_result: dict | None = None
+    best_debug: dict | None = None
     for scale in candidate_scales:
         rotation_seed = best_coarse["rotation"]
         coarse_full = transform_points(model_vertices_unity, float(scale), rotation_seed, np.zeros(3, dtype=np.float32))
@@ -510,9 +543,48 @@ def main(argv: list[str]) -> int:
         }
         if best_result is None or candidate["score"] < best_result["score"]:
             best_result = candidate
+            best_debug = {
+                "coarse_search": {
+                    "scale": float(scale),
+                    "seed_euler_deg": [float(v) for v in best_coarse["euler_deg"]],
+                    "pose": serialize_pose(
+                        rotation_seed,
+                        coarse_translation,
+                        "unity_camera_local_x_right_y_up_z_forward",
+                    ),
+                    "score": float(best_coarse["metrics"]["score"]),
+                    "rmse_3d": float(best_coarse["metrics"]["rmse_3d"]),
+                    "rmse_2d": float(best_coarse["metrics"]["rmse_2d"]),
+                    "size_error": float(best_coarse["metrics"]["size_error"]),
+                },
+                "icp_delta": {
+                    "scale": 1.0,
+                    "pose": serialize_pose(
+                        delta_result["rotation"],
+                        delta_result["translation"],
+                        "unity_camera_local_delta_x_right_y_up_z_forward",
+                    ),
+                    "rmse": float(delta_result["rmse"]),
+                    "inlier_ratio": float(delta_result["inlier_ratio"]),
+                },
+                "final_camera_local_unity": {
+                    "scale": float(scale),
+                    "pose": serialize_pose(
+                        final_rotation,
+                        final_translation,
+                        "unity_camera_local_x_right_y_up_z_forward",
+                    ),
+                    "front_view_rmse_2d": float(metrics["rmse_2d"]),
+                    "front_view_size_error": float(metrics["size_error"]),
+                    "width_error": float(metrics["width_error"]),
+                    "height_error": float(metrics["height_error"]),
+                },
+            }
 
     if best_result is None:
         raise RuntimeError("Failed to compute object alignment")
+    if best_debug is None:
+        raise RuntimeError("Failed to collect object alignment debug data")
 
     best = best_result
 
@@ -553,6 +625,28 @@ def main(argv: list[str]) -> int:
         "icp_inlier_ratio": float(best["inlier_ratio"]),
     }
     task["object_alignment"] = object_alignment
+
+    debug_section = dict(task.get("debug") or {})
+    pose_debug = dict(debug_section.get("pose_transform_stages") or {})
+    pose_debug["object_alignment"] = {
+        "coordinate_notes": {
+            "unity_camera_local": "model pose in PVCamera local space, Unity basis (X right, Y up, Z forward)",
+            "pointcloud_input_pre_blender_import": "legacy/export basis currently consumed by pose stage",
+        },
+        "coarse_search": best_debug["coarse_search"],
+        "icp_delta": best_debug["icp_delta"],
+        "final_camera_local_unity": best_debug["final_camera_local_unity"],
+        "final_camera_local_pointcloud_input": {
+            "scale": float(best["scale"]),
+            "pose": serialize_pose(
+                pointcloud_rotation,
+                pointcloud_translation,
+                "pointcloud_input_pre_blender_import",
+            ),
+        },
+    }
+    debug_section["pose_transform_stages"] = pose_debug
+    task["debug"] = debug_section
 
     blender_label = "software-fallback"
     try:

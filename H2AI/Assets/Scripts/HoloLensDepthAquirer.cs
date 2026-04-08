@@ -18,7 +18,7 @@ public class HoloLensDepthAquirer : MonoBehaviour
     // set Depth Sensor Mode (default All)
     [SerializeField] DepthSensorType _depthSensorType = DepthSensorType.AHAT;
 
-    [SerializeField] bool _enablePreview = false;
+    //[SerializeField] bool _enablePreview = false;
     //[SerializeField] HoloLensAquiredDepthPreviewController _previewController;
 
     public ShuJuQingQiu _publisher;
@@ -48,6 +48,7 @@ public class HoloLensDepthAquirer : MonoBehaviour
     private Dictionary<hl2da.SENSOR_ID, float[,]> rm_uv2xy = new Dictionary<hl2da.SENSOR_ID, float[,]>();
     private Dictionary<hl2da.SENSOR_ID, float[,]> rm_mapxy = new Dictionary<hl2da.SENSOR_ID, float[,]>();
     private Dictionary<hl2da.SENSOR_ID, float[]> rm_intrinsics = new Dictionary<hl2da.SENSOR_ID, float[]>();
+    private bool _depthInitialized;
 
     // Start is called before the first frame update
     void Start()
@@ -109,6 +110,9 @@ public class HoloLensDepthAquirer : MonoBehaviour
             //colormap_mat.SetFloat("_Lf", 0.0f / 65535.0f);
             //colormap_mat.SetFloat("_Rf", 3000.0f / 65535.0f);
         }
+
+        pose_latest = new float[hl2da.user.POSE_ROWS, hl2da.user.POSE_COLS];
+        _depthInitialized = true;
 
         //grayscale_mat = new Material(grayscale_shader);
 #endif
@@ -302,9 +306,7 @@ public class HoloLensDepthAquirer : MonoBehaviour
         tex_grayscale.Apply(false);
 
         // Display pose
-        float[,] pose = hl2da.user.Unpack2D<float>(fb.Buffer(3), hl2da.user.POSE_ROWS, hl2da.user.POSE_COLS);
-
-        pose_latest = CloneFloat2D(pose);
+        hl2da.user.Copy<float>(fb.Buffer(3), pose_latest, pose_latest.Length);
         // 回退方案：如果以后想重新发 PNG，就保留这两行
         // byte[] frameData = ImageConversion.EncodeToPNG(tex_grayscale);
         // Publish(frameData, pose);
@@ -327,8 +329,7 @@ public class HoloLensDepthAquirer : MonoBehaviour
         tex_grayscale.Apply(false);
 
         // Display pose
-        float[,] pose = hl2da.user.Unpack2D<float>(fb.Buffer(3), hl2da.user.POSE_ROWS, hl2da.user.POSE_COLS);
-        pose_latest = CloneFloat2D(pose);
+        hl2da.user.Copy<float>(fb.Buffer(3), pose_latest, pose_latest.Length);
 
         // 如果 Longthrow 也要发，就在这里保留同样结构
         // byte[] frameData = ImageConversion.EncodeToPNG(tex_grayscale);
@@ -394,6 +395,47 @@ public class HoloLensDepthAquirer : MonoBehaviour
     public void SetDepthUpdateEnabled(bool enabled)
     {
         _enable_sensor_update = enabled;
+    }
+
+    void OnDestroy()
+    {
+        ReleaseDepthResources();
+    }
+
+    void OnApplicationQuit()
+    {
+        ReleaseDepthResources();
+    }
+
+    void ReleaseDepthResources()
+    {
+#if WINDOWS_UWP
+        if (_depthInitialized)
+        {
+            if (_depthSensorType == DepthSensorType.AHAT)
+            {
+                hl2da.user.SetEnable(hl2da.SENSOR_ID.RM_DEPTH_AHAT, false);
+            }
+            else if (_depthSensorType == DepthSensorType.LONGTHROW)
+            {
+                hl2da.user.SetEnable(hl2da.SENSOR_ID.RM_DEPTH_LONGTHROW, false);
+            }
+
+            _depthInitialized = false;
+        }
+#endif
+
+        if (tex_grayscale_publish != null)
+        {
+            Destroy(tex_grayscale_publish);
+            tex_grayscale_publish = null;
+        }
+
+        if (tex_grayscale != null)
+        {
+            Destroy(tex_grayscale);
+            tex_grayscale = null;
+        }
     }
 
     string PoseToString(float[,] pose)

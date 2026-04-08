@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -29,6 +30,7 @@ public class HoloLensPVAquirer : MonoBehaviour
     private Texture2D tex_pv;
     private byte[] pv_raw_buffer;
     private byte[] pv_flip_buffer;
+    private bool _pvInitialized;
 
     //public HoloLensPVPublisher _publisher;
     public ShuJuQingQiu _publisher;
@@ -48,7 +50,10 @@ public class HoloLensPVAquirer : MonoBehaviour
         tex_pv = new Texture2D(pvcf.width, pvcf.height, TextureFormat.BGRA32, false);
         pv_raw_buffer = new byte[pvcf.width * pvcf.height * 4];
         pv_flip_buffer = new byte[pvcf.width * pvcf.height * 4];
+        pose_latest = new float[hl2da.user.POSE_ROWS, hl2da.user.POSE_COLS];
+        k_latest = new float[3, 3];
         pv_image.texture = tex_pv;
+        _pvInitialized = true;
 #endif
         _enable_sensor_update = true;////
     }
@@ -83,6 +88,20 @@ public class HoloLensPVAquirer : MonoBehaviour
         }
     }
 
+    void CopyImageRows(IntPtr source, byte[] destination, int width, int height, int strideBytes)
+    {
+        int rowBytes = width * 4;
+        for (int y = 0; y < height; y++)
+        {
+            System.Runtime.InteropServices.Marshal.Copy(
+                System.IntPtr.Add(source, y * strideBytes),
+                destination,
+                y * rowBytes,
+                rowBytes
+            );
+        }
+    }
+
 
     void UpdateFrame()
     {
@@ -90,30 +109,11 @@ public class HoloLensPVAquirer : MonoBehaviour
         if (fb.Status != hl2da.STATUS.OK) { return; }
 
         uint stride = hl2da.converter.GetStride_PV(pvcf.width);
-
-        hl2da.converter fc = hl2da.converter.Convert(fb.Buffer(0), stride, pvcf.height, hl2da.IMT_Format.Nv12, hl2da.IMT_Format.Bgra8);
+        using var fc = hl2da.converter.Convert(fb.Buffer(0), stride, pvcf.height, hl2da.IMT_Format.Nv12, hl2da.IMT_Format.Bgra8);
 
         if (stride != pvcf.width)
         {
-            byte[,,] image = hl2da.coprocessor.Crop<byte>(
-                fc.Buffer,
-                (int)stride,
-                pvcf.height,
-                4,
-                0,
-                0,
-                pvcf.width,
-                pvcf.height
-            );
-
-            using hl2da.pointer p = hl2da.pointer.get(image);
-
-            System.Runtime.InteropServices.Marshal.Copy(
-                p.value,
-                pv_raw_buffer,
-                0,
-                pv_raw_buffer.Length
-            );
+            CopyImageRows(fc.Buffer, pv_raw_buffer, pvcf.width, pvcf.height, (int)stride * 4);
         }
         else
         {
@@ -134,16 +134,21 @@ public class HoloLensPVAquirer : MonoBehaviour
         tex_pv.Apply(false);
 
         var metadata = hl2da.user.Unpack<hl2da.pv_metadata>(fb.Buffer(2));
-        float[,] pose = hl2da.user.Unpack2D<float>(fb.Buffer(3), hl2da.user.POSE_ROWS, hl2da.user.POSE_COLS);
+        hl2da.user.Copy<float>(fb.Buffer(3), pose_latest, pose_latest.Length);
         //Matrix4x4 pose = hl2da.user.Unpack<Matrix4x4>(fb.Buffer(3));
-
-        float[,] k_matrix = new float[,] { { metadata.fx, 0, metadata.cx }, { 0, metadata.fy, metadata.cy }, { 0, 0, 1 } };
 
         // encode image to png
         //byte[] frameData = ImageConversion.EncodeToPNG(tex_pv);
         //Publish(frameData, pv_width, pv_height, k_matrix, pose);
-        pose_latest = CloneFloat2D(pose);
-        k_latest = CloneFloat2D(k_matrix);
+        k_latest[0, 0] = metadata.fx;
+        k_latest[0, 1] = 0f;
+        k_latest[0, 2] = metadata.cx;
+        k_latest[1, 0] = 0f;
+        k_latest[1, 1] = metadata.fy;
+        k_latest[1, 2] = metadata.cy;
+        k_latest[2, 0] = 0f;
+        k_latest[2, 1] = 0f;
+        k_latest[2, 2] = 1f;
     }
 
     private float[,] CloneFloat2D(float[,] src)
@@ -202,5 +207,42 @@ public class HoloLensPVAquirer : MonoBehaviour
 
         Game_M.initialize.XianShi("pv_freeze_02_done");
         return true;
+    }
+
+    void OnDestroy()
+    {
+        ReleasePVResources();
+    }
+
+    void OnApplicationQuit()
+    {
+        ReleasePVResources();
+    }
+
+    void ReleasePVResources()
+    {
+#if WINDOWS_UWP
+        if (_pvInitialized)
+        {
+            hl2da.user.SetEnable(hl2da.SENSOR_ID.PV, false);
+            _pvInitialized = false;
+        }
+#endif
+        if (pv_image != null && pv_image.texture == tex_pv)
+        {
+            pv_image.texture = null;
+        }
+
+        if (tex_pv_frozen != null)
+        {
+            Destroy(tex_pv_frozen);
+            tex_pv_frozen = null;
+        }
+
+        if (tex_pv != null)
+        {
+            Destroy(tex_pv);
+            tex_pv = null;
+        }
     }
 }

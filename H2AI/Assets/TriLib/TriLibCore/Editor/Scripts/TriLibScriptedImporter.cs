@@ -9,7 +9,7 @@ using UnityEditor.Experimental.AssetImporters;
 #endif
 namespace TriLibCore.Editor
 {
-    [ScriptedImporter(1, new[] { "gltf", "glb", "ply", "stl", "3mf" })]
+    [ScriptedImporter(1, new[] {"ply", "stl", "3mf" })]
     public class TriLibScriptedImporter : ScriptedImporter
     {
         public AssetLoaderOptions AssetLoaderOptions

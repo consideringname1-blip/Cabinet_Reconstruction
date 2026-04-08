@@ -1648,7 +1648,6 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   _enable_sensor_update: 0
   _depthSensorType: 0
-  _enablePreview: 0
   _publisher: {fileID: 1912203437}
   tex_grayscale_publish: {fileID: 0}
 --- !u!114 &223974228
@@ -6771,7 +6770,6 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 1912203436}
-  - component: {fileID: 1912203435}
   - component: {fileID: 1912203437}
   - component: {fileID: 1912203438}
   - component: {fileID: 1912203439}
@@ -6782,18 +6780,6 @@ GameObject:
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
   m_IsActive: 1
---- !u!114 &1912203435
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 1912203434}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 0f8a6a8010d65f2499f266d0a3a5ff19, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!4 &1912203436
 Transform:
   m_ObjectHideFlags: 0
@@ -6831,6 +6817,10 @@ MonoBehaviour:
   urlModel: 
   image_url: 
   texture2DTuPian: {fileID: 2800000, guid: 7beab324a3ae347418d5bd86646a4c13, type: 3}
+  debug_json: 
+  pose_transform_stages_json: 
+  pose_stage_debug_json: 
+  object_alignment_debug_json: 
 --- !u!114 &1912203438
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -8578,7 +8568,6 @@ GameObject:
   - component: {fileID: 9182042754362187405}
   - component: {fileID: 9182042754362187394}
   - component: {fileID: 9182042754362187395}
-  - component: {fileID: 9182042754362187408}
   m_Layer: 0
   m_Name: CoffeeCup2 Variant
   m_TagString: Untagged
@@ -13784,18 +13773,6 @@ MonoBehaviour:
           m_StringArgument: 
           m_BoolArgument: 0
         m_CallState: 2
---- !u!114 &9182042754362187408
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 2807125549348135035}
-  m_Enabled: 0
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: a684eda687fa01f4182b41e4425aec86, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

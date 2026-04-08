@@ -170,6 +170,8 @@ def check_task(task_id):
 
             object_info = task_json.get("object")
             response["object"] = object_info if object_info else None
+            debug_info = task_json.get("debug")
+            response["debug"] = debug_info if debug_info else None
 
             mesh_path = INSTANTMESH_OUTPUT_MESHES / mesh_name if mesh_name else None
             mtl_path = INSTANTMESH_OUTPUT_MESHES / mtl_name if mtl_name else None

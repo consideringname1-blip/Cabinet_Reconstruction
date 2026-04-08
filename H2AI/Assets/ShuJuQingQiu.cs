@@ -300,6 +300,51 @@ public class ShuJuQingQiu : MonoBehaviour
     public string image_url;
     [Header("图片")]
     public Texture2D texture2DTuPian;
+    [Header("Debug JSON")]
+    [TextArea(3, 12)]
+    public string debug_json;
+    [Header("Pose Transform Debug JSON")]
+    [TextArea(3, 12)]
+    public string pose_transform_stages_json;
+    [Header("Pose Stage Debug JSON")]
+    [TextArea(3, 12)]
+    public string pose_stage_debug_json;
+    [Header("Object Alignment Debug JSON")]
+    [TextArea(3, 12)]
+    public string object_alignment_debug_json;
+
+    void ApplyDebugInfo(JObject jo)
+    {
+        JToken debugToken = jo["debug"];
+        if (debugToken == null || debugToken.Type == JTokenType.Null)
+        {
+            debug_json = "";
+            pose_transform_stages_json = "";
+            pose_stage_debug_json = "";
+            object_alignment_debug_json = "";
+            return;
+        }
+
+        debug_json = debugToken.ToString(Formatting.Indented);
+
+        JToken poseTransformStagesToken = debugToken["pose_transform_stages"];
+        pose_transform_stages_json =
+            poseTransformStagesToken == null || poseTransformStagesToken.Type == JTokenType.Null
+            ? ""
+            : poseTransformStagesToken.ToString(Formatting.Indented);
+
+        JToken poseStageToken = poseTransformStagesToken?["pose_stage"];
+        pose_stage_debug_json =
+            poseStageToken == null || poseStageToken.Type == JTokenType.Null
+            ? ""
+            : poseStageToken.ToString(Formatting.Indented);
+
+        JToken objectAlignmentToken = poseTransformStagesToken?["object_alignment"];
+        object_alignment_debug_json =
+            objectAlignmentToken == null || objectAlignmentToken.Type == JTokenType.Null
+            ? ""
+            : objectAlignmentToken.ToString(Formatting.Indented);
+    }
 
     void ApplyJson(string jsonString)
     {
@@ -361,6 +406,7 @@ public class ShuJuQingQiu : MonoBehaviour
 
         urlModel = fbxUrl;
         image_url = imgUrl;
+        ApplyDebugInfo(jo);
 
         if (objectToken != null && objectToken.Type != JTokenType.Null)
         {

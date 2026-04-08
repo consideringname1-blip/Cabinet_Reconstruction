@@ -2,6 +2,7 @@ using Microsoft.MixedReality.Toolkit.Input;
 using Microsoft.MixedReality.Toolkit.UI;
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using TriLibCore;
 using UnityEngine;
 /// <summary>
@@ -38,14 +39,22 @@ public class LoadModel : MonoBehaviour
         }
     }
     AssetLoaderOptions assetLoaderOptions;
+    private bool _isLoading;
     /// <summary>
     /// 延迟加载
     /// </summary>
     public void YanChiJiaZai()
     {
+        if (_isLoading)
+        {
+            Debug.LogWarning("[LoadModel] A model is already loading.");
+            return;
+        }
+
         if (xiaZaiModel!=null)
         {
-            xiaZaiModel.gameObject.SetActive(false);
+            Destroy(xiaZaiModel);
+            xiaZaiModel = null;
         }
         Game_M.initialize.XianShi("zaiRu");
         CancelInvoke();
@@ -64,6 +73,14 @@ public class LoadModel : MonoBehaviour
           ModelPath = Windows.Storage.ApplicationData.Current.RoamingFolder.Path + "/model.fbx";
 #endif
 
+        if (!File.Exists(ModelPath))
+        {
+            Debug.LogError("[LoadModel] Model file not found: " + ModelPath);
+            return;
+        }
+
+        _isLoading = true;
+
         AssetLoader.LoadModelFromFile(ModelPath, OnLoad, OnMaterialsLoad, OnProgress, OnError, null, assetLoaderOptions);
     }
     /// <summary>
@@ -72,6 +89,7 @@ public class LoadModel : MonoBehaviour
     /// <param name="obj">The contextualized error, containing the original exception and the context passed to the method where the error was thrown.</param>
     private void OnError(IContextualizedError obj)
     {
+        _isLoading = false;
         Debug.LogError($"An error occurred while loading your Model: {obj.GetInnerException()}");
     }
 
@@ -93,6 +111,7 @@ public class LoadModel : MonoBehaviour
     /// <param name="assetLoaderContext">The context used to load the Model.</param>
     private void OnMaterialsLoad(AssetLoaderContext assetLoaderContext)
     {
+        _isLoading = false;
         Debug.Log("Materials loaded. Model fully loaded.");
 
         GameObject game = assetLoaderContext.RootGameObject;
@@ -139,8 +158,14 @@ public class LoadModel : MonoBehaviour
 
         // 5. 后续逻辑保持不变
         AddGameObjectCollider(game);
-        game.gameObject.AddComponent<ObjectManipulator>();
-        game.gameObject.AddComponent<NearInteractionGrabbable>();
+        if (game.gameObject.GetComponent<ObjectManipulator>() == null)
+        {
+            game.gameObject.AddComponent<ObjectManipulator>();
+        }
+        if (game.gameObject.GetComponent<NearInteractionGrabbable>() == null)
+        {
+            game.gameObject.AddComponent<NearInteractionGrabbable>();
+        }
         Game_M.initialize.GuanBi();
         xiaZaiModel = game;
     }

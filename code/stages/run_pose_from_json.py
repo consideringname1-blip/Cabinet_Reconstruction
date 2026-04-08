@@ -67,6 +67,46 @@ def quat_xyzw_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
     ], dtype=np.float64)
 
 
+def rotation_matrix_to_euler_xyz_deg(R: np.ndarray) -> np.ndarray:
+    R = np.asarray(R, dtype=np.float64)
+    sy = np.sqrt((R[0, 0] * R[0, 0]) + (R[1, 0] * R[1, 0]))
+    singular = sy < 1e-8
+
+    if not singular:
+        x = np.arctan2(R[2, 1], R[2, 2])
+        y = np.arctan2(-R[2, 0], sy)
+        z = np.arctan2(R[1, 0], R[0, 0])
+    else:
+        x = np.arctan2(-R[1, 2], R[1, 1])
+        y = np.arctan2(-R[2, 0], sy)
+        z = 0.0
+    return np.degrees(np.array([x, y, z], dtype=np.float64))
+
+
+def make_row_transform_matrix(rotation: np.ndarray, translation: np.ndarray) -> np.ndarray:
+    rotation = np.asarray(rotation, dtype=np.float64)
+    translation = np.asarray(translation, dtype=np.float64)
+    matrix = np.eye(4, dtype=np.float64)
+    matrix[:3, :3] = rotation
+    matrix[3, :3] = translation
+    return matrix
+
+
+def serialize_pose(rotation: np.ndarray, translation: np.ndarray, coordinate_basis: str) -> dict[str, list[float] | list[list[float]] | str]:
+    rotation = np.asarray(rotation, dtype=np.float64)
+    translation = np.asarray(translation, dtype=np.float64)
+    quat_xyzw = rotation_matrix_to_quat_xyzw(rotation)
+    euler_deg = rotation_matrix_to_euler_xyz_deg(rotation)
+    matrix = make_row_transform_matrix(rotation, translation)
+    return {
+        "coordinate_basis": coordinate_basis,
+        "position": [float(v) for v in translation],
+        "rotation_euler_deg": [float(v) for v in euler_deg],
+        "rotation_quaternion_xyzw": [float(v) for v in quat_xyzw],
+        "transform_matrix": [[float(v) for v in row] for row in matrix],
+    }
+
+
 def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
     alignment = task.get("object_alignment") or {}
     coordinate_basis = str(alignment.get("coordinate_basis") or "")
@@ -121,6 +161,61 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     }
 
 
+def build_pose_debug(task: dict) -> dict:
+    alignment = task.get("object_alignment") or {}
+    pv = task.get("PVCamera") or {}
+
+    pointcloud_position = np.asarray(alignment.get("model_position"), dtype=np.float64)
+    pointcloud_quat = np.asarray(alignment.get("model_rotation_quaternion_xyzw"), dtype=np.float64)
+    pointcloud_rotation = quat_xyzw_to_rotation_matrix(pointcloud_quat)
+
+    local_position, local_rotation = resolve_local_camera_pose(task)
+
+    pv_pose = np.asarray(pv.get("pose"), dtype=np.float64)
+    if pv_pose.shape != (4, 4):
+        raise ValueError("PVCamera.pose must be a 4x4 matrix")
+    pv_rotation = pv_pose[:3, :3]
+    pv_translation = pv_pose[3, :3]
+
+    world_position = local_position @ pv_rotation + pv_translation
+    world_rotation = local_rotation @ pv_rotation
+
+    return {
+        "camera_local_pointcloud_input": {
+            "scale": float(alignment.get("model_real_scale") or 0.0),
+            "pose": serialize_pose(
+                pointcloud_rotation,
+                pointcloud_position,
+                "pointcloud_input_pre_blender_import",
+            ),
+        },
+        "camera_local_unity": {
+            "scale": float(alignment.get("model_real_scale") or 0.0),
+            "pose": serialize_pose(
+                local_rotation,
+                local_position,
+                "unity_camera_local_x_right_y_up_z_forward",
+            ),
+        },
+        "pv_camera_world": {
+            "pose": serialize_pose(
+                pv_rotation,
+                pv_translation,
+                "unity_world_x_right_y_up_z_forward",
+            ),
+            "notes": "PVCamera.pose is applied with row-vector convention: p_world = p_local @ R_cam + t_cam",
+        },
+        "final_object_world": {
+            "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,
+            "pose": serialize_pose(
+                world_rotation,
+                world_position,
+                "unity_world_x_right_y_up_z_forward",
+            ),
+        },
+    }
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("Usage: python code/stages/run_pose_from_json.py <task_meta.json or filename>", file=sys.stderr)
@@ -132,6 +227,11 @@ def main(argv: list[str]) -> int:
     world_pose = compute_world_pose(task)
     world_pose["coordinate_basis"] = "unity_world_x_right_y_up_z_forward"
     task["object"] = world_pose
+    debug_section = dict(task.get("debug") or {})
+    pose_debug = dict(debug_section.get("pose_transform_stages") or {})
+    pose_debug["pose_stage"] = build_pose_debug(task)
+    debug_section["pose_transform_stages"] = pose_debug
+    task["debug"] = debug_section
     save_task_json(json_path, task)
 
     print(f"[INFO] JSON            : {json_path}")
