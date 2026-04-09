@@ -607,7 +607,12 @@ def main(argv: list[str]) -> int:
 
     object_alignment = {
         "coordinate_basis": "pointcloud_input_pre_blender_import",
-        "coordinate_basis_axes_relative_to_unity": {
+        "translation_axes_relative_to_unity": {
+            "x": "-Z",
+            "y": "-Y",
+            "z": "-X",
+        },
+        "rotation_axes_relative_to_unity": {
             "x": "-Z",
             "y": "+Y",
             "z": "-X",

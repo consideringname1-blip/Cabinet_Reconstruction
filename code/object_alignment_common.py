@@ -39,9 +39,23 @@ POINTCLOUD_INPUT_TO_UNITY_BASIS = np.array(
 UNITY_TO_POINTCLOUD_INPUT_BASIS = POINTCLOUD_INPUT_TO_UNITY_BASIS.T
 
 # Legacy/export basis consumed by the pose stage for object_alignment output.
-# We keep X/Z aligned with the previous convention, but flip the vertical axis
-# so camera-local "up/down" matches the observed placement in Unity.
-OBJECT_ALIGNMENT_POINTCLOUD_INPUT_TO_UNITY_BASIS = np.array(
+# Rotation must stay in a proper right-handed frame after conversion, so we
+# preserve the previous basis for orientation.
+OBJECT_ALIGNMENT_ROTATION_POINTCLOUD_INPUT_TO_UNITY_BASIS = np.array(
+    [
+        [0.0, 0.0, -1.0],
+        [0.0, 1.0, 0.0],
+        [-1.0, 0.0, 0.0],
+    ],
+    dtype=np.float32,
+)
+UNITY_TO_OBJECT_ALIGNMENT_ROTATION_POINTCLOUD_INPUT_BASIS = (
+    OBJECT_ALIGNMENT_ROTATION_POINTCLOUD_INPUT_TO_UNITY_BASIS.T
+)
+
+# Position uses a slightly different export mapping: flip the vertical axis so
+# camera-local "left/down" in Unity lines up with the observed placement.
+OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_TO_UNITY_BASIS = np.array(
     [
         [0.0, 0.0, -1.0],
         [0.0, -1.0, 0.0],
@@ -49,7 +63,9 @@ OBJECT_ALIGNMENT_POINTCLOUD_INPUT_TO_UNITY_BASIS = np.array(
     ],
     dtype=np.float32,
 )
-UNITY_TO_OBJECT_ALIGNMENT_POINTCLOUD_INPUT_BASIS = OBJECT_ALIGNMENT_POINTCLOUD_INPUT_TO_UNITY_BASIS.T
+UNITY_TO_OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_BASIS = (
+    OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_TO_UNITY_BASIS.T
+)
 
 MODEL_INPUT_TO_UNITY_BASIS = np.array(
     [
@@ -277,10 +293,19 @@ def model_pose_unity_to_pointcloud_input(
 ) -> tuple[np.ndarray, np.ndarray]:
     # Convert the final ICP pose from the internal Unity basis to the
     # object_alignment export basis consumed by downstream pose code.
+    # Rotation and translation intentionally use separate mappings here:
+    # rotation must remain right-handed, while translation applies an empirical
+    # vertical-axis flip for downstream placement.
     rotation_unity = np.asarray(rotation_unity, dtype=np.float32)
     translation_unity = np.asarray(translation_unity, dtype=np.float32)
-    rotation_pointcloud = UNITY_TO_OBJECT_ALIGNMENT_POINTCLOUD_INPUT_BASIS @ rotation_unity @ MODEL_INPUT_TO_UNITY_BASIS
-    translation_pointcloud = translation_unity @ OBJECT_ALIGNMENT_POINTCLOUD_INPUT_TO_UNITY_BASIS
+    rotation_pointcloud = (
+        UNITY_TO_OBJECT_ALIGNMENT_ROTATION_POINTCLOUD_INPUT_BASIS
+        @ rotation_unity
+        @ MODEL_INPUT_TO_UNITY_BASIS
+    )
+    translation_pointcloud = (
+        translation_unity @ OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_TO_UNITY_BASIS
+    )
     return rotation_pointcloud.astype(np.float32), translation_pointcloud.astype(np.float32)
 
 
@@ -292,8 +317,14 @@ def model_pose_pointcloud_input_to_unity(
     # that still expect the internal Unity basis.
     rotation_pointcloud = np.asarray(rotation_pointcloud, dtype=np.float32)
     translation_pointcloud = np.asarray(translation_pointcloud, dtype=np.float32)
-    rotation_unity = OBJECT_ALIGNMENT_POINTCLOUD_INPUT_TO_UNITY_BASIS @ rotation_pointcloud @ UNITY_TO_MODEL_INPUT_BASIS
-    translation_unity = translation_pointcloud @ UNITY_TO_OBJECT_ALIGNMENT_POINTCLOUD_INPUT_BASIS
+    rotation_unity = (
+        OBJECT_ALIGNMENT_ROTATION_POINTCLOUD_INPUT_TO_UNITY_BASIS
+        @ rotation_pointcloud
+        @ UNITY_TO_MODEL_INPUT_BASIS
+    )
+    translation_unity = (
+        translation_pointcloud @ UNITY_TO_OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_BASIS
+    )
     return rotation_unity.astype(np.float32), translation_unity.astype(np.float32)
 
 
