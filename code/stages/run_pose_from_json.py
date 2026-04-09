@@ -148,11 +148,13 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
 
     # Temporary fallback for debugging: use the uploaded Unity Camera.main pose
     # as the world anchor instead of PVCamera.pose so we can compare behavior.
+    # When the anchor comes from a Unity quaternion, compose poses with the
+    # usual Unity/column-vector convention: p_world = R_cam @ p_local + t_cam.
     R_cam = quat_xyzw_to_rotation_matrix(device_rotation_quat)
     t_cam = device_position
 
-    world_position = local_position @ R_cam + t_cam
-    world_rotation = local_rotation @ R_cam
+    world_position = (R_cam @ local_position) + t_cam
+    world_rotation = R_cam @ local_rotation
     world_quat = rotation_matrix_to_quat_xyzw(world_rotation)
 
     uniform_scale = [float(model_scale), float(model_scale), float(model_scale)]
@@ -181,8 +183,8 @@ def build_pose_debug(task: dict) -> dict:
         raise ValueError("device.rotation must have 4 values")
     device_rotation = quat_xyzw_to_rotation_matrix(device_rotation_quat)
 
-    world_position = local_position @ device_rotation + device_position
-    world_rotation = local_rotation @ device_rotation
+    world_position = (device_rotation @ local_position) + device_position
+    world_rotation = device_rotation @ local_rotation
 
     return {
         "camera_local_pointcloud_input": {
