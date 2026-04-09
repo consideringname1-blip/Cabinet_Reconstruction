@@ -134,10 +134,6 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     pv = task.get("PVCamera") or {}
 
     local_position, local_rotation = resolve_local_camera_pose(task)
-    local_position = np.array(
-        [-local_position[0], local_position[1], local_position[2]],
-        dtype=np.float64,
-    )
 
     model_scale = float(alignment.get("model_real_scale") or 0.0)
     if model_scale <= 0:
@@ -175,10 +171,6 @@ def build_pose_debug(task: dict) -> dict:
     pointcloud_rotation = quat_xyzw_to_rotation_matrix(pointcloud_quat)
 
     local_position, local_rotation = resolve_local_camera_pose(task)
-    local_position = np.array(
-        [-local_position[0], local_position[1], local_position[2]],
-        dtype=np.float64,
-    )
 
     pv_pose = np.asarray(pv.get("pose"), dtype=np.float64)
     if pv_pose.shape != (4, 4):
