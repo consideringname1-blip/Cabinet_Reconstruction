@@ -1716,13 +1716,18 @@ MonoBehaviour:
   m_GameObject: {fileID: 223974226}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 906590b0bd80d8a4088ce1e48dd738f9, type: 3}
+  m_Script: {fileID: 11500000, guid: 84f80414dd86901489fee99e7cd07f69, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  modelTemplate: {fileID: 0}
-  spawnParent: {fileID: 0}
-  defaultEulerAngles: {x: 0, y: 0, z: 0}
-  rotationEulerPerSecond: {x: 0, y: 60, z: 0}
+  targetTransform: {fileID: 0}
+  useMainCameraIfMissing: 1
+  driveThisGameObjectToHeadsetPose: 1
+  tmpText: {fileID: 0}
+  uiText: {fileID: 0}
+  writeToGameObjectName: 1
+  includeRotation: 1
+  decimals: 3
+  latestDisplayText: 
 --- !u!1 &232507214
 GameObject:
   m_ObjectHideFlags: 0
