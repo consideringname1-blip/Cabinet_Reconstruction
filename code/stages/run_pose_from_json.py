@@ -143,9 +143,10 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     if pv_pose.shape != (4, 4):
         raise ValueError("PVCamera.pose must be a 4x4 matrix")
 
-    # JSON pose stores translation in the last row and uses a row-vector convention.
-    # p_world = p_local @ R_cam + t_cam
-    R_cam = pv_pose[:3, :3]
+    # JSON pose stores translation in the last row. In practice, the recorded
+    # PVCamera basis needs a transpose here when converting camera-local poses
+    # into Unity world space.
+    R_cam = pv_pose[:3, :3].T
     t_cam = pv_pose[3, :3]
 
     world_position = local_position @ R_cam + t_cam
@@ -173,7 +174,8 @@ def build_pose_debug(task: dict) -> dict:
     pv_pose = np.asarray(pv.get("pose"), dtype=np.float64)
     if pv_pose.shape != (4, 4):
         raise ValueError("PVCamera.pose must be a 4x4 matrix")
-    pv_rotation = pv_pose[:3, :3]
+    pv_rotation_raw = pv_pose[:3, :3]
+    pv_rotation = pv_rotation_raw.T
     pv_translation = pv_pose[3, :3]
 
     world_position = local_position @ pv_rotation + pv_translation
@@ -202,7 +204,15 @@ def build_pose_debug(task: dict) -> dict:
                 pv_translation,
                 "unity_world_x_right_y_up_z_forward",
             ),
-            "notes": "PVCamera.pose is applied with row-vector convention: p_world = p_local @ R_cam + t_cam",
+            "notes": "PVCamera.pose translation comes from the last row, and the rotation is transposed before applying camera-local poses to Unity world space.",
+        },
+        "pv_camera_world_raw_matrix": {
+            "pose": serialize_pose(
+                pv_rotation_raw,
+                pv_translation,
+                "unity_world_x_right_y_up_z_forward",
+            ),
+            "notes": "Raw 3x3 rotation block from PVCamera.pose before transpose.",
         },
         "final_object_world": {
             "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,
