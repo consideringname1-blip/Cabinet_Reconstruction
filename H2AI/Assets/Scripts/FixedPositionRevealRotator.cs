@@ -2,115 +2,125 @@ using UnityEngine;
 
 public class FixedPositionRevealRotator : MonoBehaviour
 {
-    [SerializeField] private Vector3 fixedPosition = Vector3.zero;
-    [SerializeField] private Vector3 fixedEulerAngles = Vector3.zero;
+    [SerializeField] private GameObject modelTemplate;
+    [SerializeField] private Transform spawnParent;
+    [SerializeField] private Vector3 defaultEulerAngles = Vector3.zero;
     [SerializeField] private Vector3 rotationEulerPerSecond = new Vector3(0f, 60f, 0f);
-    [SerializeField] private bool useLocalSpace = false;
 
-    private Renderer[] _renderers;
-    private bool _isRotating;
-    private Vector3 _currentPositionOffset = Vector3.zero;
-    private Vector3 _currentEulerOffset = Vector3.zero;
+    private GameObject _latestInstance;
 
-    void Awake()
+    public GameObject SpawnModel(Vector3 position)
     {
-        _renderers = GetComponentsInChildren<Renderer>(true);
-        ResetTransform();
-        SetVisible(false);
+        return SpawnModel(position, Quaternion.Euler(defaultEulerAngles), null, false);
     }
 
-    void Update()
+    public GameObject SpawnModel(Vector3 position, Quaternion rotation)
     {
-        if (!_isRotating)
+        return SpawnModel(position, rotation, null, false);
+    }
+
+    public GameObject SpawnModel(Vector3 position, Quaternion rotation, Color color)
+    {
+        return SpawnModel(position, rotation, color, false);
+    }
+
+    public GameObject SpawnModel(Vector3 position, Quaternion rotation, Color? color, bool rotateAfterSpawn)
+    {
+        if (modelTemplate == null)
+        {
+            Debug.LogError("[FixedPositionRevealRotator] Model template is not assigned.", this);
+            return null;
+        }
+
+        GameObject instance = Instantiate(modelTemplate, position, rotation, spawnParent);
+        instance.SetActive(true);
+
+        if (color.HasValue)
+        {
+            ApplyColor(instance, color.Value);
+        }
+
+        if (rotateAfterSpawn)
+        {
+            EnsureRuntimeRotator(instance);
+        }
+
+        _latestInstance = instance;
+        return instance;
+    }
+
+    public GameObject SpawnModelWithEuler(Vector3 position, Vector3 eulerAngles, Color? color, bool rotateAfterSpawn)
+    {
+        return SpawnModel(position, Quaternion.Euler(eulerAngles), color, rotateAfterSpawn);
+    }
+
+    public void DestroyLatestInstance()
+    {
+        if (_latestInstance != null)
+        {
+            Destroy(_latestInstance);
+            _latestInstance = null;
+        }
+    }
+
+    public void DestroyInstance(GameObject instance)
+    {
+        if (instance == null)
         {
             return;
         }
 
-        if (useLocalSpace)
+        if (_latestInstance == instance)
         {
-            transform.Rotate(rotationEulerPerSecond * Time.deltaTime, Space.Self);
+            _latestInstance = null;
         }
-        else
+
+        Destroy(instance);
+    }
+
+    void ApplyColor(GameObject target, Color color)
+    {
+        Renderer[] renderers = target.GetComponentsInChildren<Renderer>(true);
+        foreach (Renderer rendererComponent in renderers)
         {
-            transform.Rotate(rotationEulerPerSecond * Time.deltaTime, Space.World);
-        }
-    }
-
-    public void ShowRotateAndReset()
-    {
-        _currentPositionOffset = Vector3.zero;
-        _currentEulerOffset = Vector3.zero;
-        ResetTransform();
-        SetVisible(true);
-        _isRotating = true;
-    }
-
-    public void ShowRotateAndResetWithOffset(Vector3 positionOffset)
-    {
-        _currentPositionOffset = positionOffset;
-        _currentEulerOffset = Vector3.zero;
-        ResetTransform();
-        SetVisible(true);
-        _isRotating = true;
-    }
-
-    public void ShowRotateAndResetWithOffset(Vector3 positionOffset, Vector3 eulerOffset)
-    {
-        _currentPositionOffset = positionOffset;
-        _currentEulerOffset = eulerOffset;
-        ResetTransform();
-        SetVisible(true);
-        _isRotating = true;
-    }
-
-    public void ShowAtOffset(Vector3 positionOffset)
-    {
-        _currentPositionOffset = positionOffset;
-        _currentEulerOffset = Vector3.zero;
-        ResetTransform();
-        SetVisible(true);
-        _isRotating = false;
-    }
-
-    public void ShowAtOffset(Vector3 positionOffset, Vector3 eulerOffset)
-    {
-        _currentPositionOffset = positionOffset;
-        _currentEulerOffset = eulerOffset;
-        ResetTransform();
-        SetVisible(true);
-        _isRotating = false;
-    }
-
-    public void HideAndStop()
-    {
-        _isRotating = false;
-        ResetTransform();
-        SetVisible(false);
-    }
-
-    void ResetTransform()
-    {
-        Quaternion baseRotation = Quaternion.Euler(fixedEulerAngles);
-        Quaternion targetRotation = baseRotation * Quaternion.Euler(_currentEulerOffset);
-        Vector3 targetPosition = fixedPosition + _currentPositionOffset;
-
-        if (useLocalSpace)
-        {
-            transform.localPosition = targetPosition;
-            transform.localRotation = targetRotation;
-        }
-        else
-        {
-            transform.position = targetPosition;
-            transform.rotation = targetRotation;
+            Material[] materials = rendererComponent.materials;
+            foreach (Material material in materials)
+            {
+                if (material.HasProperty("_BaseColor"))
+                {
+                    material.SetColor("_BaseColor", color);
+                }
+                else if (material.HasProperty("_Color"))
+                {
+                    material.SetColor("_Color", color);
+                }
+            }
         }
     }
 
-    void SetVisible(bool visible)
+    void EnsureRuntimeRotator(GameObject target)
     {
-        foreach (Renderer rendererComponent in _renderers)
+        RuntimeSpin spin = target.GetComponent<RuntimeSpin>();
+        if (spin == null)
         {
-            rendererComponent.enabled = visible;
+            spin = target.AddComponent<RuntimeSpin>();
+        }
+
+        spin.SetAngularVelocity(rotationEulerPerSecond);
+    }
+
+    public class RuntimeSpin : MonoBehaviour
+    {
+        private Vector3 _angularVelocity;
+
+        public void SetAngularVelocity(Vector3 angularVelocity)
+        {
+            _angularVelocity = angularVelocity;
+        }
+
+        void Update()
+        {
+            transform.Rotate(_angularVelocity * Time.deltaTime, Space.Self);
         }
     }
 }

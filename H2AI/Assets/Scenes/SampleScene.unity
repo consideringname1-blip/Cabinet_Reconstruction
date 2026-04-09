@@ -1627,6 +1627,7 @@ GameObject:
   - component: {fileID: 223974228}
   - component: {fileID: 223974227}
   - component: {fileID: 223974230}
+  - component: {fileID: 223974231}
   m_Layer: 0
   m_Name: Scripts
   m_TagString: Untagged
@@ -1706,6 +1707,22 @@ MonoBehaviour:
   panelDistance: 0.8
   panelVerticalOffset: 0.05
   panelHorizontalOffset: 0
+--- !u!114 &223974231
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 223974226}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 906590b0bd80d8a4088ce1e48dd738f9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  modelTemplate: {fileID: 0}
+  spawnParent: {fileID: 0}
+  defaultEulerAngles: {x: 0, y: 0, z: 0}
+  rotationEulerPerSecond: {x: 0, y: 60, z: 0}
 --- !u!1 &232507214
 GameObject:
   m_ObjectHideFlags: 0
