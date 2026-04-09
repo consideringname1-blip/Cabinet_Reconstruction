@@ -188,6 +188,22 @@ def get_latest_unfinished_task() -> Optional[Dict[str, Any]]:
     return _row_to_dict(row)
 
 
+def get_latest_completed_task() -> Optional[Dict[str, Any]]:
+    """Query the most recent completed task."""
+    initialize_task_table()
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"""
+            SELECT *
+            FROM {TABLE_NAME}
+            WHERE status = 'completed'
+            ORDER BY id DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    return _row_to_dict(row)
+
+
 def get_unfinished_tasks() -> List[Dict[str, Any]]:
     """按创建顺序查询全部未完成且未失败的任务。"""
     initialize_task_table()

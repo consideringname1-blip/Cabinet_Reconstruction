@@ -19,6 +19,9 @@ public class ShuJuQingQiu : MonoBehaviour
     public bool hasServerPose = false;
     public Vector3 serverObjectPosition = Vector3.zero;
     public Quaternion serverObjectRotation = Quaternion.identity;
+    public bool hasServerCameraPose = false;
+    public Vector3 serverCameraPosition = Vector3.zero;
+    public Quaternion serverCameraRotation = Quaternion.identity;
 
     public HoloLensPVAquirer PV_controler;
     public HoloLensDepthAquirer DP_controler;
@@ -294,6 +297,15 @@ public class ShuJuQingQiu : MonoBehaviour
         Game_M.initialize.XianShi("check");
     }
 
+    public void XiaZaiZuiXinChengGongMoXing()
+    {
+        string url = "http://10.40.1.122:7355/latest-completed";
+        var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRequestLatestCompleted);
+        request.AddHeader("Content-Type", "application/json;charset=UTF-8");
+        request.Send();
+        Game_M.initialize.XianShi("latest_completed");
+    }
+
     [Header("模型下载地址")]
     public string urlModel;
     [Header("图片下载地址")]
@@ -365,6 +377,61 @@ public class ShuJuQingQiu : MonoBehaviour
             (float)rot[2],
             (float)rot[3]
         );
+
+        JToken pvCameraPoseToken = jo["debug"]?["pose_transform_stages"]?["pose_stage"]?["pv_camera_world"]?["pose"];
+        JArray pvPos = (JArray)pvCameraPoseToken?["position"];
+        JArray pvRot = (JArray)pvCameraPoseToken?["rotation_quaternion_xyzw"];
+        if (pvPos != null && pvPos.Count >= 3 && pvRot != null && pvRot.Count >= 4)
+        {
+            serverCameraPosition = new Vector3(
+                (float)pvPos[0],
+                (float)pvPos[1],
+                (float)pvPos[2]
+            );
+
+            serverCameraRotation = new Quaternion(
+                (float)pvRot[0],
+                (float)pvRot[1],
+                (float)pvRot[2],
+                (float)pvRot[3]
+            );
+
+            hasServerCameraPose = true;
+        }
+        else
+        {
+            hasServerCameraPose = false;
+        }
+    }
+
+    bool ApplyCompletedTaskResponse(JObject jo, string sourceTag)
+    {
+        string fbxUrl = jo["fbx_url"]?.ToString();
+        string imgUrl = jo["image_url"]?.ToString();
+        JToken objectToken = jo["object"];
+
+        if (string.IsNullOrEmpty(fbxUrl))
+        {
+            Debug.LogWarning("[" + sourceTag + "] completed response missing fbx_url.");
+            return false;
+        }
+
+        urlModel = fbxUrl;
+        image_url = imgUrl;
+        ApplyDebugInfo(jo);
+
+        if (objectToken != null && objectToken.Type != JTokenType.Null)
+        {
+            ApplyJson(jo.ToString());
+            hasServerPose = true;
+        }
+        else
+        {
+            hasServerPose = false;
+            Debug.LogWarning("[" + sourceTag + "] completed response missing object.");
+        }
+
+        return true;
     }
     private void OnRequestJieGuo(HTTPRequest request, HTTPResponse response)
     {
@@ -422,6 +489,32 @@ public class ShuJuQingQiu : MonoBehaviour
         XiaZaiModel();
     }
 
+    private void OnRequestLatestCompleted(HTTPRequest request, HTTPResponse response)
+    {
+        if (!response.IsSuccess)
+        {
+            Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
+            return;
+        }
+
+        JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
+        string status = jo["status"]?.ToString();
+
+        if (status != "completed")
+        {
+            Debug.LogWarning("[LATEST] latest-completed returned status = " + status);
+            return;
+        }
+
+        if (!ApplyCompletedTaskResponse(jo, "LATEST"))
+        {
+            return;
+        }
+
+        task_id = jo["task_id"]?.ToString();
+        XiaZaiModel();
+    }
+
     /// <summary>
     /// 下载模型
     /// </summary>
@@ -448,6 +541,15 @@ public class ShuJuQingQiu : MonoBehaviour
             File.WriteAllBytes(Application.streamingAssetsPath + "/model.fbx", receiver);
 #endif
             print("保存");
+            if (hasServerCameraPose && hasServerPose && CameraPoseDebugMarker.Instance != null)
+            {
+                CameraPoseDebugMarker.Instance.PlaceMarkers(
+                    serverCameraPosition,
+                    serverCameraRotation,
+                    serverObjectPosition,
+                    serverObjectRotation
+                );
+            }
             LoadModel.initialize.YanChiJiaZai();
             Game_M.initialize.XianShi("download completes");
         }
@@ -494,6 +596,10 @@ public class ShuJuQingQiu : MonoBehaviour
         if (Input.GetKeyDown(KeyCode.E))
         {
             XiaZaiModel();
+        }
+        if (Input.GetKeyDown(KeyCode.R))
+        {
+            XiaZaiZuiXinChengGongMoXing();
         }
     }
 }

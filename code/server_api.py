@@ -15,6 +15,7 @@ from config import (
 from task_worker import (
     create_task,
     get_current_task_id,
+    get_latest_completed_task_data,
     get_queue_snapshot,
     get_task,
     start_worker,
@@ -27,6 +28,57 @@ app = Flask(__name__)
 
 start_worker()
 
+
+def _build_completed_task_response(task_data: dict) -> dict:
+    response = {
+        "status": task_data["status"],
+        "task_id": task_data.get("task_id"),
+    }
+    task_json = task_data.get("task_json") or {}
+
+    instantmesh_info = task_json.get("InstantMesh") or {}
+    blender_info = task_json.get("Blender") or {}
+
+    mesh_name = instantmesh_info.get("mesh")
+    mtl_name = instantmesh_info.get("mtl")
+    image_name = instantmesh_info.get("image")
+    fbx_name = blender_info.get("fbx")
+
+    object_info = task_json.get("object")
+    response["object"] = object_info if object_info else None
+    debug_info = task_json.get("debug")
+    response["debug"] = debug_info if debug_info else None
+
+    mesh_path = INSTANTMESH_OUTPUT_MESHES / mesh_name if mesh_name else None
+    mtl_path = INSTANTMESH_OUTPUT_MESHES / mtl_name if mtl_name else None
+    image_path = INSTANTMESH_OUTPUT_MESHES / image_name if image_name else None
+    fbx_path = BLENDER_FBX_DIR / fbx_name if fbx_name else None
+
+    if not mesh_path or not mesh_path.exists():
+        response["error"] = "InstantMesh obj not found on disk"
+        return response
+
+    if not mtl_path or not mtl_path.exists():
+        response["error"] = "InstantMesh mtl not found on disk"
+        return response
+
+    if not image_path or not image_path.exists():
+        response["error"] = "InstantMesh image not found on disk"
+        return response
+
+    host = request.host_url.rstrip("/")
+    response.update(
+        {
+            "mesh_url": f"{host}/files/meshes/{mesh_name}",
+            "mtl_url": f"{host}/files/meshes/{mtl_name}",
+            "image_url": f"{host}/files/meshes/{image_name}",
+        }
+    )
+    if fbx_path and fbx_path.exists():
+        response["fbx_url"] = f"{host}/files/fbx/{fbx_name}"
+
+    return response
+
 @app.route("/", methods=["GET"], strict_slashes=False)
 def index():
     return jsonify(
@@ -36,6 +88,7 @@ def index():
                 "/generate",
                 "/check/<task_id>",
                 "/check?task_id=<task_id>",
+                "/latest-completed",
                 "/files/<folder>/<filename>",
             ],
         }
@@ -160,41 +213,7 @@ def check_task(task_id):
         task_json = task_data.get("task_json") or {}
 
         if status == "completed":
-            instantmesh_info = (task_json.get("InstantMesh") or {})
-            blender_info = (task_json.get("Blender") or {})
-
-            mesh_name = instantmesh_info.get("mesh")
-            mtl_name = instantmesh_info.get("mtl")
-            image_name = instantmesh_info.get("image")
-            fbx_name = blender_info.get("fbx")
-
-            object_info = task_json.get("object")
-            response["object"] = object_info if object_info else None
-            debug_info = task_json.get("debug")
-            response["debug"] = debug_info if debug_info else None
-
-            mesh_path = INSTANTMESH_OUTPUT_MESHES / mesh_name if mesh_name else None
-            mtl_path = INSTANTMESH_OUTPUT_MESHES / mtl_name if mtl_name else None
-            image_path = INSTANTMESH_OUTPUT_MESHES / image_name if image_name else None
-            fbx_path = BLENDER_FBX_DIR / fbx_name if fbx_name else None
-
-            if not mesh_path or not mesh_path.exists():
-                response["error"] = "InstantMesh obj not found on disk"
-            elif not mtl_path or not mtl_path.exists():
-                response["error"] = "InstantMesh mtl not found on disk"
-            elif not image_path or not image_path.exists():
-                response["error"] = "InstantMesh image not found on disk"
-            else:
-                host = request.host_url.rstrip("/")
-                response.update(
-                    {
-                        "mesh_url": f"{host}/files/meshes/{mesh_name}",
-                        "mtl_url": f"{host}/files/meshes/{mtl_name}",
-                        "image_url": f"{host}/files/meshes/{image_name}",
-                    }
-                )
-                if fbx_path and fbx_path.exists():
-                    response["fbx_url"] = f"{host}/files/fbx/{fbx_name}"
+            response = _build_completed_task_response(task_data)
 
         elif status == "failed":
             response["error"] = task_data.get("error_message") or "Unknown error"
@@ -220,6 +239,20 @@ def check_task_query():
     if not task_id:
         return jsonify({"error": "Missing task_id parameter"}), 400
     return check_task(task_id)
+
+
+@app.route("/latest-completed", methods=["GET"], strict_slashes=False)
+def latest_completed_task():
+    try:
+        task_data = get_latest_completed_task_data()
+        if not task_data:
+            return jsonify({"error": "No completed task found"}), 404
+
+        response = _build_completed_task_response(task_data)
+        return jsonify(response)
+    except Exception as exc:
+        print(f"Error in latest_completed_task: {exc}")
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/files/<path:folder>/<filename>", strict_slashes=False)

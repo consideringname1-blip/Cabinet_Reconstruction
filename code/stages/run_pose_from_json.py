@@ -133,6 +133,8 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     alignment = task.get("object_alignment") or {}
     pv = task.get("PVCamera") or {}
 
+    local_position, local_rotation = resolve_local_camera_pose(task)
+
     model_scale = float(alignment.get("model_real_scale") or 0.0)
     if model_scale <= 0:
         raise ValueError("object_alignment.model_real_scale must be positive")
@@ -145,11 +147,14 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     # p_world = p_local @ R_cam + t_cam
     R_cam = pv_pose[:3, :3]
     t_cam = pv_pose[3, :3]
-    world_quat = rotation_matrix_to_quat_xyzw(R_cam)
+
+    world_position = local_position @ R_cam + t_cam
+    world_rotation = local_rotation @ R_cam
+    world_quat = rotation_matrix_to_quat_xyzw(world_rotation)
 
     uniform_scale = [float(model_scale), float(model_scale), float(model_scale)]
     return {
-        "position": [float(v) for v in t_cam],
+        "position": [float(v) for v in world_position],
         "rotation": [float(v) for v in world_quat],
         "scale": uniform_scale,
     }
@@ -171,8 +176,8 @@ def build_pose_debug(task: dict) -> dict:
     pv_rotation = pv_pose[:3, :3]
     pv_translation = pv_pose[3, :3]
 
-    icp_world_position = local_position @ pv_rotation + pv_translation
-    icp_world_rotation = local_rotation @ pv_rotation
+    world_position = local_position @ pv_rotation + pv_translation
+    world_rotation = local_rotation @ pv_rotation
 
     return {
         "camera_local_pointcloud_input": {
@@ -197,25 +202,15 @@ def build_pose_debug(task: dict) -> dict:
                 pv_translation,
                 "unity_world_x_right_y_up_z_forward",
             ),
-            "notes": "Current final placement is forced to PVCamera.pose position and rotation.",
-        },
-        "final_object_world_from_icp": {
-            "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,
-            "pose": serialize_pose(
-                icp_world_rotation,
-                icp_world_position,
-                "unity_world_x_right_y_up_z_forward",
-            ),
-            "notes": "Reference only: the previous ICP-derived final world pose before forcing camera pose.",
+            "notes": "PVCamera.pose is applied with row-vector convention: p_world = p_local @ R_cam + t_cam",
         },
         "final_object_world": {
             "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,
             "pose": serialize_pose(
-                pv_rotation,
-                pv_translation,
+                world_rotation,
+                world_position,
                 "unity_world_x_right_y_up_z_forward",
             ),
-            "notes": "Final placement currently uses the received PVCamera.pose directly.",
         },
     }
 

@@ -29,6 +29,7 @@ from config import (
 )
 from task_db import (
     create_task as create_task_record,
+    get_latest_completed_task,
     get_task_by_task_id,
     get_unfinished_tasks,
     initialize_task_table,
@@ -292,6 +293,27 @@ def create_task(json_path: Path | str) -> str:
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     """根据 task_id 查询数据库记录，并附带 json 内容。"""
     task_record = get_task_by_task_id(task_id)
+    if task_record is None:
+        return None
+
+    json_path = Path(task_record["json_path"])
+    if json_path.is_file():
+        task_json = load_task_json(json_path)
+    else:
+        task_json = {}
+
+    task_record["task_json"] = task_json
+    task_record["error"] = task_record.get("error_message")
+    task_record["outputs"] = {
+        "instantmesh": task_json.get("InstantMesh") or {},
+        "blender": task_json.get("Blender") or {},
+    }
+    return task_record
+
+
+def get_latest_completed_task_data() -> Optional[Dict[str, Any]]:
+    """Return the most recent completed task with loaded JSON outputs."""
+    task_record = get_latest_completed_task()
     if task_record is None:
         return None
 
