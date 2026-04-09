@@ -12,7 +12,9 @@ public class HeadsetPoseDisplay : MonoBehaviour
     [Header("Source")]
     [SerializeField] private Transform targetTransform;
     [SerializeField] private bool useMainCameraIfMissing = true;
-    [SerializeField] private bool driveThisGameObjectToHeadsetPose = false;
+    [SerializeField] private bool driveThisGameObjectInFrontOfHeadset = true;
+    [SerializeField] private float forwardDistance = 1.0f;
+    [SerializeField] private bool faceBackTowardHeadset = true;
 
     [Header("Output")]
     [SerializeField] private TMP_Text tmpText;
@@ -63,9 +65,13 @@ public class HeadsetPoseDisplay : MonoBehaviour
         Vector3 pos = targetTransform.position;
         Vector3 rot = targetTransform.eulerAngles;
 
-        if (driveThisGameObjectToHeadsetPose)
+        if (driveThisGameObjectInFrontOfHeadset)
         {
-            transform.SetPositionAndRotation(targetTransform.position, targetTransform.rotation);
+            Vector3 targetPosition = targetTransform.position + targetTransform.forward * forwardDistance;
+            Quaternion targetRotation = faceBackTowardHeadset
+                ? Quaternion.LookRotation(targetTransform.position - targetPosition, Vector3.up)
+                : targetTransform.rotation;
+            transform.SetPositionAndRotation(targetPosition, targetRotation);
         }
 
         string format = "F" + Mathf.Clamp(decimals, 0, 6);
