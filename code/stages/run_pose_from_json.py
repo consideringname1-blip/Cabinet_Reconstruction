@@ -4,7 +4,10 @@ import sys
 import numpy as np
 
 from _bootstrap import CODE_ROOT
-from object_alignment_common import model_pose_pointcloud_input_to_unity
+from object_alignment_common import (
+    ICP_OBJ_IMPORT_LOCAL_ROTATION,
+    model_pose_pointcloud_input_to_unity,
+)
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
@@ -154,9 +157,11 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     t_cam = device_position
 
     world_position = (R_cam @ local_position) + t_cam
-    # ICP/local rotation is still produced in the legacy row-vector convention.
-    # Convert it before composing with the Unity quaternion anchor from device.pose.
-    world_rotation = R_cam @ local_rotation.T
+    # Keep the validated device.pose world anchor for placement, but before we
+    # emit the final Unity quaternion re-apply the OBJ import-axis rotation used
+    # during ICP (`forward=-X`, `up=+Z`). This keeps the loaded FBX local frame
+    # aligned with the frame that the ICP stage actually solved against.
+    world_rotation = R_cam @ local_rotation @ ICP_OBJ_IMPORT_LOCAL_ROTATION
     world_quat = rotation_matrix_to_quat_xyzw(world_rotation)
 
     uniform_scale = [float(model_scale), float(model_scale), float(model_scale)]
@@ -186,7 +191,7 @@ def build_pose_debug(task: dict) -> dict:
     device_rotation = quat_xyzw_to_rotation_matrix(device_rotation_quat)
 
     world_position = (device_rotation @ local_position) + device_position
-    world_rotation = device_rotation @ local_rotation.T
+    world_rotation = device_rotation @ local_rotation @ ICP_OBJ_IMPORT_LOCAL_ROTATION
 
     return {
         "camera_local_pointcloud_input": {

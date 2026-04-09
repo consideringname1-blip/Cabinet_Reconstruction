@@ -77,6 +77,19 @@ MODEL_INPUT_TO_UNITY_BASIS = np.array(
 )
 UNITY_TO_MODEL_INPUT_BASIS = MODEL_INPUT_TO_UNITY_BASIS.T
 
+# Proper rotation offset for the OBJ import convention used during ICP/debug
+# rendering in Blender (`forward=-X`, `up=+Z`). This is the traceable local-axis
+# compensation we can safely apply back onto the final Unity quaternion when the
+# loaded FBX does not share the exact same local orientation as the ICP input.
+ICP_OBJ_IMPORT_LOCAL_ROTATION = np.array(
+    [
+        [0.0, -1.0, 0.0],
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+    ],
+    dtype=np.float32,
+)
+
 UNITY_TO_BLENDER_WORLD = np.array(
     [
         [1.0, 0.0, 0.0],
