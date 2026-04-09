@@ -131,7 +131,7 @@ def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
 
 def compute_world_pose(task: dict) -> dict[str, list[float]]:
     alignment = task.get("object_alignment") or {}
-    pv = task.get("PVCamera") or {}
+    device = task.get("device") or {}
 
     local_position, local_rotation = resolve_local_camera_pose(task)
 
@@ -139,14 +139,17 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     if model_scale <= 0:
         raise ValueError("object_alignment.model_real_scale must be positive")
 
-    pv_pose = np.asarray(pv.get("pose"), dtype=np.float64)
-    if pv_pose.shape != (4, 4):
-        raise ValueError("PVCamera.pose must be a 4x4 matrix")
+    device_position = np.asarray(device.get("pose"), dtype=np.float64)
+    device_rotation_quat = np.asarray(device.get("rotation"), dtype=np.float64)
+    if device_position.shape != (3,):
+        raise ValueError("device.pose must have 3 values")
+    if device_rotation_quat.shape != (4,):
+        raise ValueError("device.rotation must have 4 values")
 
-    # JSON pose stores translation in the last row and uses a row-vector convention.
-    # p_world = p_local @ R_cam + t_cam
-    R_cam = pv_pose[:3, :3]
-    t_cam = pv_pose[3, :3]
+    # Temporary fallback for debugging: use the uploaded Unity Camera.main pose
+    # as the world anchor instead of PVCamera.pose so we can compare behavior.
+    R_cam = quat_xyzw_to_rotation_matrix(device_rotation_quat)
+    t_cam = device_position
 
     world_position = local_position @ R_cam + t_cam
     world_rotation = local_rotation @ R_cam
@@ -162,7 +165,7 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
 
 def build_pose_debug(task: dict) -> dict:
     alignment = task.get("object_alignment") or {}
-    pv = task.get("PVCamera") or {}
+    device = task.get("device") or {}
 
     pointcloud_position = np.asarray(alignment.get("model_position"), dtype=np.float64)
     pointcloud_quat = np.asarray(alignment.get("model_rotation_quaternion_xyzw"), dtype=np.float64)
@@ -170,14 +173,16 @@ def build_pose_debug(task: dict) -> dict:
 
     local_position, local_rotation = resolve_local_camera_pose(task)
 
-    pv_pose = np.asarray(pv.get("pose"), dtype=np.float64)
-    if pv_pose.shape != (4, 4):
-        raise ValueError("PVCamera.pose must be a 4x4 matrix")
-    pv_rotation = pv_pose[:3, :3]
-    pv_translation = pv_pose[3, :3]
+    device_position = np.asarray(device.get("pose"), dtype=np.float64)
+    device_rotation_quat = np.asarray(device.get("rotation"), dtype=np.float64)
+    if device_position.shape != (3,):
+        raise ValueError("device.pose must have 3 values")
+    if device_rotation_quat.shape != (4,):
+        raise ValueError("device.rotation must have 4 values")
+    device_rotation = quat_xyzw_to_rotation_matrix(device_rotation_quat)
 
-    world_position = local_position @ pv_rotation + pv_translation
-    world_rotation = local_rotation @ pv_rotation
+    world_position = local_position @ device_rotation + device_position
+    world_rotation = local_rotation @ device_rotation
 
     return {
         "camera_local_pointcloud_input": {
@@ -198,11 +203,11 @@ def build_pose_debug(task: dict) -> dict:
         },
         "pv_camera_world": {
             "pose": serialize_pose(
-                pv_rotation,
-                pv_translation,
+                device_rotation,
+                device_position,
                 "unity_world_x_right_y_up_z_forward",
             ),
-            "notes": "PVCamera.pose is applied with row-vector convention: p_world = p_local @ R_cam + t_cam",
+            "notes": "Temporary fallback for debugging/backtracking: this field currently uses uploaded device.pose/device.rotation (Unity Camera.main), not PVCamera.pose.",
         },
         "final_object_world": {
             "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,
