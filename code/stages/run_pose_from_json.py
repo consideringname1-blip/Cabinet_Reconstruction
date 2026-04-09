@@ -154,7 +154,9 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     t_cam = device_position
 
     world_position = (R_cam @ local_position) + t_cam
-    world_rotation = R_cam @ local_rotation
+    # ICP/local rotation is still produced in the legacy row-vector convention.
+    # Convert it before composing with the Unity quaternion anchor from device.pose.
+    world_rotation = R_cam @ local_rotation.T
     world_quat = rotation_matrix_to_quat_xyzw(world_rotation)
 
     uniform_scale = [float(model_scale), float(model_scale), float(model_scale)]
@@ -184,7 +186,7 @@ def build_pose_debug(task: dict) -> dict:
     device_rotation = quat_xyzw_to_rotation_matrix(device_rotation_quat)
 
     world_position = (device_rotation @ local_position) + device_position
-    world_rotation = device_rotation @ local_rotation
+    world_rotation = device_rotation @ local_rotation.T
 
     return {
         "camera_local_pointcloud_input": {
