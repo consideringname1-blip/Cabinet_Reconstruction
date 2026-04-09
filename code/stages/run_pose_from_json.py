@@ -134,6 +134,10 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     pv = task.get("PVCamera") or {}
 
     local_position, local_rotation = resolve_local_camera_pose(task)
+    mirrored_local_position = np.array(
+        [local_position[0], -local_position[1], local_position[2]],
+        dtype=np.float64,
+    )
 
     model_scale = float(alignment.get("model_real_scale") or 0.0)
     if model_scale <= 0:
@@ -150,7 +154,7 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     t_cam_raw = pv_pose[3, :3]
     t_cam = np.array([t_cam_raw[0], t_cam_raw[1], -t_cam_raw[2]], dtype=np.float64)
 
-    world_position = local_position @ R_cam + t_cam
+    world_position = mirrored_local_position @ R_cam + t_cam
     world_rotation = local_rotation @ R_cam
     world_quat = rotation_matrix_to_quat_xyzw(world_rotation)
 
@@ -171,6 +175,10 @@ def build_pose_debug(task: dict) -> dict:
     pointcloud_rotation = quat_xyzw_to_rotation_matrix(pointcloud_quat)
 
     local_position, local_rotation = resolve_local_camera_pose(task)
+    mirrored_local_position = np.array(
+        [local_position[0], -local_position[1], local_position[2]],
+        dtype=np.float64,
+    )
 
     pv_pose = np.asarray(pv.get("pose"), dtype=np.float64)
     if pv_pose.shape != (4, 4):
@@ -183,7 +191,7 @@ def build_pose_debug(task: dict) -> dict:
         dtype=np.float64,
     )
 
-    world_position = local_position @ pv_rotation + pv_translation
+    world_position = mirrored_local_position @ pv_rotation + pv_translation
     world_rotation = local_rotation @ pv_rotation
 
     return {
