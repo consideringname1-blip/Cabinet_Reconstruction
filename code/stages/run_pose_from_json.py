@@ -129,27 +129,11 @@ def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
     )
     return unity_translation.astype(np.float64), unity_rotation.astype(np.float64)
 
-
-def correct_camera_local_position(local_position: np.ndarray) -> np.ndarray:
-    local_position = np.asarray(local_position, dtype=np.float64)
-    if local_position.shape != (3,):
-        raise ValueError("camera-local position must have 3 values")
-
-    # Empirical correction: the object stays near the captured camera, but the
-    # image-plane offset appears mirrored (right/down becomes left/up). Flip the
-    # camera-local X/Y directions while preserving forward depth.
-    return np.array(
-        [-local_position[0], -local_position[1], local_position[2]],
-        dtype=np.float64,
-    )
-
-
 def compute_world_pose(task: dict) -> dict[str, list[float]]:
     alignment = task.get("object_alignment") or {}
     pv = task.get("PVCamera") or {}
 
-    local_position_raw, local_rotation = resolve_local_camera_pose(task)
-    local_position = correct_camera_local_position(local_position_raw)
+    local_position, local_rotation = resolve_local_camera_pose(task)
 
     model_scale = float(alignment.get("model_real_scale") or 0.0)
     if model_scale <= 0:
@@ -184,8 +168,7 @@ def build_pose_debug(task: dict) -> dict:
     pointcloud_quat = np.asarray(alignment.get("model_rotation_quaternion_xyzw"), dtype=np.float64)
     pointcloud_rotation = quat_xyzw_to_rotation_matrix(pointcloud_quat)
 
-    local_position_raw, local_rotation = resolve_local_camera_pose(task)
-    local_position = correct_camera_local_position(local_position_raw)
+    local_position, local_rotation = resolve_local_camera_pose(task)
 
     pv_pose = np.asarray(pv.get("pose"), dtype=np.float64)
     if pv_pose.shape != (4, 4):
@@ -209,18 +192,9 @@ def build_pose_debug(task: dict) -> dict:
             "scale": float(alignment.get("model_real_scale") or 0.0),
             "pose": serialize_pose(
                 local_rotation,
-                local_position_raw,
-                "unity_camera_local_x_right_y_up_z_forward",
-            ),
-        },
-        "camera_local_unity_corrected": {
-            "scale": float(alignment.get("model_real_scale") or 0.0),
-            "pose": serialize_pose(
-                local_rotation,
                 local_position,
                 "unity_camera_local_x_right_y_up_z_forward",
             ),
-            "notes": "Empirical position correction applied: flip local X/Y, preserve local Z.",
         },
         "pv_camera_world": {
             "pose": serialize_pose(
