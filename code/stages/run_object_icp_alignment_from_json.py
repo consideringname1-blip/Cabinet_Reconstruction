@@ -8,6 +8,7 @@ from pathlib import Path
 
 from _bootstrap import CODE_ROOT
 from config import (
+    ENABLE_ALIGNMENT_RENDER_OUTPUTS,
     ICP_IGNORE_INVERTED_SOLUTIONS,
     ICP_IGNORE_OCCLUDED_MODEL_POINTS,
 )
@@ -1111,6 +1112,14 @@ def main(argv: list[str]) -> int:
         icp_used_points_export,
     )
 
+    front_view_image_name: str | None = aligned_model_image_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
+    preview_image_name: str | None = overlay_preview_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
+    if not ENABLE_ALIGNMENT_RENDER_OUTPUTS:
+        if aligned_model_image_path.exists():
+            aligned_model_image_path.unlink()
+        if overlay_preview_path.exists():
+            overlay_preview_path.unlink()
+
     object_alignment = {
         "coordinate_basis": "pointcloud_input_pre_blender_import",
         "translation_axes_relative_to_unity": {
@@ -1127,8 +1136,8 @@ def main(argv: list[str]) -> int:
         "model_rotation_euler_deg": [float(v) for v in pointcloud_euler_deg],
         "model_rotation_quaternion_xyzw": [float(v) for v in pointcloud_quat_xyzw],
         "model_real_scale": float(best["scale"]),
-        "front_view_image_name": aligned_model_image_name,
-        "preview_image_name": overlay_preview_name,
+        "front_view_image_name": front_view_image_name,
+        "preview_image_name": preview_image_name,
         "icp_discarded_pointcloud_name": discarded_points_preview_name,
         "icp_used_pointcloud_name": icp_points_preview_name,
         "discarded_count": int(len(discarded_points_export)),
@@ -1169,42 +1178,44 @@ def main(argv: list[str]) -> int:
     debug_section["pose_transform_stages"] = pose_debug
     task["debug"] = debug_section
 
-    blender_label = "software-fallback"
-    try:
-        blender_path = resolve_blender_path(argv[2] if len(argv) == 3 else None)
-        blender_label = render_aligned_model_image(
-            blender_path=blender_path,
-            mesh_path=paths["mesh_path"],
-            render_path=aligned_model_image_path,
-            blender_translation=blender_translation,
-            blender_euler_deg=blender_delta_euler_deg,
-            scale=float(best["scale"]),
-            transformed_model_unity=transform_points(model_vertices_unity, best["scale"], best["rotation"], best["translation"]),
-            task=task,
-        )
-        render_overlay_preview_image(
-            blender_path=blender_path,
-            mesh_path=paths["mesh_path"],
-            discarded_pointcloud_path=discarded_points_preview_path,
-            icp_pointcloud_path=icp_points_preview_path,
-            render_path=overlay_preview_path,
-            blender_translation=blender_translation,
-            blender_delta_euler_deg=blender_delta_euler_deg,
-            scale=float(best["scale"]),
-            task=task,
-        )
-    except FileNotFoundError:
-        blender_label = render_aligned_model_image(
-            blender_path=None,
-            mesh_path=paths["mesh_path"],
-            render_path=aligned_model_image_path,
-            blender_translation=blender_translation,
-            blender_euler_deg=blender_delta_euler_deg,
-            scale=float(best["scale"]),
-            transformed_model_unity=transform_points(model_vertices_unity, best["scale"], best["rotation"], best["translation"]),
-            task=task,
-        )
-        object_alignment["preview_image_name"] = None
+    blender_label = "disabled-by-config"
+    if ENABLE_ALIGNMENT_RENDER_OUTPUTS:
+        blender_label = "software-fallback"
+        try:
+            blender_path = resolve_blender_path(argv[2] if len(argv) == 3 else None)
+            blender_label = render_aligned_model_image(
+                blender_path=blender_path,
+                mesh_path=paths["mesh_path"],
+                render_path=aligned_model_image_path,
+                blender_translation=blender_translation,
+                blender_euler_deg=blender_delta_euler_deg,
+                scale=float(best["scale"]),
+                transformed_model_unity=transform_points(model_vertices_unity, best["scale"], best["rotation"], best["translation"]),
+                task=task,
+            )
+            render_overlay_preview_image(
+                blender_path=blender_path,
+                mesh_path=paths["mesh_path"],
+                discarded_pointcloud_path=discarded_points_preview_path,
+                icp_pointcloud_path=icp_points_preview_path,
+                render_path=overlay_preview_path,
+                blender_translation=blender_translation,
+                blender_delta_euler_deg=blender_delta_euler_deg,
+                scale=float(best["scale"]),
+                task=task,
+            )
+        except FileNotFoundError:
+            blender_label = render_aligned_model_image(
+                blender_path=None,
+                mesh_path=paths["mesh_path"],
+                render_path=aligned_model_image_path,
+                blender_translation=blender_translation,
+                blender_euler_deg=blender_delta_euler_deg,
+                scale=float(best["scale"]),
+                transformed_model_unity=transform_points(model_vertices_unity, best["scale"], best["rotation"], best["translation"]),
+                task=task,
+            )
+            object_alignment["preview_image_name"] = None
 
     save_task_json(json_path, task)
     remove_legacy_outputs(prefix)
@@ -1212,7 +1223,7 @@ def main(argv: list[str]) -> int:
     print(f"[INFO] JSON            : {json_path}")
     print(f"[INFO] Pointcloud      : {pointcloud_path}")
     print(f"[INFO] Mesh            : {paths['mesh_path']}")
-    print(f"[INFO] Render          : {aligned_model_image_path}")
+    print(f"[INFO] Render          : {aligned_model_image_path if object_alignment.get('front_view_image_name') else 'not-generated'}")
     print(f"[INFO] Preview         : {overlay_preview_path if object_alignment.get('preview_image_name') else 'not-generated'}")
     print(f"[INFO] Blender         : {blender_label}")
     print(

@@ -9,6 +9,10 @@ IS_RUN_FLASK_SERVER = True
 # Fraction cropped inward from the SAM3 mask periphery before depth->pointcloud
 # conversion. Set to 0.0 to disable.
 ICP_DEPTH_BORDER_CROP_RATIO = 0.03
+# Enable preview/front-view PNG renders produced by the alignment pipeline.
+ENABLE_ALIGNMENT_RENDER_OUTPUTS = True
+# Enable InstantMesh circular-view MP4 generation.
+ENABLE_INSTANTMESH_VIDEO_OUTPUT = True
 # Reject candidate poses that leave the reconstructed model upside-down in
 # camera-local Unity space.
 ICP_IGNORE_INVERTED_SOLUTIONS = True

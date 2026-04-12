@@ -136,9 +136,17 @@ MODEL_INPUT_TO_FBX_RUNTIME_LOCAL = (
     BLENDER_WORLD_TO_FBX_EXPORT_LOCAL @ FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD
 )
 FBX_RUNTIME_LOCAL_TO_MODEL_INPUT = MODEL_INPUT_TO_FBX_RUNTIME_LOCAL.T
+# This is a geometry/basis conversion reference, not a transform-space
+# rotation. It has determinant -1, so it must not be multiplied directly into a
+# runtime world quaternion.
 FBX_RUNTIME_LOCAL_TO_UNITY_BASIS = (
     MODEL_INPUT_TO_UNITY_BASIS @ FBX_RUNTIME_LOCAL_TO_MODEL_INPUT
 )
+# The current OBJ -> FBX wrapper path bakes axis conversion into the exported
+# mesh/file, and Unity/TriLib loads that FBX as a standard runtime object. So
+# the transform-space correction that pose composition should apply at runtime
+# is identity.
+FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY = np.eye(3, dtype=np.float32)
 
 
 def ensure_file(path: Path, label: str) -> Path:

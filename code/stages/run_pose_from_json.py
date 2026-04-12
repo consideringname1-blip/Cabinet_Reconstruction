@@ -8,6 +8,7 @@ from object_alignment_common import (
     BLENDER_WORLD_TO_FBX_EXPORT_LOCAL,
     FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD,
     FBX_RUNTIME_LOCAL_TO_UNITY_BASIS,
+    FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY,
     ICP_OBJ_IMPORT_LOCAL_ROTATION,
     ICP_OBJ_IMPORT_TO_BLENDER_WORLD,
     MODEL_INPUT_TO_FBX_RUNTIME_LOCAL,
@@ -128,10 +129,10 @@ def serialize_rotation_only(
 
 
 def resolve_runtime_local_to_unity_rotation() -> np.ndarray:
-    # The runtime object is not the raw OBJ that ICP solved against. We need the
-    # full local-axis chain from model-input axes through the FBX wrapper so the
-    # final world quaternion is applied in the same basis as the ICP result.
-    return np.asarray(FBX_RUNTIME_LOCAL_TO_UNITY_BASIS, dtype=np.float64)
+    # The current OBJ->FBX wrapper path bakes the mesh axis conversion into the
+    # exported file/runtime mesh. Transform-space pose composition must stay a
+    # proper rotation, so the runtime correction applied here is identity.
+    return np.asarray(FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY, dtype=np.float64)
 
 
 def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
@@ -185,6 +186,11 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     # Compose the ICP rotation with the runtime FBX local-axis chain so the
     # loaded model is placed in the same orientation that ICP solved.
     world_rotation = R_cam @ local_rotation @ runtime_local_to_unity
+    det_world = float(np.linalg.det(world_rotation))
+    if not np.isfinite(det_world) or det_world <= 0.0:
+        raise ValueError(
+            f"Final world rotation must be a proper rotation, got determinant {det_world:.6f}"
+        )
     world_quat = rotation_matrix_to_quat_xyzw(world_rotation)
 
     uniform_scale = [float(model_scale), float(model_scale), float(model_scale)]
@@ -271,7 +277,12 @@ def build_pose_debug(task: dict) -> dict:
             "runtime_fbx_local_to_unity": serialize_rotation_only(
                 runtime_local_to_unity,
                 "runtime_fbx_local -> unity_camera_local_x_right_y_up_z_forward",
-                notes="This is the compensation actually multiplied onto the final world quaternion.",
+                notes="This is the transform-space correction actually multiplied onto the final world quaternion. It is identity for the current OBJ->FBX->Unity/TriLib path.",
+            ),
+            "runtime_fbx_local_to_unity_basis_reference": serialize_rotation_only(
+                FBX_RUNTIME_LOCAL_TO_UNITY_BASIS,
+                "runtime_fbx_mesh_basis -> unity_camera_local_x_right_y_up_z_forward",
+                notes="Reference basis map for mesh coordinates only. determinant=-1, so it must not be multiplied directly into a runtime world quaternion.",
             ),
             "legacy_icp_obj_import_only_compensation": serialize_rotation_only(
                 ICP_OBJ_IMPORT_LOCAL_ROTATION,

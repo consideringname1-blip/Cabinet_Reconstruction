@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 
 from _bootstrap import CODE_ROOT
+from config import ENABLE_ALIGNMENT_RENDER_OUTPUTS
 import numpy as np
 
 from object_alignment_common import (
@@ -57,25 +58,28 @@ def main(argv: list[str]) -> int:
     front_view_path = object_alignment_output_path(front_view_image_name)
 
     write_binary_ply(pointcloud_path, export_points)
-    render_front_view_points(
-        unity_points,
-        front_view_path,
-        title="Depth Point Cloud Front View",
-        info_lines=[
-            "Basis: Unity X-right / Y-up / Z-forward",
-            "Blender import: forward=-X, up=+Y",
-            f"Real width  : {measurements['real_width_m']:.4f} m",
-            f"Real height : {measurements['real_height_m']:.4f} m",
-            f"Mean depth  : {measurements['mean_depth_m']:.4f} m",
-            f"Mask crop   : outer {measurements['depth_border_crop_ratio'] * 100.0:.0f}% inward",
-            f"Point count : {len(export_points)}",
-        ],
-    )
+    if ENABLE_ALIGNMENT_RENDER_OUTPUTS:
+        render_front_view_points(
+            unity_points,
+            front_view_path,
+            title="Depth Point Cloud Front View",
+            info_lines=[
+                "Basis: Unity X-right / Y-up / Z-forward",
+                "Blender import: forward=-X, up=+Y",
+                f"Real width  : {measurements['real_width_m']:.4f} m",
+                f"Real height : {measurements['real_height_m']:.4f} m",
+                f"Mean depth  : {measurements['mean_depth_m']:.4f} m",
+                f"Mask crop   : outer {measurements['depth_border_crop_ratio'] * 100.0:.0f}% inward",
+                f"Point count : {len(export_points)}",
+            ],
+        )
+    elif front_view_path.exists():
+        front_view_path.unlink()
     remove_legacy_outputs(prefix)
 
     depthpointcloud = {
         "pointcloud_name": pointcloud_name,
-        "front_view_image_name": front_view_image_name,
+        "front_view_image_name": front_view_image_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None,
         "coordinate_basis": "unity_x_right_y_up_z_forward",
         "blender_import_axes": {"forward": "-X", "up": "+Y"},
         "width_pointcloud_units": extents["width_units"],
@@ -103,7 +107,7 @@ def main(argv: list[str]) -> int:
 
     print(f"[INFO] JSON            : {json_path}")
     print(f"[INFO] Pointcloud      : {pointcloud_path}")
-    print(f"[INFO] Front image     : {front_view_path}")
+    print(f"[INFO] Front image     : {front_view_path if ENABLE_ALIGNMENT_RENDER_OUTPUTS else 'not-generated'}")
     print(
         f"[INFO] Real size       : "
         f"{measurements['real_width_m']:.4f} m x {measurements['real_height_m']:.4f} m"

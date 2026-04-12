@@ -6,11 +6,13 @@ from _bootstrap import CODE_ROOT
 from PIL import Image
 
 from config import (
+    ENABLE_INSTANTMESH_VIDEO_OUTPUT,
     IMESH_PY,
     INSTANTMESH_CONFIG,
     INSTANTMESH_DIR,
     INSTANTMESH_INPUT_ROOT,
     INSTANTMESH_OUTPUT_MESHES,
+    INSTANTMESH_OUTPUT_VIDEOS,
     INSTANTMESH_RUN_PY,
     OUTPUT_ROOT,
     SAM3_OUTPUT_ROOT,
@@ -68,10 +70,10 @@ def run_instantmesh(json_path: Path) -> None:
                 str(prepared_input_path),
                 "--output_path",
                 str(OUTPUT_ROOT),
-                "--save_video",
                 "--export_texmap",
                 # "--no_rembg",
-            ],
+            ]
+            + (["--save_video"] if ENABLE_INSTANTMESH_VIDEO_OUTPUT else []),
             cwd=str(INSTANTMESH_DIR),
             env=env,
             check=True,
@@ -90,15 +92,20 @@ def run_instantmesh(json_path: Path) -> None:
     mesh_name = f"{output_stem}.obj"
     mtl_name = f"{output_stem}.mtl"
     image_name = f"{output_stem}.png"
+    video_name = f"{output_stem}.mp4" if ENABLE_INSTANTMESH_VIDEO_OUTPUT else None
 
     ensure_file(INSTANTMESH_OUTPUT_MESHES / mesh_name, "InstantMesh obj")
     ensure_file(INSTANTMESH_OUTPUT_MESHES / mtl_name, "InstantMesh mtl")
     ensure_file(INSTANTMESH_OUTPUT_MESHES / image_name, "InstantMesh texture image")
+    if video_name is not None:
+        ensure_file(INSTANTMESH_OUTPUT_VIDEOS / video_name, "InstantMesh video")
 
     task["InstantMesh"] = {
         "mesh": mesh_name,
         "mtl": mtl_name,
         "image": image_name,
+        "video": video_name,
+        "video_render_enabled": bool(ENABLE_INSTANTMESH_VIDEO_OUTPUT),
     }
     save_task_json(json_path, task)
 

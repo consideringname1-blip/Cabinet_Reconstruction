@@ -10,6 +10,7 @@ from config import (
     BLENDER_FBX_DIR,
     FOLDER_MAP,
     INSTANTMESH_OUTPUT_MESHES,
+    INSTANTMESH_OUTPUT_VIDEOS,
     UPLOAD_FOLDER,
 )
 from task_worker import (
@@ -42,6 +43,7 @@ def _build_completed_task_response(task_data: dict) -> dict:
     mesh_name = instantmesh_info.get("mesh")
     mtl_name = instantmesh_info.get("mtl")
     image_name = instantmesh_info.get("image")
+    video_name = instantmesh_info.get("video")
     fbx_name = blender_info.get("fbx")
 
     object_info = task_json.get("object")
@@ -52,6 +54,7 @@ def _build_completed_task_response(task_data: dict) -> dict:
     mesh_path = INSTANTMESH_OUTPUT_MESHES / mesh_name if mesh_name else None
     mtl_path = INSTANTMESH_OUTPUT_MESHES / mtl_name if mtl_name else None
     image_path = INSTANTMESH_OUTPUT_MESHES / image_name if image_name else None
+    video_path = INSTANTMESH_OUTPUT_VIDEOS / video_name if video_name else None
     fbx_path = BLENDER_FBX_DIR / fbx_name if fbx_name else None
 
     if not mesh_path or not mesh_path.exists():
@@ -74,6 +77,8 @@ def _build_completed_task_response(task_data: dict) -> dict:
             "image_url": f"{host}/files/meshes/{image_name}",
         }
     )
+    if video_path and video_path.exists():
+        response["video_url"] = f"{host}/files/videos/{video_name}"
     if fbx_path and fbx_path.exists():
         response["fbx_url"] = f"{host}/files/fbx/{fbx_name}"
 
