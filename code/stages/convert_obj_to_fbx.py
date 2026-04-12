@@ -15,6 +15,13 @@ if str(CODE_ROOT) not in sys.path:
 from config import BLENDER_FBX_DIR, INSTANTMESH_OUTPUT_MESHES
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
+# Keep Blender-side axis settings local to this script so Blender's bundled
+# Python does not need to import the heavier server-side alignment module.
+FBX_CONVERT_OBJ_IMPORT_FORWARD_AXIS = "NEGATIVE_Z"
+FBX_CONVERT_OBJ_IMPORT_UP_AXIS = "Y"
+FBX_EXPORT_FORWARD_AXIS = "-Z"
+FBX_EXPORT_UP_AXIS = "Y"
+
 def clean_scene() -> None:
     bpy.ops.object.select_all(action="SELECT")
     bpy.ops.object.delete(use_global=False)
@@ -79,7 +86,11 @@ def export_fbx_from_json(json_path: Path) -> Path:
     fix_mtl_texture_name(mtl_path, image_name)
 
     clean_scene()
-    bpy.ops.wm.obj_import(filepath=str(mesh_path))
+    bpy.ops.wm.obj_import(
+        filepath=str(mesh_path),
+        forward_axis=FBX_CONVERT_OBJ_IMPORT_FORWARD_AXIS,
+        up_axis=FBX_CONVERT_OBJ_IMPORT_UP_AXIS,
+    )
 
     imported_objects = get_imported_mesh_objects()
     if not imported_objects:
@@ -91,15 +102,25 @@ def export_fbx_from_json(json_path: Path) -> Path:
         filepath=str(fbx_path),
         embed_textures=True,
         path_mode="COPY",
-        axis_forward="-Z",
-        axis_up="Y",
+        axis_forward=FBX_EXPORT_FORWARD_AXIS,
+        axis_up=FBX_EXPORT_UP_AXIS,
         bake_space_transform=True,
     )
 
     if not fbx_path.is_file():
         raise RuntimeError(f"FBX export failed: {fbx_path}")
 
-    task["Blender"] = {"fbx": fbx_path.name}
+    task["Blender"] = {
+        "fbx": fbx_path.name,
+        "obj_import_axes": {
+            "forward": FBX_CONVERT_OBJ_IMPORT_FORWARD_AXIS,
+            "up": FBX_CONVERT_OBJ_IMPORT_UP_AXIS,
+        },
+        "fbx_export_axes": {
+            "forward": FBX_EXPORT_FORWARD_AXIS,
+            "up": FBX_EXPORT_UP_AXIS,
+        },
+    }
     save_task_json(json_path, task)
     return fbx_path
 

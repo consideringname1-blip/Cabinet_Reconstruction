@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import itertools
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 
 from _bootstrap import CODE_ROOT
+from config import (
+    ICP_IGNORE_INVERTED_SOLUTIONS,
+    ICP_IGNORE_OCCLUDED_MODEL_POINTS,
+)
 import numpy as np
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
@@ -12,12 +18,18 @@ from scipy.spatial.transform import Rotation
 from object_alignment_common import (
     annotate_rendered_image,
     annotate_rendered_model_front_view,
+    build_depth_border_keep_mask,
+    build_depth_pointcloud_from_valid_mask,
     compute_front_view_extents,
     model_pose_unity_to_pointcloud_input,
+    MAX_DEPTH_MM,
+    MIN_DEPTH_MM,
     obj_vertices_to_unity,
     object_alignment_output_path,
     pointcloud_export_to_unity,
+    read_depth_image,
     read_binary_ply_points,
+    read_mask,
     read_obj_vertices,
     render_front_view_points,
     resolve_blender_path,
@@ -25,11 +37,13 @@ from object_alignment_common import (
     rotation_unity_to_blender_world,
     task_prefix,
     unity_to_blender_world_vector,
+    write_binary_ply,
 )
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
 HELPER_SCRIPT = Path(__file__).resolve().with_name("blender_render_measure.py")
+MODEL_UP_AXIS_UNITY = np.array([0.0, 1.0, 0.0], dtype=np.float32)
 
 
 def normalize_quat_xyzw(q: np.ndarray) -> np.ndarray:
@@ -72,32 +86,106 @@ def downsample_points(points: np.ndarray, max_points: int, seed: int) -> np.ndar
     return points[idx]
 
 
+def select_front_visible_points(
+    points: np.ndarray,
+    bins: int = 128,
+    max_points: int | None = None,
+    seed: int = 0,
+    ignore_occluded_points: bool | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    points = np.asarray(points, dtype=np.float32)
+    if len(points) == 0:
+        return points, np.empty(0, dtype=np.int32)
+
+    if ignore_occluded_points is None:
+        ignore_occluded_points = bool(ICP_IGNORE_OCCLUDED_MODEL_POINTS)
+
+    if ignore_occluded_points:
+        # Despite the legacy name, this extracts the camera-visible surface when
+        # the camera looks along +Z in Unity camera-local space.
+        min_xy = points[:, :2].min(axis=0)
+        max_xy = points[:, :2].max(axis=0)
+        span_xy = np.maximum(max_xy - min_xy, 1e-6)
+        uv = np.floor((points[:, :2] - min_xy) / span_xy * (bins - 1)).astype(np.int32)
+        flat = uv[:, 1] * bins + uv[:, 0]
+        order = np.lexsort((points[:, 2], flat))
+        flat_sorted = flat[order]
+
+        keep = np.empty(len(order), dtype=bool)
+        keep[0] = True
+        keep[1:] = flat_sorted[1:] != flat_sorted[:-1]
+        selected_indices = order[keep]
+    else:
+        selected_indices = np.arange(len(points), dtype=np.int32)
+
+    if max_points is not None and len(selected_indices) > max_points:
+        rng = np.random.default_rng(seed)
+        pick = rng.choice(len(selected_indices), size=max_points, replace=False)
+        selected_indices = selected_indices[pick]
+
+    return points[selected_indices], selected_indices.astype(np.int32, copy=False)
+
+
 def extract_front_visible_points(
     points: np.ndarray,
     bins: int = 128,
     max_points: int | None = None,
     seed: int = 0,
+    ignore_occluded_points: bool | None = None,
 ) -> np.ndarray:
-    points = np.asarray(points, dtype=np.float32)
-    if len(points) == 0:
-        return points
+    selected_points, _ = select_front_visible_points(
+        points,
+        bins=bins,
+        max_points=max_points,
+        seed=seed,
+        ignore_occluded_points=ignore_occluded_points,
+    )
+    return selected_points
 
-    min_xy = points[:, :2].min(axis=0)
-    max_xy = points[:, :2].max(axis=0)
-    span_xy = np.maximum(max_xy - min_xy, 1e-6)
-    uv = np.floor((points[:, :2] - min_xy) / span_xy * (bins - 1)).astype(np.int32)
-    flat = uv[:, 1] * bins + uv[:, 0]
-    order = np.lexsort((points[:, 2], flat))
-    flat_sorted = flat[order]
 
-    keep = np.empty(len(order), dtype=bool)
-    keep[:-1] = flat_sorted[:-1] != flat_sorted[1:]
-    keep[-1] = True
-    selected = points[order[keep]]
+def trimmed_rmse(dists: np.ndarray, trim_percentile: float = 85.0) -> float:
+    dists = np.asarray(dists, dtype=np.float32).reshape(-1)
+    if dists.size == 0:
+        return float("inf")
+    cutoff = float(np.percentile(dists, trim_percentile))
+    keep = dists <= max(cutoff, 1e-6)
+    if not np.any(keep):
+        keep = np.ones_like(dists, dtype=bool)
+    return float(np.sqrt(np.mean(np.square(dists[keep]))))
 
-    if max_points is not None:
-        selected = downsample_points(selected, max_points=max_points, seed=seed)
-    return selected
+
+def safe_matrix_to_euler_xyz_deg(rotation: np.ndarray) -> list[float]:
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        euler = Rotation.from_matrix(np.asarray(rotation, dtype=np.float64)).as_euler("xyz", degrees=True)
+    return [float(v) for v in euler]
+
+
+def safe_matrix_to_blender_euler_xyz_deg(rotation: np.ndarray) -> list[float]:
+    # Blender's mathutils.Euler(..., "XYZ") expects intrinsic XYZ angles.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        euler = Rotation.from_matrix(np.asarray(rotation, dtype=np.float64)).as_euler("XYZ", degrees=True)
+    return [float(v) for v in euler]
+
+
+def model_up_y_in_unity(rotation: np.ndarray) -> float:
+    rotation = np.asarray(rotation, dtype=np.float32)
+    return float((rotation @ MODEL_UP_AXIS_UNITY)[1])
+
+
+def should_reject_inverted_solution(rotation: np.ndarray) -> bool:
+    return bool(ICP_IGNORE_INVERTED_SOLUTIONS) and (model_up_y_in_unity(rotation) < 0.0)
+
+
+def compute_xy_center(extents: dict) -> np.ndarray:
+    return np.array(
+        [
+            0.5 * (extents["bbox_min"][0] + extents["bbox_max"][0]),
+            0.5 * (extents["bbox_min"][1] + extents["bbox_max"][1]),
+        ],
+        dtype=np.float32,
+    )
 
 
 def best_fit_transform(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
@@ -126,25 +214,37 @@ def run_icp(
     init_rotation: np.ndarray,
     init_translation: np.ndarray,
     iterations: int = 25,
+    visible_bins: int = 160,
+    visible_max_points: int = 5000,
 ) -> dict:
     rotation = init_rotation.astype(np.float32).copy()
     translation = init_translation.astype(np.float32).copy()
     rmse = float("inf")
     inlier_ratio = 0.0
+    transformed_visible = np.empty((0, 3), dtype=np.float32)
 
     for _ in range(iterations):
-        transformed = transform_points(model_points, scale, rotation, translation)
-        tree = cKDTree(transformed)
+        transformed_full = transform_points(model_points, scale, rotation, translation)
+        transformed_visible = extract_front_visible_points(
+            transformed_full,
+            bins=visible_bins,
+            max_points=visible_max_points,
+            seed=17,
+        )
+        if len(transformed_visible) < 32:
+            break
+
+        tree = cKDTree(transformed_visible)
         dists, idx = tree.query(target_points, k=1)
 
-        threshold = float(np.percentile(dists, 80))
+        threshold = float(np.percentile(dists, 75))
         if threshold <= 0:
             threshold = float(dists.max()) if len(dists) else 0.0
         keep = dists <= max(threshold, 1e-4)
-        if keep.sum() < 16:
+        if keep.sum() < 24:
             break
 
-        matched_model = transformed[idx[keep]]
+        matched_model = transformed_visible[idx[keep]]
         matched_target = target_points[keep]
 
         delta_r, delta_t = best_fit_transform(matched_model, matched_target)
@@ -153,10 +253,16 @@ def run_icp(
         rmse = float(np.sqrt(np.mean((matched_model - matched_target) ** 2)))
         inlier_ratio = float(keep.mean())
 
-    transformed = transform_points(model_points, scale, rotation, translation)
-    tree = cKDTree(transformed)
+    transformed_full = transform_points(model_points, scale, rotation, translation)
+    transformed_visible = extract_front_visible_points(
+        transformed_full,
+        bins=visible_bins,
+        max_points=visible_max_points,
+        seed=19,
+    )
+    tree = cKDTree(transformed_visible)
     dists, _ = tree.query(target_points, k=1)
-    rmse = float(np.sqrt(np.mean(dists ** 2)))
+    rmse = trimmed_rmse(dists, trim_percentile=85.0)
 
     return {
         "scale": float(scale),
@@ -164,6 +270,7 @@ def run_icp(
         "translation": translation,
         "rmse": rmse,
         "inlier_ratio": inlier_ratio,
+        "visible_points": transformed_visible,
     }
 
 
@@ -171,22 +278,20 @@ def build_initial_translation(
     model_full_points: np.ndarray,
     model_front_points: np.ndarray,
     target_front_points: np.ndarray,
-    mean_depth: float,
 ) -> np.ndarray:
     model_extents = compute_front_view_extents(model_full_points)
     target_extents = compute_front_view_extents(target_front_points)
 
-    model_center_x = 0.5 * (model_extents["bbox_min"][0] + model_extents["bbox_max"][0])
-    model_center_y = 0.5 * (model_extents["bbox_min"][1] + model_extents["bbox_max"][1])
-    target_center_x = 0.5 * (target_extents["bbox_min"][0] + target_extents["bbox_max"][0])
-    target_center_y = 0.5 * (target_extents["bbox_min"][1] + target_extents["bbox_max"][1])
-    front_anchor_z = float(model_front_points[:, 2].mean())
+    model_center_x, model_center_y = compute_xy_center(model_extents)
+    target_center_x, target_center_y = compute_xy_center(target_extents)
+    front_anchor_z = float(np.median(model_front_points[:, 2]))
+    target_anchor_z = float(np.median(target_front_points[:, 2]))
 
     return np.array(
         [
             target_center_x - model_center_x,
             target_center_y - model_center_y,
-            mean_depth - front_anchor_z,
+            target_anchor_z - front_anchor_z,
         ],
         dtype=np.float32,
     )
@@ -207,86 +312,381 @@ def evaluate_alignment(
     transformed_full_points: np.ndarray,
     transformed_front_points: np.ndarray,
     target_front_points: np.ndarray,
-    real_width: float,
-    real_height: float,
     scale: float,
     nominal_scale: float,
 ) -> dict:
-    tree_3d = cKDTree(transformed_front_points)
-    dists_3d, _ = tree_3d.query(target_front_points, k=1)
+    tree_target_to_model_3d = cKDTree(transformed_front_points)
+    dists_target_to_model_3d, _ = tree_target_to_model_3d.query(target_front_points, k=1)
+    tree_model_to_target_3d = cKDTree(target_front_points)
+    dists_model_to_target_3d, _ = tree_model_to_target_3d.query(transformed_front_points, k=1)
 
-    tree_2d = cKDTree(transformed_front_points[:, :2])
-    dists_2d, _ = tree_2d.query(target_front_points[:, :2], k=1)
+    tree_target_to_model_2d = cKDTree(transformed_front_points[:, :2])
+    dists_target_to_model_2d, _ = tree_target_to_model_2d.query(target_front_points[:, :2], k=1)
+    tree_model_to_target_2d = cKDTree(target_front_points[:, :2])
+    dists_model_to_target_2d, _ = tree_model_to_target_2d.query(transformed_front_points[:, :2], k=1)
 
-    extents = compute_front_view_extents(transformed_full_points)
-    width_error = abs(extents["width_units"] - real_width)
-    height_error = abs(extents["height_units"] - real_height)
+    extents = compute_front_view_extents(transformed_front_points)
+    target_extents = compute_front_view_extents(target_front_points)
+    width_error = abs(extents["width_units"] - target_extents["width_units"])
+    height_error = abs(extents["height_units"] - target_extents["height_units"])
     size_error = width_error + height_error
     scale_error = abs(scale - nominal_scale) / max(nominal_scale, 1e-6)
+    center_error = float(np.linalg.norm(compute_xy_center(extents) - compute_xy_center(target_extents)))
 
-    rmse_3d = float(np.sqrt(np.mean(np.square(dists_3d))))
-    rmse_2d = float(np.sqrt(np.mean(np.square(dists_2d))))
-    score = rmse_3d + 0.35 * rmse_2d + 0.45 * size_error + 0.10 * scale_error
+    rmse_3d = trimmed_rmse(dists_target_to_model_3d, trim_percentile=85.0)
+    coverage_rmse_3d = trimmed_rmse(dists_model_to_target_3d, trim_percentile=85.0)
+    surface_rmse_3d = 0.5 * (rmse_3d + coverage_rmse_3d)
+    rmse_2d = 0.5 * (
+        trimmed_rmse(dists_target_to_model_2d, trim_percentile=85.0)
+        + trimmed_rmse(dists_model_to_target_2d, trim_percentile=85.0)
+    )
+    score = (
+        0.60 * surface_rmse_3d
+        + 0.20 * rmse_2d
+        + 0.10 * size_error
+        + 0.05 * center_error
+        + 0.05 * scale_error
+    )
     return {
         "score": float(score),
         "rmse_3d": rmse_3d,
+        "coverage_rmse_3d": float(coverage_rmse_3d),
+        "surface_rmse_3d": float(surface_rmse_3d),
         "rmse_2d": rmse_2d,
         "size_error": float(size_error),
         "width_error": float(width_error),
         "height_error": float(height_error),
+        "center_error": center_error,
         "extents": extents,
     }
+
+
+def refine_pose_locally(
+    model_points: np.ndarray,
+    target_front_points: np.ndarray,
+    scale: float,
+    nominal_scale: float,
+    base_rotation: np.ndarray,
+    base_translation: np.ndarray,
+) -> dict:
+    best_candidate: dict | None = None
+    best_score = float("inf")
+    best_metrics: dict | None = None
+
+    for rx in (-9, -6, -3, 0, 3, 6, 9):
+        for ry in (-9, -6, -3, 0, 3, 6, 9):
+            for rz in (-9, -6, -3, 0, 3, 6, 9):
+                delta = Rotation.from_euler("xyz", [rx, ry, rz], degrees=True).as_matrix().astype(np.float32)
+                init_rotation = delta @ base_rotation
+                if should_reject_inverted_solution(init_rotation):
+                    continue
+
+                init_full = transform_points(model_points, float(scale), init_rotation, np.zeros(3, dtype=np.float32))
+                init_front = extract_front_visible_points(init_full, bins=180, max_points=5200, seed=29)
+                init_translation = build_initial_translation(
+                    model_full_points=init_full,
+                    model_front_points=init_front,
+                    target_front_points=target_front_points,
+                )
+                result = run_icp(
+                    model_points=model_points,
+                    target_points=target_front_points,
+                    scale=float(scale),
+                    init_rotation=init_rotation,
+                    init_translation=init_translation,
+                    iterations=8,
+                    visible_bins=180,
+                    visible_max_points=5200,
+                )
+                rotation = result["rotation"]
+                translation = result["translation"]
+                if should_reject_inverted_solution(rotation):
+                    continue
+
+                transformed_full = transform_points(model_points, float(scale), rotation, translation)
+                transformed_front = extract_front_visible_points(
+                    transformed_full,
+                    bins=180,
+                    max_points=5200,
+                    seed=31,
+                )
+                metrics = evaluate_alignment(
+                    transformed_full_points=transformed_full,
+                    transformed_front_points=transformed_front,
+                    target_front_points=target_front_points,
+                    scale=float(scale),
+                    nominal_scale=nominal_scale,
+                )
+                score = float(metrics["score"])
+                if score < best_score:
+                    best_score = score
+                    best_metrics = metrics
+                    best_candidate = {
+                        "rotation": rotation,
+                        "translation": translation,
+                        "delta_euler_deg": [float(rx), float(ry), float(rz)],
+                        "rmse": float(metrics["rmse_3d"]),
+                        "surface_rmse_3d": float(metrics["surface_rmse_3d"]),
+                        "coverage_rmse_3d": float(metrics["coverage_rmse_3d"]),
+                        "rmse_2d": float(metrics["rmse_2d"]),
+                        "score": score,
+                        "size_error": float(metrics["size_error"]),
+                        "inlier_ratio": float(result["inlier_ratio"]),
+                        "extents": metrics["extents"],
+                        "width_error": float(metrics["width_error"]),
+                        "height_error": float(metrics["height_error"]),
+                        "center_error": float(metrics["center_error"]),
+                    }
+
+    if best_candidate is None or best_metrics is None:
+        return {
+            "rotation": base_rotation,
+            "translation": base_translation,
+            "delta_euler_deg": [0.0, 0.0, 0.0],
+            "refinement_applied": False,
+        }
+
+    best_candidate["refinement_applied"] = True
+    return best_candidate
+
+
+def estimate_scale_from_visible_extents(
+    model_front_points: np.ndarray,
+    target_front_points: np.ndarray,
+    fallback_scale: float,
+) -> dict:
+    model_extents = compute_front_view_extents(model_front_points)
+    target_extents = compute_front_view_extents(target_front_points)
+
+    width_scale = target_extents["width_units"] / max(model_extents["width_units"], 1e-6)
+    height_scale = target_extents["height_units"] / max(model_extents["height_units"], 1e-6)
+    candidates = [
+        float(width_scale),
+        float(height_scale),
+        float(0.5 * (width_scale + height_scale)),
+        float(np.sqrt(max(width_scale * height_scale, 1e-8))),
+    ]
+    candidates = [value for value in candidates if np.isfinite(value) and value > 0]
+    estimated_scale = float(np.median(candidates)) if candidates else float(fallback_scale)
+
+    min_scale = max(float(fallback_scale) * 0.65, 1e-4)
+    max_scale = max(float(fallback_scale) * 1.45, min_scale + 1e-4)
+    estimated_scale = float(np.clip(estimated_scale, min_scale, max_scale))
+    return {
+        "estimated_scale": estimated_scale,
+        "width_scale": float(width_scale),
+        "height_scale": float(height_scale),
+    }
+
+
+def build_scale_candidates(
+    estimated_scale: float,
+    width_scale: float,
+    height_scale: float,
+    fallback_scale: float,
+) -> np.ndarray:
+    raw_scales = [
+        float(fallback_scale),
+        float(estimated_scale),
+        float(0.5 * (width_scale + height_scale)),
+    ]
+    min_scale = max(float(fallback_scale) * 0.65, 1e-4)
+    max_scale = max(float(fallback_scale) * 1.45, min_scale + 1e-4)
+
+    candidates: list[float] = []
+    for base in raw_scales:
+        if not np.isfinite(base) or base <= 0:
+            continue
+        for factor in (0.95, 1.0, 1.05):
+            value = float(np.clip(base * factor, min_scale, max_scale))
+            candidates.append(round(value, 6))
+    return np.array(sorted(set(candidates)), dtype=np.float32)
+
+
+def generate_axis_aligned_rotation_seeds() -> list[dict]:
+    seeds: list[dict] = []
+    seen: set[tuple[float, ...]] = set()
+    for perm in itertools.permutations(range(3)):
+        for signs in itertools.product((-1.0, 1.0), repeat=3):
+            rotation = np.zeros((3, 3), dtype=np.float32)
+            for row, col in enumerate(perm):
+                rotation[row, col] = signs[row]
+            if np.linalg.det(rotation) < 0.5:
+                continue
+            key = tuple(float(v) for v in rotation.reshape(-1))
+            if key in seen:
+                continue
+            seen.add(key)
+            seeds.append(
+                {
+                    "rotation": rotation,
+                    "euler_deg": safe_matrix_to_euler_xyz_deg(rotation),
+                }
+            )
+    return seeds
+
+
+def evaluate_pose_candidate(
+    model_points: np.ndarray,
+    target_front_points: np.ndarray,
+    nominal_scale: float,
+    rotation: np.ndarray,
+    visible_bins: int,
+    visible_max_points: int,
+    scale_candidates: np.ndarray | None = None,
+) -> dict:
+    rotated_full = transform_points(model_points, 1.0, rotation, np.zeros(3, dtype=np.float32))
+    rotated_front = extract_front_visible_points(
+        rotated_full,
+        bins=visible_bins,
+        max_points=visible_max_points,
+        seed=11,
+    )
+    scale_estimate = estimate_scale_from_visible_extents(
+        rotated_front,
+        target_front_points,
+        fallback_scale=nominal_scale,
+    )
+    if scale_candidates is None:
+        scale_candidates = build_scale_candidates(
+            estimated_scale=scale_estimate["estimated_scale"],
+            width_scale=scale_estimate["width_scale"],
+            height_scale=scale_estimate["height_scale"],
+            fallback_scale=nominal_scale,
+        )
+
+    best_candidate: dict | None = None
+    for scale in scale_candidates:
+        scaled_full = transform_points(model_points, float(scale), rotation, np.zeros(3, dtype=np.float32))
+        scaled_front = extract_front_visible_points(
+            scaled_full,
+            bins=visible_bins,
+            max_points=visible_max_points,
+            seed=13,
+        )
+        translation = build_initial_translation(
+            model_full_points=scaled_full,
+            model_front_points=scaled_front,
+            target_front_points=target_front_points,
+        )
+        translated_full = scaled_full + translation
+        translated_front = scaled_front + translation
+        metrics = evaluate_alignment(
+            transformed_full_points=translated_full,
+            transformed_front_points=translated_front,
+            target_front_points=target_front_points,
+            scale=float(scale),
+            nominal_scale=nominal_scale,
+        )
+        candidate = {
+            "rotation": rotation.astype(np.float32),
+            "translation": translation.astype(np.float32),
+            "scale": float(scale),
+            "metrics": metrics,
+            "scale_estimate": scale_estimate,
+        }
+        if best_candidate is None or candidate["metrics"]["score"] < best_candidate["metrics"]["score"]:
+            best_candidate = candidate
+
+    if best_candidate is None:
+        raise RuntimeError("Failed to evaluate pose candidate")
+    return best_candidate
+
+
+def search_initial_pose_candidates(
+    model_points: np.ndarray,
+    target_front_points: np.ndarray,
+    nominal_scale: float,
+) -> list[dict]:
+    candidates: list[dict] = []
+
+    def append_candidate(
+        rotation: np.ndarray,
+        seed_euler_deg: list[float],
+        local_euler_deg: list[float],
+        stage: str,
+        visible_bins: int,
+        visible_max_points: int,
+    ) -> None:
+        if should_reject_inverted_solution(rotation):
+            return
+        candidate = evaluate_pose_candidate(
+            model_points=model_points,
+            target_front_points=target_front_points,
+            nominal_scale=nominal_scale,
+            rotation=rotation,
+            visible_bins=visible_bins,
+            visible_max_points=visible_max_points,
+        )
+        candidate["seed_euler_deg"] = [float(v) for v in seed_euler_deg]
+        candidate["local_euler_deg"] = [float(v) for v in local_euler_deg]
+        candidate["euler_deg"] = safe_matrix_to_euler_xyz_deg(rotation)
+        candidate["stage"] = stage
+        candidates.append(candidate)
+
+    for seed in generate_axis_aligned_rotation_seeds():
+        append_candidate(
+            rotation=seed["rotation"],
+            seed_euler_deg=seed["euler_deg"],
+            local_euler_deg=[0.0, 0.0, 0.0],
+            stage="axis_seed",
+            visible_bins=120,
+            visible_max_points=2600,
+        )
+
+    if not candidates:
+        raise RuntimeError("No valid coarse pose candidates remain after applying ICP constraints.")
+
+    seed_best = sorted(candidates, key=lambda item: item["metrics"]["score"])[:4]
+    for base in seed_best:
+        for rx in (-18, 0, 18):
+            for ry in (-18, 0, 18):
+                for rz in (-18, 0, 18):
+                    perturb = Rotation.from_euler("xyz", [rx, ry, rz], degrees=True).as_matrix().astype(np.float32)
+                    append_candidate(
+                        rotation=perturb @ base["rotation"],
+                        seed_euler_deg=base["seed_euler_deg"],
+                        local_euler_deg=[float(rx), float(ry), float(rz)],
+                        stage="refine_medium",
+                        visible_bins=144,
+                        visible_max_points=3600,
+                    )
+
+    medium_best = sorted(candidates, key=lambda item: item["metrics"]["score"])[:3]
+    for base in medium_best:
+        for rx in (-6, 0, 6):
+            for ry in (-6, 0, 6):
+                for rz in (-6, 0, 6):
+                    perturb = Rotation.from_euler("xyz", [rx, ry, rz], degrees=True).as_matrix().astype(np.float32)
+                    append_candidate(
+                        rotation=perturb @ base["rotation"],
+                        seed_euler_deg=base["seed_euler_deg"],
+                        local_euler_deg=[
+                            float(base["local_euler_deg"][0] + rx),
+                            float(base["local_euler_deg"][1] + ry),
+                            float(base["local_euler_deg"][2] + rz),
+                        ],
+                        stage="refine_fine",
+                        visible_bins=160,
+                        visible_max_points=4200,
+                    )
+
+    candidates.sort(key=lambda item: item["metrics"]["score"])
+    if not candidates:
+        raise RuntimeError("No valid pose candidates remain after applying ICP constraints.")
+    return candidates
 
 
 def search_initial_pose(
     model_points: np.ndarray,
     target_front_points: np.ndarray,
     nominal_scale: float,
-    mean_depth: float,
-    real_width: float,
-    real_height: float,
 ) -> dict:
-    candidates: list[dict] = []
-
-    def try_grid(center: tuple[float, float, float], step: int, radius: int) -> None:
-        for rx in range(int(center[0] - radius), int(center[0] + radius + 1), step):
-            for ry in range(int(center[1] - radius), int(center[1] + radius + 1), step):
-                for rz in range(int(center[2] - radius), int(center[2] + radius + 1), step):
-                    rotation = Rotation.from_euler("xyz", [rx, ry, rz], degrees=True).as_matrix().astype(np.float32)
-                    coarse_full = transform_points(model_points, nominal_scale, rotation, np.zeros(3, dtype=np.float32))
-                    coarse_front = extract_front_visible_points(coarse_full, bins=128, max_points=3200, seed=11)
-                    translation = build_initial_translation(
-                        model_full_points=coarse_full,
-                        model_front_points=coarse_front,
-                        target_front_points=target_front_points,
-                        mean_depth=mean_depth,
-                    )
-                    coarse_full = coarse_full + translation
-                    coarse_front = coarse_front + translation
-                    metrics = evaluate_alignment(
-                        transformed_full_points=coarse_full,
-                        transformed_front_points=coarse_front,
-                        target_front_points=target_front_points,
-                        real_width=real_width,
-                        real_height=real_height,
-                        scale=nominal_scale,
-                        nominal_scale=nominal_scale,
-                    )
-                    candidates.append(
-                        {
-                            "rotation": rotation,
-                            "translation": translation,
-                            "scale": nominal_scale,
-                            "metrics": metrics,
-                            "euler_deg": [float(rx), float(ry), float(rz)],
-                        }
-                    )
-
-    try_grid(center=(0.0, 0.0, 0.0), step=10, radius=30)
-    best_coarse = min(candidates, key=lambda item: item["metrics"]["score"])
-    try_grid(center=tuple(best_coarse["euler_deg"]), step=4, radius=8)
-    candidates.sort(key=lambda item: item["metrics"]["score"])
-    return candidates[0]
+    return search_initial_pose_candidates(
+        model_points=model_points,
+        target_front_points=target_front_points,
+        nominal_scale=nominal_scale,
+    )[0]
 
 
 def compute_confidence(task: dict, best: dict) -> float:
@@ -307,14 +707,18 @@ def compute_confidence(task: dict, best: dict) -> float:
     real_w = float(depthpointcloud.get("real_width_measured") or 0.0)
     real_h = float(depthpointcloud.get("real_height_measured") or 0.0)
     size_ref = max(real_w, real_h, 1e-6)
-    rmse_score = 1.0 - min(best["rmse"] / size_ref, 1.0)
+    surface_rmse = float(best.get("surface_rmse_3d") or best["rmse"])
+    coverage_rmse = float(best.get("coverage_rmse_3d") or best["rmse"])
+    rmse_score = 1.0 - min(surface_rmse / size_ref, 1.0)
+    coverage_score = 1.0 - min(coverage_rmse / size_ref, 1.0)
     inlier_ratio = float(np.clip(best["inlier_ratio"], 0.0, 1.0))
 
     confidence = (
-        0.30 * valid_ratio
-        + 0.20 * scale_consistency
+        0.25 * valid_ratio
+        + 0.15 * scale_consistency
         + 0.25 * rmse_score
-        + 0.15 * inlier_ratio
+        + 0.15 * coverage_score
+        + 0.10 * inlier_ratio
         + 0.10 * point_score
     )
     return float(np.clip(confidence, 0.0, 1.0))
@@ -382,7 +786,8 @@ def render_aligned_model_image(
 def render_overlay_preview_image(
     blender_path: Path | None,
     mesh_path: Path,
-    pointcloud_path: Path,
+    discarded_pointcloud_path: Path,
+    icp_pointcloud_path: Path,
     render_path: Path,
     blender_translation: np.ndarray,
     blender_delta_euler_deg: np.ndarray,
@@ -396,7 +801,7 @@ def render_overlay_preview_image(
         "Perspective preview: point cloud + aligned model",
         "Point cloud import: forward=-X, up=+Y",
         "Model import: forward=-X, up=+Z",
-        "Dark = point cloud, light = aligned model",
+        "Orange = mask-border-discarded points, green = ICP-used points, blue = aligned model",
         f"Depth mean    : {float(depthpointcloud.get('mean_depth_measured') or 0.0):.4f} m",
         f"ICP rmse      : {float(object_alignment.get('icp_rmse') or 0.0):.4f} m",
         f"Confidence    : {float(object_alignment.get('confidence') or 0.0):.3f}",
@@ -413,7 +818,8 @@ def render_overlay_preview_image(
         "--",
         "overlay_preview",
         str(mesh_path),
-        str(pointcloud_path),
+        str(discarded_pointcloud_path),
+        str(icp_pointcloud_path),
         str(render_path),
         *[f"{float(v):.9f}" for v in blender_translation],
         *[f"{float(v):.9f}" for v in blender_delta_euler_deg],
@@ -464,122 +870,156 @@ def main(argv: list[str]) -> int:
     if not pointcloud_name:
         raise ValueError("depthpointcloud.pointcloud_name is missing")
 
+    k = np.asarray((task.get("PVCamera") or {}).get("k"), dtype=np.float32)
+    if k.shape != (3, 3):
+        raise ValueError(f"PVCamera.k must be 3x3, got {k.shape}")
+
+    mask_bool = read_mask(paths["mask_path"])
+    depth_mm = read_depth_image(paths["depth_path"])
+    valid_all = mask_bool & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
+    depth_keep_mask = build_depth_border_keep_mask(mask_bool)
+    valid_cropped = valid_all & ~depth_keep_mask
+    discarded_points_export, _ = build_depth_pointcloud_from_valid_mask(depth_mm, valid_cropped, k)
+
     pointcloud_path = object_alignment_output_path(pointcloud_name)
     pointcloud_points_export = read_binary_ply_points(pointcloud_path)
     pointcloud_points_unity = pointcloud_export_to_unity(pointcloud_points_export)
     model_vertices_raw = read_obj_vertices(paths["mesh_path"])
     model_vertices_unity = obj_vertices_to_unity(model_vertices_raw)
-    target_front_fit = extract_front_visible_points(pointcloud_points_unity, bins=140, max_points=4200, seed=7)
+    target_front_fit, target_front_indices = select_front_visible_points(
+        pointcloud_points_unity,
+        bins=160,
+        max_points=5200,
+        seed=7,
+    )
+    icp_used_points_export = pointcloud_points_export[target_front_indices]
 
     overall_scale = float((task.get("model") or {}).get("overall_scale") or 1.0)
-    mean_depth = float((task.get("depthpointcloud") or {}).get("mean_depth_measured") or 0.0)
-    real_width = float((task.get("depthpointcloud") or {}).get("real_width_measured") or 0.0)
-    real_height = float((task.get("depthpointcloud") or {}).get("real_height_measured") or 0.0)
 
-    best_coarse = search_initial_pose(
+    coarse_candidates = search_initial_pose_candidates(
         model_points=model_vertices_unity,
         target_front_points=target_front_fit,
         nominal_scale=overall_scale,
-        mean_depth=mean_depth,
-        real_width=real_width,
-        real_height=real_height,
     )
+    coarse_candidates = coarse_candidates[:4]
 
-    candidate_scales = np.linspace(0.97, 1.03, 7, dtype=np.float32) * overall_scale
     best_result: dict | None = None
     best_debug: dict | None = None
-    for scale in candidate_scales:
-        rotation_seed = best_coarse["rotation"]
-        coarse_full = transform_points(model_vertices_unity, float(scale), rotation_seed, np.zeros(3, dtype=np.float32))
-        coarse_front = extract_front_visible_points(coarse_full, bins=160, max_points=5000, seed=19)
-        coarse_translation = build_initial_translation(
-            model_full_points=coarse_full,
-            model_front_points=coarse_front,
-            target_front_points=target_front_fit,
-            mean_depth=mean_depth,
+    for coarse_rank, best_coarse in enumerate(coarse_candidates, start=1):
+        candidate_scales = build_scale_candidates(
+            estimated_scale=float(best_coarse["scale_estimate"]["estimated_scale"]),
+            width_scale=float(best_coarse["scale_estimate"]["width_scale"]),
+            height_scale=float(best_coarse["scale_estimate"]["height_scale"]),
+            fallback_scale=overall_scale,
         )
-        coarse_full = coarse_full + coarse_translation
-        coarse_front = coarse_front + coarse_translation
+        for scale in candidate_scales:
+            rotation_seed = best_coarse["rotation"]
+            coarse_full = transform_points(model_vertices_unity, float(scale), rotation_seed, np.zeros(3, dtype=np.float32))
+            coarse_front = extract_front_visible_points(coarse_full, bins=180, max_points=5200, seed=19)
+            coarse_translation = build_initial_translation(
+                model_full_points=coarse_full,
+                model_front_points=coarse_front,
+                target_front_points=target_front_fit,
+            )
+            coarse_full = coarse_full + coarse_translation
+            coarse_front = coarse_front + coarse_translation
 
-        delta_result = run_icp(
-            model_points=coarse_front,
-            target_points=target_front_fit,
-            scale=1.0,
-            init_rotation=np.eye(3, dtype=np.float32),
-            init_translation=np.zeros(3, dtype=np.float32),
-            iterations=24,
-        )
-        final_rotation, final_translation = compose_transform(
-            base_rotation=rotation_seed,
-            base_translation=coarse_translation,
-            delta_rotation=delta_result["rotation"],
-            delta_translation=delta_result["translation"],
-        )
+            delta_result = run_icp(
+                model_points=model_vertices_unity,
+                target_points=target_front_fit,
+                scale=float(scale),
+                init_rotation=rotation_seed,
+                init_translation=coarse_translation,
+                iterations=20,
+                visible_bins=180,
+                visible_max_points=5200,
+            )
+            final_rotation = delta_result["rotation"]
+            final_translation = delta_result["translation"]
+            delta_rotation = final_rotation @ rotation_seed.T
+            delta_translation = final_translation - (coarse_translation @ delta_rotation.T)
 
-        transformed_full = transform_points(model_vertices_unity, float(scale), final_rotation, final_translation)
-        transformed_front = extract_front_visible_points(transformed_full, bins=160, max_points=5000, seed=23)
-        metrics = evaluate_alignment(
-            transformed_full_points=transformed_full,
-            transformed_front_points=transformed_front,
-            target_front_points=target_front_fit,
-            real_width=real_width,
-            real_height=real_height,
-            scale=float(scale),
-            nominal_scale=overall_scale,
-        )
+            if should_reject_inverted_solution(final_rotation):
+                continue
 
-        candidate = {
-            "scale": float(scale),
-            "rotation": final_rotation,
-            "translation": final_translation,
-            "rmse": metrics["rmse_3d"],
-            "rmse_2d": metrics["rmse_2d"],
-            "score": metrics["score"],
-            "size_error": metrics["size_error"],
-            "inlier_ratio": float(delta_result["inlier_ratio"]),
-            "extents": metrics["extents"],
-            "width_error": metrics["width_error"],
-            "height_error": metrics["height_error"],
-        }
-        if best_result is None or candidate["score"] < best_result["score"]:
-            best_result = candidate
-            best_debug = {
-                "coarse_search": {
-                    "scale": float(scale),
-                    "seed_euler_deg": [float(v) for v in best_coarse["euler_deg"]],
-                    "pose": serialize_pose(
-                        rotation_seed,
-                        coarse_translation,
-                        "unity_camera_local_x_right_y_up_z_forward",
-                    ),
-                    "score": float(best_coarse["metrics"]["score"]),
-                    "rmse_3d": float(best_coarse["metrics"]["rmse_3d"]),
-                    "rmse_2d": float(best_coarse["metrics"]["rmse_2d"]),
-                    "size_error": float(best_coarse["metrics"]["size_error"]),
-                },
-                "icp_delta": {
-                    "scale": 1.0,
-                    "pose": serialize_pose(
-                        delta_result["rotation"],
-                        delta_result["translation"],
-                        "unity_camera_local_delta_x_right_y_up_z_forward",
-                    ),
-                    "rmse": float(delta_result["rmse"]),
-                    "inlier_ratio": float(delta_result["inlier_ratio"]),
-                },
-                "final_camera_local_unity": {
-                    "scale": float(scale),
-                    "pose": serialize_pose(
-                        final_rotation,
-                        final_translation,
-                        "unity_camera_local_x_right_y_up_z_forward",
-                    ),
-                    "front_view_rmse_2d": float(metrics["rmse_2d"]),
-                    "front_view_size_error": float(metrics["size_error"]),
-                    "width_error": float(metrics["width_error"]),
-                    "height_error": float(metrics["height_error"]),
-                },
+            transformed_full = transform_points(model_vertices_unity, float(scale), final_rotation, final_translation)
+            transformed_front = extract_front_visible_points(transformed_full, bins=180, max_points=5200, seed=23)
+            metrics = evaluate_alignment(
+                transformed_full_points=transformed_full,
+                transformed_front_points=transformed_front,
+                target_front_points=target_front_fit,
+                scale=float(scale),
+                nominal_scale=overall_scale,
+            )
+
+            candidate = {
+                "scale": float(scale),
+                "rotation": final_rotation,
+                "translation": final_translation,
+                "rmse": metrics["rmse_3d"],
+                "surface_rmse_3d": metrics["surface_rmse_3d"],
+                "coverage_rmse_3d": metrics["coverage_rmse_3d"],
+                "rmse_2d": metrics["rmse_2d"],
+                "score": metrics["score"],
+                "size_error": metrics["size_error"],
+                "inlier_ratio": float(delta_result["inlier_ratio"]),
+                "extents": metrics["extents"],
+                "width_error": metrics["width_error"],
+                "height_error": metrics["height_error"],
             }
+            if best_result is None or candidate["score"] < best_result["score"]:
+                best_result = candidate
+                best_debug = {
+                    "coarse_search": {
+                        "candidate_rank": int(coarse_rank),
+                        "scale": float(scale),
+                        "up_y": model_up_y_in_unity(rotation_seed),
+                        "seed_euler_deg": [float(v) for v in best_coarse["seed_euler_deg"]],
+                        "local_refine_euler_deg": [float(v) for v in best_coarse["local_euler_deg"]],
+                        "search_stage": str(best_coarse["stage"]),
+                        "pose": serialize_pose(
+                            rotation_seed,
+                            coarse_translation,
+                            "unity_camera_local_x_right_y_up_z_forward",
+                        ),
+                        "score": float(best_coarse["metrics"]["score"]),
+                        "rmse_3d": float(best_coarse["metrics"]["rmse_3d"]),
+                        "surface_rmse_3d": float(best_coarse["metrics"]["surface_rmse_3d"]),
+                        "coverage_rmse_3d": float(best_coarse["metrics"]["coverage_rmse_3d"]),
+                        "rmse_2d": float(best_coarse["metrics"]["rmse_2d"]),
+                        "size_error": float(best_coarse["metrics"]["size_error"]),
+                        "center_error": float(best_coarse["metrics"]["center_error"]),
+                        "estimated_scale": float(best_coarse["scale_estimate"]["estimated_scale"]),
+                        "width_scale": float(best_coarse["scale_estimate"]["width_scale"]),
+                        "height_scale": float(best_coarse["scale_estimate"]["height_scale"]),
+                    },
+                    "icp_delta": {
+                        "scale": 1.0,
+                        "pose": serialize_pose(
+                            delta_rotation,
+                            delta_translation,
+                            "unity_camera_local_delta_x_right_y_up_z_forward",
+                        ),
+                        "rmse": float(delta_result["rmse"]),
+                        "inlier_ratio": float(delta_result["inlier_ratio"]),
+                    },
+                    "final_camera_local_unity": {
+                        "scale": float(scale),
+                        "up_y": model_up_y_in_unity(final_rotation),
+                        "pose": serialize_pose(
+                            final_rotation,
+                            final_translation,
+                            "unity_camera_local_x_right_y_up_z_forward",
+                        ),
+                        "front_view_rmse_2d": float(metrics["rmse_2d"]),
+                        "surface_rmse_3d": float(metrics["surface_rmse_3d"]),
+                        "coverage_rmse_3d": float(metrics["coverage_rmse_3d"]),
+                        "front_view_size_error": float(metrics["size_error"]),
+                        "width_error": float(metrics["width_error"]),
+                        "height_error": float(metrics["height_error"]),
+                        "center_error": float(metrics["center_error"]),
+                    },
+                }
 
     if best_result is None:
         raise RuntimeError("Failed to compute object alignment")
@@ -587,6 +1027,57 @@ def main(argv: list[str]) -> int:
         raise RuntimeError("Failed to collect object alignment debug data")
 
     best = best_result
+    refined = refine_pose_locally(
+        model_points=model_vertices_unity,
+        target_front_points=target_front_fit,
+        scale=float(best["scale"]),
+        nominal_scale=overall_scale,
+        base_rotation=best["rotation"],
+        base_translation=best["translation"],
+    )
+    if refined.get("refinement_applied") and float(refined["score"]) < float(best["score"]):
+        best = {
+            **best,
+            **{
+                "rotation": refined["rotation"],
+                "translation": refined["translation"],
+                "rmse": refined["rmse"],
+                "surface_rmse_3d": refined["surface_rmse_3d"],
+                "coverage_rmse_3d": refined["coverage_rmse_3d"],
+                "rmse_2d": refined["rmse_2d"],
+                "score": refined["score"],
+                "size_error": refined["size_error"],
+                "inlier_ratio": refined["inlier_ratio"],
+                "extents": refined["extents"],
+                "width_error": refined["width_error"],
+                "height_error": refined["height_error"],
+            },
+        }
+        best_debug["local_rotation_refine"] = {
+            "delta_euler_deg": [float(v) for v in refined["delta_euler_deg"]],
+            "center_error": float(refined["center_error"]),
+            "score": float(refined["score"]),
+            "surface_rmse_3d": float(refined["surface_rmse_3d"]),
+            "coverage_rmse_3d": float(refined["coverage_rmse_3d"]),
+            "front_view_rmse_2d": float(refined["rmse_2d"]),
+            "up_y": model_up_y_in_unity(refined["rotation"]),
+        }
+        best_debug["final_camera_local_unity"] = {
+            "scale": float(best["scale"]),
+            "up_y": model_up_y_in_unity(best["rotation"]),
+            "pose": serialize_pose(
+                best["rotation"],
+                best["translation"],
+                "unity_camera_local_x_right_y_up_z_forward",
+            ),
+            "front_view_rmse_2d": float(best["rmse_2d"]),
+            "surface_rmse_3d": float(best["surface_rmse_3d"]),
+            "coverage_rmse_3d": float(best["coverage_rmse_3d"]),
+            "front_view_size_error": float(best["size_error"]),
+            "width_error": float(best["width_error"]),
+            "height_error": float(best["height_error"]),
+            "center_error": float(refined["center_error"]),
+        }
 
     pointcloud_rotation, pointcloud_translation = model_pose_unity_to_pointcloud_input(
         best["rotation"],
@@ -597,13 +1088,28 @@ def main(argv: list[str]) -> int:
 
     blender_rotation = rotation_unity_to_blender_world(best["rotation"])
     blender_translation = unity_to_blender_world_vector(best["translation"])
-    blender_delta_euler_deg = Rotation.from_matrix(blender_rotation).as_euler("xyz", degrees=True)
+    blender_delta_euler_deg = np.asarray(
+        safe_matrix_to_blender_euler_xyz_deg(blender_rotation),
+        dtype=np.float32,
+    )
 
     confidence = compute_confidence(task, best)
     aligned_model_image_name = f"{prefix}_aligned_model_front.png"
     aligned_model_image_path = object_alignment_output_path(aligned_model_image_name)
     overlay_preview_name = f"{prefix}_alignment_preview_perspective.png"
     overlay_preview_path = object_alignment_output_path(overlay_preview_name)
+    discarded_points_preview_name = f"{prefix}_icp_discarded_points.ply"
+    discarded_points_preview_path = object_alignment_output_path(discarded_points_preview_name)
+    icp_points_preview_name = f"{prefix}_icp_used_points.ply"
+    icp_points_preview_path = object_alignment_output_path(icp_points_preview_name)
+    write_binary_ply(
+        discarded_points_preview_path,
+        discarded_points_export,
+    )
+    write_binary_ply(
+        icp_points_preview_path,
+        icp_used_points_export,
+    )
 
     object_alignment = {
         "coordinate_basis": "pointcloud_input_pre_blender_import",
@@ -623,11 +1129,21 @@ def main(argv: list[str]) -> int:
         "model_real_scale": float(best["scale"]),
         "front_view_image_name": aligned_model_image_name,
         "preview_image_name": overlay_preview_name,
+        "icp_discarded_pointcloud_name": discarded_points_preview_name,
+        "icp_used_pointcloud_name": icp_points_preview_name,
+        "discarded_count": int(len(discarded_points_export)),
+        "used_count": int(len(icp_used_points_export)),
         "confidence": confidence,
         "icp_rmse": float(best["rmse"]),
+        "surface_rmse_3d": float(best.get("surface_rmse_3d") or 0.0),
+        "coverage_rmse_3d": float(best.get("coverage_rmse_3d") or 0.0),
         "front_view_rmse_2d": float(best.get("rmse_2d") or 0.0),
         "front_view_size_error": float(best.get("size_error") or 0.0),
         "icp_inlier_ratio": float(best["inlier_ratio"]),
+        "icp_constraints": {
+            "ignore_inverted_solutions": bool(ICP_IGNORE_INVERTED_SOLUTIONS),
+            "ignore_occluded_model_points": bool(ICP_IGNORE_OCCLUDED_MODEL_POINTS),
+        },
     }
     task["object_alignment"] = object_alignment
 
@@ -669,7 +1185,8 @@ def main(argv: list[str]) -> int:
         render_overlay_preview_image(
             blender_path=blender_path,
             mesh_path=paths["mesh_path"],
-            pointcloud_path=pointcloud_path,
+            discarded_pointcloud_path=discarded_points_preview_path,
+            icp_pointcloud_path=icp_points_preview_path,
             render_path=overlay_preview_path,
             blender_translation=blender_translation,
             blender_delta_euler_deg=blender_delta_euler_deg,

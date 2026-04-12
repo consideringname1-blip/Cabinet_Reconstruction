@@ -56,6 +56,13 @@ def import_ply(pointcloud_path: Path) -> list[bpy.types.Object]:
     return imported
 
 
+def import_optional_ply(pointcloud_path: Path) -> list[bpy.types.Object]:
+    try:
+        return import_ply(pointcloud_path)
+    except Exception:
+        return []
+
+
 def build_emission_material(name: str, color_rgb: tuple[float, float, float], alpha: float = 1.0) -> bpy.types.Material:
     material = bpy.data.materials.new(name=name)
     material.use_nodes = True
@@ -139,8 +146,8 @@ def setup_front_camera(center: Vector, width: float, height: float) -> None:
 
     distance = max(width, height) * 2.5 + 1.0
     camera.location = Vector((center.x, center.y - distance, center.z))
-    direction = center - camera.location
-    camera.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+    # Match Blender's default Front view: look along +Y with Z-up in the image.
+    camera.rotation_euler = Euler((radians(90.0), 0.0, 0.0), "XYZ")
     bpy.context.scene.camera = camera
 
 
@@ -260,17 +267,26 @@ def render_front_model(
 def render_overlay_preview(
     mesh_path: Path,
     pointcloud_path: Path,
+    icp_pointcloud_path: Path,
     render_path: Path,
     location: tuple[float, float, float],
     rotation_deg: tuple[float, float, float],
     uniform_scale: float,
 ) -> None:
-    pointcloud_objects = import_ply(pointcloud_path)
-    point_vertices = collect_world_vertices(pointcloud_objects, evaluated=False)
+    pointcloud_objects = import_optional_ply(pointcloud_path)
+    point_vertices = collect_world_vertices(pointcloud_objects, evaluated=False) if pointcloud_objects else []
 
-    point_material = build_emission_material("PointCloudRed", (1.00, 0.28, 0.10), alpha=1.0)
-    add_point_instances(pointcloud_objects, radius=0.0035, material=point_material)
-    set_object_color(pointcloud_objects, (1.00, 0.28, 0.10, 1.0))
+    point_material = build_emission_material("PointCloudOrange", (1.00, 0.28, 0.10), alpha=1.0)
+    if pointcloud_objects:
+        add_point_instances(pointcloud_objects, radius=0.0035, material=point_material)
+        set_object_color(pointcloud_objects, (1.00, 0.28, 0.10, 1.0))
+
+    icp_pointcloud_objects = import_optional_ply(icp_pointcloud_path)
+    icp_point_vertices = collect_world_vertices(icp_pointcloud_objects, evaluated=False) if icp_pointcloud_objects else []
+    icp_point_material = build_emission_material("PointCloudGreen", (0.18, 0.80, 0.30), alpha=1.0)
+    if icp_pointcloud_objects:
+        add_point_instances(icp_pointcloud_objects, radius=0.0039, material=icp_point_material)
+        set_object_color(icp_pointcloud_objects, (0.18, 0.80, 0.30, 1.0))
 
     model_objects = import_obj(mesh_path)
     model_material = build_emission_material("AlignedBlue", (0.25, 0.55, 1.00), alpha=0.42)
@@ -279,7 +295,7 @@ def render_overlay_preview(
     apply_group_transform(model_objects, location, rotation_deg, uniform_scale)
     model_vertices = collect_world_vertices(model_objects, evaluated=False)
 
-    all_vertices = point_vertices + model_vertices
+    all_vertices = point_vertices + icp_point_vertices + model_vertices
     xs = [v.x for v in all_vertices]
     ys = [v.y for v in all_vertices]
     zs = [v.z for v in all_vertices]
@@ -326,25 +342,34 @@ def main() -> int:
             print(str(exc), file=sys.stderr)
             return 1
 
-    if len(argv) != 10:
+    if len(argv) != 11:
         print(
             "Usage: blender --background --python code/stages/blender_render_measure.py -- "
-            "overlay_preview <mesh.obj> <pointcloud.ply> <render.png> <tx> <ty> <tz> <rx> <ry> <rz> <scale>",
+            "overlay_preview <mesh.obj> <pointcloud.ply> <icp_pointcloud.ply> <render.png> <tx> <ty> <tz> <rx> <ry> <rz> <scale>",
             file=sys.stderr,
         )
         return 2
 
     mesh_path = ensure_file(Path(argv[0]).expanduser().resolve(), "OBJ mesh")
     pointcloud_path = ensure_file(Path(argv[1]).expanduser().resolve(), "PLY pointcloud")
-    render_path = Path(argv[2]).expanduser().resolve()
+    icp_pointcloud_path = ensure_file(Path(argv[2]).expanduser().resolve(), "ICP pointcloud")
+    render_path = Path(argv[3]).expanduser().resolve()
     render_path.parent.mkdir(parents=True, exist_ok=True)
-    location = tuple(float(v) for v in argv[3:6])
-    rotation_deg = tuple(float(v) for v in argv[6:9])
-    uniform_scale = float(argv[9])
+    location = tuple(float(v) for v in argv[4:7])
+    rotation_deg = tuple(float(v) for v in argv[7:10])
+    uniform_scale = float(argv[10])
 
     try:
         clean_scene()
-        render_overlay_preview(mesh_path, pointcloud_path, render_path, location, rotation_deg, uniform_scale)
+        render_overlay_preview(
+            mesh_path,
+            pointcloud_path,
+            icp_pointcloud_path,
+            render_path,
+            location,
+            rotation_deg,
+            uniform_scale,
+        )
         return 0
     except Exception as exc:
         print(str(exc), file=sys.stderr)

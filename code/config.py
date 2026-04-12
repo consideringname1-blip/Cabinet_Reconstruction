@@ -6,9 +6,15 @@ HOLOLENS2_HOST = "10.40.1.132"
 IS_RUN_FLASK_SERVER = True
 
 # Depth / alignment tuning
-# Fraction cropped from each image edge before depth->pointcloud conversion.
-# Set to 0.0 to disable.
-ICP_DEPTH_BORDER_CROP_RATIO = 0.15
+# Fraction cropped inward from the SAM3 mask periphery before depth->pointcloud
+# conversion. Set to 0.0 to disable.
+ICP_DEPTH_BORDER_CROP_RATIO = 0.03
+# Reject candidate poses that leave the reconstructed model upside-down in
+# camera-local Unity space.
+ICP_IGNORE_INVERTED_SOLUTIONS = True
+# When enabled, ICP and coarse search only use the nearest model surface along
+# the camera ray and ignore occluded model geometry behind it.
+ICP_IGNORE_OCCLUDED_MODEL_POINTS = True
 
 
 # Project roots

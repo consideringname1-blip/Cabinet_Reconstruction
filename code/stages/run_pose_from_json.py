@@ -5,7 +5,13 @@ import numpy as np
 
 from _bootstrap import CODE_ROOT
 from object_alignment_common import (
+    BLENDER_WORLD_TO_FBX_EXPORT_LOCAL,
+    FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD,
+    FBX_RUNTIME_LOCAL_TO_UNITY_BASIS,
     ICP_OBJ_IMPORT_LOCAL_ROTATION,
+    ICP_OBJ_IMPORT_TO_BLENDER_WORLD,
+    MODEL_INPUT_TO_FBX_RUNTIME_LOCAL,
+    MODEL_INPUT_TO_UNITY_BASIS,
     model_pose_pointcloud_input_to_unity,
 )
 from task_json import load_task_json, resolve_task_json_path, save_task_json
@@ -110,6 +116,24 @@ def serialize_pose(rotation: np.ndarray, translation: np.ndarray, coordinate_bas
     }
 
 
+def serialize_rotation_only(
+    rotation: np.ndarray,
+    coordinate_basis: str,
+    notes: str | None = None,
+) -> dict[str, list[float] | list[list[float]] | str]:
+    payload = serialize_pose(rotation, np.zeros(3, dtype=np.float64), coordinate_basis)
+    if notes:
+        payload["notes"] = notes
+    return payload
+
+
+def resolve_runtime_local_to_unity_rotation() -> np.ndarray:
+    # The runtime object is not the raw OBJ that ICP solved against. We need the
+    # full local-axis chain from model-input axes through the FBX wrapper so the
+    # final world quaternion is applied in the same basis as the ICP result.
+    return np.asarray(FBX_RUNTIME_LOCAL_TO_UNITY_BASIS, dtype=np.float64)
+
+
 def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
     alignment = task.get("object_alignment") or {}
     coordinate_basis = str(alignment.get("coordinate_basis") or "")
@@ -155,13 +179,12 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     # usual Unity/column-vector convention: p_world = R_cam @ p_local + t_cam.
     R_cam = quat_xyzw_to_rotation_matrix(device_rotation_quat)
     t_cam = device_position
+    runtime_local_to_unity = resolve_runtime_local_to_unity_rotation()
 
     world_position = (R_cam @ local_position) + t_cam
-    # Keep the validated device.pose world anchor for placement, but before we
-    # emit the final Unity quaternion re-apply the OBJ import-axis rotation used
-    # during ICP (`forward=-X`, `up=+Z`). This keeps the loaded FBX local frame
-    # aligned with the frame that the ICP stage actually solved against.
-    world_rotation = R_cam @ local_rotation @ ICP_OBJ_IMPORT_LOCAL_ROTATION
+    # Compose the ICP rotation with the runtime FBX local-axis chain so the
+    # loaded model is placed in the same orientation that ICP solved.
+    world_rotation = R_cam @ local_rotation @ runtime_local_to_unity
     world_quat = rotation_matrix_to_quat_xyzw(world_rotation)
 
     uniform_scale = [float(model_scale), float(model_scale), float(model_scale)]
@@ -189,9 +212,10 @@ def build_pose_debug(task: dict) -> dict:
     if device_rotation_quat.shape != (4,):
         raise ValueError("device.rotation must have 4 values")
     device_rotation = quat_xyzw_to_rotation_matrix(device_rotation_quat)
+    runtime_local_to_unity = resolve_runtime_local_to_unity_rotation()
 
     world_position = (device_rotation @ local_position) + device_position
-    world_rotation = device_rotation @ local_rotation @ ICP_OBJ_IMPORT_LOCAL_ROTATION
+    world_rotation = device_rotation @ local_rotation @ runtime_local_to_unity
 
     return {
         "camera_local_pointcloud_input": {
@@ -217,6 +241,43 @@ def build_pose_debug(task: dict) -> dict:
                 "unity_world_x_right_y_up_z_forward",
             ),
             "notes": "Temporary fallback for debugging/backtracking: this field currently uses uploaded device.pose/device.rotation (Unity Camera.main), not PVCamera.pose.",
+        },
+        "local_rotation_compensation_chain": {
+            "model_input_to_unity": serialize_rotation_only(
+                MODEL_INPUT_TO_UNITY_BASIS,
+                "model_input_x_unknown_y_unknown_z_unknown -> unity_camera_local_x_right_y_up_z_forward",
+                notes="This is the basis used when ICP converts raw OBJ vertices into the internal Unity-aligned point set.",
+            ),
+            "icp_obj_import_to_blender_world": serialize_rotation_only(
+                ICP_OBJ_IMPORT_TO_BLENDER_WORLD,
+                "model_input_local -> blender_world_for_icp_preview",
+                notes="ICP preview/rendering imports OBJ into Blender with forward=-X, up=+Z.",
+            ),
+            "fbx_convert_obj_import_to_blender_world": serialize_rotation_only(
+                FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD,
+                "model_input_local -> blender_world_for_fbx_wrapper",
+                notes="Runtime FBX wrapping imports OBJ with Blender's default OBJ axes: forward=-Z, up=+Y.",
+            ),
+            "blender_world_to_fbx_export_local": serialize_rotation_only(
+                BLENDER_WORLD_TO_FBX_EXPORT_LOCAL,
+                "blender_world -> runtime_fbx_local",
+                notes="FBX export uses axis_forward=-Z, axis_up=Y with bake_space_transform=True.",
+            ),
+            "model_input_to_runtime_fbx_local": serialize_rotation_only(
+                MODEL_INPUT_TO_FBX_RUNTIME_LOCAL,
+                "model_input_local -> runtime_fbx_local",
+                notes="This is the composed local-axis transform of the OBJ->FBX wrapper path.",
+            ),
+            "runtime_fbx_local_to_unity": serialize_rotation_only(
+                runtime_local_to_unity,
+                "runtime_fbx_local -> unity_camera_local_x_right_y_up_z_forward",
+                notes="This is the compensation actually multiplied onto the final world quaternion.",
+            ),
+            "legacy_icp_obj_import_only_compensation": serialize_rotation_only(
+                ICP_OBJ_IMPORT_LOCAL_ROTATION,
+                "legacy_blender_icp_local -> model_input_local",
+                notes="Previous pose-stage implementation only used the ICP Blender import correction, which ignored the FBX wrapper path.",
+            ),
         },
         "final_object_world": {
             "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,

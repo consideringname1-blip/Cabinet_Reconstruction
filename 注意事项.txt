@@ -32,7 +32,7 @@ pip install pyzdepth
 [ERROR] /generate exception: 413 Request Entity Too Large: The data value transmitted exceeds the capacity limit.
 10.40.1.132 - - [28/Mar/2026 08:27:06] "POST /generate HTTP/1.1" 400 -
 
-260409-1
+260409
 1.在hololens启动时加上时间戳获取，每次上传时同步传下，作为这次启动的标志，为之后使用mark进行世界坐标保存做准备
 2.在server上加上识别对应的模块，先判断框选范围内有无完整的这个标，如果有，在当前一直在跑的taskworker旁路进行坐标重计算
 3.坐标重计算需要修改数据库结构，加上以启动时间戳为基准的部分，向内写入mark的坐标（作为多次启动时模型加载的基准位置）
@@ -42,3 +42,7 @@ pip install pyzdepth
 1.增加shigurei的位置记录
 2.unity增加滑块，物品表，可以放置物体并进行位置追踪
 3.朝向是个很大的问题，估计无法理解朝向（待议）
+
+260412
+1.config里增加可选渲染结果选项（对于instantmesh的video生成也是一样）
+2.按照目前的预览渲染的链路（包括模型导入，fbx生成，icp结果等相关坐标变换），重新检查最终的模型位姿变换结果

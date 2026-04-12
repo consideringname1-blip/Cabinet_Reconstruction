@@ -67,6 +67,16 @@ UNITY_TO_OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_BASIS = (
     OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_TO_UNITY_BASIS.T
 )
 
+UNITY_TO_BLENDER_WORLD = np.array(
+    [
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 1.0, 0.0],
+    ],
+    dtype=np.float32,
+)
+BLENDER_WORLD_TO_UNITY = UNITY_TO_BLENDER_WORLD.copy()
+
 MODEL_INPUT_TO_UNITY_BASIS = np.array(
     [
         [0.0, 1.0, 0.0],
@@ -77,28 +87,58 @@ MODEL_INPUT_TO_UNITY_BASIS = np.array(
 )
 UNITY_TO_MODEL_INPUT_BASIS = MODEL_INPUT_TO_UNITY_BASIS.T
 
-# Proper rotation offset for the OBJ import convention used during ICP/debug
-# rendering in Blender (`forward=-X`, `up=+Z`). This is the traceable local-axis
-# compensation we can safely apply back onto the final Unity quaternion when the
-# loaded FBX does not share the exact same local orientation as the ICP input.
-ICP_OBJ_IMPORT_LOCAL_ROTATION = np.array(
-    [
-        [0.0, -1.0, 0.0],
-        [1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0],
-    ],
-    dtype=np.float32,
-)
+# Axis declarations used across the pipeline.
+# ICP/debug rendering imports OBJ with `forward=-X`, `up=+Z`.
+ICP_OBJ_IMPORT_FORWARD_AXIS = "NEGATIVE_X"
+ICP_OBJ_IMPORT_UP_AXIS = "Z"
+# Runtime FBX wrapping imports OBJ with Blender's default OBJ convention and
+# then exports to a Unity-facing FBX basis.
+FBX_CONVERT_OBJ_IMPORT_FORWARD_AXIS = "NEGATIVE_Z"
+FBX_CONVERT_OBJ_IMPORT_UP_AXIS = "Y"
+FBX_EXPORT_FORWARD_AXIS = "-Z"
+FBX_EXPORT_UP_AXIS = "Y"
 
-UNITY_TO_BLENDER_WORLD = np.array(
+# OBJ -> Blender world basis used by the ICP/debug path
+# (`bpy.ops.wm.obj_import(..., forward_axis="NEGATIVE_X", up_axis="Z")`).
+ICP_OBJ_IMPORT_TO_BLENDER_WORLD = UNITY_TO_BLENDER_WORLD @ MODEL_INPUT_TO_UNITY_BASIS
+# Backward-compatibility alias kept for older debug code: Blender-local axes
+# from the ICP import back to the original model-input axes.
+ICP_OBJ_IMPORT_LOCAL_ROTATION = ICP_OBJ_IMPORT_TO_BLENDER_WORLD.T
+
+# OBJ -> Blender world basis used when wrapping the reconstructed OBJ into FBX.
+# This mirrors Blender's default OBJ import orientation
+# (`forward=-Z`, `up=+Y`) so the conversion stage no longer depends on implicit
+# Blender defaults.
+FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD = np.array(
     [
         [1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0],
+        [0.0, 0.0, -1.0],
         [0.0, 1.0, 0.0],
     ],
     dtype=np.float32,
 )
-BLENDER_WORLD_TO_UNITY = UNITY_TO_BLENDER_WORLD.copy()
+
+# Blender world -> exported FBX local basis used by the runtime file wrapper
+# (`axis_forward="-Z", axis_up="Y", bake_space_transform=True`).
+BLENDER_WORLD_TO_FBX_EXPORT_LOCAL = np.array(
+    [
+        [1.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, -1.0, 0.0],
+    ],
+    dtype=np.float32,
+)
+
+# Original model-input axes -> runtime FBX local axes. With the explicit OBJ
+# import and FBX export settings above, this composes to identity, but we keep
+# the full chain here because the pose stage needs to reason about every step.
+MODEL_INPUT_TO_FBX_RUNTIME_LOCAL = (
+    BLENDER_WORLD_TO_FBX_EXPORT_LOCAL @ FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD
+)
+FBX_RUNTIME_LOCAL_TO_MODEL_INPUT = MODEL_INPUT_TO_FBX_RUNTIME_LOCAL.T
+FBX_RUNTIME_LOCAL_TO_UNITY_BASIS = (
+    MODEL_INPUT_TO_UNITY_BASIS @ FBX_RUNTIME_LOCAL_TO_MODEL_INPUT
+)
 
 
 def ensure_file(path: Path, label: str) -> Path:
@@ -176,44 +216,81 @@ def read_color_image(path: Path) -> np.ndarray:
 
 def get_depth_border_crop_ratio() -> float:
     ratio = float(ICP_DEPTH_BORDER_CROP_RATIO)
-    if not 0.0 <= ratio < 0.5:
-        raise ValueError("config.ICP_DEPTH_BORDER_CROP_RATIO must be in [0.0, 0.5)")
+    if not 0.0 <= ratio < 1.0:
+        raise ValueError("config.ICP_DEPTH_BORDER_CROP_RATIO must be in [0.0, 1.0)")
     return ratio
 
 
+def compute_mask_border_crop(mask_bool: np.ndarray, border_ratio: float | None = None) -> dict:
+    mask = np.asarray(mask_bool, dtype=bool)
+    if mask.ndim != 2:
+        raise ValueError(f"Mask must be HxW, got shape {mask.shape}")
+
+    ratio = get_depth_border_crop_ratio() if border_ratio is None else float(border_ratio)
+    if not 0.0 <= ratio < 1.0:
+        raise ValueError("Depth border crop ratio must be in [0.0, 1.0)")
+
+    keep_mask = mask.copy()
+    discard_mask = np.zeros_like(mask, dtype=bool)
+    threshold_px = 0.0
+    min_inside_distance_px = 0.0
+    max_inside_distance_px = 0.0
+    margin_x = 0
+    margin_y = 0
+
+    if np.any(mask):
+        distance_px = cv2.distanceTransform(mask.astype(np.uint8), cv2.DIST_L2, 5)
+        inside_distances = distance_px[mask]
+        min_inside_distance_px = float(inside_distances.min())
+        max_inside_distance_px = float(inside_distances.max())
+
+        if ratio > 0.0 and max_inside_distance_px > (min_inside_distance_px + 1e-6):
+            threshold_px = float(
+                min_inside_distance_px
+                + ratio * (max_inside_distance_px - min_inside_distance_px)
+            )
+            keep_mask = mask & (distance_px >= (threshold_px - 1e-6))
+            if not np.any(keep_mask):
+                keep_mask = mask & (distance_px >= (max_inside_distance_px - 1e-6))
+
+        discard_mask = mask & ~keep_mask
+        if np.any(keep_mask):
+            x0, y0, x1, y1 = mask_bbox(mask)
+            kx0, ky0, kx1, ky1 = mask_bbox(keep_mask)
+            margin_x = max(int(round(((kx0 - x0) + (x1 - kx1)) / 2.0)), 0)
+            margin_y = max(int(round(((ky0 - y0) + (y1 - ky1)) / 2.0)), 0)
+
+    return {
+        "mode": "mask_periphery",
+        "keep_mask": keep_mask,
+        "discard_mask": discard_mask,
+        "threshold_px": float(threshold_px),
+        "min_inside_distance_px": float(min_inside_distance_px),
+        "max_inside_distance_px": float(max_inside_distance_px),
+        "approx_margin_x_px": int(margin_x),
+        "approx_margin_y_px": int(margin_y),
+    }
+
+
 def depth_border_crop_margins(
-    image_shape: tuple[int, int],
+    mask_bool: np.ndarray,
     border_ratio: float | None = None,
 ) -> tuple[int, int]:
-    h, w = image_shape
-    ratio = get_depth_border_crop_ratio() if border_ratio is None else float(border_ratio)
-    if not 0.0 <= ratio < 0.5:
-        raise ValueError("Depth border crop ratio must be in [0.0, 0.5)")
-
-    margin_y = int(np.floor(h * ratio))
-    margin_x = int(np.floor(w * ratio))
-    if (margin_y * 2) >= h or (margin_x * 2) >= w:
-        raise ValueError("Depth border crop leaves no pixels in the image center")
-    return margin_x, margin_y
+    crop = compute_mask_border_crop(mask_bool, border_ratio=border_ratio)
+    return int(crop["approx_margin_x_px"]), int(crop["approx_margin_y_px"])
 
 
 def build_depth_border_keep_mask(
-    image_shape: tuple[int, int],
+    mask_bool: np.ndarray,
     border_ratio: float | None = None,
 ) -> np.ndarray:
-    h, w = image_shape
-    margin_x, margin_y = depth_border_crop_margins(image_shape, border_ratio=border_ratio)
-    if margin_x == 0 and margin_y == 0:
-        return np.ones((h, w), dtype=bool)
-
-    keep = np.zeros((h, w), dtype=bool)
-    keep[margin_y:h - margin_y, margin_x:w - margin_x] = True
-    return keep
+    crop = compute_mask_border_crop(mask_bool, border_ratio=border_ratio)
+    return np.asarray(crop["keep_mask"], dtype=bool)
 
 
 def apply_depth_border_crop(mask_bool: np.ndarray, border_ratio: float | None = None) -> np.ndarray:
     mask = np.asarray(mask_bool, dtype=bool)
-    return mask & build_depth_border_keep_mask(mask.shape, border_ratio=border_ratio)
+    return mask & build_depth_border_keep_mask(mask, border_ratio=border_ratio)
 
 
 def mask_bbox(mask_bool: np.ndarray) -> tuple[int, int, int, int]:
@@ -227,16 +304,18 @@ def compute_real_measurements(mask_bool: np.ndarray, depth_mm: np.ndarray, k: np
     fx = float(k[0, 0])
     fy = float(k[1, 1])
     crop_ratio = get_depth_border_crop_ratio()
-    crop_margin_x, crop_margin_y = depth_border_crop_margins(depth_mm.shape, border_ratio=crop_ratio)
+    crop = compute_mask_border_crop(mask_bool, border_ratio=crop_ratio)
+    crop_margin_x = int(crop["approx_margin_x_px"])
+    crop_margin_y = int(crop["approx_margin_y_px"])
 
     x0, y0, x1, y1 = mask_bbox(mask_bool)
     width_px = x1 - x0 + 1
     height_px = y1 - y0 + 1
 
-    usable_mask = apply_depth_border_crop(mask_bool, border_ratio=crop_ratio)
+    usable_mask = np.asarray(crop["keep_mask"], dtype=bool)
     valid_depth = usable_mask & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
     if not np.any(valid_depth):
-        raise ValueError("No mask pixels remain within 20-120 cm after edge crop")
+        raise ValueError("No mask pixels remain within 20-120 cm after mask-border crop")
 
     mean_depth_m = float(depth_mm[valid_depth].mean()) / 1000.0
     real_width_m = width_px * mean_depth_m / fx
@@ -255,14 +334,29 @@ def compute_real_measurements(mask_bool: np.ndarray, depth_mm: np.ndarray, k: np
         "real_width_m": real_width_m,
         "real_height_m": real_height_m,
         "depth_border_crop_ratio": crop_ratio,
+        "depth_border_crop_mode": str(crop["mode"]),
         "depth_border_crop_margin_x_px": int(crop_margin_x),
         "depth_border_crop_margin_y_px": int(crop_margin_y),
+        "mask_border_crop_threshold_px": float(crop["threshold_px"]),
+        "mask_border_crop_min_inside_distance_px": float(crop["min_inside_distance_px"]),
+        "mask_border_crop_max_inside_distance_px": float(crop["max_inside_distance_px"]),
     }
 
 
 def build_depth_pointcloud(
     depth_mm: np.ndarray,
     mask_bool: np.ndarray,
+    k: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    valid = apply_depth_border_crop(mask_bool) & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
+    if not np.any(valid):
+        raise ValueError("No valid depth points remain for pointcloud generation after mask-border crop")
+    return build_depth_pointcloud_from_valid_mask(depth_mm, valid, k)
+
+
+def build_depth_pointcloud_from_valid_mask(
+    depth_mm: np.ndarray,
+    valid_mask: np.ndarray,
     k: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     fx = float(k[0, 0])
@@ -272,10 +366,12 @@ def build_depth_pointcloud(
 
     h, w = depth_mm.shape
     uu, vv = np.meshgrid(np.arange(w, dtype=np.float32), np.arange(h, dtype=np.float32))
-
-    valid = apply_depth_border_crop(mask_bool) & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
+    valid = np.asarray(valid_mask, dtype=bool)
+    if valid.shape != depth_mm.shape:
+        raise ValueError(f"valid_mask shape mismatch: expected {depth_mm.shape}, got {valid.shape}")
     if not np.any(valid):
-        raise ValueError("No valid depth points remain for pointcloud generation after edge crop")
+        empty = np.empty((0, 3), dtype=np.float32)
+        return empty, empty
 
     z_m = depth_mm.astype(np.float32) / 1000.0
     x_cam = (uu - cx) * z_m / fx
@@ -293,6 +389,11 @@ def build_depth_pointcloud(
 def pointcloud_export_to_unity(points: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float32)
     return (points @ POINTCLOUD_INPUT_TO_UNITY_BASIS.T).astype(np.float32)
+
+
+def unity_to_pointcloud_export_points(points: np.ndarray) -> np.ndarray:
+    points = np.asarray(points, dtype=np.float32)
+    return (points @ UNITY_TO_POINTCLOUD_INPUT_BASIS.T).astype(np.float32)
 
 
 def obj_vertices_to_unity(points: np.ndarray) -> np.ndarray:
@@ -359,6 +460,27 @@ def blender_world_to_unity_vector(vector: np.ndarray) -> np.ndarray:
 def rotation_unity_to_blender_world(rotation: np.ndarray) -> np.ndarray:
     rotation = np.asarray(rotation, dtype=np.float32)
     return UNITY_TO_BLENDER_WORLD @ rotation @ BLENDER_WORLD_TO_UNITY
+
+
+def rotation_unity_to_blender_obj_import(
+    rotation: np.ndarray,
+    obj_import_to_blender_world: np.ndarray,
+) -> np.ndarray:
+    rotation = np.asarray(rotation, dtype=np.float32)
+    obj_import_to_blender_world = np.asarray(obj_import_to_blender_world, dtype=np.float32)
+    return (
+        UNITY_TO_BLENDER_WORLD
+        @ rotation
+        @ MODEL_INPUT_TO_UNITY_BASIS
+        @ obj_import_to_blender_world.T
+    ).astype(np.float32)
+
+
+def rotation_unity_to_blender_default_obj_import(rotation: np.ndarray) -> np.ndarray:
+    return rotation_unity_to_blender_obj_import(
+        rotation,
+        FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD,
+    )
 
 
 def compute_front_view_extents(points: np.ndarray) -> dict:
