@@ -51,3 +51,4 @@ dvc pull
 
 /root/.cache/pydrive2fs
 C:\Users\hwang.CV\AppData\Local\pydrive2fs\Cache
+C:\Users\maozh\AppData\Local\pydrive2fs\Cache
