@@ -145,8 +145,13 @@ def resolve_runtime_local_to_unity_rotation() -> np.ndarray:
     # new +Y = current -X
     # new +Z = current +Y
     # and therefore new +X = current -Z to keep a proper right-handed rotation.
+    # A single-axis flip would become a reflection (det=-1), which cannot be
+    # represented by the runtime quaternion path. So we apply a 180-degree
+    # local-Z rotation after the remap: this reverses Y and X together while
+    # keeping a proper rotation matrix.
     base = np.asarray(FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY, dtype=np.float64)
-    return base @ CUSTOM_RUNTIME_LOCAL_AXIS_REMAP_TO_UNITY
+    rotate_180_about_local_z = np.diag([-1.0, -1.0, 1.0]).astype(np.float64)
+    return base @ CUSTOM_RUNTIME_LOCAL_AXIS_REMAP_TO_UNITY @ rotate_180_about_local_z
 
 
 def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
