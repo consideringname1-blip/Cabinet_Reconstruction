@@ -18,6 +18,16 @@ from object_alignment_common import (
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
+CUSTOM_RUNTIME_LOCAL_AXIS_REMAP_TO_UNITY = np.array(
+    [
+        [0.0, -1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [-1.0, 0.0, 0.0],
+    ],
+    dtype=np.float64,
+)
+
+
 def normalize_quat_xyzw(q: np.ndarray) -> np.ndarray:
     q = np.asarray(q, dtype=np.float64)
     n = np.linalg.norm(q)
@@ -129,10 +139,14 @@ def serialize_rotation_only(
 
 
 def resolve_runtime_local_to_unity_rotation() -> np.ndarray:
-    # The current OBJ->FBX wrapper path bakes the mesh axis conversion into the
-    # exported file/runtime mesh. Transform-space pose composition must stay a
-    # proper rotation, so the runtime correction applied here is identity.
-    return np.asarray(FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY, dtype=np.float64)
+    # Apply a transform-space axis remap on top of the runtime FBX correction so
+    # the final Unity object axes match the desired debugging/orientation
+    # convention:
+    # new +Y = current -X
+    # new +Z = current +Y
+    # and therefore new +X = current -Z to keep a proper right-handed rotation.
+    base = np.asarray(FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY, dtype=np.float64)
+    return base @ CUSTOM_RUNTIME_LOCAL_AXIS_REMAP_TO_UNITY
 
 
 def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
