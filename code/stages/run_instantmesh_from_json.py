@@ -77,7 +77,6 @@ def run_instantmesh(json_path: Path) -> None:
             cwd=str(INSTANTMESH_DIR),
             env=env,
             check=True,
-            capture_output=True,
             text=True,
         )
     except subprocess.CalledProcessError as exc:

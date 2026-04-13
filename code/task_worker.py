@@ -88,7 +88,6 @@ def _run_python_script(python_path: str, script_path: Path, json_path: Path, cwd
         [_resolve_python(python_path), str(script_path), str(json_path)],
         cwd=str(cwd),
         check=True,
-        capture_output=True,
         text=True,
     )
     if result.stdout:

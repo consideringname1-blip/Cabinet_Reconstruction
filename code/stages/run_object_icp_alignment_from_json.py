@@ -788,7 +788,7 @@ def render_aligned_model_image(
         *[f"{float(v):.9f}" for v in blender_euler_deg],
         f"{float(scale):.9f}",
     ]
-    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    completed = subprocess.run(command, check=False, text=True)
     if completed.returncode != 0:
         raise RuntimeError(
             "Blender aligned-model render failed.\n"
@@ -842,7 +842,7 @@ def render_overlay_preview_image(
         *[f"{float(v):.9f}" for v in blender_delta_euler_deg],
         f"{float(scale):.9f}",
     ]
-    completed = subprocess.run(command, check=False, capture_output=True, text=True)
+    completed = subprocess.run(command, check=False, text=True)
     if completed.returncode != 0:
         raise RuntimeError(
             "Blender overlay preview render failed.\n"

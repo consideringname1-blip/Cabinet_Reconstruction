@@ -25,7 +25,6 @@ def run_stage(stage_script: Path, json_arg: str, extra_args: list[str]) -> None:
     completed = subprocess.run(
         command,
         check=False,
-        capture_output=True,
         text=True,
         cwd=str(stage_script.parent),
     )

@@ -12,7 +12,6 @@ from config import ENV_CONFIG_ROOT
 def _run_command(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
-        capture_output=True,
         text=True,
         check=True,
     )
