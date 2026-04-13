@@ -47,3 +47,7 @@ git push
 conda activate dvc
 git pull
 dvc pull
+
+
+/root/.cache/pydrive2fs
+C:\Users\hwang.CV\AppData\Local\pydrive2fs\Cache
