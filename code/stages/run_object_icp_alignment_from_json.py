@@ -8,6 +8,7 @@ from pathlib import Path
 
 from _bootstrap import CODE_ROOT
 from config import (
+    ICP_ACCELERATION_DEVICE,
     ICP_AXIS_SEED_RETAIN_TOPK,
     ICP_COARSE_CANDIDATE_KEEP,
     ICP_COARSE_VISIBLE_MAX_POINTS,
@@ -15,6 +16,7 @@ from config import (
     ICP_FINAL_ITERATIONS,
     ICP_FINAL_VISIBLE_MAX_POINTS,
     ICP_FINE_VISIBLE_MAX_POINTS,
+    ICP_GPU_CDIST_CHUNK_SIZE,
     ICP_IGNORE_INVERTED_SOLUTIONS,
     ICP_IGNORE_OCCLUDED_MODEL_POINTS,
     ICP_LOCAL_REFINE_ITERATIONS,
@@ -26,6 +28,10 @@ from config import (
 import numpy as np
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
+try:
+    import torch
+except Exception:  # pragma: no cover - optional dependency
+    torch = None
 
 from object_alignment_common import (
     annotate_rendered_image,
@@ -56,6 +62,94 @@ from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 HELPER_SCRIPT = Path(__file__).resolve().with_name("blender_render_measure.py")
 MODEL_UP_AXIS_UNITY = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+_ICP_BACKEND: dict | None = None
+
+
+def resolve_icp_backend() -> dict:
+    global _ICP_BACKEND
+    if _ICP_BACKEND is not None:
+        return _ICP_BACKEND
+
+    requested = str(ICP_ACCELERATION_DEVICE).strip().lower()
+    if requested not in {"auto", "cuda", "cpu"}:
+        raise ValueError("config.ICP_ACCELERATION_DEVICE must be one of: auto / cuda / cpu")
+
+    if requested == "cpu":
+        _ICP_BACKEND = {"requested": requested, "actual": "cpu", "reason": "forced-by-config", "torch_device": None}
+        return _ICP_BACKEND
+
+    if torch is None:
+        if requested == "cuda":
+            raise RuntimeError("config.ICP_ACCELERATION_DEVICE='cuda' but PyTorch is not installed")
+        _ICP_BACKEND = {"requested": requested, "actual": "cpu", "reason": "torch-not-installed", "torch_device": None}
+        return _ICP_BACKEND
+
+    if torch.cuda.is_available():
+        _ICP_BACKEND = {
+            "requested": requested,
+            "actual": "cuda",
+            "reason": "cuda-available",
+            "torch_device": torch.device("cuda"),
+        }
+        return _ICP_BACKEND
+
+    if requested == "cuda":
+        raise RuntimeError("config.ICP_ACCELERATION_DEVICE='cuda' but CUDA is not available")
+
+    _ICP_BACKEND = {"requested": requested, "actual": "cpu", "reason": "cuda-unavailable", "torch_device": None}
+    return _ICP_BACKEND
+
+
+def nearest_neighbor_distances(
+    query_points: np.ndarray,
+    reference_points: np.ndarray,
+    *,
+    dims: int = 3,
+    return_indices: bool = False,
+) -> tuple[np.ndarray, np.ndarray] | np.ndarray:
+    query_points = np.asarray(query_points, dtype=np.float32)
+    reference_points = np.asarray(reference_points, dtype=np.float32)
+    if dims <= 0 or dims > query_points.shape[1] or dims > reference_points.shape[1]:
+        raise ValueError(f"invalid dims={dims} for nearest-neighbor query")
+
+    query_used = query_points[:, :dims]
+    reference_used = reference_points[:, :dims]
+    if len(query_used) == 0:
+        empty_dist = np.empty(0, dtype=np.float32)
+        empty_idx = np.empty(0, dtype=np.int32)
+        return (empty_dist, empty_idx) if return_indices else empty_dist
+    if len(reference_used) == 0:
+        raise ValueError("reference_points must be non-empty")
+
+    backend = resolve_icp_backend()
+    if backend["actual"] != "cuda":
+        tree = cKDTree(reference_used)
+        dists, idx = tree.query(query_used, k=1)
+        dists = np.asarray(dists, dtype=np.float32)
+        idx = np.asarray(idx, dtype=np.int32)
+        return (dists, idx) if return_indices else dists
+
+    device = backend["torch_device"]
+    query_tensor = torch.as_tensor(query_used, dtype=torch.float32, device=device)
+    reference_tensor = torch.as_tensor(reference_used, dtype=torch.float32, device=device)
+
+    chunk_size = max(1, int(ICP_GPU_CDIST_CHUNK_SIZE))
+    dist_chunks: list[np.ndarray] = []
+    idx_chunks: list[np.ndarray] = []
+    with torch.no_grad():
+        for start in range(0, len(query_tensor), chunk_size):
+            end = min(start + chunk_size, len(query_tensor))
+            distances = torch.cdist(query_tensor[start:end], reference_tensor)
+            chunk_dists, chunk_idx = torch.min(distances, dim=1)
+            dist_chunks.append(chunk_dists.cpu().numpy().astype(np.float32, copy=False))
+            if return_indices:
+                idx_chunks.append(chunk_idx.cpu().numpy().astype(np.int32, copy=False))
+
+    all_dists = np.concatenate(dist_chunks) if dist_chunks else np.empty(0, dtype=np.float32)
+    if not return_indices:
+        return all_dists
+    all_idx = np.concatenate(idx_chunks) if idx_chunks else np.empty(0, dtype=np.int32)
+    return all_dists, all_idx
 
 
 def normalize_quat_xyzw(q: np.ndarray) -> np.ndarray:
@@ -201,18 +295,43 @@ def compute_xy_center(extents: dict) -> np.ndarray:
 
 
 def best_fit_transform(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    centroid_a = a.mean(axis=0)
-    centroid_b = b.mean(axis=0)
-    aa = a - centroid_a
-    bb = b - centroid_b
-    h = aa.T @ bb
-    u, _, vt = np.linalg.svd(h)
-    r = vt.T @ u.T
-    if np.linalg.det(r) < 0:
-        vt[-1, :] *= -1
+    a = np.asarray(a, dtype=np.float32)
+    b = np.asarray(b, dtype=np.float32)
+    backend = resolve_icp_backend()
+    if backend["actual"] != "cuda":
+        centroid_a = a.mean(axis=0)
+        centroid_b = b.mean(axis=0)
+        aa = a - centroid_a
+        bb = b - centroid_b
+        h = aa.T @ bb
+        u, _, vt = np.linalg.svd(h)
         r = vt.T @ u.T
-    t = centroid_b - (centroid_a @ r.T)
-    return r.astype(np.float32), t.astype(np.float32)
+        if np.linalg.det(r) < 0:
+            vt[-1, :] *= -1
+            r = vt.T @ u.T
+        t = centroid_b - (centroid_a @ r.T)
+        return r.astype(np.float32), t.astype(np.float32)
+
+    device = backend["torch_device"]
+    with torch.no_grad():
+        a_tensor = torch.as_tensor(a, dtype=torch.float32, device=device)
+        b_tensor = torch.as_tensor(b, dtype=torch.float32, device=device)
+        centroid_a = a_tensor.mean(dim=0)
+        centroid_b = b_tensor.mean(dim=0)
+        aa = a_tensor - centroid_a
+        bb = b_tensor - centroid_b
+        h = aa.transpose(0, 1) @ bb
+        u, _, vh = torch.linalg.svd(h, full_matrices=False)
+        r = vh.transpose(0, 1) @ u.transpose(0, 1)
+        if torch.linalg.det(r) < 0:
+            vh = vh.clone()
+            vh[-1, :] *= -1
+            r = vh.transpose(0, 1) @ u.transpose(0, 1)
+        t = centroid_b - (centroid_a @ r.transpose(0, 1))
+    return (
+        r.cpu().numpy().astype(np.float32, copy=False),
+        t.cpu().numpy().astype(np.float32, copy=False),
+    )
 
 
 def transform_points(points: np.ndarray, scale: float, rotation: np.ndarray, translation: np.ndarray) -> np.ndarray:
@@ -246,8 +365,12 @@ def run_icp(
         if len(transformed_visible) < 32:
             break
 
-        tree = cKDTree(transformed_visible)
-        dists, idx = tree.query(target_points, k=1)
+        dists, idx = nearest_neighbor_distances(
+            target_points,
+            transformed_visible,
+            dims=3,
+            return_indices=True,
+        )
 
         threshold = float(np.percentile(dists, 75))
         if threshold <= 0:
@@ -272,8 +395,7 @@ def run_icp(
         max_points=visible_max_points,
         seed=19,
     )
-    tree = cKDTree(transformed_visible)
-    dists, _ = tree.query(target_points, k=1)
+    dists = nearest_neighbor_distances(target_points, transformed_visible, dims=3, return_indices=False)
     rmse = trimmed_rmse(dists, trim_percentile=85.0)
 
     return {
@@ -327,15 +449,10 @@ def evaluate_alignment(
     scale: float,
     nominal_scale: float,
 ) -> dict:
-    tree_target_to_model_3d = cKDTree(transformed_front_points)
-    dists_target_to_model_3d, _ = tree_target_to_model_3d.query(target_front_points, k=1)
-    tree_model_to_target_3d = cKDTree(target_front_points)
-    dists_model_to_target_3d, _ = tree_model_to_target_3d.query(transformed_front_points, k=1)
-
-    tree_target_to_model_2d = cKDTree(transformed_front_points[:, :2])
-    dists_target_to_model_2d, _ = tree_target_to_model_2d.query(target_front_points[:, :2], k=1)
-    tree_model_to_target_2d = cKDTree(target_front_points[:, :2])
-    dists_model_to_target_2d, _ = tree_model_to_target_2d.query(transformed_front_points[:, :2], k=1)
+    dists_target_to_model_3d = nearest_neighbor_distances(target_front_points, transformed_front_points, dims=3)
+    dists_model_to_target_3d = nearest_neighbor_distances(transformed_front_points, target_front_points, dims=3)
+    dists_target_to_model_2d = nearest_neighbor_distances(target_front_points, transformed_front_points, dims=2)
+    dists_model_to_target_2d = nearest_neighbor_distances(transformed_front_points, target_front_points, dims=2)
 
     extents = compute_front_view_extents(transformed_front_points)
     target_extents = compute_front_view_extents(target_front_points)
@@ -876,6 +993,11 @@ def main(argv: list[str]) -> int:
     json_path = resolve_task_json_path(argv[1])
     task = load_task_json(json_path)
     print(f"[STAGE] Object alignment start : {json_path}")
+    icp_backend = resolve_icp_backend()
+    print(
+        f"[STAGE] ICP acceleration     : requested={icp_backend['requested']}, "
+        f"actual={icp_backend['actual']}, reason={icp_backend['reason']}"
+    )
 
     if "depthpointcloud" not in task:
         raise ValueError("depthpointcloud is missing. Run pointcloud stage first.")
@@ -1192,6 +1314,9 @@ def main(argv: list[str]) -> int:
         "front_view_size_error": float(best.get("size_error") or 0.0),
         "icp_inlier_ratio": float(best["inlier_ratio"]),
         "icp_constraints": {
+            "acceleration_device_requested": str(icp_backend["requested"]),
+            "acceleration_device_actual": str(icp_backend["actual"]),
+            "acceleration_reason": str(icp_backend["reason"]),
             "ignore_inverted_solutions": bool(ICP_IGNORE_INVERTED_SOLUTIONS),
             "ignore_occluded_model_points": bool(ICP_IGNORE_OCCLUDED_MODEL_POINTS),
             "target_front_max_points": int(ICP_TARGET_FRONT_MAX_POINTS),
@@ -1279,6 +1404,10 @@ def main(argv: list[str]) -> int:
     print(f"[INFO] Render          : {aligned_model_image_path if object_alignment.get('front_view_image_name') else 'not-generated'}")
     print(f"[INFO] Preview         : {overlay_preview_path if object_alignment.get('preview_image_name') else 'not-generated'}")
     print(f"[INFO] Blender         : {blender_label}")
+    print(
+        f"[INFO] ICP backend     : requested={icp_backend['requested']}, "
+        f"actual={icp_backend['actual']}, reason={icp_backend['reason']}"
+    )
     print(
         f"[INFO] Point usage      : source={len(pointcloud_points_export)}, "
         f"selected={len(target_front_fit)}, discarded={len(discarded_points_export)}"
