@@ -9,6 +9,9 @@ IS_RUN_FLASK_SERVER = True
 # Fraction cropped inward from the SAM3 mask periphery before depth->pointcloud
 # conversion. Set to 0.0 to disable.
 ICP_DEPTH_BORDER_CROP_RATIO = 0.03
+# Maximum number of points written to the exported depth point cloud PLY.
+# Set to 0 or None to keep all valid depth points.
+DEPTHPOINTCLOUD_MAX_EXPORT_POINTS = 6000
 # Enable preview/front-view PNG renders produced by the alignment pipeline.
 ENABLE_ALIGNMENT_RENDER_OUTPUTS = True
 # Enable InstantMesh circular-view MP4 generation.
@@ -19,6 +22,17 @@ ICP_IGNORE_INVERTED_SOLUTIONS = True
 # When enabled, ICP and coarse search only use the nearest model surface along
 # the camera ray and ignore occluded model geometry behind it.
 ICP_IGNORE_OCCLUDED_MODEL_POINTS = True
+ICP_TARGET_FRONT_MAX_POINTS = 3600
+ICP_COARSE_VISIBLE_MAX_POINTS = 2600
+ICP_MEDIUM_VISIBLE_MAX_POINTS = 3200
+ICP_FINE_VISIBLE_MAX_POINTS = 3600
+ICP_LOCAL_REFINE_VISIBLE_MAX_POINTS = 3600
+ICP_FINAL_VISIBLE_MAX_POINTS = 3600
+ICP_FINAL_ITERATIONS = 12
+ICP_LOCAL_REFINE_ITERATIONS = 6
+ICP_COARSE_CANDIDATE_KEEP = 3
+ICP_AXIS_SEED_RETAIN_TOPK = 3
+ICP_MEDIUM_RETAIN_TOPK = 2
 
 
 # Project roots

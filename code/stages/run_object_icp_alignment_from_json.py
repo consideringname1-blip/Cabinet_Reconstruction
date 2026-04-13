@@ -8,9 +8,20 @@ from pathlib import Path
 
 from _bootstrap import CODE_ROOT
 from config import (
+    ICP_AXIS_SEED_RETAIN_TOPK,
+    ICP_COARSE_CANDIDATE_KEEP,
+    ICP_COARSE_VISIBLE_MAX_POINTS,
     ENABLE_ALIGNMENT_RENDER_OUTPUTS,
+    ICP_FINAL_ITERATIONS,
+    ICP_FINAL_VISIBLE_MAX_POINTS,
+    ICP_FINE_VISIBLE_MAX_POINTS,
     ICP_IGNORE_INVERTED_SOLUTIONS,
     ICP_IGNORE_OCCLUDED_MODEL_POINTS,
+    ICP_LOCAL_REFINE_ITERATIONS,
+    ICP_LOCAL_REFINE_VISIBLE_MAX_POINTS,
+    ICP_MEDIUM_RETAIN_TOPK,
+    ICP_MEDIUM_VISIBLE_MAX_POINTS,
+    ICP_TARGET_FRONT_MAX_POINTS,
 )
 import numpy as np
 from scipy.spatial import cKDTree
@@ -383,7 +394,12 @@ def refine_pose_locally(
                     continue
 
                 init_full = transform_points(model_points, float(scale), init_rotation, np.zeros(3, dtype=np.float32))
-                init_front = extract_front_visible_points(init_full, bins=180, max_points=5200, seed=29)
+                init_front = extract_front_visible_points(
+                    init_full,
+                    bins=180,
+                    max_points=ICP_LOCAL_REFINE_VISIBLE_MAX_POINTS,
+                    seed=29,
+                )
                 init_translation = build_initial_translation(
                     model_full_points=init_full,
                     model_front_points=init_front,
@@ -395,9 +411,9 @@ def refine_pose_locally(
                     scale=float(scale),
                     init_rotation=init_rotation,
                     init_translation=init_translation,
-                    iterations=8,
+                    iterations=ICP_LOCAL_REFINE_ITERATIONS,
                     visible_bins=180,
-                    visible_max_points=5200,
+                    visible_max_points=ICP_LOCAL_REFINE_VISIBLE_MAX_POINTS,
                 )
                 rotation = result["rotation"]
                 translation = result["translation"]
@@ -408,9 +424,9 @@ def refine_pose_locally(
                 transformed_front = extract_front_visible_points(
                     transformed_full,
                     bins=180,
-                    max_points=5200,
-                    seed=31,
-                )
+                        max_points=ICP_LOCAL_REFINE_VISIBLE_MAX_POINTS,
+                        seed=31,
+                    )
                 metrics = evaluate_alignment(
                     transformed_full_points=transformed_full,
                     transformed_front_points=transformed_front,
@@ -638,7 +654,7 @@ def search_initial_pose_candidates(
     if not candidates:
         raise RuntimeError("No valid coarse pose candidates remain after applying ICP constraints.")
 
-    seed_best = sorted(candidates, key=lambda item: item["metrics"]["score"])[:4]
+    seed_best = sorted(candidates, key=lambda item: item["metrics"]["score"])[:ICP_AXIS_SEED_RETAIN_TOPK]
     for base in seed_best:
         for rx in (-18, 0, 18):
             for ry in (-18, 0, 18):
@@ -650,10 +666,10 @@ def search_initial_pose_candidates(
                         local_euler_deg=[float(rx), float(ry), float(rz)],
                         stage="refine_medium",
                         visible_bins=144,
-                        visible_max_points=3600,
+                        visible_max_points=ICP_MEDIUM_VISIBLE_MAX_POINTS,
                     )
 
-    medium_best = sorted(candidates, key=lambda item: item["metrics"]["score"])[:3]
+    medium_best = sorted(candidates, key=lambda item: item["metrics"]["score"])[:ICP_MEDIUM_RETAIN_TOPK]
     for base in medium_best:
         for rx in (-6, 0, 6):
             for ry in (-6, 0, 6):
@@ -669,7 +685,7 @@ def search_initial_pose_candidates(
                         ],
                         stage="refine_fine",
                         visible_bins=160,
-                        visible_max_points=4200,
+                        visible_max_points=ICP_FINE_VISIBLE_MAX_POINTS,
                     )
 
     candidates.sort(key=lambda item: item["metrics"]["score"])
@@ -859,6 +875,7 @@ def main(argv: list[str]) -> int:
 
     json_path = resolve_task_json_path(argv[1])
     task = load_task_json(json_path)
+    print(f"[STAGE] Object alignment start : {json_path}")
 
     if "depthpointcloud" not in task:
         raise ValueError("depthpointcloud is missing. Run pointcloud stage first.")
@@ -877,6 +894,7 @@ def main(argv: list[str]) -> int:
 
     mask_bool = read_mask(paths["mask_path"])
     depth_mm = read_depth_image(paths["depth_path"])
+    print("[STAGE] Preparing point cloud and mesh inputs")
     valid_all = mask_bool & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
     depth_keep_mask = build_depth_border_keep_mask(mask_bool)
     valid_cropped = valid_all & ~depth_keep_mask
@@ -890,23 +908,36 @@ def main(argv: list[str]) -> int:
     target_front_fit, target_front_indices = select_front_visible_points(
         pointcloud_points_unity,
         bins=160,
-        max_points=5200,
+        max_points=ICP_TARGET_FRONT_MAX_POINTS,
         seed=7,
     )
     icp_used_points_export = pointcloud_points_export[target_front_indices]
+    print(
+        f"[STAGE] Front visible points  : source={len(pointcloud_points_export)}, "
+        f"selected={len(target_front_fit)}, max_selected={ICP_TARGET_FRONT_MAX_POINTS}"
+    )
 
     overall_scale = float((task.get("model") or {}).get("overall_scale") or 1.0)
 
+    print("[STAGE] Running coarse pose search")
     coarse_candidates = search_initial_pose_candidates(
         model_points=model_vertices_unity,
         target_front_points=target_front_fit,
         nominal_scale=overall_scale,
     )
-    coarse_candidates = coarse_candidates[:4]
+    coarse_candidates = coarse_candidates[:ICP_COARSE_CANDIDATE_KEEP]
+    print(
+        f"[STAGE] Coarse candidates     : total={len(coarse_candidates)}, "
+        f"keep={ICP_COARSE_CANDIDATE_KEEP}"
+    )
 
     best_result: dict | None = None
     best_debug: dict | None = None
     for coarse_rank, best_coarse in enumerate(coarse_candidates, start=1):
+        print(
+            f"[STAGE] ICP candidate        : rank={coarse_rank}, "
+            f"search_stage={best_coarse['stage']}, seed={best_coarse['seed_euler_deg']}"
+        )
         candidate_scales = build_scale_candidates(
             estimated_scale=float(best_coarse["scale_estimate"]["estimated_scale"]),
             width_scale=float(best_coarse["scale_estimate"]["width_scale"]),
@@ -916,7 +947,12 @@ def main(argv: list[str]) -> int:
         for scale in candidate_scales:
             rotation_seed = best_coarse["rotation"]
             coarse_full = transform_points(model_vertices_unity, float(scale), rotation_seed, np.zeros(3, dtype=np.float32))
-            coarse_front = extract_front_visible_points(coarse_full, bins=180, max_points=5200, seed=19)
+            coarse_front = extract_front_visible_points(
+                coarse_full,
+                bins=180,
+                max_points=ICP_COARSE_VISIBLE_MAX_POINTS,
+                seed=19,
+            )
             coarse_translation = build_initial_translation(
                 model_full_points=coarse_full,
                 model_front_points=coarse_front,
@@ -931,9 +967,9 @@ def main(argv: list[str]) -> int:
                 scale=float(scale),
                 init_rotation=rotation_seed,
                 init_translation=coarse_translation,
-                iterations=20,
+                iterations=ICP_FINAL_ITERATIONS,
                 visible_bins=180,
-                visible_max_points=5200,
+                visible_max_points=ICP_FINAL_VISIBLE_MAX_POINTS,
             )
             final_rotation = delta_result["rotation"]
             final_translation = delta_result["translation"]
@@ -944,7 +980,12 @@ def main(argv: list[str]) -> int:
                 continue
 
             transformed_full = transform_points(model_vertices_unity, float(scale), final_rotation, final_translation)
-            transformed_front = extract_front_visible_points(transformed_full, bins=180, max_points=5200, seed=23)
+            transformed_front = extract_front_visible_points(
+                transformed_full,
+                bins=180,
+                max_points=ICP_FINAL_VISIBLE_MAX_POINTS,
+                seed=23,
+            )
             metrics = evaluate_alignment(
                 transformed_full_points=transformed_full,
                 transformed_front_points=transformed_front,
@@ -1028,6 +1069,7 @@ def main(argv: list[str]) -> int:
         raise RuntimeError("Failed to collect object alignment debug data")
 
     best = best_result
+    print("[STAGE] Running local pose refinement")
     refined = refine_pose_locally(
         model_points=model_vertices_unity,
         target_front_points=target_front_fit,
@@ -1152,6 +1194,17 @@ def main(argv: list[str]) -> int:
         "icp_constraints": {
             "ignore_inverted_solutions": bool(ICP_IGNORE_INVERTED_SOLUTIONS),
             "ignore_occluded_model_points": bool(ICP_IGNORE_OCCLUDED_MODEL_POINTS),
+            "target_front_max_points": int(ICP_TARGET_FRONT_MAX_POINTS),
+            "coarse_visible_max_points": int(ICP_COARSE_VISIBLE_MAX_POINTS),
+            "medium_visible_max_points": int(ICP_MEDIUM_VISIBLE_MAX_POINTS),
+            "fine_visible_max_points": int(ICP_FINE_VISIBLE_MAX_POINTS),
+            "local_refine_visible_max_points": int(ICP_LOCAL_REFINE_VISIBLE_MAX_POINTS),
+            "final_visible_max_points": int(ICP_FINAL_VISIBLE_MAX_POINTS),
+            "final_iterations": int(ICP_FINAL_ITERATIONS),
+            "local_refine_iterations": int(ICP_LOCAL_REFINE_ITERATIONS),
+            "coarse_candidate_keep": int(ICP_COARSE_CANDIDATE_KEEP),
+            "axis_seed_retain_topk": int(ICP_AXIS_SEED_RETAIN_TOPK),
+            "medium_retain_topk": int(ICP_MEDIUM_RETAIN_TOPK),
         },
     }
     task["object_alignment"] = object_alignment
@@ -1227,13 +1280,17 @@ def main(argv: list[str]) -> int:
     print(f"[INFO] Preview         : {overlay_preview_path if object_alignment.get('preview_image_name') else 'not-generated'}")
     print(f"[INFO] Blender         : {blender_label}")
     print(
+        f"[INFO] Point usage      : source={len(pointcloud_points_export)}, "
+        f"selected={len(target_front_fit)}, discarded={len(discarded_points_export)}"
+    )
+    print(
         f"[INFO] Output pose     : "
         f"pos={object_alignment['model_position']}, "
         f"rot={object_alignment['model_rotation_euler_deg']}"
     )
     print(
         f"[INFO] Final scale     : {object_alignment['model_real_scale']:.6f}, "
-        f"confidence={confidence:.3f}"
+        f"confidence={confidence:.3f}, icp_iter={ICP_FINAL_ITERATIONS}"
     )
     print("[OK] Object alignment stage completed")
     return 0
