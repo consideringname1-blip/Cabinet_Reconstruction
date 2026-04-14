@@ -109,6 +109,11 @@ def serialize_pose(rotation: np.ndarray, translation: np.ndarray, coordinate_bas
     rotation = np.asarray(rotation, dtype=np.float64)
     translation = np.asarray(translation, dtype=np.float64)
     quat_xyzw = rotation_matrix_to_quat_xyzw(rotation)
+    # Runtime compatibility fix:
+    # downstream Unity consumer expects quaternion z sign flipped
+    # relative to the quaternion directly converted from world_rotation.
+    quat_xyzw[2] *= -1.0
+    quat_xyzw = normalize_quat_xyzw(quat_xyzw)
     euler_deg = rotation_matrix_to_euler_xyz_deg(rotation)
     matrix = make_row_transform_matrix(rotation, translation)
     return {
@@ -192,6 +197,11 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
             f"Final world rotation must be a proper rotation, got determinant {det_world:.6f}"
         )
     world_quat = rotation_matrix_to_quat_xyzw(world_rotation)
+    # Runtime compatibility fix:
+    # downstream Unity consumer expects quaternion z sign flipped
+    # relative to the quaternion directly converted from world_rotation.
+    world_quat[2] *= -1.0
+    world_quat = normalize_quat_xyzw(world_quat)
 
     uniform_scale = [float(model_scale), float(model_scale), float(model_scale)]
     return {
