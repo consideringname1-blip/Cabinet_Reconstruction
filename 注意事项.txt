@@ -46,3 +46,15 @@ pip install pyzdepth
 260412
 1.config里增加可选渲染结果选项（对于instantmesh的video生成也是一样）
 2.按照目前的预览渲染的链路（包括模型导入，fbx生成，icp结果等相关坐标变换），重新检查最终的模型位姿变换结果
+
+260414
+我修改了一部分的pvcamera的旋转矩阵提取四元数后的z反转问题：“def compute_world_pose(task: dict) -> dict[str, list[float]]:
+    ...
+    world_quat = rotation_matrix_to_quat_xyzw(world_rotation)
+    world_quat[2] *= -1.0
+    world_quat = normalize_quat_xyzw(world_quat)”和“def serialize_pose(rotation: np.ndarray, translation: np.ndarray, coordinate_basis: str) -> dict:
+    ...
+    quat_xyzw = rotation_matrix_to_quat_xyzw(rotation)
+    quat_xyzw[2] *= -1.0
+    quat_xyzw = normalize_quat_xyzw(quat_xyzw)”
+但是好像只修改了相机的部分，并没有修正物体的部分。按照这个，继续修改这个链路中的相关项（只反转这个z值，不要做任何其他事情）。
