@@ -92,6 +92,39 @@ def build_emission_material(name: str, color_rgb: tuple[float, float, float], al
     return material
 
 
+def build_surface_material(
+    name: str,
+    color_rgb: tuple[float, float, float],
+    alpha: float = 1.0,
+    roughness: float = 0.42,
+) -> bpy.types.Material:
+    material = bpy.data.materials.new(name=name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    links = material.node_tree.links
+    nodes.clear()
+
+    output = nodes.new(type="ShaderNodeOutputMaterial")
+    principled = nodes.new(type="ShaderNodeBsdfPrincipled")
+    principled.inputs["Base Color"].default_value = (*color_rgb, 1.0)
+    principled.inputs["Roughness"].default_value = roughness
+    if "Specular IOR Level" in principled.inputs:
+        principled.inputs["Specular IOR Level"].default_value = 0.35
+    elif "Specular" in principled.inputs:
+        principled.inputs["Specular"].default_value = 0.35
+    if "Alpha" in principled.inputs:
+        principled.inputs["Alpha"].default_value = alpha
+    links.new(principled.outputs["BSDF"], output.inputs["Surface"])
+
+    if hasattr(material, "blend_method"):
+        material.blend_method = "BLEND" if alpha < 0.999 else "OPAQUE"
+    if hasattr(material, "shadow_method"):
+        material.shadow_method = "NONE" if alpha < 0.999 else "OPAQUE"
+    if hasattr(material, "use_backface_culling"):
+        material.use_backface_culling = False
+    return material
+
+
 def assign_material(objects: list[bpy.types.Object], material: bpy.types.Material) -> None:
     for obj in objects:
         if obj.data.materials:
@@ -102,6 +135,13 @@ def assign_material(objects: list[bpy.types.Object], material: bpy.types.Materia
 def set_object_color(objects: list[bpy.types.Object], rgba: tuple[float, float, float, float]) -> None:
     for obj in objects:
         obj.color = rgba
+
+
+def set_display_wireframe(objects: list[bpy.types.Object], thickness: float = 0.0008) -> None:
+    for obj in objects:
+        modifier = obj.modifiers.new(name="PreviewWire", type="WIREFRAME")
+        modifier.thickness = thickness
+        modifier.use_replace = False
 
 def apply_group_transform(
     objects: list[bpy.types.Object],
@@ -195,6 +235,63 @@ def configure_scene(render_path: Path, transparent: bool) -> None:
     if bg is not None:
         bg.inputs[0].default_value = (1.0, 1.0, 1.0, 1.0)
         bg.inputs[1].default_value = 1.0
+
+
+def configure_compare_scene(render_path: Path, transparent: bool) -> None:
+    scene = bpy.context.scene
+    try:
+        scene.render.engine = "BLENDER_EEVEE_NEXT"
+    except Exception:
+        scene.render.engine = "BLENDER_EEVEE"
+    scene.render.film_transparent = transparent
+    scene.render.image_settings.file_format = "PNG"
+    scene.render.image_settings.color_mode = "RGBA"
+    scene.render.resolution_x = 1280
+    scene.render.resolution_y = 960
+    scene.render.resolution_percentage = 100
+    scene.render.filepath = str(render_path)
+
+    if hasattr(scene, "eevee"):
+        if hasattr(scene.eevee, "taa_render_samples"):
+            scene.eevee.taa_render_samples = 32
+        if hasattr(scene.eevee, "use_gtao"):
+            scene.eevee.use_gtao = True
+        if hasattr(scene.eevee, "gtao_factor"):
+            scene.eevee.gtao_factor = 1.2
+
+    world = bpy.data.worlds.get("RenderWorld")
+    if world is None:
+        world = bpy.data.worlds.new(name="RenderWorld")
+    scene.world = world
+    world.use_nodes = True
+    bg = world.node_tree.nodes.get("Background")
+    if bg is not None:
+        bg.inputs[0].default_value = (0.955, 0.965, 0.985, 1.0)
+        bg.inputs[1].default_value = 0.9
+
+
+def add_sun_light(name: str, location: tuple[float, float, float], rotation_deg: tuple[float, float, float], energy: float) -> None:
+    light_data = bpy.data.lights.new(name=name, type="SUN")
+    light_data.energy = energy
+    light = bpy.data.objects.new(name, light_data)
+    bpy.context.scene.collection.objects.link(light)
+    light.location = Vector(location)
+    light.rotation_euler = Euler(tuple(radians(v) for v in rotation_deg), "XYZ")
+
+
+def setup_preview_lights(center: Vector, span: float) -> None:
+    add_sun_light(
+        name="KeySun",
+        location=(center.x + 0.8 * span, center.y - 1.6 * span, center.z + 1.8 * span),
+        rotation_deg=(48.0, 0.0, 28.0),
+        energy=2.4,
+    )
+    add_sun_light(
+        name="FillSun",
+        location=(center.x - 1.4 * span, center.y + 0.8 * span, center.z + 0.9 * span),
+        rotation_deg=(62.0, 0.0, -115.0),
+        energy=1.1,
+    )
 
 
 def add_point_instances(objects: list[bpy.types.Object], radius: float, material: bpy.types.Material) -> None:
@@ -309,12 +406,50 @@ def render_overlay_preview(
     bpy.ops.render.render(write_still=True)
 
 
+def render_model_compare_preview(
+    mesh_path: Path,
+    render_path: Path,
+    aligned_location: tuple[float, float, float],
+    aligned_rotation_deg: tuple[float, float, float],
+    aligned_scale: float,
+    reference_location: tuple[float, float, float],
+    reference_rotation_deg: tuple[float, float, float],
+    reference_scale: float,
+) -> None:
+    aligned_objects = import_obj(mesh_path)
+    aligned_material = build_surface_material("AlignedBlue", (0.16, 0.42, 0.94), alpha=0.50, roughness=0.36)
+    assign_material(aligned_objects, aligned_material)
+    set_object_color(aligned_objects, (0.16, 0.42, 0.94, 0.50))
+    apply_group_transform(aligned_objects, aligned_location, aligned_rotation_deg, aligned_scale)
+
+    reference_objects = import_obj(mesh_path)
+    reference_material = build_surface_material("ReferenceOrange", (0.96, 0.48, 0.10), alpha=0.50, roughness=0.48)
+    assign_material(reference_objects, reference_material)
+    set_object_color(reference_objects, (0.96, 0.48, 0.10, 0.50))
+    set_display_wireframe(reference_objects, thickness=0.0012)
+    apply_group_transform(reference_objects, reference_location, reference_rotation_deg, reference_scale)
+
+    all_vertices = collect_world_vertices(aligned_objects, evaluated=True) + collect_world_vertices(reference_objects, evaluated=True)
+    xs = [v.x for v in all_vertices]
+    ys = [v.y for v in all_vertices]
+    zs = [v.z for v in all_vertices]
+    min_corner = Vector((min(xs), min(ys), min(zs)))
+    max_corner = Vector((max(xs), max(ys), max(zs)))
+    center = (min_corner + max_corner) / 2.0
+    spans = max_corner - min_corner
+
+    setup_preview_camera(center=center, spans=spans)
+    setup_preview_lights(center=center, span=max(spans.x, spans.y, spans.z, 0.15))
+    configure_compare_scene(render_path, transparent=False)
+    bpy.ops.render.render(write_still=True)
+
+
 def main() -> int:
     argv = sys.argv
     argv = argv[argv.index("--") + 1 :] if "--" in argv else []
 
     mode = "front_model"
-    if argv and argv[0] in {"front_model", "overlay_preview"}:
+    if argv and argv[0] in {"front_model", "overlay_preview", "model_compare_preview"}:
         mode = argv[0]
         argv = argv[1:]
 
@@ -337,6 +472,44 @@ def main() -> int:
         try:
             clean_scene()
             render_front_model(mesh_path, render_path, location, rotation_deg, uniform_scale)
+            return 0
+        except Exception as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+
+    if mode == "model_compare_preview":
+        if len(argv) != 16:
+            print(
+                "Usage: blender --background --python code/stages/blender_render_measure.py -- "
+                "model_compare_preview <mesh.obj> <render.png> "
+                "<aligned_tx> <aligned_ty> <aligned_tz> <aligned_rx> <aligned_ry> <aligned_rz> <aligned_scale> "
+                "<ref_tx> <ref_ty> <ref_tz> <ref_rx> <ref_ry> <ref_rz> <ref_scale>",
+                file=sys.stderr,
+            )
+            return 2
+
+        mesh_path = ensure_file(Path(argv[0]).expanduser().resolve(), "OBJ mesh")
+        render_path = Path(argv[1]).expanduser().resolve()
+        render_path.parent.mkdir(parents=True, exist_ok=True)
+        aligned_location = tuple(float(v) for v in argv[2:5])
+        aligned_rotation_deg = tuple(float(v) for v in argv[5:8])
+        aligned_scale = float(argv[8])
+        reference_location = tuple(float(v) for v in argv[9:12])
+        reference_rotation_deg = tuple(float(v) for v in argv[12:15])
+        reference_scale = float(argv[15])
+
+        try:
+            clean_scene()
+            render_model_compare_preview(
+                mesh_path,
+                render_path,
+                aligned_location,
+                aligned_rotation_deg,
+                aligned_scale,
+                reference_location,
+                reference_rotation_deg,
+                reference_scale,
+            )
             return 0
         except Exception as exc:
             print(str(exc), file=sys.stderr)

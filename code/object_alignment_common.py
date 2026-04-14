@@ -457,6 +457,11 @@ def pointcloud_export_to_unity(points: np.ndarray) -> np.ndarray:
     return (points @ POINTCLOUD_INPUT_TO_UNITY_BASIS.T).astype(np.float32)
 
 
+def pointcloud_export_to_blender_world(points: np.ndarray) -> np.ndarray:
+    points_unity = pointcloud_export_to_unity(points)
+    return unity_to_blender_world_points(points_unity)
+
+
 def unity_to_pointcloud_export_points(points: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float32)
     return (points @ UNITY_TO_POINTCLOUD_INPUT_BASIS.T).astype(np.float32)
@@ -465,6 +470,11 @@ def unity_to_pointcloud_export_points(points: np.ndarray) -> np.ndarray:
 def obj_vertices_to_unity(points: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float32)
     return (points @ MODEL_INPUT_TO_UNITY_BASIS.T).astype(np.float32)
+
+
+def obj_vertices_to_blender_world(points: np.ndarray) -> np.ndarray:
+    points_unity = obj_vertices_to_unity(points)
+    return unity_to_blender_world_points(points_unity)
 
 
 def model_pose_unity_to_pointcloud_input(
@@ -528,6 +538,29 @@ def rotation_unity_to_blender_world(rotation: np.ndarray) -> np.ndarray:
     return UNITY_TO_BLENDER_WORLD @ rotation @ BLENDER_WORLD_TO_UNITY
 
 
+def rotation_blender_world_to_unity(rotation: np.ndarray) -> np.ndarray:
+    rotation = np.asarray(rotation, dtype=np.float32)
+    return BLENDER_WORLD_TO_UNITY @ rotation @ UNITY_TO_BLENDER_WORLD
+
+
+def model_pose_unity_to_blender_world(
+    rotation_unity: np.ndarray,
+    translation_unity: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    rotation_blender = rotation_unity_to_blender_world(rotation_unity)
+    translation_blender = unity_to_blender_world_vector(translation_unity)
+    return rotation_blender.astype(np.float32), translation_blender.astype(np.float32)
+
+
+def model_pose_blender_world_to_unity(
+    rotation_blender: np.ndarray,
+    translation_blender: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    rotation_unity = rotation_blender_world_to_unity(rotation_blender)
+    translation_unity = blender_world_to_unity_vector(translation_blender)
+    return rotation_unity.astype(np.float32), translation_unity.astype(np.float32)
+
+
 def rotation_unity_to_blender_obj_import(
     rotation: np.ndarray,
     obj_import_to_blender_world: np.ndarray,
@@ -568,8 +601,11 @@ def add_text_block(image: np.ndarray, lines: list[str]) -> np.ndarray:
 
     pad = 24
     line_h = 34
-    canvas = np.full((image.shape[0] + pad * 2 + line_h * len(lines), image.shape[1], 3), 255, dtype=np.uint8)
+    footer_color = np.array((242, 244, 247), dtype=np.uint8)
+    canvas = np.empty((image.shape[0] + pad * 2 + line_h * len(lines), image.shape[1], 3), dtype=np.uint8)
+    canvas[:, :, :] = footer_color
     canvas[: image.shape[0], :, :] = image
+    cv2.line(canvas, (0, image.shape[0]), (image.shape[1] - 1, image.shape[0]), (214, 219, 226), 2)
 
     y = image.shape[0] + pad + 8
     for line in lines:
@@ -677,8 +713,8 @@ def annotate_rendered_image(image_path: Path, title: str, info_lines: list[str])
     elif image.shape[2] == 4:
         alpha = image[:, :, 3].astype(np.float32) / 255.0
         bgr = image[:, :, :3].astype(np.float32)
-        white = np.full_like(bgr, 255.0)
-        rgb = np.clip(bgr * alpha[:, :, None] + white * (1.0 - alpha[:, :, None]), 0, 255).astype(np.uint8)
+        matte = np.full_like(bgr, (244.0, 246.0, 249.0))
+        rgb = np.clip(bgr * alpha[:, :, None] + matte * (1.0 - alpha[:, :, None]), 0, 255).astype(np.uint8)
     else:
         rgb = image[:, :, :3]
 

@@ -5,7 +5,7 @@ import sys
 import warnings
 
 from _bootstrap import CODE_ROOT
-from alignment_preview import render_overlay_preview_image
+from alignment_preview import render_model_compare_preview_image, render_overlay_preview_image
 from config import (
     ICP_ACCELERATION_DEVICE,
     ICP_AXIS_SEED_RETAIN_TOPK,
@@ -35,6 +35,7 @@ from object_alignment_common import (
     build_depth_pointcloud_from_valid_mask,
     compute_front_view_extents,
     extract_front_visible_points,
+    model_pose_unity_to_blender_world,
     model_pose_unity_to_pointcloud_input,
     MAX_DEPTH_MM,
     MIN_DEPTH_MM,
@@ -46,7 +47,6 @@ from object_alignment_common import (
     read_mask,
     read_obj_vertices,
     resolve_task_paths,
-    rotation_unity_to_blender_world,
     select_front_visible_points,
     task_prefix,
     unity_to_blender_world_vector,
@@ -1060,6 +1060,25 @@ def main(argv: list[str]) -> int:
 
     target_context = build_target_context(target_front_fit)
     overall_scale = float((task.get("model") or {}).get("overall_scale") or 1.0)
+    preview_initial_rotation = np.eye(3, dtype=np.float32)
+    preview_initial_full = transform_points(
+        model_vertices_unity,
+        overall_scale,
+        preview_initial_rotation,
+        np.zeros(3, dtype=np.float32),
+    )
+    preview_initial_front = extract_front_visible_points(
+        preview_initial_full,
+        bins=160,
+        max_points=ICP_TARGET_FRONT_MAX_POINTS,
+        seed=11,
+    )
+    preview_initial_translation = build_initial_translation(
+        model_full_points=preview_initial_full,
+        model_front_points=preview_initial_front,
+        target_front_points=target_front_fit,
+        target_context=target_context,
+    )
 
     best, final_camera_local_unity_debug = solve_alignment(
         model_vertices_unity=model_vertices_unity,
@@ -1075,8 +1094,10 @@ def main(argv: list[str]) -> int:
     pointcloud_euler_deg = Rotation.from_matrix(pointcloud_rotation).as_euler("xyz", degrees=True)
     pointcloud_quat_xyzw = Rotation.from_matrix(pointcloud_rotation).as_quat()
 
-    blender_rotation = rotation_unity_to_blender_world(best["rotation"])
-    blender_translation = unity_to_blender_world_vector(best["translation"])
+    blender_rotation, blender_translation = model_pose_unity_to_blender_world(
+        best["rotation"],
+        best["translation"],
+    )
     blender_delta_euler_deg = np.asarray(
         safe_matrix_to_blender_euler_xyz_deg(blender_rotation),
         dtype=np.float32,
@@ -1089,9 +1110,12 @@ def main(argv: list[str]) -> int:
     icp_points_preview_path = object_alignment_output_path(icp_points_preview_name)
     overlay_preview_name = f"{prefix}_alignment_preview_perspective.png"
     overlay_preview_path = object_alignment_output_path(overlay_preview_name)
+    unaligned_preview_name = f"{prefix}_alignment_preview_unaligned_perspective.png"
+    unaligned_preview_path = object_alignment_output_path(unaligned_preview_name)
     write_binary_ply(discarded_points_preview_path, discarded_points_export)
     write_binary_ply(icp_points_preview_path, icp_used_points_export)
     preview_image_name: str | None = overlay_preview_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
+    preview_image_unaligned_name: str | None = unaligned_preview_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
 
     object_alignment = {
         "coordinate_basis": "pointcloud_input_pre_blender_import",
@@ -1100,6 +1124,7 @@ def main(argv: list[str]) -> int:
         "model_rotation_quaternion_xyzw": [float(v) for v in pointcloud_quat_xyzw],
         "model_real_scale": float(best["scale"]),
         "preview_image_name": preview_image_name,
+        "preview_image_unaligned_name": preview_image_unaligned_name,
         "confidence": confidence,
         "icp_rmse": float(best["rmse"]),
     }
@@ -1125,8 +1150,25 @@ def main(argv: list[str]) -> int:
             task=task,
             blender_arg=argv[2] if len(argv) == 3 else None,
         )
+        render_model_compare_preview_image(
+            mesh_path=paths["mesh_path"],
+            render_path=unaligned_preview_path,
+            aligned_blender_translation=blender_translation,
+            aligned_blender_delta_euler_deg=blender_delta_euler_deg,
+            aligned_scale=float(best["scale"]),
+            reference_blender_translation=unity_to_blender_world_vector(preview_initial_translation),
+            reference_blender_delta_euler_deg=np.zeros(3, dtype=np.float32),
+            reference_scale=float(overall_scale),
+            task=task,
+            blender_arg=argv[2] if len(argv) == 3 else None,
+            title="Aligned vs Initial Model Preview",
+            header_line="Perspective preview: ICP result overlaid with initial-distance model",
+            model_legend_line="Blue = ICP-aligned model, orange = initial-distance model",
+        )
     elif overlay_preview_path.exists():
         overlay_preview_path.unlink()
+        if unaligned_preview_path.exists():
+            unaligned_preview_path.unlink()
 
     save_task_json(json_path, task)
     remove_legacy_outputs(prefix)
