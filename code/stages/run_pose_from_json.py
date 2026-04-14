@@ -109,11 +109,6 @@ def serialize_pose(rotation: np.ndarray, translation: np.ndarray, coordinate_bas
     rotation = np.asarray(rotation, dtype=np.float64)
     translation = np.asarray(translation, dtype=np.float64)
     quat_xyzw = rotation_matrix_to_quat_xyzw(rotation)
-    # Runtime compatibility fix:
-    # downstream Unity consumer expects quaternion z sign flipped
-    # relative to the quaternion directly converted from world_rotation.
-    quat_xyzw[2] *= -1.0
-    quat_xyzw = normalize_quat_xyzw(quat_xyzw)
     euler_deg = rotation_matrix_to_euler_xyz_deg(rotation)
     matrix = make_row_transform_matrix(rotation, translation)
     return {
@@ -166,13 +161,25 @@ def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
 
 def resolve_pv_camera_world_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
     pv_info = task.get("PVCamera") or {}
+    translation = np.asarray(pv_info.get("position"), dtype=np.float64)
+    quat_xyzw = np.asarray(pv_info.get("rotation_quaternion_xyzw"), dtype=np.float64)
+
+    if translation.shape == (3,) and quat_xyzw.shape == (4,):
+        rotation = quat_xyzw_to_rotation_matrix(quat_xyzw)
+        return translation.astype(np.float64), rotation.astype(np.float64)
+
     pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
     if pv_pose.shape != (4, 4):
-        raise ValueError("PVCamera.pose must be 4x4")
+        raise ValueError(
+            "PVCamera must include either position+rotation_quaternion_xyzw or pose(4x4)"
+        )
 
     rotation = pv_pose[:3, :3].astype(np.float64)
     translation = pv_pose[3, :3].astype(np.float64)
-    translation[2] = -translation[2]
+    quat_xyzw = rotation_matrix_to_quat_xyzw(rotation)
+    translation[2] *= -1.0
+    quat_xyzw[2] *= -1.0
+    rotation = quat_xyzw_to_rotation_matrix(quat_xyzw)
     return translation, rotation
 
 def compute_world_pose(task: dict) -> dict[str, list[float]]:
@@ -197,11 +204,6 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
             f"Final world rotation must be a proper rotation, got determinant {det_world:.6f}"
         )
     world_quat = rotation_matrix_to_quat_xyzw(world_rotation)
-    # Runtime compatibility fix:
-    # downstream Unity consumer expects quaternion z sign flipped
-    # relative to the quaternion directly converted from world_rotation.
-    world_quat[2] *= -1.0
-    world_quat = normalize_quat_xyzw(world_quat)
 
     uniform_scale = [float(model_scale), float(model_scale), float(model_scale)]
     return {
@@ -235,7 +237,7 @@ def build_pose_debug(task: dict) -> dict:
                 pv_position,
                 "unity_world_x_right_y_up_z_forward",
             ),
-            "notes": "PVCamera.pose is used as the world anchor here, with the uploaded translation Z value negated before composition.",
+            "notes": "PVCamera world pose uses the precomputed server-side position/quaternion with Z flipped on both translation and quaternion.",
         },
         "final_object_world": {
             "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,
