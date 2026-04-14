@@ -3,18 +3,26 @@ from __future__ import annotations
 import sys
 
 from _bootstrap import CODE_ROOT
-from config import ENABLE_ALIGNMENT_RENDER_OUTPUTS, DEPTHPOINTCLOUD_MAX_EXPORT_POINTS
+from config import (
+    ENABLE_ALIGNMENT_RENDER_OUTPUTS,
+    DEPTHPOINTCLOUD_MAX_EXPORT_POINTS,
+    ICP_TARGET_FRONT_MAX_POINTS,
+)
 import numpy as np
 
 from object_alignment_common import (
+    MAX_DEPTH_MM,
+    MIN_DEPTH_MM,
+    build_depth_border_keep_mask,
     build_depth_pointcloud,
+    build_depth_pointcloud_from_valid_mask,
     compute_front_view_extents,
     compute_real_measurements,
     object_alignment_output_path,
     read_depth_image,
     read_mask,
-    render_front_view_points,
     resolve_task_paths,
+    select_front_visible_points,
     task_prefix,
     write_binary_ply,
 )
@@ -25,6 +33,7 @@ def remove_legacy_outputs(prefix: str) -> None:
     for name in (
         f"{prefix}_size_compare.png",
         f"{prefix}_pointcloud_measure.png",
+        f"{prefix}_depthpointcloud_front.png",
     ):
         path = object_alignment_output_path(name)
         if path.exists():
@@ -53,17 +62,15 @@ def main(argv: list[str]) -> int:
     json_path = resolve_task_json_path(argv[1])
     task = load_task_json(json_path)
     paths = resolve_task_paths(task)
-    print(f"[STAGE] Depth pointcloud start : {json_path}")
+    print(f"[STAGE] depthpointcloud : {json_path}")
 
     k = np.asarray((task.get("PVCamera") or {}).get("k"), dtype=np.float32)
     if k.shape != (3, 3):
         raise ValueError(f"PVCamera.k must be 3x3, got {k.shape}")
 
-    print("[STAGE] Loading depth and mask inputs")
     mask_bool = read_mask(paths["mask_path"])
     depth_mm = read_depth_image(paths["depth_path"])
 
-    print("[STAGE] Computing measurements and building point cloud")
     measurements = compute_real_measurements(mask_bool, depth_mm, k)
     export_points, unity_points = build_depth_pointcloud(depth_mm, mask_bool, k)
     export_points, unity_points, raw_point_count = downsample_export_points(
@@ -75,37 +82,31 @@ def main(argv: list[str]) -> int:
 
     prefix = task_prefix(task, json_path)
     pointcloud_name = f"{prefix}_sam3_pointcloud.ply"
-    front_view_image_name = f"{prefix}_depthpointcloud_front.png"
+    icp_discarded_pointcloud_name = f"{prefix}_icp_discarded_points.ply"
+    icp_used_pointcloud_name = f"{prefix}_icp_used_points.ply"
     pointcloud_path = object_alignment_output_path(pointcloud_name)
-    front_view_path = object_alignment_output_path(front_view_image_name)
+    icp_discarded_pointcloud_path = object_alignment_output_path(icp_discarded_pointcloud_name)
+    icp_used_pointcloud_path = object_alignment_output_path(icp_used_pointcloud_name)
 
-    print(
-        f"[STAGE] Writing outputs      : raw_points={raw_point_count}, "
-        f"export_points={len(export_points)}, max_export={DEPTHPOINTCLOUD_MAX_EXPORT_POINTS}"
+    valid_all = mask_bool & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
+    depth_keep_mask = build_depth_border_keep_mask(mask_bool)
+    valid_cropped = valid_all & ~depth_keep_mask
+    discarded_points_export, _ = build_depth_pointcloud_from_valid_mask(depth_mm, valid_cropped, k)
+    icp_used_points_unity, target_front_indices = select_front_visible_points(
+        unity_points,
+        bins=160,
+        max_points=ICP_TARGET_FRONT_MAX_POINTS,
+        seed=7,
     )
+    icp_used_points_export = export_points[target_front_indices]
+
     write_binary_ply(pointcloud_path, export_points)
-    if ENABLE_ALIGNMENT_RENDER_OUTPUTS:
-        render_front_view_points(
-            unity_points,
-            front_view_path,
-            title="Depth Point Cloud Front View",
-            info_lines=[
-                "Basis: Unity X-right / Y-up / Z-forward",
-                "Blender import: forward=-X, up=+Y",
-                f"Real width  : {measurements['real_width_m']:.4f} m",
-                f"Real height : {measurements['real_height_m']:.4f} m",
-                f"Mean depth  : {measurements['mean_depth_m']:.4f} m",
-                f"Mask crop   : outer {measurements['depth_border_crop_ratio'] * 100.0:.0f}% inward",
-                f"Point count : {len(export_points)}",
-            ],
-        )
-    elif front_view_path.exists():
-        front_view_path.unlink()
+    write_binary_ply(icp_discarded_pointcloud_path, discarded_points_export)
+    write_binary_ply(icp_used_pointcloud_path, icp_used_points_export)
     remove_legacy_outputs(prefix)
 
     depthpointcloud = {
         "pointcloud_name": pointcloud_name,
-        "front_view_image_name": front_view_image_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None,
         "coordinate_basis": "unity_x_right_y_up_z_forward",
         "blender_import_axes": {"forward": "-X", "up": "+Y"},
         "width_pointcloud_units": extents["width_units"],
@@ -130,23 +131,22 @@ def main(argv: list[str]) -> int:
         "mask_border_crop_max_inside_distance_px": measurements["mask_border_crop_max_inside_distance_px"],
         "usable_mask_pixels": measurements["usable_mask_pixels"],
         "cropped_mask_pixels": measurements["cropped_mask_pixels"],
+        "icp_discarded_pointcloud_name": icp_discarded_pointcloud_name,
+        "icp_used_pointcloud_name": icp_used_pointcloud_name,
+        "discarded_count": int(len(discarded_points_export)),
+        "used_count": int(len(icp_used_points_export)),
+        "icp_target_front_max_points": int(ICP_TARGET_FRONT_MAX_POINTS),
     }
     task["depthpointcloud"] = depthpointcloud
     save_task_json(json_path, task)
 
-    print(f"[INFO] JSON            : {json_path}")
-    print(f"[INFO] Pointcloud      : {pointcloud_path}")
-    print(f"[INFO] Front image     : {front_view_path if ENABLE_ALIGNMENT_RENDER_OUTPUTS else 'not-generated'}")
     print(
-        f"[INFO] Real size       : "
-        f"{measurements['real_width_m']:.4f} m x {measurements['real_height_m']:.4f} m"
+        f"[INFO] depthpointcloud : points raw={raw_point_count} export={len(export_points)} "
+        f"used={len(icp_used_points_export)} discarded={len(discarded_points_export)} "
+        f"size={measurements['real_width_m']:.4f}x{measurements['real_height_m']:.4f}m "
+        f"depth={measurements['mean_depth_m']:.4f}m"
     )
-    print(f"[INFO] Mean depth      : {measurements['mean_depth_m']:.4f} m")
-    print(
-        f"[INFO] Point count      : raw={raw_point_count}, "
-        f"exported={len(export_points)}, downsampled={len(export_points) != raw_point_count}"
-    )
-    print("[OK] Depth pointcloud stage completed")
+    print("[OK] depthpointcloud")
     return 0
 
 

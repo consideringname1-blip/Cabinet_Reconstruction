@@ -32,6 +32,7 @@ def main(argv: list[str]) -> int:
 
     json_path = resolve_task_json_path(argv[1])
     task = load_task_json(json_path)
+    print(f"[STAGE] modelscale : {json_path}")
 
     if "depthpointcloud" not in task:
         raise ValueError("depthpointcloud is missing. Run pointcloud stage first.")
@@ -73,14 +74,11 @@ def main(argv: list[str]) -> int:
     save_task_json(json_path, task)
     remove_legacy_outputs(prefix)
 
-    print(f"[INFO] JSON            : {json_path}")
-    print(f"[INFO] Mesh            : {paths['mesh_path']}")
-    print(f"[INFO] Model size      : {width_measured:.4f} x {height_measured:.4f}")
     print(
-        f"[INFO] Scale factors   : width={width_scale:.6f}, "
-        f"height={height_scale:.6f}, overall={overall_scale:.6f}"
+        f"[INFO] modelscale : size={width_measured:.4f}x{height_measured:.4f} "
+        f"scale=({width_scale:.6f}, {height_scale:.6f}, overall={overall_scale:.6f})"
     )
-    print("[OK] Model scale stage completed")
+    print("[OK] modelscale")
     return 0
 
 

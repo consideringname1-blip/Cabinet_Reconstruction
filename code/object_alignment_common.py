@@ -11,6 +11,7 @@ import numpy as np
 from config import (
     BLENDER_BIN,
     ICP_DEPTH_BORDER_CROP_RATIO,
+    ICP_IGNORE_OCCLUDED_MODEL_POINTS,
     INSTANTMESH_OUTPUT_MESHES,
     OBJECT_ALIGNMENT_OUTPUT_ROOT,
     SAM3_OUTPUT_ROOT,
@@ -392,6 +393,63 @@ def build_depth_pointcloud_from_valid_mask(
     # X=right, Z=up, Y=forward, which corresponds to the same object pose.
     export_points = np.stack((-z_m, -y_cam, -x_cam), axis=-1)[valid]
     return export_points.astype(np.float32), unity_points.astype(np.float32)
+
+
+def select_front_visible_points(
+    points: np.ndarray,
+    bins: int = 128,
+    max_points: int | None = None,
+    seed: int = 0,
+    ignore_occluded_points: bool | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    points = np.asarray(points, dtype=np.float32)
+    if len(points) == 0:
+        return points, np.empty(0, dtype=np.int32)
+
+    if ignore_occluded_points is None:
+        ignore_occluded_points = bool(ICP_IGNORE_OCCLUDED_MODEL_POINTS)
+
+    if ignore_occluded_points:
+        # Extract the camera-visible surface when the camera looks along +Z in
+        # Unity camera-local space.
+        min_xy = points[:, :2].min(axis=0)
+        max_xy = points[:, :2].max(axis=0)
+        span_xy = np.maximum(max_xy - min_xy, 1e-6)
+        uv = np.floor((points[:, :2] - min_xy) / span_xy * (bins - 1)).astype(np.int32)
+        flat = uv[:, 1] * bins + uv[:, 0]
+        order = np.lexsort((points[:, 2], flat))
+        flat_sorted = flat[order]
+
+        keep = np.empty(len(order), dtype=bool)
+        keep[0] = True
+        keep[1:] = flat_sorted[1:] != flat_sorted[:-1]
+        selected_indices = order[keep]
+    else:
+        selected_indices = np.arange(len(points), dtype=np.int32)
+
+    if max_points is not None and len(selected_indices) > max_points:
+        rng = np.random.default_rng(seed)
+        pick = rng.choice(len(selected_indices), size=max_points, replace=False)
+        selected_indices = selected_indices[pick]
+
+    return points[selected_indices], selected_indices.astype(np.int32, copy=False)
+
+
+def extract_front_visible_points(
+    points: np.ndarray,
+    bins: int = 128,
+    max_points: int | None = None,
+    seed: int = 0,
+    ignore_occluded_points: bool | None = None,
+) -> np.ndarray:
+    selected_points, _ = select_front_visible_points(
+        points,
+        bins=bins,
+        max_points=max_points,
+        seed=seed,
+        ignore_occluded_points=ignore_occluded_points,
+    )
+    return selected_points
 
 
 def pointcloud_export_to_unity(points: np.ndarray) -> np.ndarray:

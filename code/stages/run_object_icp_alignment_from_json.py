@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import itertools
-import subprocess
 import sys
 import warnings
-from pathlib import Path
 
 from _bootstrap import CODE_ROOT
+from alignment_preview import render_overlay_preview_image
 from config import (
     ICP_ACCELERATION_DEVICE,
     ICP_AXIS_SEED_RETAIN_TOPK,
@@ -18,7 +17,6 @@ from config import (
     ICP_FINAL_ITERATIONS,
     ICP_FINAL_VISIBLE_MAX_POINTS,
     ICP_FINE_VISIBLE_MAX_POINTS,
-    ICP_GPU_CDIST_CHUNK_SIZE,
     ICP_IGNORE_INVERTED_SOLUTIONS,
     ICP_LOCAL_REFINE_CANDIDATE_KEEP,
     ICP_IGNORE_OCCLUDED_MODEL_POINTS,
@@ -31,17 +29,12 @@ from config import (
 import numpy as np
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
-try:
-    import torch
-except Exception:  # pragma: no cover - optional dependency
-    torch = None
 
 from object_alignment_common import (
-    annotate_rendered_image,
-    annotate_rendered_model_front_view,
     build_depth_border_keep_mask,
     build_depth_pointcloud_from_valid_mask,
     compute_front_view_extents,
+    extract_front_visible_points,
     model_pose_unity_to_pointcloud_input,
     MAX_DEPTH_MM,
     MIN_DEPTH_MM,
@@ -52,10 +45,9 @@ from object_alignment_common import (
     read_binary_ply_points,
     read_mask,
     read_obj_vertices,
-    render_front_view_points,
-    resolve_blender_path,
     resolve_task_paths,
     rotation_unity_to_blender_world,
+    select_front_visible_points,
     task_prefix,
     unity_to_blender_world_vector,
     write_binary_ply,
@@ -63,7 +55,6 @@ from object_alignment_common import (
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
-HELPER_SCRIPT = Path(__file__).resolve().with_name("blender_render_measure.py")
 MODEL_UP_AXIS_UNITY = np.array([0.0, 1.0, 0.0], dtype=np.float32)
 _ICP_BACKEND: dict | None = None
 
@@ -77,29 +68,8 @@ def resolve_icp_backend() -> dict:
     if requested not in {"auto", "cuda", "cpu"}:
         raise ValueError("config.ICP_ACCELERATION_DEVICE must be one of: auto / cuda / cpu")
 
-    if requested == "cpu":
-        _ICP_BACKEND = {"requested": requested, "actual": "cpu", "reason": "forced-by-config", "torch_device": None}
-        return _ICP_BACKEND
-
-    if torch is None:
-        if requested == "cuda":
-            raise RuntimeError("config.ICP_ACCELERATION_DEVICE='cuda' but PyTorch is not installed")
-        _ICP_BACKEND = {"requested": requested, "actual": "cpu", "reason": "torch-not-installed", "torch_device": None}
-        return _ICP_BACKEND
-
-    if torch.cuda.is_available():
-        _ICP_BACKEND = {
-            "requested": requested,
-            "actual": "cuda",
-            "reason": "cuda-available",
-            "torch_device": torch.device("cuda"),
-        }
-        return _ICP_BACKEND
-
-    if requested == "cuda":
-        raise RuntimeError("config.ICP_ACCELERATION_DEVICE='cuda' but CUDA is not available")
-
-    _ICP_BACKEND = {"requested": requested, "actual": "cpu", "reason": "cuda-unavailable", "torch_device": None}
+    reason = "forced-by-config" if requested == "cpu" else "simplified-cpu-only"
+    _ICP_BACKEND = {"requested": requested, "actual": "cpu", "reason": reason, "torch_device": None}
     return _ICP_BACKEND
 
 
@@ -124,35 +94,11 @@ def nearest_neighbor_distances(
     if len(reference_used) == 0:
         raise ValueError("reference_points must be non-empty")
 
-    backend = resolve_icp_backend()
-    if backend["actual"] != "cuda":
-        tree = cKDTree(reference_used)
-        dists, idx = tree.query(query_used, k=1)
-        dists = np.asarray(dists, dtype=np.float32)
-        idx = np.asarray(idx, dtype=np.int32)
-        return (dists, idx) if return_indices else dists
-
-    device = backend["torch_device"]
-    query_tensor = torch.as_tensor(query_used, dtype=torch.float32, device=device)
-    reference_tensor = torch.as_tensor(reference_used, dtype=torch.float32, device=device)
-
-    chunk_size = max(1, int(ICP_GPU_CDIST_CHUNK_SIZE))
-    dist_chunks: list[np.ndarray] = []
-    idx_chunks: list[np.ndarray] = []
-    with torch.no_grad():
-        for start in range(0, len(query_tensor), chunk_size):
-            end = min(start + chunk_size, len(query_tensor))
-            distances = torch.cdist(query_tensor[start:end], reference_tensor)
-            chunk_dists, chunk_idx = torch.min(distances, dim=1)
-            dist_chunks.append(chunk_dists.cpu().numpy().astype(np.float32, copy=False))
-            if return_indices:
-                idx_chunks.append(chunk_idx.cpu().numpy().astype(np.int32, copy=False))
-
-    all_dists = np.concatenate(dist_chunks) if dist_chunks else np.empty(0, dtype=np.float32)
-    if not return_indices:
-        return all_dists
-    all_idx = np.concatenate(idx_chunks) if idx_chunks else np.empty(0, dtype=np.int32)
-    return all_dists, all_idx
+    tree = cKDTree(reference_used)
+    dists, idx = tree.query(query_used, k=1)
+    dists = np.asarray(dists, dtype=np.float32)
+    idx = np.asarray(idx, dtype=np.int32)
+    return (dists, idx) if return_indices else dists
 
 
 def query_prebuilt_tree(
@@ -218,63 +164,6 @@ def downsample_points(points: np.ndarray, max_points: int, seed: int) -> np.ndar
     return points[idx]
 
 
-def select_front_visible_points(
-    points: np.ndarray,
-    bins: int = 128,
-    max_points: int | None = None,
-    seed: int = 0,
-    ignore_occluded_points: bool | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
-    points = np.asarray(points, dtype=np.float32)
-    if len(points) == 0:
-        return points, np.empty(0, dtype=np.int32)
-
-    if ignore_occluded_points is None:
-        ignore_occluded_points = bool(ICP_IGNORE_OCCLUDED_MODEL_POINTS)
-
-    if ignore_occluded_points:
-        # Despite the legacy name, this extracts the camera-visible surface when
-        # the camera looks along +Z in Unity camera-local space.
-        min_xy = points[:, :2].min(axis=0)
-        max_xy = points[:, :2].max(axis=0)
-        span_xy = np.maximum(max_xy - min_xy, 1e-6)
-        uv = np.floor((points[:, :2] - min_xy) / span_xy * (bins - 1)).astype(np.int32)
-        flat = uv[:, 1] * bins + uv[:, 0]
-        order = np.lexsort((points[:, 2], flat))
-        flat_sorted = flat[order]
-
-        keep = np.empty(len(order), dtype=bool)
-        keep[0] = True
-        keep[1:] = flat_sorted[1:] != flat_sorted[:-1]
-        selected_indices = order[keep]
-    else:
-        selected_indices = np.arange(len(points), dtype=np.int32)
-
-    if max_points is not None and len(selected_indices) > max_points:
-        rng = np.random.default_rng(seed)
-        pick = rng.choice(len(selected_indices), size=max_points, replace=False)
-        selected_indices = selected_indices[pick]
-
-    return points[selected_indices], selected_indices.astype(np.int32, copy=False)
-
-
-def extract_front_visible_points(
-    points: np.ndarray,
-    bins: int = 128,
-    max_points: int | None = None,
-    seed: int = 0,
-    ignore_occluded_points: bool | None = None,
-) -> np.ndarray:
-    selected_points, _ = select_front_visible_points(
-        points,
-        bins=bins,
-        max_points=max_points,
-        seed=seed,
-        ignore_occluded_points=ignore_occluded_points,
-    )
-    return selected_points
-
-
 def trimmed_rmse(dists: np.ndarray, trim_percentile: float = 85.0) -> float:
     dists = np.asarray(dists, dtype=np.float32).reshape(-1)
     if dists.size == 0:
@@ -284,13 +173,6 @@ def trimmed_rmse(dists: np.ndarray, trim_percentile: float = 85.0) -> float:
     if not np.any(keep):
         keep = np.ones_like(dists, dtype=bool)
     return float(np.sqrt(np.mean(np.square(dists[keep]))))
-
-
-def safe_matrix_to_euler_xyz_deg(rotation: np.ndarray) -> list[float]:
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore")
-        euler = Rotation.from_matrix(np.asarray(rotation, dtype=np.float64)).as_euler("xyz", degrees=True)
-    return [float(v) for v in euler]
 
 
 def safe_matrix_to_blender_euler_xyz_deg(rotation: np.ndarray) -> list[float]:
@@ -323,18 +205,14 @@ def compute_xy_center(extents: dict) -> np.ndarray:
 def build_target_context(target_front_points: np.ndarray) -> dict:
     target_front_points = np.asarray(target_front_points, dtype=np.float32)
     extents = compute_front_view_extents(target_front_points)
-    backend = resolve_icp_backend()
     context = {
         "points": target_front_points,
         "extents": extents,
         "center_xy": compute_xy_center(extents),
         "front_anchor_z": float(np.median(target_front_points[:, 2])),
-        "tree_3d": None,
-        "tree_2d": None,
+        "tree_3d": cKDTree(target_front_points) if len(target_front_points) > 0 else None,
+        "tree_2d": cKDTree(target_front_points[:, :2]) if len(target_front_points) > 0 else None,
     }
-    if backend["actual"] != "cuda" and len(target_front_points) > 0:
-        context["tree_3d"] = cKDTree(target_front_points)
-        context["tree_2d"] = cKDTree(target_front_points[:, :2])
     return context
 
 
@@ -400,41 +278,18 @@ def rank_scale_candidates(
 def best_fit_transform(a: np.ndarray, b: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     a = np.asarray(a, dtype=np.float32)
     b = np.asarray(b, dtype=np.float32)
-    backend = resolve_icp_backend()
-    if backend["actual"] != "cuda":
-        centroid_a = a.mean(axis=0)
-        centroid_b = b.mean(axis=0)
-        aa = a - centroid_a
-        bb = b - centroid_b
-        h = aa.T @ bb
-        u, _, vt = np.linalg.svd(h)
+    centroid_a = a.mean(axis=0)
+    centroid_b = b.mean(axis=0)
+    aa = a - centroid_a
+    bb = b - centroid_b
+    h = aa.T @ bb
+    u, _, vt = np.linalg.svd(h)
+    r = vt.T @ u.T
+    if np.linalg.det(r) < 0:
+        vt[-1, :] *= -1
         r = vt.T @ u.T
-        if np.linalg.det(r) < 0:
-            vt[-1, :] *= -1
-            r = vt.T @ u.T
-        t = centroid_b - (centroid_a @ r.T)
-        return r.astype(np.float32), t.astype(np.float32)
-
-    device = backend["torch_device"]
-    with torch.no_grad():
-        a_tensor = torch.as_tensor(a, dtype=torch.float32, device=device)
-        b_tensor = torch.as_tensor(b, dtype=torch.float32, device=device)
-        centroid_a = a_tensor.mean(dim=0)
-        centroid_b = b_tensor.mean(dim=0)
-        aa = a_tensor - centroid_a
-        bb = b_tensor - centroid_b
-        h = aa.transpose(0, 1) @ bb
-        u, _, vh = torch.linalg.svd(h, full_matrices=False)
-        r = vh.transpose(0, 1) @ u.transpose(0, 1)
-        if torch.linalg.det(r) < 0:
-            vh = vh.clone()
-            vh[-1, :] *= -1
-            r = vh.transpose(0, 1) @ u.transpose(0, 1)
-        t = centroid_b - (centroid_a @ r.transpose(0, 1))
-    return (
-        r.cpu().numpy().astype(np.float32, copy=False),
-        t.cpu().numpy().astype(np.float32, copy=False),
-    )
+    t = centroid_b - (centroid_a @ r.T)
+    return r.astype(np.float32), t.astype(np.float32)
 
 
 def transform_points(points: np.ndarray, scale: float, rotation: np.ndarray, translation: np.ndarray) -> np.ndarray:
@@ -539,17 +394,6 @@ def build_initial_translation(
         ],
         dtype=np.float32,
     )
-
-
-def compose_transform(
-    base_rotation: np.ndarray,
-    base_translation: np.ndarray,
-    delta_rotation: np.ndarray,
-    delta_translation: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    final_rotation = delta_rotation @ base_rotation
-    final_translation = base_translation @ delta_rotation.T + delta_translation
-    return final_rotation.astype(np.float32), final_translation.astype(np.float32)
 
 
 def evaluate_alignment(
@@ -710,7 +554,6 @@ def refine_pose_locally(
             best_candidate = {
                 "rotation": rotation,
                 "translation": translation,
-                "delta_euler_deg": [float(v) for v in seeded["delta_euler_deg"]],
                 "rmse": float(metrics["rmse_3d"]),
                 "surface_rmse_3d": float(metrics["surface_rmse_3d"]),
                 "coverage_rmse_3d": float(metrics["coverage_rmse_3d"]),
@@ -807,7 +650,6 @@ def generate_axis_aligned_rotation_seeds() -> list[dict]:
             seeds.append(
                 {
                     "rotation": rotation,
-                    "euler_deg": safe_matrix_to_euler_xyz_deg(rotation),
                 }
             )
     return seeds
@@ -899,8 +741,6 @@ def search_initial_pose_candidates(
 
     def append_candidate(
         rotation: np.ndarray,
-        seed_euler_deg: list[float],
-        local_euler_deg: list[float],
         stage: str,
         visible_bins: int,
         visible_max_points: int,
@@ -916,17 +756,12 @@ def search_initial_pose_candidates(
             visible_max_points=visible_max_points,
             target_context=target_context,
         )
-        candidate["seed_euler_deg"] = [float(v) for v in seed_euler_deg]
-        candidate["local_euler_deg"] = [float(v) for v in local_euler_deg]
-        candidate["euler_deg"] = safe_matrix_to_euler_xyz_deg(rotation)
         candidate["stage"] = stage
         candidates.append(candidate)
 
     for seed in generate_axis_aligned_rotation_seeds():
         append_candidate(
             rotation=seed["rotation"],
-            seed_euler_deg=seed["euler_deg"],
-            local_euler_deg=[0.0, 0.0, 0.0],
             stage="axis_seed",
             visible_bins=120,
             visible_max_points=2600,
@@ -943,8 +778,6 @@ def search_initial_pose_candidates(
                     perturb = Rotation.from_euler("xyz", [rx, ry, rz], degrees=True).as_matrix().astype(np.float32)
                     append_candidate(
                         rotation=perturb @ base["rotation"],
-                        seed_euler_deg=base["seed_euler_deg"],
-                        local_euler_deg=[float(rx), float(ry), float(rz)],
                         stage="refine_medium",
                         visible_bins=144,
                         visible_max_points=ICP_MEDIUM_VISIBLE_MAX_POINTS,
@@ -958,12 +791,6 @@ def search_initial_pose_candidates(
                     perturb = Rotation.from_euler("xyz", [rx, ry, rz], degrees=True).as_matrix().astype(np.float32)
                     append_candidate(
                         rotation=perturb @ base["rotation"],
-                        seed_euler_deg=base["seed_euler_deg"],
-                        local_euler_deg=[
-                            float(base["local_euler_deg"][0] + rx),
-                            float(base["local_euler_deg"][1] + ry),
-                            float(base["local_euler_deg"][2] + rz),
-                        ],
                         stage="refine_fine",
                         visible_bins=160,
                         visible_max_points=ICP_FINE_VISIBLE_MAX_POINTS,
@@ -973,20 +800,6 @@ def search_initial_pose_candidates(
     if not candidates:
         raise RuntimeError("No valid pose candidates remain after applying ICP constraints.")
     return candidates
-
-
-def search_initial_pose(
-    model_points: np.ndarray,
-    target_front_points: np.ndarray,
-    nominal_scale: float,
-    target_context: dict | None = None,
-) -> dict:
-    return search_initial_pose_candidates(
-        model_points=model_points,
-        target_front_points=target_front_points,
-        nominal_scale=nominal_scale,
-        target_context=target_context,
-    )[0]
 
 
 def compute_confidence(task: dict, best: dict) -> float:
@@ -1024,191 +837,36 @@ def compute_confidence(task: dict, best: dict) -> float:
     return float(np.clip(confidence, 0.0, 1.0))
 
 
-def render_aligned_model_image(
-    blender_path: Path | None,
-    mesh_path: Path,
-    render_path: Path,
-    blender_translation: np.ndarray,
-    blender_euler_deg: np.ndarray,
+def build_final_camera_local_unity_debug(
+    rotation: np.ndarray,
+    translation: np.ndarray,
     scale: float,
-    transformed_model_unity: np.ndarray,
-    task: dict,
-) -> str:
-    depthpointcloud = task.get("depthpointcloud") or {}
-    model = task.get("model") or {}
-    object_alignment = task.get("object_alignment") or {}
-
-    info_lines = [
-        "Basis: orthographic front view",
-        "Model import in Blender: forward=-X, up=+Z",
-        f"Model width  : {float(model.get('width_measured') or 0.0) * scale:.4f} m",
-        f"Model height : {float(model.get('height_measured') or 0.0) * scale:.4f} m",
-        f"Point depth   : {float(depthpointcloud.get('mean_depth_measured') or 0.0):.4f} m",
-        f"ICP rmse      : {float(object_alignment.get('icp_rmse') or 0.0):.4f} m",
-        f"Confidence    : {float(object_alignment.get('confidence') or 0.0):.3f}",
-    ]
-
-    if blender_path is None:
-        render_front_view_points(
-            transformed_model_unity,
-            render_path,
-            title="Aligned Model Front View",
-            info_lines=info_lines + ["Render: software fallback"],
-            point_color=(210, 210, 210),
-        )
-        return "software-fallback"
-
-    command = [
-        str(blender_path),
-        "--background",
-        "--python",
-        str(HELPER_SCRIPT),
-        "--",
-        "front_model",
-        str(mesh_path),
-        str(render_path),
-        *[f"{float(v):.9f}" for v in blender_translation],
-        *[f"{float(v):.9f}" for v in blender_euler_deg],
-        f"{float(scale):.9f}",
-    ]
-    completed = subprocess.run(command, check=False, text=True)
-    if completed.returncode != 0:
-        raise RuntimeError(
-            "Blender aligned-model render failed.\n"
-            f"stdout:\n{completed.stdout}\n"
-            f"stderr:\n{completed.stderr}"
-        )
-
-    annotate_rendered_model_front_view(render_path, "Aligned Model Front View", info_lines)
-    return str(blender_path)
+    metrics: dict,
+) -> dict:
+    return {
+        "scale": float(scale),
+        "up_y": model_up_y_in_unity(rotation),
+        "pose": serialize_pose(
+            rotation,
+            translation,
+            "unity_camera_local_x_right_y_up_z_forward",
+        ),
+        "front_view_rmse_2d": float(metrics["rmse_2d"]),
+        "surface_rmse_3d": float(metrics["surface_rmse_3d"]),
+        "coverage_rmse_3d": float(metrics["coverage_rmse_3d"]),
+        "front_view_size_error": float(metrics["size_error"]),
+        "width_error": float(metrics["width_error"]),
+        "height_error": float(metrics["height_error"]),
+        "center_error": float(metrics["center_error"]),
+    }
 
 
-def render_overlay_preview_image(
-    blender_path: Path | None,
-    mesh_path: Path,
-    discarded_pointcloud_path: Path,
-    icp_pointcloud_path: Path,
-    render_path: Path,
-    blender_translation: np.ndarray,
-    blender_delta_euler_deg: np.ndarray,
-    scale: float,
-    task: dict,
-) -> str:
-    depthpointcloud = task.get("depthpointcloud") or {}
-    object_alignment = task.get("object_alignment") or {}
-
-    info_lines = [
-        "Perspective preview: point cloud + aligned model",
-        "Point cloud import: forward=-X, up=+Y",
-        "Model import: forward=-X, up=+Z",
-        "Orange = mask-border-discarded points, green = ICP-used points, blue = aligned model",
-        f"Depth mean    : {float(depthpointcloud.get('mean_depth_measured') or 0.0):.4f} m",
-        f"ICP rmse      : {float(object_alignment.get('icp_rmse') or 0.0):.4f} m",
-        f"Confidence    : {float(object_alignment.get('confidence') or 0.0):.3f}",
-    ]
-
-    if blender_path is None:
-        raise FileNotFoundError("Blender is required for perspective overlay preview.")
-
-    command = [
-        str(blender_path),
-        "--background",
-        "--python",
-        str(HELPER_SCRIPT),
-        "--",
-        "overlay_preview",
-        str(mesh_path),
-        str(discarded_pointcloud_path),
-        str(icp_pointcloud_path),
-        str(render_path),
-        *[f"{float(v):.9f}" for v in blender_translation],
-        *[f"{float(v):.9f}" for v in blender_delta_euler_deg],
-        f"{float(scale):.9f}",
-    ]
-    completed = subprocess.run(command, check=False, text=True)
-    if completed.returncode != 0:
-        raise RuntimeError(
-            "Blender overlay preview render failed.\n"
-            f"stdout:\n{completed.stdout}\n"
-            f"stderr:\n{completed.stderr}"
-        )
-
-    annotate_rendered_image(render_path, "Alignment Perspective Preview", info_lines)
-    return str(blender_path)
-
-
-def remove_legacy_outputs(prefix: str) -> None:
-    for name in (
-        f"{prefix}_size_compare.png",
-        f"{prefix}_model_front.png",
-        f"{prefix}_model_front_tmp.png",
-    ):
-        path = object_alignment_output_path(name)
-        if path.exists():
-            path.unlink()
-
-
-def main(argv: list[str]) -> int:
-    if len(argv) not in (2, 3):
-        print(
-            "Usage: python code/stages/run_object_icp_alignment_from_json.py <task_meta.json or filename> [blender_path]",
-            file=sys.stderr,
-        )
-        return 2
-
-    json_path = resolve_task_json_path(argv[1])
-    task = load_task_json(json_path)
-    print(f"[STAGE] Object alignment start : {json_path}")
-    icp_backend = resolve_icp_backend()
-    print(
-        f"[STAGE] ICP acceleration     : requested={icp_backend['requested']}, "
-        f"actual={icp_backend['actual']}, reason={icp_backend['reason']}"
-    )
-
-    if "depthpointcloud" not in task:
-        raise ValueError("depthpointcloud is missing. Run pointcloud stage first.")
-    if "model" not in task:
-        raise ValueError("model is missing. Run model scale stage first.")
-
-    paths = resolve_task_paths(task)
-    prefix = task_prefix(task, json_path)
-    pointcloud_name = (task.get("depthpointcloud") or {}).get("pointcloud_name")
-    if not pointcloud_name:
-        raise ValueError("depthpointcloud.pointcloud_name is missing")
-
-    k = np.asarray((task.get("PVCamera") or {}).get("k"), dtype=np.float32)
-    if k.shape != (3, 3):
-        raise ValueError(f"PVCamera.k must be 3x3, got {k.shape}")
-
-    mask_bool = read_mask(paths["mask_path"])
-    depth_mm = read_depth_image(paths["depth_path"])
-    print("[STAGE] Preparing point cloud and mesh inputs")
-    valid_all = mask_bool & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
-    depth_keep_mask = build_depth_border_keep_mask(mask_bool)
-    valid_cropped = valid_all & ~depth_keep_mask
-    discarded_points_export, _ = build_depth_pointcloud_from_valid_mask(depth_mm, valid_cropped, k)
-
-    pointcloud_path = object_alignment_output_path(pointcloud_name)
-    pointcloud_points_export = read_binary_ply_points(pointcloud_path)
-    pointcloud_points_unity = pointcloud_export_to_unity(pointcloud_points_export)
-    model_vertices_raw = read_obj_vertices(paths["mesh_path"])
-    model_vertices_unity = obj_vertices_to_unity(model_vertices_raw)
-    target_front_fit, target_front_indices = select_front_visible_points(
-        pointcloud_points_unity,
-        bins=160,
-        max_points=ICP_TARGET_FRONT_MAX_POINTS,
-        seed=7,
-    )
-    target_context = build_target_context(target_front_fit)
-    icp_used_points_export = pointcloud_points_export[target_front_indices]
-    print(
-        f"[STAGE] Front visible points  : source={len(pointcloud_points_export)}, "
-        f"selected={len(target_front_fit)}, max_selected={ICP_TARGET_FRONT_MAX_POINTS}"
-    )
-
-    overall_scale = float((task.get("model") or {}).get("overall_scale") or 1.0)
-
-    print("[STAGE] Running coarse pose search")
+def solve_alignment(
+    model_vertices_unity: np.ndarray,
+    target_front_fit: np.ndarray,
+    overall_scale: float,
+    target_context: dict,
+) -> tuple[dict, dict]:
     coarse_candidates = search_initial_pose_candidates(
         model_points=model_vertices_unity,
         target_front_points=target_front_fit,
@@ -1216,25 +874,16 @@ def main(argv: list[str]) -> int:
         target_context=target_context,
     )
     coarse_candidates = coarse_candidates[:ICP_COARSE_CANDIDATE_KEEP]
-    print(
-        f"[STAGE] Coarse candidates     : total={len(coarse_candidates)}, "
-        f"keep={ICP_COARSE_CANDIDATE_KEEP}"
-    )
 
-    best_result: dict | None = None
-    best_debug: dict | None = None
-    for coarse_rank, best_coarse in enumerate(coarse_candidates, start=1):
-        print(
-            f"[STAGE] ICP candidate        : rank={coarse_rank}, "
-            f"search_stage={best_coarse['stage']}, seed={best_coarse['seed_euler_deg']}"
-        )
+    best: dict | None = None
+    for coarse_candidate in coarse_candidates:
         candidate_scales = build_scale_candidates(
-            estimated_scale=float(best_coarse["scale_estimate"]["estimated_scale"]),
-            width_scale=float(best_coarse["scale_estimate"]["width_scale"]),
-            height_scale=float(best_coarse["scale_estimate"]["height_scale"]),
+            estimated_scale=float(coarse_candidate["scale_estimate"]["estimated_scale"]),
+            width_scale=float(coarse_candidate["scale_estimate"]["width_scale"]),
+            height_scale=float(coarse_candidate["scale_estimate"]["height_scale"]),
             fallback_scale=overall_scale,
         )
-        rotation_seed = best_coarse["rotation"]
+        rotation_seed = coarse_candidate["rotation"]
         coarse_full_unit = transform_points(model_vertices_unity, 1.0, rotation_seed, np.zeros(3, dtype=np.float32))
         coarse_front_unit = extract_front_visible_points(
             coarse_full_unit,
@@ -1252,16 +901,11 @@ def main(argv: list[str]) -> int:
         scale_keep = max(1, min(len(ranked_scales), int(ICP_FINAL_SCALE_CANDIDATE_KEEP)))
         for ranked in ranked_scales[:scale_keep]:
             scale = float(ranked["scale"])
-            coarse_full = coarse_full_unit * scale
-            coarse_front = coarse_front_unit * scale
             coarse_translation = ranked["translation"]
-            coarse_full = coarse_full + coarse_translation
-            coarse_front = coarse_front + coarse_translation
-
             delta_result = run_icp(
                 model_points=model_vertices_unity,
                 target_points=target_front_fit,
-                scale=float(scale),
+                scale=scale,
                 init_rotation=rotation_seed,
                 init_translation=coarse_translation,
                 iterations=ICP_FINAL_ITERATIONS,
@@ -1270,13 +914,10 @@ def main(argv: list[str]) -> int:
             )
             final_rotation = delta_result["rotation"]
             final_translation = delta_result["translation"]
-            delta_rotation = final_rotation @ rotation_seed.T
-            delta_translation = final_translation - (coarse_translation @ delta_rotation.T)
-
             if should_reject_inverted_solution(final_rotation):
                 continue
 
-            transformed_full = transform_points(model_vertices_unity, float(scale), final_rotation, final_translation)
+            transformed_full = transform_points(model_vertices_unity, scale, final_rotation, final_translation)
             transformed_front = extract_front_visible_points(
                 transformed_full,
                 bins=180,
@@ -1287,87 +928,32 @@ def main(argv: list[str]) -> int:
                 transformed_full_points=transformed_full,
                 transformed_front_points=transformed_front,
                 target_front_points=target_front_fit,
-                scale=float(scale),
+                scale=scale,
                 nominal_scale=overall_scale,
                 target_context=target_context,
             )
-
             candidate = {
-                "scale": float(scale),
+                "scale": scale,
                 "rotation": final_rotation,
                 "translation": final_translation,
-                "rmse": metrics["rmse_3d"],
-                "surface_rmse_3d": metrics["surface_rmse_3d"],
-                "coverage_rmse_3d": metrics["coverage_rmse_3d"],
-                "rmse_2d": metrics["rmse_2d"],
-                "score": metrics["score"],
-                "size_error": metrics["size_error"],
+                "rmse": float(metrics["rmse_3d"]),
+                "surface_rmse_3d": float(metrics["surface_rmse_3d"]),
+                "coverage_rmse_3d": float(metrics["coverage_rmse_3d"]),
+                "rmse_2d": float(metrics["rmse_2d"]),
+                "score": float(metrics["score"]),
+                "size_error": float(metrics["size_error"]),
                 "inlier_ratio": float(delta_result["inlier_ratio"]),
                 "extents": metrics["extents"],
-                "width_error": metrics["width_error"],
-                "height_error": metrics["height_error"],
+                "width_error": float(metrics["width_error"]),
+                "height_error": float(metrics["height_error"]),
+                "center_error": float(metrics["center_error"]),
             }
-            if best_result is None or candidate["score"] < best_result["score"]:
-                best_result = candidate
-                best_debug = {
-                    "coarse_search": {
-                        "candidate_rank": int(coarse_rank),
-                        "scale": float(scale),
-                        "up_y": model_up_y_in_unity(rotation_seed),
-                        "seed_euler_deg": [float(v) for v in best_coarse["seed_euler_deg"]],
-                        "local_refine_euler_deg": [float(v) for v in best_coarse["local_euler_deg"]],
-                        "search_stage": str(best_coarse["stage"]),
-                        "pose": serialize_pose(
-                            rotation_seed,
-                            coarse_translation,
-                            "unity_camera_local_x_right_y_up_z_forward",
-                        ),
-                        "score": float(best_coarse["metrics"]["score"]),
-                        "rmse_3d": float(best_coarse["metrics"]["rmse_3d"]),
-                        "surface_rmse_3d": float(best_coarse["metrics"]["surface_rmse_3d"]),
-                        "coverage_rmse_3d": float(best_coarse["metrics"]["coverage_rmse_3d"]),
-                        "rmse_2d": float(best_coarse["metrics"]["rmse_2d"]),
-                        "size_error": float(best_coarse["metrics"]["size_error"]),
-                        "center_error": float(best_coarse["metrics"]["center_error"]),
-                        "estimated_scale": float(best_coarse["scale_estimate"]["estimated_scale"]),
-                        "width_scale": float(best_coarse["scale_estimate"]["width_scale"]),
-                        "height_scale": float(best_coarse["scale_estimate"]["height_scale"]),
-                    },
-                    "icp_delta": {
-                        "scale": 1.0,
-                        "pose": serialize_pose(
-                            delta_rotation,
-                            delta_translation,
-                            "unity_camera_local_delta_x_right_y_up_z_forward",
-                        ),
-                        "rmse": float(delta_result["rmse"]),
-                        "inlier_ratio": float(delta_result["inlier_ratio"]),
-                    },
-                    "final_camera_local_unity": {
-                        "scale": float(scale),
-                        "up_y": model_up_y_in_unity(final_rotation),
-                        "pose": serialize_pose(
-                            final_rotation,
-                            final_translation,
-                            "unity_camera_local_x_right_y_up_z_forward",
-                        ),
-                        "front_view_rmse_2d": float(metrics["rmse_2d"]),
-                        "surface_rmse_3d": float(metrics["surface_rmse_3d"]),
-                        "coverage_rmse_3d": float(metrics["coverage_rmse_3d"]),
-                        "front_view_size_error": float(metrics["size_error"]),
-                        "width_error": float(metrics["width_error"]),
-                        "height_error": float(metrics["height_error"]),
-                        "center_error": float(metrics["center_error"]),
-                    },
-                }
+            if best is None or candidate["score"] < best["score"]:
+                best = candidate
 
-    if best_result is None:
+    if best is None:
         raise RuntimeError("Failed to compute object alignment")
-    if best_debug is None:
-        raise RuntimeError("Failed to collect object alignment debug data")
 
-    best = best_result
-    print("[STAGE] Running local pose refinement")
     refined = refine_pose_locally(
         model_points=model_vertices_unity,
         target_front_points=target_front_fit,
@@ -1393,33 +979,94 @@ def main(argv: list[str]) -> int:
                 "extents": refined["extents"],
                 "width_error": refined["width_error"],
                 "height_error": refined["height_error"],
+                "center_error": refined["center_error"],
             },
         }
-        best_debug["local_rotation_refine"] = {
-            "delta_euler_deg": [float(v) for v in refined["delta_euler_deg"]],
-            "center_error": float(refined["center_error"]),
-            "score": float(refined["score"]),
-            "surface_rmse_3d": float(refined["surface_rmse_3d"]),
-            "coverage_rmse_3d": float(refined["coverage_rmse_3d"]),
-            "front_view_rmse_2d": float(refined["rmse_2d"]),
-            "up_y": model_up_y_in_unity(refined["rotation"]),
-        }
-        best_debug["final_camera_local_unity"] = {
-            "scale": float(best["scale"]),
-            "up_y": model_up_y_in_unity(best["rotation"]),
-            "pose": serialize_pose(
-                best["rotation"],
-                best["translation"],
-                "unity_camera_local_x_right_y_up_z_forward",
-            ),
-            "front_view_rmse_2d": float(best["rmse_2d"]),
-            "surface_rmse_3d": float(best["surface_rmse_3d"]),
-            "coverage_rmse_3d": float(best["coverage_rmse_3d"]),
-            "front_view_size_error": float(best["size_error"]),
-            "width_error": float(best["width_error"]),
-            "height_error": float(best["height_error"]),
-            "center_error": float(refined["center_error"]),
-        }
+
+    final_debug = build_final_camera_local_unity_debug(
+        best["rotation"],
+        best["translation"],
+        float(best["scale"]),
+        best,
+    )
+    return best, final_debug
+
+
+def remove_legacy_outputs(prefix: str) -> None:
+    for name in (
+        f"{prefix}_size_compare.png",
+        f"{prefix}_model_front.png",
+        f"{prefix}_model_front_tmp.png",
+        f"{prefix}_aligned_model_front.png",
+    ):
+        path = object_alignment_output_path(name)
+        if path.exists():
+            path.unlink()
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) not in (2, 3):
+        print(
+            "Usage: python code/stages/run_object_icp_alignment_from_json.py <task_meta.json or filename> [blender_path]",
+            file=sys.stderr,
+        )
+        return 2
+
+    json_path = resolve_task_json_path(argv[1])
+    task = load_task_json(json_path)
+    print(f"[STAGE] icpalignment : {json_path}")
+    icp_backend = resolve_icp_backend()
+
+    if "depthpointcloud" not in task:
+        raise ValueError("depthpointcloud is missing. Run pointcloud stage first.")
+    if "model" not in task:
+        raise ValueError("model is missing. Run model scale stage first.")
+
+    paths = resolve_task_paths(task)
+    prefix = task_prefix(task, json_path)
+    pointcloud_name = (task.get("depthpointcloud") or {}).get("pointcloud_name")
+    if not pointcloud_name:
+        raise ValueError("depthpointcloud.pointcloud_name is missing")
+    precomputed_discarded_name = (task.get("depthpointcloud") or {}).get("icp_discarded_pointcloud_name")
+    precomputed_used_name = (task.get("depthpointcloud") or {}).get("icp_used_pointcloud_name")
+
+    k = np.asarray((task.get("PVCamera") or {}).get("k"), dtype=np.float32)
+    if k.shape != (3, 3):
+        raise ValueError(f"PVCamera.k must be 3x3, got {k.shape}")
+
+    pointcloud_path = object_alignment_output_path(pointcloud_name)
+    pointcloud_points_export = read_binary_ply_points(pointcloud_path)
+    pointcloud_points_unity = pointcloud_export_to_unity(pointcloud_points_export)
+    model_vertices_raw = read_obj_vertices(paths["mesh_path"])
+    model_vertices_unity = obj_vertices_to_unity(model_vertices_raw)
+
+    if precomputed_discarded_name and precomputed_used_name:
+        discarded_points_export = read_binary_ply_points(object_alignment_output_path(precomputed_discarded_name))
+        icp_used_points_export = read_binary_ply_points(object_alignment_output_path(precomputed_used_name))
+        target_front_fit = pointcloud_export_to_unity(icp_used_points_export)
+    else:
+        mask_bool = read_mask(paths["mask_path"])
+        depth_mm = read_depth_image(paths["depth_path"])
+        valid_all = mask_bool & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
+        discarded_mask = valid_all & ~build_depth_border_keep_mask(mask_bool)
+        discarded_points_export, _ = build_depth_pointcloud_from_valid_mask(depth_mm, discarded_mask, k)
+        target_front_fit, target_front_indices = select_front_visible_points(
+            pointcloud_points_unity,
+            bins=160,
+            max_points=ICP_TARGET_FRONT_MAX_POINTS,
+            seed=7,
+        )
+        icp_used_points_export = pointcloud_points_export[target_front_indices]
+
+    target_context = build_target_context(target_front_fit)
+    overall_scale = float((task.get("model") or {}).get("overall_scale") or 1.0)
+
+    best, final_camera_local_unity_debug = solve_alignment(
+        model_vertices_unity=model_vertices_unity,
+        target_front_fit=target_front_fit,
+        overall_scale=overall_scale,
+        target_context=target_context,
+    )
 
     pointcloud_rotation, pointcloud_translation = model_pose_unity_to_pointcloud_input(
         best["rotation"],
@@ -1436,172 +1083,62 @@ def main(argv: list[str]) -> int:
     )
 
     confidence = compute_confidence(task, best)
-    aligned_model_image_name = f"{prefix}_aligned_model_front.png"
-    aligned_model_image_path = object_alignment_output_path(aligned_model_image_name)
-    overlay_preview_name = f"{prefix}_alignment_preview_perspective.png"
-    overlay_preview_path = object_alignment_output_path(overlay_preview_name)
     discarded_points_preview_name = f"{prefix}_icp_discarded_points.ply"
     discarded_points_preview_path = object_alignment_output_path(discarded_points_preview_name)
     icp_points_preview_name = f"{prefix}_icp_used_points.ply"
     icp_points_preview_path = object_alignment_output_path(icp_points_preview_name)
-    write_binary_ply(
-        discarded_points_preview_path,
-        discarded_points_export,
-    )
-    write_binary_ply(
-        icp_points_preview_path,
-        icp_used_points_export,
-    )
-
-    front_view_image_name: str | None = aligned_model_image_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
+    overlay_preview_name = f"{prefix}_alignment_preview_perspective.png"
+    overlay_preview_path = object_alignment_output_path(overlay_preview_name)
+    write_binary_ply(discarded_points_preview_path, discarded_points_export)
+    write_binary_ply(icp_points_preview_path, icp_used_points_export)
     preview_image_name: str | None = overlay_preview_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
-    if not ENABLE_ALIGNMENT_RENDER_OUTPUTS:
-        if aligned_model_image_path.exists():
-            aligned_model_image_path.unlink()
-        if overlay_preview_path.exists():
-            overlay_preview_path.unlink()
 
     object_alignment = {
         "coordinate_basis": "pointcloud_input_pre_blender_import",
-        "translation_axes_relative_to_unity": {
-            "x": "-Z",
-            "y": "-Y",
-            "z": "-X",
-        },
-        "rotation_axes_relative_to_unity": {
-            "x": "-Z",
-            "y": "+Y",
-            "z": "-X",
-        },
         "model_position": [float(v) for v in pointcloud_translation],
         "model_rotation_euler_deg": [float(v) for v in pointcloud_euler_deg],
         "model_rotation_quaternion_xyzw": [float(v) for v in pointcloud_quat_xyzw],
         "model_real_scale": float(best["scale"]),
-        "front_view_image_name": front_view_image_name,
         "preview_image_name": preview_image_name,
-        "icp_discarded_pointcloud_name": discarded_points_preview_name,
-        "icp_used_pointcloud_name": icp_points_preview_name,
-        "discarded_count": int(len(discarded_points_export)),
-        "used_count": int(len(icp_used_points_export)),
         "confidence": confidence,
         "icp_rmse": float(best["rmse"]),
-        "surface_rmse_3d": float(best.get("surface_rmse_3d") or 0.0),
-        "coverage_rmse_3d": float(best.get("coverage_rmse_3d") or 0.0),
-        "front_view_rmse_2d": float(best.get("rmse_2d") or 0.0),
-        "front_view_size_error": float(best.get("size_error") or 0.0),
-        "icp_inlier_ratio": float(best["inlier_ratio"]),
-        "icp_constraints": {
-            "acceleration_device_requested": str(icp_backend["requested"]),
-            "acceleration_device_actual": str(icp_backend["actual"]),
-            "acceleration_reason": str(icp_backend["reason"]),
-            "ignore_inverted_solutions": bool(ICP_IGNORE_INVERTED_SOLUTIONS),
-            "ignore_occluded_model_points": bool(ICP_IGNORE_OCCLUDED_MODEL_POINTS),
-            "target_front_max_points": int(ICP_TARGET_FRONT_MAX_POINTS),
-            "coarse_visible_max_points": int(ICP_COARSE_VISIBLE_MAX_POINTS),
-            "medium_visible_max_points": int(ICP_MEDIUM_VISIBLE_MAX_POINTS),
-            "fine_visible_max_points": int(ICP_FINE_VISIBLE_MAX_POINTS),
-            "local_refine_visible_max_points": int(ICP_LOCAL_REFINE_VISIBLE_MAX_POINTS),
-            "final_visible_max_points": int(ICP_FINAL_VISIBLE_MAX_POINTS),
-            "coarse_scale_eval_keep": int(ICP_COARSE_SCALE_EVAL_KEEP),
-            "final_scale_candidate_keep": int(ICP_FINAL_SCALE_CANDIDATE_KEEP),
-            "local_refine_candidate_keep": int(ICP_LOCAL_REFINE_CANDIDATE_KEEP),
-            "final_iterations": int(ICP_FINAL_ITERATIONS),
-            "local_refine_iterations": int(ICP_LOCAL_REFINE_ITERATIONS),
-            "coarse_candidate_keep": int(ICP_COARSE_CANDIDATE_KEEP),
-            "axis_seed_retain_topk": int(ICP_AXIS_SEED_RETAIN_TOPK),
-            "medium_retain_topk": int(ICP_MEDIUM_RETAIN_TOPK),
-        },
     }
     task["object_alignment"] = object_alignment
 
     debug_section = dict(task.get("debug") or {})
     pose_debug = dict(debug_section.get("pose_transform_stages") or {})
     pose_debug["object_alignment"] = {
-        "coordinate_notes": {
-            "unity_camera_local": "model pose in PVCamera local space, Unity basis (X right, Y up, Z forward)",
-            "pointcloud_input_pre_blender_import": "legacy/export basis currently consumed by pose stage",
-        },
-        "coarse_search": best_debug["coarse_search"],
-        "icp_delta": best_debug["icp_delta"],
-        "final_camera_local_unity": best_debug["final_camera_local_unity"],
-        "final_camera_local_pointcloud_input": {
-            "scale": float(best["scale"]),
-            "pose": serialize_pose(
-                pointcloud_rotation,
-                pointcloud_translation,
-                "pointcloud_input_pre_blender_import",
-            ),
-        },
+        "final_camera_local_unity": final_camera_local_unity_debug,
     }
     debug_section["pose_transform_stages"] = pose_debug
     task["debug"] = debug_section
 
-    blender_label = "disabled-by-config"
     if ENABLE_ALIGNMENT_RENDER_OUTPUTS:
-        blender_label = "software-fallback"
-        try:
-            blender_path = resolve_blender_path(argv[2] if len(argv) == 3 else None)
-            blender_label = render_aligned_model_image(
-                blender_path=blender_path,
-                mesh_path=paths["mesh_path"],
-                render_path=aligned_model_image_path,
-                blender_translation=blender_translation,
-                blender_euler_deg=blender_delta_euler_deg,
-                scale=float(best["scale"]),
-                transformed_model_unity=transform_points(model_vertices_unity, best["scale"], best["rotation"], best["translation"]),
-                task=task,
-            )
-            render_overlay_preview_image(
-                blender_path=blender_path,
-                mesh_path=paths["mesh_path"],
-                discarded_pointcloud_path=discarded_points_preview_path,
-                icp_pointcloud_path=icp_points_preview_path,
-                render_path=overlay_preview_path,
-                blender_translation=blender_translation,
-                blender_delta_euler_deg=blender_delta_euler_deg,
-                scale=float(best["scale"]),
-                task=task,
-            )
-        except FileNotFoundError:
-            blender_label = render_aligned_model_image(
-                blender_path=None,
-                mesh_path=paths["mesh_path"],
-                render_path=aligned_model_image_path,
-                blender_translation=blender_translation,
-                blender_euler_deg=blender_delta_euler_deg,
-                scale=float(best["scale"]),
-                transformed_model_unity=transform_points(model_vertices_unity, best["scale"], best["rotation"], best["translation"]),
-                task=task,
-            )
-            object_alignment["preview_image_name"] = None
+        render_overlay_preview_image(
+            mesh_path=paths["mesh_path"],
+            discarded_pointcloud_path=discarded_points_preview_path,
+            icp_pointcloud_path=icp_points_preview_path,
+            render_path=overlay_preview_path,
+            blender_translation=blender_translation,
+            blender_delta_euler_deg=blender_delta_euler_deg,
+            scale=float(best["scale"]),
+            task=task,
+            blender_arg=argv[2] if len(argv) == 3 else None,
+        )
+    elif overlay_preview_path.exists():
+        overlay_preview_path.unlink()
 
     save_task_json(json_path, task)
     remove_legacy_outputs(prefix)
 
-    print(f"[INFO] JSON            : {json_path}")
-    print(f"[INFO] Pointcloud      : {pointcloud_path}")
-    print(f"[INFO] Mesh            : {paths['mesh_path']}")
-    print(f"[INFO] Render          : {aligned_model_image_path if object_alignment.get('front_view_image_name') else 'not-generated'}")
-    print(f"[INFO] Preview         : {overlay_preview_path if object_alignment.get('preview_image_name') else 'not-generated'}")
-    print(f"[INFO] Blender         : {blender_label}")
     print(
-        f"[INFO] ICP backend     : requested={icp_backend['requested']}, "
-        f"actual={icp_backend['actual']}, reason={icp_backend['reason']}"
+        f"[INFO] icpalignment : backend={icp_backend['actual']} "
+        f"points={len(pointcloud_points_export)}/{len(target_front_fit)} discarded={len(discarded_points_export)} "
+        f"scale={object_alignment['model_real_scale']:.6f} confidence={confidence:.3f} "
+        f"rmse={object_alignment['icp_rmse']:.6f} preview={object_alignment.get('preview_image_name') or 'not-generated'}"
     )
-    print(
-        f"[INFO] Point usage      : source={len(pointcloud_points_export)}, "
-        f"selected={len(target_front_fit)}, discarded={len(discarded_points_export)}"
-    )
-    print(
-        f"[INFO] Output pose     : "
-        f"pos={object_alignment['model_position']}, "
-        f"rot={object_alignment['model_rotation_euler_deg']}"
-    )
-    print(
-        f"[INFO] Final scale     : {object_alignment['model_real_scale']:.6f}, "
-        f"confidence={confidence:.3f}, icp_iter={ICP_FINAL_ITERATIONS}"
-    )
-    print("[OK] Object alignment stage completed")
+    print(f"[INFO] pose-local      : pos={object_alignment['model_position']} rot={object_alignment['model_rotation_euler_deg']}")
+    print("[OK] icpalignment")
     return 0
 
 

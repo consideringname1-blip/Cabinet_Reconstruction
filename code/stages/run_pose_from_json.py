@@ -5,14 +5,7 @@ import numpy as np
 
 from _bootstrap import CODE_ROOT
 from object_alignment_common import (
-    BLENDER_WORLD_TO_FBX_EXPORT_LOCAL,
-    FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD,
-    FBX_RUNTIME_LOCAL_TO_UNITY_BASIS,
     FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY,
-    ICP_OBJ_IMPORT_LOCAL_ROTATION,
-    ICP_OBJ_IMPORT_TO_BLENDER_WORLD,
-    MODEL_INPUT_TO_FBX_RUNTIME_LOCAL,
-    MODEL_INPUT_TO_UNITY_BASIS,
     model_pose_pointcloud_input_to_unity,
 )
 from task_json import load_task_json, resolve_task_json_path, save_task_json
@@ -127,17 +120,6 @@ def serialize_pose(rotation: np.ndarray, translation: np.ndarray, coordinate_bas
     }
 
 
-def serialize_rotation_only(
-    rotation: np.ndarray,
-    coordinate_basis: str,
-    notes: str | None = None,
-) -> dict[str, list[float] | list[list[float]] | str]:
-    payload = serialize_pose(rotation, np.zeros(3, dtype=np.float64), coordinate_basis)
-    if notes:
-        payload["notes"] = notes
-    return payload
-
-
 def resolve_runtime_local_to_unity_rotation() -> np.ndarray:
     # Apply a transform-space axis remap on top of the runtime FBX correction so
     # the final Unity object axes match the desired debugging/orientation
@@ -221,11 +203,6 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
 
 def build_pose_debug(task: dict) -> dict:
     alignment = task.get("object_alignment") or {}
-
-    pointcloud_position = np.asarray(alignment.get("model_position"), dtype=np.float64)
-    pointcloud_quat = np.asarray(alignment.get("model_rotation_quaternion_xyzw"), dtype=np.float64)
-    pointcloud_rotation = quat_xyzw_to_rotation_matrix(pointcloud_quat)
-
     local_position, local_rotation = resolve_local_camera_pose(task)
     pv_position, pv_rotation = resolve_pv_camera_world_pose(task)
     runtime_local_to_unity = resolve_runtime_local_to_unity_rotation()
@@ -234,14 +211,6 @@ def build_pose_debug(task: dict) -> dict:
     world_rotation = pv_rotation @ local_rotation @ runtime_local_to_unity
 
     return {
-        "camera_local_pointcloud_input": {
-            "scale": float(alignment.get("model_real_scale") or 0.0),
-            "pose": serialize_pose(
-                pointcloud_rotation,
-                pointcloud_position,
-                "pointcloud_input_pre_blender_import",
-            ),
-        },
         "camera_local_unity": {
             "scale": float(alignment.get("model_real_scale") or 0.0),
             "pose": serialize_pose(
@@ -257,48 +226,6 @@ def build_pose_debug(task: dict) -> dict:
                 "unity_world_x_right_y_up_z_forward",
             ),
             "notes": "PVCamera.pose is used as the world anchor here, with the uploaded translation Z value negated before composition.",
-        },
-        "local_rotation_compensation_chain": {
-            "model_input_to_unity": serialize_rotation_only(
-                MODEL_INPUT_TO_UNITY_BASIS,
-                "model_input_x_unknown_y_unknown_z_unknown -> unity_camera_local_x_right_y_up_z_forward",
-                notes="This is the basis used when ICP converts raw OBJ vertices into the internal Unity-aligned point set.",
-            ),
-            "icp_obj_import_to_blender_world": serialize_rotation_only(
-                ICP_OBJ_IMPORT_TO_BLENDER_WORLD,
-                "model_input_local -> blender_world_for_icp_preview",
-                notes="ICP preview/rendering imports OBJ into Blender with forward=-X, up=+Z.",
-            ),
-            "fbx_convert_obj_import_to_blender_world": serialize_rotation_only(
-                FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD,
-                "model_input_local -> blender_world_for_fbx_wrapper",
-                notes="Runtime FBX wrapping imports OBJ with Blender's default OBJ axes: forward=-Z, up=+Y.",
-            ),
-            "blender_world_to_fbx_export_local": serialize_rotation_only(
-                BLENDER_WORLD_TO_FBX_EXPORT_LOCAL,
-                "blender_world -> runtime_fbx_local",
-                notes="FBX export uses axis_forward=-Z, axis_up=Y with bake_space_transform=True.",
-            ),
-            "model_input_to_runtime_fbx_local": serialize_rotation_only(
-                MODEL_INPUT_TO_FBX_RUNTIME_LOCAL,
-                "model_input_local -> runtime_fbx_local",
-                notes="This is the composed local-axis transform of the OBJ->FBX wrapper path.",
-            ),
-            "runtime_fbx_local_to_unity": serialize_rotation_only(
-                runtime_local_to_unity,
-                "runtime_fbx_local -> unity_camera_local_x_right_y_up_z_forward",
-                notes="This is the transform-space correction actually multiplied onto the final world quaternion. It is identity for the current OBJ->FBX->Unity/TriLib path.",
-            ),
-            "runtime_fbx_local_to_unity_basis_reference": serialize_rotation_only(
-                FBX_RUNTIME_LOCAL_TO_UNITY_BASIS,
-                "runtime_fbx_mesh_basis -> unity_camera_local_x_right_y_up_z_forward",
-                notes="Reference basis map for mesh coordinates only. determinant=-1, so it must not be multiplied directly into a runtime world quaternion.",
-            ),
-            "legacy_icp_obj_import_only_compensation": serialize_rotation_only(
-                ICP_OBJ_IMPORT_LOCAL_ROTATION,
-                "legacy_blender_icp_local -> model_input_local",
-                notes="Previous pose-stage implementation only used the ICP Blender import correction, which ignored the FBX wrapper path.",
-            ),
         },
         "final_object_world": {
             "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,
@@ -318,6 +245,7 @@ def main(argv: list[str]) -> int:
 
     json_path = resolve_task_json_path(argv[1])
     task = load_task_json(json_path)
+    print(f"[STAGE] pose : {json_path}")
 
     world_pose = compute_world_pose(task)
     world_pose["coordinate_basis"] = "unity_world_x_right_y_up_z_forward"
@@ -329,11 +257,8 @@ def main(argv: list[str]) -> int:
     task["debug"] = debug_section
     save_task_json(json_path, task)
 
-    print(f"[INFO] JSON            : {json_path}")
-    print(f"[INFO] World position  : {world_pose['position']}")
-    print(f"[INFO] World rotation  : {world_pose['rotation']}")
-    print(f"[INFO] World scale     : {world_pose['scale']}")
-    print("[OK] Pose stage completed")
+    print(f"[INFO] pose : position={world_pose['position']} rotation={world_pose['rotation']} scale={world_pose['scale']}")
+    print("[OK] pose")
     return 0
 
 
