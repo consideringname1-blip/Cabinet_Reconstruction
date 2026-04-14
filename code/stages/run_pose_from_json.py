@@ -176,9 +176,20 @@ def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
     )
     return unity_translation.astype(np.float64), unity_rotation.astype(np.float64)
 
+
+def resolve_pv_camera_world_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
+    pv_info = task.get("PVCamera") or {}
+    pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
+    if pv_pose.shape != (4, 4):
+        raise ValueError("PVCamera.pose must be 4x4")
+
+    rotation = pv_pose[:3, :3].astype(np.float64)
+    translation = pv_pose[3, :3].astype(np.float64)
+    translation[2] = -translation[2]
+    return translation, rotation
+
 def compute_world_pose(task: dict) -> dict[str, list[float]]:
     alignment = task.get("object_alignment") or {}
-    device = task.get("device") or {}
 
     local_position, local_rotation = resolve_local_camera_pose(task)
 
@@ -186,19 +197,7 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     if model_scale <= 0:
         raise ValueError("object_alignment.model_real_scale must be positive")
 
-    device_position = np.asarray(device.get("pose"), dtype=np.float64)
-    device_rotation_quat = np.asarray(device.get("rotation"), dtype=np.float64)
-    if device_position.shape != (3,):
-        raise ValueError("device.pose must have 3 values")
-    if device_rotation_quat.shape != (4,):
-        raise ValueError("device.rotation must have 4 values")
-
-    # Temporary fallback for debugging: use the uploaded Unity Camera.main pose
-    # as the world anchor instead of PVCamera.pose so we can compare behavior.
-    # When the anchor comes from a Unity quaternion, compose poses with the
-    # usual Unity/column-vector convention: p_world = R_cam @ p_local + t_cam.
-    R_cam = quat_xyzw_to_rotation_matrix(device_rotation_quat)
-    t_cam = device_position
+    t_cam, R_cam = resolve_pv_camera_world_pose(task)
     runtime_local_to_unity = resolve_runtime_local_to_unity_rotation()
 
     world_position = (R_cam @ local_position) + t_cam
@@ -222,25 +221,17 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
 
 def build_pose_debug(task: dict) -> dict:
     alignment = task.get("object_alignment") or {}
-    device = task.get("device") or {}
 
     pointcloud_position = np.asarray(alignment.get("model_position"), dtype=np.float64)
     pointcloud_quat = np.asarray(alignment.get("model_rotation_quaternion_xyzw"), dtype=np.float64)
     pointcloud_rotation = quat_xyzw_to_rotation_matrix(pointcloud_quat)
 
     local_position, local_rotation = resolve_local_camera_pose(task)
-
-    device_position = np.asarray(device.get("pose"), dtype=np.float64)
-    device_rotation_quat = np.asarray(device.get("rotation"), dtype=np.float64)
-    if device_position.shape != (3,):
-        raise ValueError("device.pose must have 3 values")
-    if device_rotation_quat.shape != (4,):
-        raise ValueError("device.rotation must have 4 values")
-    device_rotation = quat_xyzw_to_rotation_matrix(device_rotation_quat)
+    pv_position, pv_rotation = resolve_pv_camera_world_pose(task)
     runtime_local_to_unity = resolve_runtime_local_to_unity_rotation()
 
-    world_position = (device_rotation @ local_position) + device_position
-    world_rotation = device_rotation @ local_rotation @ runtime_local_to_unity
+    world_position = (pv_rotation @ local_position) + pv_position
+    world_rotation = pv_rotation @ local_rotation @ runtime_local_to_unity
 
     return {
         "camera_local_pointcloud_input": {
@@ -261,11 +252,11 @@ def build_pose_debug(task: dict) -> dict:
         },
         "pv_camera_world": {
             "pose": serialize_pose(
-                device_rotation,
-                device_position,
+                pv_rotation,
+                pv_position,
                 "unity_world_x_right_y_up_z_forward",
             ),
-            "notes": "Temporary fallback for debugging/backtracking: this field currently uses uploaded device.pose/device.rotation (Unity Camera.main), not PVCamera.pose.",
+            "notes": "PVCamera.pose is used as the world anchor here, with the uploaded translation Z value negated before composition.",
         },
         "local_rotation_compensation_chain": {
             "model_input_to_unity": serialize_rotation_only(
