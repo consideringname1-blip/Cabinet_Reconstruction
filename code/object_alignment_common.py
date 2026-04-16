@@ -54,12 +54,13 @@ UNITY_TO_OBJECT_ALIGNMENT_ROTATION_POINTCLOUD_INPUT_BASIS = (
     OBJECT_ALIGNMENT_ROTATION_POINTCLOUD_INPUT_TO_UNITY_BASIS.T
 )
 
-# Position uses a slightly different export mapping: flip the vertical axis so
-# camera-local "left/down" in Unity lines up with the observed placement.
+# Position must use the same basis conversion as rotation. The previous
+# translation-only vertical flip made the exported camera-local pose internally
+# inconsistent and pushed the final world-space Y value in the wrong direction.
 OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_TO_UNITY_BASIS = np.array(
     [
         [0.0, 0.0, -1.0],
-        [0.0, -1.0, 0.0],
+        [0.0, 1.0, 0.0],
         [-1.0, 0.0, 0.0],
     ],
     dtype=np.float32,
@@ -483,9 +484,9 @@ def model_pose_unity_to_pointcloud_input(
 ) -> tuple[np.ndarray, np.ndarray]:
     # Convert the final ICP pose from the internal Unity basis to the
     # object_alignment export basis consumed by downstream pose code.
-    # Rotation and translation intentionally use separate mappings here:
-    # rotation must remain right-handed, while translation applies an empirical
-    # vertical-axis flip for downstream placement.
+    # Rotation and translation share the same basis mapping so the exported
+    # pose stays self-consistent when the pose stage reconstructs Unity-local
+    # coordinates.
     rotation_unity = np.asarray(rotation_unity, dtype=np.float32)
     translation_unity = np.asarray(translation_unity, dtype=np.float32)
     rotation_pointcloud = (
