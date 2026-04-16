@@ -1,4 +1,40 @@
+import os
 from pathlib import Path
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
+def _resolve_icp_mode() -> str:
+    raw = os.environ.get("ICP_MODE")
+    if raw is not None:
+        value = str(raw).strip().lower()
+        aliases = {
+            "full": "full",
+            "on": "full",
+            "enabled": "full",
+            "translation_only": "translation_only",
+            "translation-only": "translation_only",
+            "translation": "translation_only",
+            "translate_only": "translation_only",
+            "tronly": "translation_only",
+            "off": "off",
+            "disabled": "off",
+            "none": "off",
+            "0": "off",
+        }
+        if value in aliases:
+            return aliases[value]
+    return "translation_only" if _env_flag("ICP_ENABLE", True) else "off"
 
 
 # Runtime switches
@@ -9,6 +45,12 @@ IS_RUN_FLASK_SERVER = True
 # Fraction cropped inward from the SAM3 mask periphery before depth->pointcloud
 # conversion. Set to 0.0 to disable.
 ICP_DEPTH_BORDER_CROP_RATIO = 0.03
+# full = search + rotation+translation ICP, translation_only = preserve
+# InstantMesh orientation and only optimize translation, off = measured-distance
+# placement without ICP. Default now uses translation_only; ICP_ENABLE=0 still
+# maps to off for backwards compatibility.
+ICP_MODE = _resolve_icp_mode()
+ICP_ENABLE = ICP_MODE != "off"
 # Maximum number of points written to the exported depth point cloud PLY.
 # Set to 0 or None to keep all valid depth points.
 DEPTHPOINTCLOUD_MAX_EXPORT_POINTS = 6000
@@ -37,6 +79,10 @@ ICP_LOCAL_REFINE_ITERATIONS = 6
 ICP_COARSE_CANDIDATE_KEEP = 3
 ICP_AXIS_SEED_RETAIN_TOPK = 3
 ICP_MEDIUM_RETAIN_TOPK = 2
+# Penalize rotations that drift too far from the InstantMesh identity
+# orientation. 180-degree flips receive the full weight; smaller rotations are
+# scaled quadratically by angle / pi.
+ICP_INITIAL_ROTATION_PENALTY_WEIGHT = 0.005
 
 
 # Project roots

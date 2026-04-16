@@ -778,6 +778,109 @@ def read_obj_vertices(path: Path) -> np.ndarray:
     return np.asarray(vertices, dtype=np.float32)
 
 
+def read_obj_mesh(path: Path) -> tuple[np.ndarray, list[list[int]]]:
+    vertices: list[list[float]] = []
+    faces: list[list[int]] = []
+
+    with path.open("r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if line.startswith("v "):
+                parts = line.strip().split()
+                if len(parts) >= 4:
+                    vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
+                continue
+            if line.startswith("f "):
+                parts = line.strip().split()[1:]
+                if len(parts) < 3:
+                    continue
+                face: list[int] = []
+                for token in parts:
+                    index_token = token.split("/")[0]
+                    if not index_token:
+                        continue
+                    raw_index = int(index_token)
+                    if raw_index > 0:
+                        face.append(raw_index - 1)
+                    else:
+                        face.append(len(vertices) + raw_index)
+                if len(face) >= 3:
+                    faces.append(face)
+
+    if not vertices:
+        raise ValueError(f"No OBJ vertices found: {path}")
+    return np.asarray(vertices, dtype=np.float32), faces
+
+
+def transform_model_vertices_to_unity_space(
+    model_vertices: np.ndarray,
+    rotation_unity: np.ndarray,
+    translation_unity: np.ndarray,
+    uniform_scale: float,
+) -> np.ndarray:
+    model_vertices = np.asarray(model_vertices, dtype=np.float32)
+    rotation_unity = np.asarray(rotation_unity, dtype=np.float32)
+    translation_unity = np.asarray(translation_unity, dtype=np.float32)
+    scale_value = float(uniform_scale)
+    if rotation_unity.shape != (3, 3):
+        raise ValueError(f"rotation_unity must be 3x3, got {rotation_unity.shape}")
+    if translation_unity.shape != (3,):
+        raise ValueError(f"translation_unity must have 3 values, got {translation_unity.shape}")
+    vertices_unity = model_vertices @ MODEL_INPUT_TO_UNITY_BASIS.T
+    return ((vertices_unity * scale_value) @ rotation_unity.T + translation_unity).astype(np.float32)
+
+
+def write_binary_scene_ply(
+    path: Path,
+    vertices: np.ndarray,
+    colors_rgb: np.ndarray,
+    faces: list[list[int]] | None = None,
+) -> None:
+    vertices = np.asarray(vertices, dtype=np.float32)
+    colors_rgb = np.asarray(colors_rgb, dtype=np.uint8)
+    faces = faces or []
+
+    if vertices.ndim != 2 or vertices.shape[1] != 3:
+        raise ValueError(f"vertices must have shape Nx3, got {vertices.shape}")
+    if colors_rgb.shape != vertices.shape:
+        raise ValueError(f"colors_rgb must match vertices shape, got {colors_rgb.shape} vs {vertices.shape}")
+
+    header = (
+        "ply\n"
+        "format binary_little_endian 1.0\n"
+        f"element vertex {len(vertices)}\n"
+        "property float x\n"
+        "property float y\n"
+        "property float z\n"
+        "property uchar red\n"
+        "property uchar green\n"
+        "property uchar blue\n"
+        f"element face {len(faces)}\n"
+        "property list uchar int vertex_indices\n"
+        "end_header\n"
+    ).encode("ascii")
+
+    with path.open("wb") as f:
+        f.write(header)
+        for point, color in zip(vertices, colors_rgb, strict=False):
+            f.write(
+                struct.pack(
+                    "<fffBBB",
+                    float(point[0]),
+                    float(point[1]),
+                    float(point[2]),
+                    int(color[0]),
+                    int(color[1]),
+                    int(color[2]),
+                )
+            )
+        for face in faces:
+            if len(face) > 255:
+                raise ValueError("PLY face vertex count cannot exceed 255")
+            f.write(struct.pack("<B", len(face)))
+            for index in face:
+                f.write(struct.pack("<i", int(index)))
+
+
 def write_transformed_obj_in_unity_space(
     source_obj_path: Path,
     output_obj_path: Path,

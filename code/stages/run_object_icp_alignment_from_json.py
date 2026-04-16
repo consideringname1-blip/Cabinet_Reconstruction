@@ -13,11 +13,14 @@ from config import (
     ICP_COARSE_SCALE_EVAL_KEEP,
     ICP_COARSE_VISIBLE_MAX_POINTS,
     ENABLE_ALIGNMENT_RENDER_OUTPUTS,
+    ICP_ENABLE,
+    ICP_MODE,
     ICP_FINAL_SCALE_CANDIDATE_KEEP,
     ICP_FINAL_ITERATIONS,
     ICP_FINAL_VISIBLE_MAX_POINTS,
     ICP_FINE_VISIBLE_MAX_POINTS,
     ICP_IGNORE_INVERTED_SOLUTIONS,
+    ICP_INITIAL_ROTATION_PENALTY_WEIGHT,
     ICP_LOCAL_REFINE_CANDIDATE_KEEP,
     ICP_IGNORE_OCCLUDED_MODEL_POINTS,
     ICP_LOCAL_REFINE_ITERATIONS,
@@ -45,10 +48,13 @@ from object_alignment_common import (
     read_depth_image,
     read_binary_ply_points,
     read_mask,
+    read_obj_mesh,
     read_obj_vertices,
     resolve_task_paths,
     select_front_visible_points,
     task_prefix,
+    transform_model_vertices_to_unity_space,
+    write_binary_scene_ply,
     unity_to_blender_world_vector,
     write_binary_ply,
     write_transformed_obj_in_unity_space,
@@ -193,6 +199,44 @@ def should_reject_inverted_solution(rotation: np.ndarray) -> bool:
     return bool(ICP_IGNORE_INVERTED_SOLUTIONS) and (model_up_y_in_unity(rotation) < 0.0)
 
 
+def is_identity_rotation(rotation: np.ndarray, atol: float = 1e-5) -> bool:
+    rotation = np.asarray(rotation, dtype=np.float32)
+    return bool(np.allclose(rotation, np.eye(3, dtype=np.float32), atol=atol))
+
+
+def keep_best_candidates_with_identity(
+    candidates: list[dict],
+    keep_count: int,
+) -> list[dict]:
+    if keep_count <= 0 or not candidates:
+        return []
+
+    sorted_candidates = sorted(candidates, key=lambda item: item["metrics"]["score"])
+    selected = list(sorted_candidates[:keep_count])
+    identity_candidate = next(
+        (item for item in sorted_candidates if bool(item.get("includes_identity_lineage"))),
+        None,
+    )
+    if identity_candidate is not None and all(identity_candidate is not item for item in selected):
+        if selected:
+            selected[-1] = identity_candidate
+        else:
+            selected.append(identity_candidate)
+        selected.sort(key=lambda item: item["metrics"]["score"])
+    return selected
+
+
+def compute_initial_rotation_penalty(rotation: np.ndarray | None) -> float:
+    if rotation is None:
+        return 0.0
+    weight = float(ICP_INITIAL_ROTATION_PENALTY_WEIGHT)
+    if weight <= 0.0:
+        return 0.0
+    angle_rad = float(Rotation.from_matrix(np.asarray(rotation, dtype=np.float64)).magnitude())
+    normalized = angle_rad / np.pi
+    return float(weight * normalized * normalized)
+
+
 def compute_xy_center(extents: dict) -> np.ndarray:
     return np.array(
         [
@@ -222,6 +266,7 @@ def evaluate_alignment_geometry_only(
     target_context: dict,
     scale: float,
     nominal_scale: float,
+    rotation: np.ndarray | None = None,
 ) -> dict:
     extents = compute_front_view_extents(transformed_front_points)
     target_extents = target_context["extents"]
@@ -230,13 +275,15 @@ def evaluate_alignment_geometry_only(
     size_error = width_error + height_error
     scale_error = abs(scale - nominal_scale) / max(nominal_scale, 1e-6)
     center_error = float(np.linalg.norm(compute_xy_center(extents) - target_context["center_xy"]))
-    score = 0.70 * size_error + 0.20 * center_error + 0.10 * scale_error
+    initial_rotation_penalty = compute_initial_rotation_penalty(rotation)
+    score = 0.70 * size_error + 0.20 * center_error + 0.10 * scale_error + initial_rotation_penalty
     return {
         "score": float(score),
         "size_error": float(size_error),
         "width_error": float(width_error),
         "height_error": float(height_error),
         "center_error": center_error,
+        "initial_rotation_penalty": float(initial_rotation_penalty),
         "extents": extents,
     }
 
@@ -247,6 +294,7 @@ def rank_scale_candidates(
     scale_candidates: np.ndarray,
     nominal_scale: float,
     target_context: dict,
+    rotation: np.ndarray | None = None,
 ) -> list[dict]:
     ranked: list[dict] = []
     for scale in scale_candidates:
@@ -264,6 +312,7 @@ def rank_scale_candidates(
             target_context=target_context,
             scale=scale_value,
             nominal_scale=nominal_scale,
+            rotation=rotation,
         )
         ranked.append(
             {
@@ -367,6 +416,76 @@ def run_icp(
     }
 
 
+def run_translation_only_icp(
+    model_points: np.ndarray,
+    target_points: np.ndarray,
+    scale: float,
+    rotation: np.ndarray,
+    init_translation: np.ndarray,
+    iterations: int = 25,
+    visible_bins: int = 160,
+    visible_max_points: int = 5000,
+) -> dict:
+    rotation = np.asarray(rotation, dtype=np.float32).copy()
+    translation = np.asarray(init_translation, dtype=np.float32).copy()
+    rmse = float("inf")
+    inlier_ratio = 0.0
+    transformed_visible = np.empty((0, 3), dtype=np.float32)
+
+    for _ in range(iterations):
+        transformed_full = transform_points(model_points, scale, rotation, translation)
+        transformed_visible = extract_front_visible_points(
+            transformed_full,
+            bins=visible_bins,
+            max_points=visible_max_points,
+            seed=41,
+        )
+        if len(transformed_visible) < 32:
+            break
+
+        dists, idx = nearest_neighbor_distances(
+            target_points,
+            transformed_visible,
+            dims=3,
+            return_indices=True,
+        )
+
+        threshold = float(np.percentile(dists, 75))
+        if threshold <= 0:
+            threshold = float(dists.max()) if len(dists) else 0.0
+        keep = dists <= max(threshold, 1e-4)
+        if keep.sum() < 24:
+            break
+
+        matched_model = transformed_visible[idx[keep]]
+        matched_target = target_points[keep]
+        delta_t = matched_target.mean(axis=0) - matched_model.mean(axis=0)
+        translation = translation + delta_t.astype(np.float32)
+        rmse = float(np.sqrt(np.mean(np.square((matched_model + delta_t) - matched_target))))
+        inlier_ratio = float(keep.mean())
+        if float(np.linalg.norm(delta_t)) < 1e-5:
+            break
+
+    transformed_full = transform_points(model_points, scale, rotation, translation)
+    transformed_visible = extract_front_visible_points(
+        transformed_full,
+        bins=visible_bins,
+        max_points=visible_max_points,
+        seed=43,
+    )
+    dists = nearest_neighbor_distances(target_points, transformed_visible, dims=3, return_indices=False)
+    rmse = trimmed_rmse(dists, trim_percentile=85.0)
+
+    return {
+        "scale": float(scale),
+        "rotation": rotation,
+        "translation": translation,
+        "rmse": rmse,
+        "inlier_ratio": inlier_ratio,
+        "visible_points": transformed_visible,
+    }
+
+
 def build_initial_translation(
     model_full_points: np.ndarray,
     model_front_points: np.ndarray,
@@ -404,6 +523,7 @@ def evaluate_alignment(
     scale: float,
     nominal_scale: float,
     target_context: dict | None = None,
+    rotation: np.ndarray | None = None,
 ) -> dict:
     if target_context is None:
         target_context = build_target_context(target_front_points)
@@ -432,12 +552,14 @@ def evaluate_alignment(
         trimmed_rmse(dists_target_to_model_2d, trim_percentile=85.0)
         + trimmed_rmse(dists_model_to_target_2d, trim_percentile=85.0)
     )
+    initial_rotation_penalty = compute_initial_rotation_penalty(rotation)
     score = (
         0.60 * surface_rmse_3d
         + 0.20 * rmse_2d
         + 0.10 * size_error
         + 0.05 * center_error
         + 0.05 * scale_error
+        + initial_rotation_penalty
     )
     return {
         "score": float(score),
@@ -449,6 +571,7 @@ def evaluate_alignment(
         "width_error": float(width_error),
         "height_error": float(height_error),
         "center_error": center_error,
+        "initial_rotation_penalty": float(initial_rotation_penalty),
         "extents": extents,
     }
 
@@ -492,6 +615,7 @@ def refine_pose_locally(
                     target_context=target_context,
                     scale=float(scale),
                     nominal_scale=nominal_scale,
+                    rotation=init_rotation,
                 )
                 quick_candidates.append(
                     {
@@ -547,6 +671,7 @@ def refine_pose_locally(
             scale=float(scale),
             nominal_scale=nominal_scale,
             target_context=target_context,
+            rotation=rotation,
         )
         score = float(metrics["score"])
         if score < best_score:
@@ -566,6 +691,7 @@ def refine_pose_locally(
                 "width_error": float(metrics["width_error"]),
                 "height_error": float(metrics["height_error"]),
                 "center_error": float(metrics["center_error"]),
+                "initial_rotation_penalty": float(metrics["initial_rotation_penalty"]),
                 "quick_score": float(seeded["quick_score"]),
             }
 
@@ -695,6 +821,7 @@ def evaluate_pose_candidate(
         scale_candidates=scale_candidates,
         nominal_scale=nominal_scale,
         target_context=target_context,
+        rotation=rotation,
     )
     scale_eval_keep = max(1, min(len(ranked_scales), int(ICP_COARSE_SCALE_EVAL_KEEP)))
 
@@ -713,6 +840,7 @@ def evaluate_pose_candidate(
             scale=scale_value,
             nominal_scale=nominal_scale,
             target_context=target_context,
+            rotation=rotation,
         )
         candidate = {
             "rotation": rotation.astype(np.float32),
@@ -745,6 +873,7 @@ def search_initial_pose_candidates(
         stage: str,
         visible_bins: int,
         visible_max_points: int,
+        includes_identity_lineage: bool = False,
     ) -> None:
         if should_reject_inverted_solution(rotation):
             return
@@ -758,6 +887,7 @@ def search_initial_pose_candidates(
             target_context=target_context,
         )
         candidate["stage"] = stage
+        candidate["includes_identity_lineage"] = bool(includes_identity_lineage)
         candidates.append(candidate)
 
     for seed in generate_axis_aligned_rotation_seeds():
@@ -766,12 +896,13 @@ def search_initial_pose_candidates(
             stage="axis_seed",
             visible_bins=120,
             visible_max_points=2600,
+            includes_identity_lineage=is_identity_rotation(seed["rotation"]),
         )
 
     if not candidates:
         raise RuntimeError("No valid coarse pose candidates remain after applying ICP constraints.")
 
-    seed_best = sorted(candidates, key=lambda item: item["metrics"]["score"])[:ICP_AXIS_SEED_RETAIN_TOPK]
+    seed_best = keep_best_candidates_with_identity(candidates, int(ICP_AXIS_SEED_RETAIN_TOPK))
     for base in seed_best:
         for rx in (-18, 0, 18):
             for ry in (-18, 0, 18):
@@ -782,9 +913,10 @@ def search_initial_pose_candidates(
                         stage="refine_medium",
                         visible_bins=144,
                         visible_max_points=ICP_MEDIUM_VISIBLE_MAX_POINTS,
+                        includes_identity_lineage=bool(base.get("includes_identity_lineage")),
                     )
 
-    medium_best = sorted(candidates, key=lambda item: item["metrics"]["score"])[:ICP_MEDIUM_RETAIN_TOPK]
+    medium_best = keep_best_candidates_with_identity(candidates, int(ICP_MEDIUM_RETAIN_TOPK))
     for base in medium_best:
         for rx in (-6, 0, 6):
             for ry in (-6, 0, 6):
@@ -795,6 +927,7 @@ def search_initial_pose_candidates(
                         stage="refine_fine",
                         visible_bins=160,
                         visible_max_points=ICP_FINE_VISIBLE_MAX_POINTS,
+                        includes_identity_lineage=bool(base.get("includes_identity_lineage")),
                     )
 
     candidates.sort(key=lambda item: item["metrics"]["score"])
@@ -859,6 +992,7 @@ def build_final_camera_local_unity_debug(
         "width_error": float(metrics["width_error"]),
         "height_error": float(metrics["height_error"]),
         "center_error": float(metrics["center_error"]),
+        "initial_rotation_penalty": float(metrics["initial_rotation_penalty"]),
     }
 
 
@@ -874,7 +1008,10 @@ def solve_alignment(
         nominal_scale=overall_scale,
         target_context=target_context,
     )
-    coarse_candidates = coarse_candidates[:ICP_COARSE_CANDIDATE_KEEP]
+    coarse_candidates = keep_best_candidates_with_identity(
+        coarse_candidates,
+        int(ICP_COARSE_CANDIDATE_KEEP),
+    )
 
     best: dict | None = None
     for coarse_candidate in coarse_candidates:
@@ -932,6 +1069,7 @@ def solve_alignment(
                 scale=scale,
                 nominal_scale=overall_scale,
                 target_context=target_context,
+                rotation=final_rotation,
             )
             candidate = {
                 "scale": scale,
@@ -948,6 +1086,7 @@ def solve_alignment(
                 "width_error": float(metrics["width_error"]),
                 "height_error": float(metrics["height_error"]),
                 "center_error": float(metrics["center_error"]),
+                "initial_rotation_penalty": float(metrics["initial_rotation_penalty"]),
             }
             if best is None or candidate["score"] < best["score"]:
                 best = candidate
@@ -981,9 +1120,154 @@ def solve_alignment(
                 "width_error": refined["width_error"],
                 "height_error": refined["height_error"],
                 "center_error": refined["center_error"],
+                "initial_rotation_penalty": refined["initial_rotation_penalty"],
             },
         }
 
+    final_debug = build_final_camera_local_unity_debug(
+        best["rotation"],
+        best["translation"],
+        float(best["scale"]),
+        best,
+    )
+    return best, final_debug
+
+
+def build_distance_only_alignment(
+    model_vertices_unity: np.ndarray,
+    target_front_fit: np.ndarray,
+    overall_scale: float,
+    target_context: dict,
+) -> tuple[dict, dict]:
+    initial_rotation = np.eye(3, dtype=np.float32)
+    initial_full = transform_points(
+        model_vertices_unity,
+        overall_scale,
+        initial_rotation,
+        np.zeros(3, dtype=np.float32),
+    )
+    initial_front = extract_front_visible_points(
+        initial_full,
+        bins=160,
+        max_points=ICP_TARGET_FRONT_MAX_POINTS,
+        seed=11,
+    )
+    initial_translation = build_initial_translation(
+        model_full_points=initial_full,
+        model_front_points=initial_front,
+        target_front_points=target_front_fit,
+        target_context=target_context,
+    )
+    transformed_full = initial_full + initial_translation
+    transformed_front = initial_front + initial_translation
+    metrics = evaluate_alignment(
+        transformed_full_points=transformed_full,
+        transformed_front_points=transformed_front,
+        target_front_points=target_front_fit,
+        scale=float(overall_scale),
+        nominal_scale=overall_scale,
+        target_context=target_context,
+        rotation=initial_rotation,
+    )
+    best = {
+        "scale": float(overall_scale),
+        "rotation": initial_rotation,
+        "translation": initial_translation.astype(np.float32),
+        "rmse": float(metrics["rmse_3d"]),
+        "surface_rmse_3d": float(metrics["surface_rmse_3d"]),
+        "coverage_rmse_3d": float(metrics["coverage_rmse_3d"]),
+        "rmse_2d": float(metrics["rmse_2d"]),
+        "score": float(metrics["score"]),
+        "size_error": float(metrics["size_error"]),
+        "inlier_ratio": 0.0,
+        "extents": metrics["extents"],
+        "width_error": float(metrics["width_error"]),
+        "height_error": float(metrics["height_error"]),
+        "center_error": float(metrics["center_error"]),
+        "initial_rotation_penalty": float(metrics["initial_rotation_penalty"]),
+    }
+    final_debug = build_final_camera_local_unity_debug(
+        best["rotation"],
+        best["translation"],
+        float(best["scale"]),
+        best,
+    )
+    return best, final_debug
+
+
+def build_translation_only_alignment(
+    model_vertices_unity: np.ndarray,
+    target_front_fit: np.ndarray,
+    overall_scale: float,
+    target_context: dict,
+) -> tuple[dict, dict]:
+    initial_rotation = np.eye(3, dtype=np.float32)
+    initial_full = transform_points(
+        model_vertices_unity,
+        overall_scale,
+        initial_rotation,
+        np.zeros(3, dtype=np.float32),
+    )
+    initial_front = extract_front_visible_points(
+        initial_full,
+        bins=160,
+        max_points=ICP_TARGET_FRONT_MAX_POINTS,
+        seed=11,
+    )
+    initial_translation = build_initial_translation(
+        model_full_points=initial_full,
+        model_front_points=initial_front,
+        target_front_points=target_front_fit,
+        target_context=target_context,
+    )
+    translation_only_result = run_translation_only_icp(
+        model_points=model_vertices_unity,
+        target_points=target_front_fit,
+        scale=float(overall_scale),
+        rotation=initial_rotation,
+        init_translation=initial_translation,
+        iterations=ICP_FINAL_ITERATIONS,
+        visible_bins=180,
+        visible_max_points=ICP_FINAL_VISIBLE_MAX_POINTS,
+    )
+    transformed_full = transform_points(
+        model_vertices_unity,
+        float(overall_scale),
+        initial_rotation,
+        translation_only_result["translation"],
+    )
+    transformed_front = extract_front_visible_points(
+        transformed_full,
+        bins=180,
+        max_points=ICP_FINAL_VISIBLE_MAX_POINTS,
+        seed=45,
+    )
+    metrics = evaluate_alignment(
+        transformed_full_points=transformed_full,
+        transformed_front_points=transformed_front,
+        target_front_points=target_front_fit,
+        scale=float(overall_scale),
+        nominal_scale=overall_scale,
+        target_context=target_context,
+        rotation=initial_rotation,
+    )
+    best = {
+        "scale": float(overall_scale),
+        "rotation": initial_rotation,
+        "translation": translation_only_result["translation"].astype(np.float32),
+        "rmse": float(metrics["rmse_3d"]),
+        "surface_rmse_3d": float(metrics["surface_rmse_3d"]),
+        "coverage_rmse_3d": float(metrics["coverage_rmse_3d"]),
+        "rmse_2d": float(metrics["rmse_2d"]),
+        "score": float(metrics["score"]),
+        "size_error": float(metrics["size_error"]),
+        "inlier_ratio": float(translation_only_result["inlier_ratio"]),
+        "extents": metrics["extents"],
+        "width_error": float(metrics["width_error"]),
+        "height_error": float(metrics["height_error"]),
+        "center_error": float(metrics["center_error"]),
+        "initial_rotation_penalty": float(metrics["initial_rotation_penalty"]),
+    }
     final_debug = build_final_camera_local_unity_debug(
         best["rotation"],
         best["translation"],
@@ -1038,6 +1322,7 @@ def main(argv: list[str]) -> int:
     pointcloud_path = object_alignment_output_path(pointcloud_name)
     pointcloud_points_export = read_binary_ply_points(pointcloud_path)
     pointcloud_points_unity = pointcloud_export_to_unity(pointcloud_points_export)
+    model_vertices_raw_full, model_faces = read_obj_mesh(paths["mesh_path"])
     model_vertices_raw = read_obj_vertices(paths["mesh_path"])
     model_vertices_unity = obj_vertices_to_unity(model_vertices_raw)
 
@@ -1081,12 +1366,27 @@ def main(argv: list[str]) -> int:
         target_context=target_context,
     )
 
-    best, final_camera_local_unity_debug = solve_alignment(
-        model_vertices_unity=model_vertices_unity,
-        target_front_fit=target_front_fit,
-        overall_scale=overall_scale,
-        target_context=target_context,
-    )
+    if ICP_MODE == "full":
+        best, final_camera_local_unity_debug = solve_alignment(
+            model_vertices_unity=model_vertices_unity,
+            target_front_fit=target_front_fit,
+            overall_scale=overall_scale,
+            target_context=target_context,
+        )
+    elif ICP_MODE == "translation_only":
+        best, final_camera_local_unity_debug = build_translation_only_alignment(
+            model_vertices_unity=model_vertices_unity,
+            target_front_fit=target_front_fit,
+            overall_scale=overall_scale,
+            target_context=target_context,
+        )
+    else:
+        best, final_camera_local_unity_debug = build_distance_only_alignment(
+            model_vertices_unity=model_vertices_unity,
+            target_front_fit=target_front_fit,
+            overall_scale=overall_scale,
+            target_context=target_context,
+        )
 
     pointcloud_rotation, pointcloud_translation = model_pose_unity_to_pointcloud_input(
         best["rotation"],
@@ -1105,18 +1405,27 @@ def main(argv: list[str]) -> int:
     )
 
     confidence = compute_confidence(task, best)
+    preview_suffix = {
+        "full": "",
+        "translation_only": "_translation_only",
+        "off": "_noicp",
+    }.get(ICP_MODE, "")
     discarded_points_preview_name = f"{prefix}_icp_discarded_points.ply"
     discarded_points_preview_path = object_alignment_output_path(discarded_points_preview_name)
     icp_points_preview_name = f"{prefix}_icp_used_points.ply"
     icp_points_preview_path = object_alignment_output_path(icp_points_preview_name)
-    overlay_preview_name = f"{prefix}_alignment_preview_perspective.png"
+    overlay_preview_name = f"{prefix}_alignment_preview{preview_suffix}_perspective.png"
     overlay_preview_path = object_alignment_output_path(overlay_preview_name)
-    unaligned_preview_name = f"{prefix}_alignment_preview_unaligned_perspective.png"
+    unaligned_preview_name = f"{prefix}_alignment_preview{preview_suffix}_unaligned_perspective.png"
     unaligned_preview_path = object_alignment_output_path(unaligned_preview_name)
-    preview_aligned_model_name = f"{prefix}_alignment_preview_aligned_model.obj"
+    preview_aligned_model_name = f"{prefix}_alignment_preview{preview_suffix}_aligned_model.obj"
     preview_aligned_model_path = object_alignment_output_path(preview_aligned_model_name)
-    preview_initial_model_name = f"{prefix}_alignment_preview_initial_distance_model.obj"
+    preview_initial_model_name = f"{prefix}_alignment_preview{preview_suffix}_initial_distance_model.obj"
     preview_initial_model_path = object_alignment_output_path(preview_initial_model_name)
+    preview_overlay_scene_name = f"{prefix}_alignment_preview{preview_suffix}_pointcloud_aligned_scene.ply"
+    preview_overlay_scene_path = object_alignment_output_path(preview_overlay_scene_name)
+    preview_compare_scene_name = f"{prefix}_alignment_preview{preview_suffix}_initial_aligned_scene.ply"
+    preview_compare_scene_path = object_alignment_output_path(preview_compare_scene_name)
     write_binary_ply(discarded_points_preview_path, discarded_points_export)
     write_binary_ply(icp_points_preview_path, icp_used_points_export)
     write_transformed_obj_in_unity_space(
@@ -1133,6 +1442,69 @@ def main(argv: list[str]) -> int:
         preview_initial_translation,
         float(overall_scale),
     )
+    aligned_model_vertices_unity = transform_model_vertices_to_unity_space(
+        model_vertices_raw_full,
+        best["rotation"],
+        best["translation"],
+        float(best["scale"]),
+    )
+    initial_model_vertices_unity = transform_model_vertices_to_unity_space(
+        model_vertices_raw_full,
+        preview_initial_rotation,
+        preview_initial_translation,
+        float(overall_scale),
+    )
+    discarded_points_unity = pointcloud_export_to_unity(discarded_points_export)
+    icp_used_points_unity = pointcloud_export_to_unity(icp_used_points_export)
+
+    overlay_vertices = np.concatenate(
+        [
+            discarded_points_unity,
+            icp_used_points_unity,
+            aligned_model_vertices_unity,
+        ],
+        axis=0,
+    )
+    overlay_colors = np.concatenate(
+        [
+            np.tile(np.array([[255, 71, 26]], dtype=np.uint8), (len(discarded_points_unity), 1)),
+            np.tile(np.array([[46, 204, 113]], dtype=np.uint8), (len(icp_used_points_unity), 1)),
+            np.tile(np.array([[64, 140, 255]], dtype=np.uint8), (len(aligned_model_vertices_unity), 1)),
+        ],
+        axis=0,
+    )
+    overlay_face_offset = len(discarded_points_unity) + len(icp_used_points_unity)
+    overlay_faces = [[overlay_face_offset + idx for idx in face] for face in model_faces]
+    write_binary_scene_ply(
+        preview_overlay_scene_path,
+        overlay_vertices,
+        overlay_colors,
+        overlay_faces,
+    )
+
+    compare_vertices = np.concatenate(
+        [
+            initial_model_vertices_unity,
+            aligned_model_vertices_unity,
+        ],
+        axis=0,
+    )
+    compare_colors = np.concatenate(
+        [
+            np.tile(np.array([[245, 122, 26]], dtype=np.uint8), (len(initial_model_vertices_unity), 1)),
+            np.tile(np.array([[64, 140, 255]], dtype=np.uint8), (len(aligned_model_vertices_unity), 1)),
+        ],
+        axis=0,
+    )
+    compare_faces = [list(face) for face in model_faces] + [
+        [len(initial_model_vertices_unity) + idx for idx in face] for face in model_faces
+    ]
+    write_binary_scene_ply(
+        preview_compare_scene_path,
+        compare_vertices,
+        compare_colors,
+        compare_faces,
+    )
     preview_image_name: str | None = overlay_preview_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
     preview_image_unaligned_name: str | None = unaligned_preview_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
 
@@ -1142,10 +1514,14 @@ def main(argv: list[str]) -> int:
         "model_rotation_euler_deg": [float(v) for v in pointcloud_euler_deg],
         "model_rotation_quaternion_xyzw": [float(v) for v in pointcloud_quat_xyzw],
         "model_real_scale": float(best["scale"]),
+        "icp_mode": str(ICP_MODE),
+        "icp_enabled": bool(ICP_ENABLE),
         "preview_image_name": preview_image_name,
         "preview_image_unaligned_name": preview_image_unaligned_name,
         "preview_aligned_model_name": preview_aligned_model_name,
         "preview_initial_distance_model_name": preview_initial_model_name,
+        "preview_pointcloud_aligned_scene_name": preview_overlay_scene_name,
+        "preview_initial_aligned_scene_name": preview_compare_scene_name,
         "preview_model_coordinate_basis": "unity_camera_local_x_right_y_up_z_forward",
         "confidence": confidence,
         "icp_rmse": float(best["rmse"]),
@@ -1171,9 +1547,27 @@ def main(argv: list[str]) -> int:
             scale=float(best["scale"]),
             task=task,
             blender_arg=argv[2] if len(argv) == 3 else None,
-            title="Alignment Camera View Preview",
-            header_line="Camera-view preview: point cloud + aligned model",
-            model_legend_line="Orange = mask-border-discarded points, green = ICP-used points, blue = aligned model",
+            title=(
+                "Alignment Camera View Preview"
+                if ICP_MODE == "full"
+                else "Translation-only ICP Camera View Preview"
+                if ICP_MODE == "translation_only"
+                else "No-ICP Camera View Preview"
+            ),
+            header_line=(
+                "Camera-view preview: point cloud + aligned model"
+                if ICP_MODE == "full"
+                else "Camera-view preview: point cloud + translation-only ICP model"
+                if ICP_MODE == "translation_only"
+                else "Camera-view preview: point cloud + initial-distance model (ICP disabled)"
+            ),
+            model_legend_line=(
+                "Orange = mask-border-discarded points, green = ICP-used points, blue = aligned model"
+                if ICP_MODE == "full"
+                else "Orange = mask-border-discarded points, green = ICP-used points, blue = translation-only ICP model"
+                if ICP_MODE == "translation_only"
+                else "Orange = mask-border-discarded points, green = ICP-used points, blue = initial-distance model"
+            ),
         )
         render_model_compare_preview_image(
             mesh_path=paths["mesh_path"],
@@ -1186,9 +1580,27 @@ def main(argv: list[str]) -> int:
             reference_scale=float(overall_scale),
             task=task,
             blender_arg=argv[2] if len(argv) == 3 else None,
-            title="Aligned vs Initial Camera View Preview",
-            header_line="Camera-view preview: ICP result overlaid with initial-distance model",
-            model_legend_line="Blue = ICP-aligned model, orange = initial-distance model placed at measured distance",
+            title=(
+                "Aligned vs Initial Camera View Preview"
+                if ICP_MODE == "full"
+                else "Translation-only vs Initial Camera View Preview"
+                if ICP_MODE == "translation_only"
+                else "No-ICP vs Initial Camera View Preview"
+            ),
+            header_line=(
+                "Camera-view preview: ICP result overlaid with initial-distance model"
+                if ICP_MODE == "full"
+                else "Camera-view preview: translation-only ICP result overlaid with initial-distance model"
+                if ICP_MODE == "translation_only"
+                else "Camera-view preview: current output overlaid with initial-distance model (ICP disabled)"
+            ),
+            model_legend_line=(
+                "Blue = ICP-aligned model, orange = initial-distance model placed at measured distance"
+                if ICP_MODE == "full"
+                else "Blue = translation-only ICP model, orange = initial-distance model placed at measured distance"
+                if ICP_MODE == "translation_only"
+                else "Blue = current output pose, orange = initial-distance model (identical when ICP is disabled)"
+            ),
         )
     elif overlay_preview_path.exists():
         overlay_preview_path.unlink()
@@ -1200,6 +1612,8 @@ def main(argv: list[str]) -> int:
 
     print(
         f"[INFO] icpalignment : backend={icp_backend['actual']} "
+        f"icp_mode={str(ICP_MODE)} "
+        f"icp_enabled={bool(ICP_ENABLE)} "
         f"points={len(pointcloud_points_export)}/{len(target_front_fit)} discarded={len(discarded_points_export)} "
         f"scale={object_alignment['model_real_scale']:.6f} confidence={confidence:.3f} "
         f"rmse={object_alignment['icp_rmse']:.6f} preview={object_alignment.get('preview_image_name') or 'not-generated'}"
