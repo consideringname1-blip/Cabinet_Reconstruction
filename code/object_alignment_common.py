@@ -778,6 +778,69 @@ def read_obj_vertices(path: Path) -> np.ndarray:
     return np.asarray(vertices, dtype=np.float32)
 
 
+def write_transformed_obj_in_unity_space(
+    source_obj_path: Path,
+    output_obj_path: Path,
+    rotation_unity: np.ndarray,
+    translation_unity: np.ndarray,
+    uniform_scale: float,
+) -> None:
+    rotation_unity = np.asarray(rotation_unity, dtype=np.float32)
+    translation_unity = np.asarray(translation_unity, dtype=np.float32)
+    scale_value = float(uniform_scale)
+
+    if rotation_unity.shape != (3, 3):
+        raise ValueError(f"rotation_unity must be 3x3, got {rotation_unity.shape}")
+    if translation_unity.shape != (3,):
+        raise ValueError(f"translation_unity must have 3 values, got {translation_unity.shape}")
+    if scale_value <= 0.0:
+        raise ValueError("uniform_scale must be positive")
+
+    output_obj_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with source_obj_path.open("r", encoding="utf-8", errors="ignore") as src, output_obj_path.open(
+        "w",
+        encoding="utf-8",
+        newline="\n",
+    ) as dst:
+        dst.write("# Transformed OBJ exported in Unity camera-local coordinates.\n")
+        dst.write("# coordinate_basis: unity_camera_local_x_right_y_up_z_forward\n")
+        dst.write(
+            "# transform: uniform_scale={:.9f} translation=({:.9f}, {:.9f}, {:.9f})\n".format(
+                scale_value,
+                float(translation_unity[0]),
+                float(translation_unity[1]),
+                float(translation_unity[2]),
+            )
+        )
+
+        for line in src:
+            if line.startswith("mtllib ") or line.startswith("usemtl "):
+                continue
+            if line.startswith("v "):
+                parts = line.strip().split()
+                if len(parts) < 4:
+                    continue
+                vertex_model = np.asarray([float(parts[1]), float(parts[2]), float(parts[3])], dtype=np.float32)
+                vertex_unity = vertex_model @ MODEL_INPUT_TO_UNITY_BASIS.T
+                transformed = (vertex_unity * scale_value) @ rotation_unity.T + translation_unity
+                dst.write("v {:.9f} {:.9f} {:.9f}\n".format(*[float(v) for v in transformed]))
+                continue
+            if line.startswith("vn "):
+                parts = line.strip().split()
+                if len(parts) < 4:
+                    continue
+                normal_model = np.asarray([float(parts[1]), float(parts[2]), float(parts[3])], dtype=np.float32)
+                normal_unity = normal_model @ MODEL_INPUT_TO_UNITY_BASIS.T
+                rotated = normal_unity @ rotation_unity.T
+                length = float(np.linalg.norm(rotated))
+                if length > 1e-8:
+                    rotated = rotated / length
+                dst.write("vn {:.9f} {:.9f} {:.9f}\n".format(*[float(v) for v in rotated]))
+                continue
+            dst.write(line)
+
+
 def resolve_blender_path(cli_arg: str | None = None) -> Path:
     candidates: list[Path] = []
 

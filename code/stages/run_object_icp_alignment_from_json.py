@@ -51,6 +51,7 @@ from object_alignment_common import (
     task_prefix,
     unity_to_blender_world_vector,
     write_binary_ply,
+    write_transformed_obj_in_unity_space,
 )
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
@@ -1112,8 +1113,26 @@ def main(argv: list[str]) -> int:
     overlay_preview_path = object_alignment_output_path(overlay_preview_name)
     unaligned_preview_name = f"{prefix}_alignment_preview_unaligned_perspective.png"
     unaligned_preview_path = object_alignment_output_path(unaligned_preview_name)
+    preview_aligned_model_name = f"{prefix}_alignment_preview_aligned_model.obj"
+    preview_aligned_model_path = object_alignment_output_path(preview_aligned_model_name)
+    preview_initial_model_name = f"{prefix}_alignment_preview_initial_distance_model.obj"
+    preview_initial_model_path = object_alignment_output_path(preview_initial_model_name)
     write_binary_ply(discarded_points_preview_path, discarded_points_export)
     write_binary_ply(icp_points_preview_path, icp_used_points_export)
+    write_transformed_obj_in_unity_space(
+        paths["mesh_path"],
+        preview_aligned_model_path,
+        best["rotation"],
+        best["translation"],
+        float(best["scale"]),
+    )
+    write_transformed_obj_in_unity_space(
+        paths["mesh_path"],
+        preview_initial_model_path,
+        preview_initial_rotation,
+        preview_initial_translation,
+        float(overall_scale),
+    )
     preview_image_name: str | None = overlay_preview_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
     preview_image_unaligned_name: str | None = unaligned_preview_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
 
@@ -1125,6 +1144,9 @@ def main(argv: list[str]) -> int:
         "model_real_scale": float(best["scale"]),
         "preview_image_name": preview_image_name,
         "preview_image_unaligned_name": preview_image_unaligned_name,
+        "preview_aligned_model_name": preview_aligned_model_name,
+        "preview_initial_distance_model_name": preview_initial_model_name,
+        "preview_model_coordinate_basis": "unity_camera_local_x_right_y_up_z_forward",
         "confidence": confidence,
         "icp_rmse": float(best["rmse"]),
     }
@@ -1149,6 +1171,9 @@ def main(argv: list[str]) -> int:
             scale=float(best["scale"]),
             task=task,
             blender_arg=argv[2] if len(argv) == 3 else None,
+            title="Alignment Camera View Preview",
+            header_line="Camera-view preview: point cloud + aligned model",
+            model_legend_line="Orange = mask-border-discarded points, green = ICP-used points, blue = aligned model",
         )
         render_model_compare_preview_image(
             mesh_path=paths["mesh_path"],
@@ -1161,9 +1186,9 @@ def main(argv: list[str]) -> int:
             reference_scale=float(overall_scale),
             task=task,
             blender_arg=argv[2] if len(argv) == 3 else None,
-            title="Aligned vs Initial Model Preview",
-            header_line="Perspective preview: ICP result overlaid with initial-distance model",
-            model_legend_line="Blue = ICP-aligned model, orange = initial-distance model",
+            title="Aligned vs Initial Camera View Preview",
+            header_line="Camera-view preview: ICP result overlaid with initial-distance model",
+            model_legend_line="Blue = ICP-aligned model, orange = initial-distance model placed at measured distance",
         )
     elif overlay_preview_path.exists():
         overlay_preview_path.unlink()

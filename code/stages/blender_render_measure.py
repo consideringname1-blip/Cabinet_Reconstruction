@@ -191,31 +191,42 @@ def setup_front_camera(center: Vector, width: float, height: float) -> None:
     bpy.context.scene.camera = camera
 
 
-def setup_preview_camera(center: Vector, spans: Vector) -> None:
+def setup_camera_from_pv_intrinsics(
+    width_px: int,
+    height_px: int,
+    fx_px: float,
+    fy_px: float,
+    cx_px: float,
+    cy_px: float,
+) -> None:
     camera_data = bpy.data.cameras.new(name="PreviewCamera")
     camera_data.type = "PERSP"
-    camera_data.lens = 55.0
+    camera_data.clip_start = 0.01
+    camera_data.clip_end = 50.0
+    camera_data.sensor_fit = "HORIZONTAL"
+    camera_data.sensor_width = 36.0
+    camera_data.sensor_height = 36.0 * float(height_px) / max(float(width_px), 1.0)
+    camera_data.lens = float(fx_px) * camera_data.sensor_width / max(float(width_px), 1.0)
+
+    # Match a pinhole camera looking along +Z in Unity camera-local space.
+    camera_data.shift_x = (float(width_px) * 0.5 - float(cx_px)) / max(float(width_px), 1.0)
+    camera_data.shift_y = (float(cy_px) - float(height_px) * 0.5) / max(float(width_px), 1.0)
 
     camera = bpy.data.objects.new("PreviewCamera", camera_data)
     bpy.context.scene.collection.objects.link(camera)
-
-    span = max(spans.x, spans.y, spans.z, 0.15)
-    offset = Vector((0.75 * span, -2.4 * span, 0.95 * span))
-    camera.location = center + offset
-    look_target = center + Vector((0.0, 0.2 * span, 0.05 * span))
-    direction = look_target - camera.location
-    camera.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+    camera.location = Vector((0.0, 0.0, 0.0))
+    camera.rotation_euler = Euler((radians(90.0), 0.0, 0.0), "XYZ")
     bpy.context.scene.camera = camera
 
 
-def configure_scene(render_path: Path, transparent: bool) -> None:
+def configure_scene(render_path: Path, transparent: bool, width_px: int, height_px: int) -> None:
     scene = bpy.context.scene
     scene.render.engine = "BLENDER_WORKBENCH"
     scene.render.film_transparent = transparent
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
-    scene.render.resolution_x = 1280
-    scene.render.resolution_y = 960
+    scene.render.resolution_x = int(width_px)
+    scene.render.resolution_y = int(height_px)
     scene.render.resolution_percentage = 100
     scene.render.filepath = str(render_path)
 
@@ -237,7 +248,7 @@ def configure_scene(render_path: Path, transparent: bool) -> None:
         bg.inputs[1].default_value = 1.0
 
 
-def configure_compare_scene(render_path: Path, transparent: bool) -> None:
+def configure_compare_scene(render_path: Path, transparent: bool, width_px: int, height_px: int) -> None:
     scene = bpy.context.scene
     try:
         scene.render.engine = "BLENDER_EEVEE_NEXT"
@@ -246,8 +257,8 @@ def configure_compare_scene(render_path: Path, transparent: bool) -> None:
     scene.render.film_transparent = transparent
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
-    scene.render.resolution_x = 1280
-    scene.render.resolution_y = 960
+    scene.render.resolution_x = int(width_px)
+    scene.render.resolution_y = int(height_px)
     scene.render.resolution_percentage = 100
     scene.render.filepath = str(render_path)
 
@@ -357,7 +368,7 @@ def render_front_model(
     width = max_corner.x - min_corner.x
     height = max_corner.z - min_corner.z
     setup_front_camera(center=center, width=width, height=height)
-    configure_scene(render_path, transparent=True)
+    configure_scene(render_path, transparent=True, width_px=1280, height_px=960)
     bpy.ops.render.render(write_still=True)
 
 
@@ -369,6 +380,12 @@ def render_overlay_preview(
     location: tuple[float, float, float],
     rotation_deg: tuple[float, float, float],
     uniform_scale: float,
+    width_px: int,
+    height_px: int,
+    fx_px: float,
+    fy_px: float,
+    cx_px: float,
+    cy_px: float,
 ) -> None:
     pointcloud_objects = import_optional_ply(pointcloud_path)
     point_vertices = collect_world_vertices(pointcloud_objects, evaluated=False) if pointcloud_objects else []
@@ -392,17 +409,8 @@ def render_overlay_preview(
     apply_group_transform(model_objects, location, rotation_deg, uniform_scale)
     model_vertices = collect_world_vertices(model_objects, evaluated=False)
 
-    all_vertices = point_vertices + icp_point_vertices + model_vertices
-    xs = [v.x for v in all_vertices]
-    ys = [v.y for v in all_vertices]
-    zs = [v.z for v in all_vertices]
-    min_corner = Vector((min(xs), min(ys), min(zs)))
-    max_corner = Vector((max(xs), max(ys), max(zs)))
-    center = (min_corner + max_corner) / 2.0
-    spans = max_corner - min_corner
-
-    setup_preview_camera(center=center, spans=spans)
-    configure_scene(render_path, transparent=False)
+    setup_camera_from_pv_intrinsics(width_px, height_px, fx_px, fy_px, cx_px, cy_px)
+    configure_scene(render_path, transparent=False, width_px=width_px, height_px=height_px)
     bpy.ops.render.render(write_still=True)
 
 
@@ -415,6 +423,12 @@ def render_model_compare_preview(
     reference_location: tuple[float, float, float],
     reference_rotation_deg: tuple[float, float, float],
     reference_scale: float,
+    width_px: int,
+    height_px: int,
+    fx_px: float,
+    fy_px: float,
+    cx_px: float,
+    cy_px: float,
 ) -> None:
     aligned_objects = import_obj(mesh_path)
     aligned_material = build_surface_material("AlignedBlue", (0.16, 0.42, 0.94), alpha=0.50, roughness=0.36)
@@ -438,9 +452,9 @@ def render_model_compare_preview(
     center = (min_corner + max_corner) / 2.0
     spans = max_corner - min_corner
 
-    setup_preview_camera(center=center, spans=spans)
+    setup_camera_from_pv_intrinsics(width_px, height_px, fx_px, fy_px, cx_px, cy_px)
     setup_preview_lights(center=center, span=max(spans.x, spans.y, spans.z, 0.15))
-    configure_compare_scene(render_path, transparent=False)
+    configure_compare_scene(render_path, transparent=False, width_px=width_px, height_px=height_px)
     bpy.ops.render.render(write_still=True)
 
 
@@ -478,12 +492,13 @@ def main() -> int:
             return 1
 
     if mode == "model_compare_preview":
-        if len(argv) != 16:
+        if len(argv) != 22:
             print(
                 "Usage: blender --background --python code/stages/blender_render_measure.py -- "
                 "model_compare_preview <mesh.obj> <render.png> "
                 "<aligned_tx> <aligned_ty> <aligned_tz> <aligned_rx> <aligned_ry> <aligned_rz> <aligned_scale> "
-                "<ref_tx> <ref_ty> <ref_tz> <ref_rx> <ref_ry> <ref_rz> <ref_scale>",
+                "<ref_tx> <ref_ty> <ref_tz> <ref_rx> <ref_ry> <ref_rz> <ref_scale> "
+                "<width> <height> <fx> <fy> <cx> <cy>",
                 file=sys.stderr,
             )
             return 2
@@ -497,6 +512,12 @@ def main() -> int:
         reference_location = tuple(float(v) for v in argv[9:12])
         reference_rotation_deg = tuple(float(v) for v in argv[12:15])
         reference_scale = float(argv[15])
+        width_px = int(float(argv[16]))
+        height_px = int(float(argv[17]))
+        fx_px = float(argv[18])
+        fy_px = float(argv[19])
+        cx_px = float(argv[20])
+        cy_px = float(argv[21])
 
         try:
             clean_scene()
@@ -509,16 +530,23 @@ def main() -> int:
                 reference_location,
                 reference_rotation_deg,
                 reference_scale,
+                width_px,
+                height_px,
+                fx_px,
+                fy_px,
+                cx_px,
+                cy_px,
             )
             return 0
         except Exception as exc:
             print(str(exc), file=sys.stderr)
             return 1
 
-    if len(argv) != 11:
+    if len(argv) != 17:
         print(
             "Usage: blender --background --python code/stages/blender_render_measure.py -- "
-            "overlay_preview <mesh.obj> <pointcloud.ply> <icp_pointcloud.ply> <render.png> <tx> <ty> <tz> <rx> <ry> <rz> <scale>",
+            "overlay_preview <mesh.obj> <pointcloud.ply> <icp_pointcloud.ply> <render.png> "
+            "<tx> <ty> <tz> <rx> <ry> <rz> <scale> <width> <height> <fx> <fy> <cx> <cy>",
             file=sys.stderr,
         )
         return 2
@@ -531,6 +559,12 @@ def main() -> int:
     location = tuple(float(v) for v in argv[4:7])
     rotation_deg = tuple(float(v) for v in argv[7:10])
     uniform_scale = float(argv[10])
+    width_px = int(float(argv[11]))
+    height_px = int(float(argv[12]))
+    fx_px = float(argv[13])
+    fy_px = float(argv[14])
+    cx_px = float(argv[15])
+    cy_px = float(argv[16])
 
     try:
         clean_scene()
@@ -542,6 +576,12 @@ def main() -> int:
             location,
             rotation_deg,
             uniform_scale,
+            width_px,
+            height_px,
+            fx_px,
+            fy_px,
+            cx_px,
+            cy_px,
         )
         return 0
     except Exception as exc:
