@@ -2,27 +2,13 @@ from __future__ import annotations
 
 import sys
 
-from _bootstrap import CODE_ROOT
 from object_alignment_common import (
     compute_front_view_extents,
-    object_alignment_output_path,
     obj_vertices_to_unity,
     read_obj_vertices,
     resolve_task_paths,
-    task_prefix,
 )
 from task_json import load_task_json, resolve_task_json_path, save_task_json
-
-
-def remove_legacy_outputs(prefix: str) -> None:
-    for name in (
-        f"{prefix}_model_front.png",
-        f"{prefix}_model_front_tmp.png",
-        f"{prefix}_size_compare.png",
-    ):
-        path = object_alignment_output_path(name)
-        if path.exists():
-            path.unlink()
 
 
 def main(argv: list[str]) -> int:
@@ -38,8 +24,6 @@ def main(argv: list[str]) -> int:
         raise ValueError("depthpointcloud is missing. Run pointcloud stage first.")
 
     paths = resolve_task_paths(task)
-    prefix = task_prefix(task, json_path)
-
     model_vertices_raw = read_obj_vertices(paths["mesh_path"])
     model_vertices_unity = obj_vertices_to_unity(model_vertices_raw)
     extents = compute_front_view_extents(model_vertices_unity)
@@ -72,7 +56,6 @@ def main(argv: list[str]) -> int:
     }
     task["model"] = model_info
     save_task_json(json_path, task)
-    remove_legacy_outputs(prefix)
 
     print(
         f"[INFO] modelscale : size={width_measured:.4f}x{height_measured:.4f} "

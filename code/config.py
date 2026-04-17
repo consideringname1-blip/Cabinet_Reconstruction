@@ -2,18 +2,6 @@ import os
 from pathlib import Path
 
 
-def _env_flag(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return bool(default)
-    value = str(raw).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off"}:
-        return False
-    return bool(default)
-
-
 def _resolve_icp_mode() -> str:
     raw = os.environ.get("ICP_MODE")
     if raw is not None:
@@ -21,7 +9,7 @@ def _resolve_icp_mode() -> str:
         if value in {"camera_refine", "off"}:
             return value
         raise ValueError("ICP_MODE must be one of: camera_refine / off")
-    return "camera_refine" if _env_flag("ICP_ENABLE", True) else "off"
+    return "camera_refine"
 
 
 # Runtime switches
@@ -35,8 +23,7 @@ ICP_DEPTH_BORDER_CROP_RATIO = 0.03
 # camera_refine = camera-view local rotation+translation+scale adjustment.
 # off = measured-distance placement without ICP. The runtime only keeps one
 # active ICP path plus the skip-ICP path.
-# Default now uses camera_refine; ICP_ENABLE=0 still maps to off for backwards
-# compatibility.
+# Default now uses camera_refine.
 ICP_MODE = _resolve_icp_mode()
 ICP_ENABLE = ICP_MODE != "off"
 # Maximum number of points written to the exported depth point cloud PLY.

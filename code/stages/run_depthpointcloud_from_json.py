@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from _bootstrap import CODE_ROOT
 from config import (
-    ENABLE_ALIGNMENT_RENDER_OUTPUTS,
     DEPTHPOINTCLOUD_MAX_EXPORT_POINTS,
     ICP_TARGET_FRONT_MAX_POINTS,
 )
@@ -27,19 +25,6 @@ from object_alignment_common import (
     write_binary_ply,
 )
 from task_json import load_task_json, resolve_task_json_path, save_task_json
-
-
-def remove_legacy_outputs(prefix: str) -> None:
-    for name in (
-        f"{prefix}_size_compare.png",
-        f"{prefix}_pointcloud_measure.png",
-        f"{prefix}_depthpointcloud_front.png",
-    ):
-        path = object_alignment_output_path(name)
-        if path.exists():
-            path.unlink()
-
-
 def downsample_export_points(
     export_points: np.ndarray,
     unity_points: np.ndarray,
@@ -103,7 +88,6 @@ def main(argv: list[str]) -> int:
     write_binary_ply(pointcloud_path, export_points)
     write_binary_ply(icp_discarded_pointcloud_path, discarded_points_export)
     write_binary_ply(icp_used_pointcloud_path, icp_used_points_export)
-    remove_legacy_outputs(prefix)
 
     depthpointcloud = {
         "pointcloud_name": pointcloud_name,

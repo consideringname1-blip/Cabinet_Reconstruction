@@ -103,9 +103,6 @@ FBX_EXPORT_UP_AXIS = "Y"
 # OBJ -> Blender world basis used by the ICP/debug path
 # (`bpy.ops.wm.obj_import(..., forward_axis="NEGATIVE_X", up_axis="Z")`).
 ICP_OBJ_IMPORT_TO_BLENDER_WORLD = UNITY_TO_BLENDER_WORLD @ MODEL_INPUT_TO_UNITY_BASIS
-# Backward-compatibility alias kept for older debug code: Blender-local axes
-# from the ICP import back to the original model-input axes.
-ICP_OBJ_IMPORT_LOCAL_ROTATION = ICP_OBJ_IMPORT_TO_BLENDER_WORLD.T
 
 # OBJ -> Blender world basis used when wrapping the reconstructed OBJ into FBX.
 # This mirrors Blender's default OBJ import orientation
@@ -728,85 +725,6 @@ def add_text_block(image: np.ndarray, lines: list[str]) -> np.ndarray:
         y += line_h
 
     return canvas
-
-
-def render_front_view_points(
-    points: np.ndarray,
-    image_path: Path,
-    title: str,
-    info_lines: list[str] | None = None,
-    point_color: tuple[int, int, int] = (20, 20, 20),
-    bbox_color: tuple[int, int, int] = (0, 140, 255),
-) -> None:
-    points = np.asarray(points, dtype=np.float32)
-    if len(points) == 0:
-        raise ValueError("Cannot render empty point set")
-
-    image_size = 1024
-    margin = 64
-    canvas = np.full((image_size, image_size, 3), 255, dtype=np.uint8)
-
-    x = points[:, 0]
-    y = points[:, 1]
-    min_x, max_x = float(x.min()), float(x.max())
-    min_y, max_y = float(y.min()), float(y.max())
-    span_x = max(max_x - min_x, 1e-6)
-    span_y = max(max_y - min_y, 1e-6)
-    scale = min((image_size - 2 * margin) / span_x, (image_size - 2 * margin) / span_y)
-
-    u = np.round((x - min_x) * scale + margin).astype(np.int32)
-    v = np.round((max_y - y) * scale + margin).astype(np.int32)
-    keep = (u >= 0) & (u < image_size) & (v >= 0) & (v < image_size)
-    u = u[keep]
-    v = v[keep]
-    canvas[v, u] = point_color
-
-    if len(u) > 0:
-        cv2.rectangle(
-            canvas,
-            (int(u.min()), int(v.min())),
-            (int(u.max()), int(v.max())),
-            bbox_color,
-            2,
-        )
-
-    canvas = draw_image_title(canvas, title)
-    canvas = add_text_block(canvas, info_lines or [])
-    image_path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(image_path), canvas)
-
-
-def annotate_rendered_model_front_view(image_path: Path, title: str, info_lines: list[str]) -> None:
-    image = cv2.imread(str(image_path), cv2.IMREAD_UNCHANGED)
-    if image is None:
-        raise FileNotFoundError(f"Failed to read rendered image: {image_path}")
-
-    if image.ndim == 2:
-        rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
-        mask = image < 250
-    elif image.shape[2] == 4:
-        alpha = image[:, :, 3].astype(np.float32) / 255.0
-        bgr = image[:, :, :3].astype(np.float32)
-        white = np.full_like(bgr, 255.0)
-        rgb = np.clip(bgr * alpha[:, :, None] + white * (1.0 - alpha[:, :, None]), 0, 255).astype(np.uint8)
-        mask = image[:, :, 3] > 0
-    else:
-        rgb = image[:, :, :3]
-        mask = np.any(rgb < 250, axis=2)
-
-    if np.any(mask):
-        ys, xs = np.where(mask)
-        cv2.rectangle(
-            rgb,
-            (int(xs.min()), int(ys.min())),
-            (int(xs.max()), int(ys.max())),
-            (0, 140, 255),
-            2,
-        )
-
-    rgb = draw_image_title(rgb, title)
-    rgb = add_text_block(rgb, info_lines)
-    cv2.imwrite(str(image_path), rgb)
 
 
 def annotate_rendered_image(image_path: Path, title: str, info_lines: list[str]) -> None:
