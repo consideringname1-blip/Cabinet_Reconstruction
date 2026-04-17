@@ -18,23 +18,10 @@ def _resolve_icp_mode() -> str:
     raw = os.environ.get("ICP_MODE")
     if raw is not None:
         value = str(raw).strip().lower()
-        aliases = {
-            "full": "full",
-            "on": "full",
-            "enabled": "full",
-            "translation_only": "translation_only",
-            "translation-only": "translation_only",
-            "translation": "translation_only",
-            "translate_only": "translation_only",
-            "tronly": "translation_only",
-            "off": "off",
-            "disabled": "off",
-            "none": "off",
-            "0": "off",
-        }
-        if value in aliases:
-            return aliases[value]
-    return "translation_only" if _env_flag("ICP_ENABLE", True) else "off"
+        if value in {"camera_refine", "off"}:
+            return value
+        raise ValueError("ICP_MODE must be one of: camera_refine / off")
+    return "camera_refine" if _env_flag("ICP_ENABLE", True) else "off"
 
 
 # Runtime switches
@@ -45,10 +32,11 @@ IS_RUN_FLASK_SERVER = True
 # Fraction cropped inward from the SAM3 mask periphery before depth->pointcloud
 # conversion. Set to 0.0 to disable.
 ICP_DEPTH_BORDER_CROP_RATIO = 0.03
-# full = search + rotation+translation ICP, translation_only = preserve
-# InstantMesh orientation and only optimize translation, off = measured-distance
-# placement without ICP. Default now uses translation_only; ICP_ENABLE=0 still
-# maps to off for backwards compatibility.
+# camera_refine = camera-view local rotation+translation+scale adjustment.
+# off = measured-distance placement without ICP. The runtime only keeps one
+# active ICP path plus the skip-ICP path.
+# Default now uses camera_refine; ICP_ENABLE=0 still maps to off for backwards
+# compatibility.
 ICP_MODE = _resolve_icp_mode()
 ICP_ENABLE = ICP_MODE != "off"
 # Maximum number of points written to the exported depth point cloud PLY.
@@ -65,6 +53,7 @@ ICP_IGNORE_INVERTED_SOLUTIONS = True
 # the camera ray and ignore occluded model geometry behind it.
 ICP_IGNORE_OCCLUDED_MODEL_POINTS = True
 ICP_TARGET_FRONT_MAX_POINTS = 3600
+ICP_ALIGNMENT_MODEL_MAX_POINTS = 2800
 ICP_COARSE_VISIBLE_MAX_POINTS = 2600
 ICP_MEDIUM_VISIBLE_MAX_POINTS = 3200
 ICP_FINE_VISIBLE_MAX_POINTS = 3600
@@ -79,6 +68,9 @@ ICP_LOCAL_REFINE_ITERATIONS = 6
 ICP_COARSE_CANDIDATE_KEEP = 3
 ICP_AXIS_SEED_RETAIN_TOPK = 3
 ICP_MEDIUM_RETAIN_TOPK = 2
+ICP_CAMERA_REFINE_MAX_ROTATION_DELTA_DEG = 18.0
+ICP_CAMERA_REFINE_SCALE_DELTA_RATIO = 0.12
+ICP_CAMERA_REFINE_SEED_KEEP = 9
 # Penalize rotations that drift too far from the InstantMesh identity
 # orientation. 180-degree flips receive the full weight; smaller rotations are
 # scaled quadratically by angle / pi.

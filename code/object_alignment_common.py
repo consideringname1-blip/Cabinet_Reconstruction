@@ -596,28 +596,133 @@ def compute_front_view_extents(points: np.ndarray) -> dict:
     }
 
 
+def _measure_text(text: str, scale: float, thickness: int) -> tuple[int, int, int]:
+    (width, height), baseline = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, thickness)
+    return width, height, baseline
+
+
+def _fit_text_scale(
+    text: str,
+    max_width: int,
+    *,
+    base_scale: float,
+    thickness: int,
+    min_scale: float,
+) -> float:
+    if not text:
+        return float(base_scale)
+    scale = float(base_scale)
+    while scale > float(min_scale):
+        width, _, _ = _measure_text(text, scale, thickness)
+        if width <= max_width:
+            return scale
+        scale -= 0.05
+    return float(min_scale)
+
+
+def _wrap_text_to_width(text: str, max_width: int, *, scale: float, thickness: int) -> list[str]:
+    text = str(text or "").strip()
+    if not text:
+        return []
+    width, _, _ = _measure_text(text, scale, thickness)
+    if width <= max_width:
+        return [text]
+
+    words = text.split(" ")
+    if len(words) <= 1:
+        chunks: list[str] = []
+        current = ""
+        for ch in text:
+            candidate = f"{current}{ch}"
+            candidate_width, _, _ = _measure_text(candidate, scale, thickness)
+            if current and candidate_width > max_width:
+                chunks.append(current)
+                current = ch
+            else:
+                current = candidate
+        if current:
+            chunks.append(current)
+        return chunks
+
+    wrapped: list[str] = []
+    current = ""
+    for word in words:
+        candidate = word if not current else f"{current} {word}"
+        candidate_width, _, _ = _measure_text(candidate, scale, thickness)
+        if current and candidate_width > max_width:
+            wrapped.append(current)
+            current = word
+        else:
+            current = candidate
+    if current:
+        wrapped.append(current)
+    return wrapped
+
+
+def draw_image_title(image: np.ndarray, title: str) -> np.ndarray:
+    title = str(title or "").strip()
+    if not title:
+        return image
+    max_width = max(image.shape[1] - 56, 80)
+    scale = _fit_text_scale(
+        title,
+        max_width,
+        base_scale=1.0,
+        thickness=2,
+        min_scale=0.55,
+    )
+    _, height, _ = _measure_text(title, scale, 2)
+    y = 24 + height
+    cv2.putText(
+        image,
+        title,
+        (28, y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        scale,
+        (30, 30, 30),
+        2,
+        cv2.LINE_AA,
+    )
+    return image
+
+
 def add_text_block(image: np.ndarray, lines: list[str]) -> np.ndarray:
     if not lines:
         return image
 
-    pad = 24
-    line_h = 34
+    pad_top = 22
+    pad_bottom = 24
+    left_pad = 20
+    max_width = max(image.shape[1] - left_pad * 2, 80)
+    scale = 0.72
+    thickness = 2
+    wrapped_lines: list[str] = []
+    for line in lines:
+        wrapped_lines.extend(_wrap_text_to_width(line, max_width, scale=scale, thickness=thickness))
+    if not wrapped_lines:
+        return image
+
+    _, sample_height, sample_baseline = _measure_text("Ag", scale, thickness)
+    line_h = sample_height + sample_baseline + 10
     footer_color = np.array((242, 244, 247), dtype=np.uint8)
-    canvas = np.empty((image.shape[0] + pad * 2 + line_h * len(lines), image.shape[1], 3), dtype=np.uint8)
+    canvas = np.empty(
+        (image.shape[0] + pad_top + pad_bottom + line_h * len(wrapped_lines), image.shape[1], 3),
+        dtype=np.uint8,
+    )
     canvas[:, :, :] = footer_color
     canvas[: image.shape[0], :, :] = image
     cv2.line(canvas, (0, image.shape[0]), (image.shape[1] - 1, image.shape[0]), (214, 219, 226), 2)
 
-    y = image.shape[0] + pad + 8
-    for line in lines:
+    y = image.shape[0] + pad_top + sample_height
+    for line in wrapped_lines:
         cv2.putText(
             canvas,
             line,
-            (20, y),
+            (left_pad, y),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
+            scale,
             (20, 20, 20),
-            2,
+            thickness,
             cv2.LINE_AA,
         )
         y += line_h
@@ -665,7 +770,7 @@ def render_front_view_points(
             2,
         )
 
-    cv2.putText(canvas, title, (28, 42), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (30, 30, 30), 2, cv2.LINE_AA)
+    canvas = draw_image_title(canvas, title)
     canvas = add_text_block(canvas, info_lines or [])
     image_path.parent.mkdir(parents=True, exist_ok=True)
     cv2.imwrite(str(image_path), canvas)
@@ -699,7 +804,7 @@ def annotate_rendered_model_front_view(image_path: Path, title: str, info_lines:
             2,
         )
 
-    cv2.putText(rgb, title, (28, 42), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (30, 30, 30), 2, cv2.LINE_AA)
+    rgb = draw_image_title(rgb, title)
     rgb = add_text_block(rgb, info_lines)
     cv2.imwrite(str(image_path), rgb)
 
@@ -719,7 +824,7 @@ def annotate_rendered_image(image_path: Path, title: str, info_lines: list[str])
     else:
         rgb = image[:, :, :3]
 
-    cv2.putText(rgb, title, (28, 42), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (30, 30, 30), 2, cv2.LINE_AA)
+    rgb = draw_image_title(rgb, title)
     rgb = add_text_block(rgb, info_lines)
     cv2.imwrite(str(image_path), rgb)
 
