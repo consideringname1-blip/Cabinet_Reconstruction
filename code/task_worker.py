@@ -37,9 +37,6 @@ from task_db import (
 )
 from task_json import (
     ensure_task_id_in_json,
-    load_task_json,
-    resolve_task_json_path,
-    save_task_json,
 )
 
 
@@ -47,7 +44,6 @@ STAGE_ORDER = [
     "hololens2depth",
     "sam3mask",
     "instantmesh",
-    "objectalignment",
     "depthpointcloud",
     "modelscale",
     "icpalignment",
@@ -123,10 +119,6 @@ def _run_instantmesh(json_path: Path) -> None:
     )
 
 
-def _run_objectalignment(json_path: Path) -> None:
-    return
-
-
 def _run_depthpointcloud(json_path: Path) -> None:
     _run_python_script(
         python_path=DEPTHPOINTCLOUD_STAGE_PY,
@@ -176,7 +168,6 @@ STAGE_RUNNERS = {
     "hololens2depth": _run_hololens2depth,
     "sam3mask": _run_sam3mask,
     "instantmesh": _run_instantmesh,
-    "objectalignment": _run_objectalignment,
     "depthpointcloud": _run_depthpointcloud,
     "modelscale": _run_modelscale,
     "icpalignment": _run_icpalignment,

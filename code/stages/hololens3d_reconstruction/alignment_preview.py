@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import _bootstrap
 import numpy as np
 
 from object_alignment_common import annotate_rendered_image, resolve_blender_path

@@ -2,23 +2,23 @@ from __future__ import annotations
 
 import sys
 
+import _bootstrap
 from object_alignment_common import (
     compute_front_view_extents,
     obj_vertices_to_unity,
     read_obj_vertices,
     resolve_task_paths,
 )
-from task_json import load_task_json, resolve_task_json_path, save_task_json
+from stage_common import load_stage_task
+from task_json import save_task_json
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("Usage: python code/stages/run_model_scale_from_json.py <task_meta.json or filename>", file=sys.stderr)
-        return 2
-
-    json_path = resolve_task_json_path(argv[1])
-    task = load_task_json(json_path)
-    print(f"[STAGE] modelscale : {json_path}")
+    json_path, task = load_stage_task(
+        argv,
+        usage="Usage: python code/stages/hololens3d_reconstruction/run_model_scale_from_json.py <task_meta.json or filename>",
+        stage_name="modelscale",
+    )
 
     if "depthpointcloud" not in task:
         raise ValueError("depthpointcloud is missing. Run pointcloud stage first.")

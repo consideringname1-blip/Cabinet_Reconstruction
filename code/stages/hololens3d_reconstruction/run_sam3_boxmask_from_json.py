@@ -10,15 +10,12 @@ from scipy import ndimage as ndi
 
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
-from _bootstrap import CODE_ROOT
+import _bootstrap
 import config
 import numpy as np
 from PIL import Image, ImageDraw
-from task_json import load_task_json, resolve_task_json_path, save_task_json
-
-
-def _eprint(*args: Any) -> None:
-    print(*args, file=sys.stderr)
+from stage_common import ensure_file, load_stage_task
+from task_json import save_task_json
 
 
 def require_attr(module: Any, *names: str) -> Any:
@@ -33,13 +30,6 @@ def safe_name(text: str) -> str:
     text = re.sub(r"[^0-9A-Za-z._-]+", "_", text)
     text = text.strip("._")
     return text or "sam3_task"
-
-
-def ensure_file(path: Path, label: str) -> Path:
-    if not path.is_file():
-        raise FileNotFoundError(f"{label} not found: {path}")
-    return path
-
 
 def read_image_rgb(path: Path) -> Image.Image:
     return Image.open(path).convert("RGB")
@@ -231,19 +221,16 @@ def resolve_device(torch_module: Any) -> Any:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        _eprint("Usage: python code/stages/run_sam3_boxmask_from_json.py <task_meta.json or filename>")
-        return 2
-
-    json_path = resolve_task_json_path(sys.argv[1])
-    ensure_file(json_path, "JSON file")
+    json_path, task = load_stage_task(
+        sys.argv,
+        usage="Usage: python code/stages/hololens3d_reconstruction/run_sam3_boxmask_from_json.py <task_meta.json or filename>",
+        stage_name="sam3mask",
+    )
 
     upload_folder = Path(require_attr(config, "UPLOAD_FOLDER")).expanduser().resolve()
     depth_root = Path(require_attr(config, "HOLOLENS2_OUTPUT_DEPTH_IMAGES")).expanduser().resolve()
     output_root = Path(require_attr(config, "SAM3_OUTPUT_ROOT")).expanduser().resolve()
     output_root.mkdir(parents=True, exist_ok=True)
-
-    task = load_task_json(json_path)
 
     pv_info = task.get("PVCamera") or {}
     depth_info = task.get("DepthCamera") or {}

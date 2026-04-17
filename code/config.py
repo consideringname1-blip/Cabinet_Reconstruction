@@ -70,6 +70,7 @@ PROJECT_ROOT = BASE_DIR.parent
 
 CODE_ROOT = PROJECT_ROOT / "code"
 STAGES_ROOT = CODE_ROOT / "stages"
+HOLOLENS3D_RECON_STAGE_ROOT = STAGES_ROOT / "hololens3d_reconstruction"
 SCRIPTS_ROOT = CODE_ROOT / "scripts"
 RECON_ROOT = CODE_ROOT / "reconstruction"
 HOLOLENS_ROOT = CODE_ROOT / "Hololens2"
@@ -114,14 +115,14 @@ SAM3_BEP = SAM3_DIR / "assets" / "bpe_simple_vocab_16e6.txt.gz"
 
 
 # Stage scripts
-SAM3_BOX_MASK_RUN = STAGES_ROOT / "run_sam3_boxmask_from_json.py"
-INSTANTMESH_STAGE_RUN = STAGES_ROOT / "run_instantmesh_from_json.py"
-DEPTHPOINTCLOUD_STAGE_RUN = STAGES_ROOT / "run_depthpointcloud_from_json.py"
-MODELSCALE_STAGE_RUN = STAGES_ROOT / "run_model_scale_from_json.py"
-ICPALIGNMENT_STAGE_RUN = STAGES_ROOT / "run_object_icp_alignment_from_json.py"
-POSE_STAGE_RUN = STAGES_ROOT / "run_pose_from_json.py"
-BLENDER_STAGE_RUN = STAGES_ROOT / "run_blender_from_json.py"
-CONVERT_SCRIPT = STAGES_ROOT / "convert_obj_to_fbx.py"
+SAM3_BOX_MASK_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_sam3_boxmask_from_json.py"
+INSTANTMESH_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_instantmesh_from_json.py"
+DEPTHPOINTCLOUD_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_depthpointcloud_from_json.py"
+MODELSCALE_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_model_scale_from_json.py"
+ICPALIGNMENT_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_object_icp_alignment_from_json.py"
+POSE_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_pose_from_json.py"
+BLENDER_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_blender_from_json.py"
+CONVERT_SCRIPT = HOLOLENS3D_RECON_STAGE_ROOT / "convert_obj_to_fbx.py"
 
 INSTANTMESH_STAGE_PY = SERVER_PY
 DEPTHPOINTCLOUD_STAGE_PY = SERVER_PY

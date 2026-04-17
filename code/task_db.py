@@ -11,7 +11,6 @@ ALLOWED_STATUSES = (
     "hololens2depth",
     "sam3mask",
     "instantmesh",
-    "objectalignment",
     "depthpointcloud",
     "modelscale",
     "icpalignment",

@@ -3,16 +3,9 @@ from pathlib import Path
 
 import bpy
 
-THIS_FILE = Path(__file__).resolve()
-STAGES_DIR = THIS_FILE.parent
-CODE_ROOT = STAGES_DIR.parent
-
-if str(STAGES_DIR) not in sys.path:
-    sys.path.insert(0, str(STAGES_DIR))
-if str(CODE_ROOT) not in sys.path:
-    sys.path.insert(0, str(CODE_ROOT))
-
+from blender_common import clean_scene, ensure_file
 from config import BLENDER_FBX_DIR, INSTANTMESH_OUTPUT_MESHES
+from stage_common import parse_blender_stage_args
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 # Keep Blender-side axis settings local to this script so Blender's bundled
@@ -21,16 +14,6 @@ FBX_CONVERT_OBJ_IMPORT_FORWARD_AXIS = "NEGATIVE_Z"
 FBX_CONVERT_OBJ_IMPORT_UP_AXIS = "Y"
 FBX_EXPORT_FORWARD_AXIS = "-Z"
 FBX_EXPORT_UP_AXIS = "Y"
-
-def clean_scene() -> None:
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete(use_global=False)
-
-
-def ensure_file(path: Path, label: str) -> Path:
-    if not path.is_file():
-        raise FileNotFoundError(f"{label} not found: {path}")
-    return path
 
 
 def fix_mtl_texture_name(mtl_path: Path, texture_name: str) -> None:
@@ -85,7 +68,7 @@ def export_fbx_from_json(json_path: Path) -> Path:
 
     fix_mtl_texture_name(mtl_path, image_name)
 
-    clean_scene()
+    clean_scene(purge_orphans=False)
     bpy.ops.wm.obj_import(
         filepath=str(mesh_path),
         forward_axis=FBX_CONVERT_OBJ_IMPORT_FORWARD_AXIS,
@@ -126,18 +109,19 @@ def export_fbx_from_json(json_path: Path) -> Path:
 
 
 def main() -> int:
-    argv = sys.argv
-    argv = argv[argv.index("--") + 1 :] if "--" in argv else []
-
-    if len(argv) != 1:
-        print(
-            "Usage: blender --background --python code/stages/convert_obj_to_fbx.py -- <task_meta.json or filename>",
-            file=sys.stderr,
+    try:
+        argv = parse_blender_stage_args(
+            sys.argv,
+            usage=(
+                "Usage: blender --background --python "
+                "code/stages/hololens3d_reconstruction/convert_obj_to_fbx.py -- <task_meta.json or filename>"
+            ),
+            expected_count=1,
         )
-        return 2
+    except SystemExit as exc:
+        return int(exc.code)
 
-    json_path = resolve_task_json_path(argv[0])
-    ensure_file(json_path, "JSON file")
+    json_path = ensure_file(resolve_task_json_path(argv[0]), "JSON file")
     try:
         export_fbx_from_json(json_path)
         return 0

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 
+import _bootstrap
 from config import (
     DEPTHPOINTCLOUD_MAX_EXPORT_POINTS,
     ICP_TARGET_FRONT_MAX_POINTS,
@@ -24,7 +25,10 @@ from object_alignment_common import (
     task_prefix,
     write_binary_ply,
 )
-from task_json import load_task_json, resolve_task_json_path, save_task_json
+from stage_common import load_stage_task
+from task_json import save_task_json
+
+
 def downsample_export_points(
     export_points: np.ndarray,
     unity_points: np.ndarray,
@@ -40,14 +44,12 @@ def downsample_export_points(
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("Usage: python code/stages/run_depthpointcloud_from_json.py <task_meta.json or filename>", file=sys.stderr)
-        return 2
-
-    json_path = resolve_task_json_path(argv[1])
-    task = load_task_json(json_path)
+    json_path, task = load_stage_task(
+        argv,
+        usage="Usage: python code/stages/hololens3d_reconstruction/run_depthpointcloud_from_json.py <task_meta.json or filename>",
+        stage_name="depthpointcloud",
+    )
     paths = resolve_task_paths(task)
-    print(f"[STAGE] depthpointcloud : {json_path}")
 
     k = np.asarray((task.get("PVCamera") or {}).get("k"), dtype=np.float32)
     if k.shape != (3, 3):

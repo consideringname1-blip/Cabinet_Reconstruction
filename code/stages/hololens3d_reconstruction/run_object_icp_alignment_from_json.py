@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import warnings
 
+import _bootstrap
 from alignment_preview import render_model_compare_preview_image, render_overlay_preview_image
 from config import (
     ICP_ACCELERATION_DEVICE,
@@ -50,7 +51,13 @@ from object_alignment_common import (
     write_binary_ply,
     write_transformed_obj_in_unity_space,
 )
-from task_json import load_task_json, resolve_task_json_path, save_task_json
+from pose_math import (
+    rotation_matrix_to_euler_xyz_deg,
+    rotation_matrix_to_quat_xyzw,
+    serialize_pose,
+)
+from stage_common import load_stage_task
+from task_json import save_task_json
 
 
 MODEL_UP_AXIS_UNITY = np.array([0.0, 1.0, 0.0], dtype=np.float32)
@@ -120,39 +127,6 @@ def query_prebuilt_tree(
     dists = np.asarray(dists, dtype=np.float32)
     idx = np.asarray(idx, dtype=np.int32)
     return (dists, idx) if return_indices else dists
-
-
-def normalize_quat_xyzw(q: np.ndarray) -> np.ndarray:
-    q = np.asarray(q, dtype=np.float64)
-    n = np.linalg.norm(q)
-    if n <= 0:
-        raise ValueError("zero-length quaternion")
-    return q / n
-
-
-def make_row_transform_matrix(rotation: np.ndarray, translation: np.ndarray) -> np.ndarray:
-    rotation = np.asarray(rotation, dtype=np.float64)
-    translation = np.asarray(translation, dtype=np.float64)
-    matrix = np.eye(4, dtype=np.float64)
-    matrix[:3, :3] = rotation
-    matrix[3, :3] = translation
-    return matrix
-
-
-def serialize_pose(rotation: np.ndarray, translation: np.ndarray, coordinate_basis: str) -> dict:
-    rotation = np.asarray(rotation, dtype=np.float64)
-    translation = np.asarray(translation, dtype=np.float64)
-    quat_xyzw = normalize_quat_xyzw(Rotation.from_matrix(rotation).as_quat())
-    euler_deg = Rotation.from_matrix(rotation).as_euler("xyz", degrees=True)
-    matrix = make_row_transform_matrix(rotation, translation)
-    return {
-        "coordinate_basis": coordinate_basis,
-        "position": [float(v) for v in translation],
-        "rotation_euler_deg": [float(v) for v in euler_deg],
-        "rotation_quaternion_xyzw": [float(v) for v in quat_xyzw],
-        "transform_matrix": [[float(v) for v in row] for row in matrix],
-    }
-
 
 def downsample_points(points: np.ndarray, max_points: int, seed: int) -> np.ndarray:
     if len(points) <= max_points:
@@ -870,16 +844,15 @@ def build_distance_only_alignment(
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) not in (2, 3):
-        print(
-            "Usage: python code/stages/run_object_icp_alignment_from_json.py <task_meta.json or filename> [blender_path]",
-            file=sys.stderr,
-        )
-        return 2
-
-    json_path = resolve_task_json_path(argv[1])
-    task = load_task_json(json_path)
-    print(f"[STAGE] icpalignment : {json_path}")
+    json_path, task = load_stage_task(
+        argv,
+        usage=(
+            "Usage: python code/stages/hololens3d_reconstruction/"
+            "run_object_icp_alignment_from_json.py <task_meta.json or filename> [blender_path]"
+        ),
+        stage_name="icpalignment",
+        valid_lengths=(2, 3),
+    )
     icp_backend = resolve_icp_backend()
 
     if "depthpointcloud" not in task:
@@ -972,8 +945,8 @@ def main(argv: list[str]) -> int:
         best["rotation"],
         best["translation"],
     )
-    pointcloud_euler_deg = Rotation.from_matrix(pointcloud_rotation).as_euler("xyz", degrees=True)
-    pointcloud_quat_xyzw = Rotation.from_matrix(pointcloud_rotation).as_quat()
+    pointcloud_euler_deg = rotation_matrix_to_euler_xyz_deg(pointcloud_rotation)
+    pointcloud_quat_xyzw = rotation_matrix_to_quat_xyzw(pointcloud_rotation)
 
     blender_rotation, blender_translation = model_pose_unity_to_blender_world(
         best["rotation"],

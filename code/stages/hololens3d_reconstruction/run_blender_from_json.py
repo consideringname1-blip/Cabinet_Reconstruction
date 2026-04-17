@@ -2,16 +2,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _bootstrap import CODE_ROOT
+import _bootstrap
 from config import BLENDER_FBX_DIR, CONVERT_SCRIPT
 from object_alignment_common import resolve_blender_path
-from task_json import load_task_json, resolve_task_json_path
-
-
-def ensure_file(path: Path, label: str) -> Path:
-    if not path.is_file():
-        raise FileNotFoundError(f"{label} not found: {path}")
-    return path
+from stage_common import ensure_file, load_stage_task
+from task_json import load_task_json
 
 
 def run_blender(json_path: Path) -> None:
@@ -47,13 +42,12 @@ def run_blender(json_path: Path) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("Usage: python code/stages/run_blender_from_json.py <task_meta.json or filename>", file=sys.stderr)
-        return 2
-
-    json_path = resolve_task_json_path(sys.argv[1])
-    ensure_file(json_path, "JSON file")
     try:
+        json_path, _ = load_stage_task(
+            sys.argv,
+            usage="Usage: python code/stages/hololens3d_reconstruction/run_blender_from_json.py <task_meta.json or filename>",
+            stage_name="blender",
+        )
         run_blender(json_path)
         return 0
     except Exception as exc:

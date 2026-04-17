@@ -5,29 +5,8 @@ from math import radians
 from pathlib import Path
 
 import bpy
+from blender_common import clean_scene, ensure_file
 from mathutils import Euler, Matrix, Vector
-
-
-def ensure_file(path: Path, label: str) -> Path:
-    if not path.is_file():
-        raise FileNotFoundError(f"{label} not found: {path}")
-    return path
-
-
-def clean_scene() -> None:
-    bpy.ops.object.select_all(action="SELECT")
-    bpy.ops.object.delete(use_global=False)
-    for collection in (
-        bpy.data.meshes,
-        bpy.data.materials,
-        bpy.data.images,
-        bpy.data.cameras,
-        bpy.data.lights,
-        bpy.data.node_groups,
-    ):
-        for block in list(collection):
-            if block.users == 0:
-                collection.remove(block)
 
 
 def import_obj(mesh_path: Path) -> list[bpy.types.Object]:
@@ -470,7 +449,7 @@ def main() -> int:
     if mode == "front_model":
         if len(argv) != 9:
             print(
-                "Usage: blender --background --python code/stages/blender_render_measure.py -- "
+                "Usage: blender --background --python code/stages/hololens3d_reconstruction/blender_render_measure.py -- "
                 "front_model <mesh.obj> <render.png> <tx> <ty> <tz> <rx> <ry> <rz> <scale>",
                 file=sys.stderr,
             )
@@ -494,7 +473,7 @@ def main() -> int:
     if mode == "model_compare_preview":
         if len(argv) != 22:
             print(
-                "Usage: blender --background --python code/stages/blender_render_measure.py -- "
+                "Usage: blender --background --python code/stages/hololens3d_reconstruction/blender_render_measure.py -- "
                 "model_compare_preview <mesh.obj> <render.png> "
                 "<aligned_tx> <aligned_ty> <aligned_tz> <aligned_rx> <aligned_ry> <aligned_rz> <aligned_scale> "
                 "<ref_tx> <ref_ty> <ref_tz> <ref_rx> <ref_ry> <ref_rz> <ref_scale> "
@@ -544,7 +523,7 @@ def main() -> int:
 
     if len(argv) != 17:
         print(
-            "Usage: blender --background --python code/stages/blender_render_measure.py -- "
+            "Usage: blender --background --python code/stages/hololens3d_reconstruction/blender_render_measure.py -- "
             "overlay_preview <mesh.obj> <pointcloud.ply> <icp_pointcloud.ply> <render.png> "
             "<tx> <ty> <tz> <rx> <ry> <rz> <scale> <width> <height> <fx> <fy> <cx> <cy>",
             file=sys.stderr,

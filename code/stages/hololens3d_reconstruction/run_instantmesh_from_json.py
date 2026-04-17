@@ -2,7 +2,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from _bootstrap import CODE_ROOT
+import _bootstrap
 from PIL import Image
 
 from config import (
@@ -17,17 +17,8 @@ from config import (
     OUTPUT_ROOT,
     SAM3_OUTPUT_ROOT,
 )
-from task_json import load_task_json, resolve_task_json_path, save_task_json
-
-
-def _resolve_python(python_path: str) -> str:
-    return python_path or sys.executable
-
-
-def ensure_file(path: Path, label: str) -> Path:
-    if not path.is_file():
-        raise FileNotFoundError(f"{label} not found: {path}")
-    return path
+from stage_common import ensure_file, load_stage_task, resolve_python
+from task_json import save_task_json
 
 
 def create_white_background_image(source_path: Path, target_path: Path) -> Path:
@@ -40,8 +31,7 @@ def create_white_background_image(source_path: Path, target_path: Path) -> Path:
     return target_path
 
 
-def run_instantmesh(json_path: Path) -> None:
-    task = load_task_json(json_path)
+def run_instantmesh(json_path: Path, task: dict) -> None:
     sam3_name = task.get("sam3Name") or {}
 
     sam3_color_name = sam3_name.get("color")
@@ -56,7 +46,7 @@ def run_instantmesh(json_path: Path) -> None:
 
     try:
         import os
-        imesh_python = _resolve_python(IMESH_PY)
+        imesh_python = resolve_python(IMESH_PY)
         imesh_bin = str(Path(imesh_python).resolve().parent)
 
         env = os.environ.copy()
@@ -110,14 +100,13 @@ def run_instantmesh(json_path: Path) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        print("Usage: python code/stages/run_instantmesh_from_json.py <task_meta.json or filename>", file=sys.stderr)
-        return 2
-
-    json_path = resolve_task_json_path(sys.argv[1])
-    ensure_file(json_path, "JSON file")
     try:
-        run_instantmesh(json_path)
+        json_path, task = load_stage_task(
+            sys.argv,
+            usage="Usage: python code/stages/hololens3d_reconstruction/run_instantmesh_from_json.py <task_meta.json or filename>",
+            stage_name="instantmesh",
+        )
+        run_instantmesh(json_path, task)
         return 0
     except Exception as exc:
         print(str(exc), file=sys.stderr)
