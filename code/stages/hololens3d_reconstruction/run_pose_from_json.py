@@ -16,6 +16,7 @@ from pose_math import (
 )
 from stage_common import load_stage_task
 from task_json import save_task_json
+from unity_coordinate_utils import convert_windows_pose_matrix_to_unity_pose_components
 
 
 CUSTOM_RUNTIME_LOCAL_AXIS_REMAP_TO_UNITY = np.array(
@@ -68,6 +69,13 @@ def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
 
 def resolve_pv_camera_world_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
     pv_info = task.get("PVCamera") or {}
+    pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
+    if pv_pose.shape == (4, 4):
+        translation, rotation, _quat_xyzw = convert_windows_pose_matrix_to_unity_pose_components(
+            pv_pose
+        )
+        return translation, rotation
+
     translation = np.asarray(pv_info.get("position"), dtype=np.float64)
     quat_xyzw = np.asarray(pv_info.get("rotation_quaternion_xyzw"), dtype=np.float64)
 
@@ -75,19 +83,9 @@ def resolve_pv_camera_world_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
         rotation = quat_xyzw_to_rotation_matrix(quat_xyzw)
         return translation.astype(np.float64), rotation.astype(np.float64)
 
-    pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
-    if pv_pose.shape != (4, 4):
-        raise ValueError(
-            "PVCamera must include either position+rotation_quaternion_xyzw or pose(4x4)"
-        )
-
-    rotation = pv_pose[:3, :3].astype(np.float64)
-    translation = pv_pose[3, :3].astype(np.float64)
-    quat_xyzw = rotation_matrix_to_quat_xyzw(rotation)
-    translation[2] *= -1.0
-    quat_xyzw[2] *= -1.0
-    rotation = quat_xyzw_to_rotation_matrix(quat_xyzw)
-    return translation, rotation
+    raise ValueError(
+        "PVCamera must include either pose(4x4) or position+rotation_quaternion_xyzw"
+    )
 
 def compute_world_pose(task: dict) -> dict[str, list[float]]:
     alignment = task.get("object_alignment") or {}
@@ -144,7 +142,7 @@ def build_pose_debug(task: dict) -> dict:
                 pv_position,
                 "unity_world_x_right_y_up_z_forward",
             ),
-            "notes": "PVCamera world pose uses the precomputed server-side position/quaternion with Z flipped on both translation and quaternion.",
+            "notes": "PVCamera world pose is converted from the raw Windows/hl2da pose matrix into the Unity world basis before composition.",
         },
         "final_object_world": {
             "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,

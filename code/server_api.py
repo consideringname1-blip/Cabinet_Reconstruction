@@ -4,8 +4,6 @@ import base64
 import json
 from datetime import datetime, timezone
 
-import numpy as np
-
 from flask import Flask, jsonify, request, send_from_directory
 
 from config import (
@@ -24,6 +22,7 @@ from task_worker import (
     start_worker,
 )
 from task_json import save_task_json
+from unity_coordinate_utils import convert_windows_pose_matrix_to_unity_pose_components
 
 
 app = Flask(__name__)
@@ -32,68 +31,13 @@ app = Flask(__name__)
 start_worker()
 
 
-def _normalize_quat_xyzw(q: np.ndarray) -> np.ndarray:
-    q = np.asarray(q, dtype=np.float64)
-    n = np.linalg.norm(q)
-    if n <= 0:
-        raise ValueError("zero-length quaternion")
-    return q / n
-
-
-def _rotation_matrix_to_quat_xyzw(rotation: np.ndarray) -> np.ndarray:
-    rotation = np.asarray(rotation, dtype=np.float64)
-    if rotation.shape != (3, 3):
-        raise ValueError("rotation matrix must be 3x3")
-
-    m00, m01, m02 = rotation[0]
-    m10, m11, m12 = rotation[1]
-    m20, m21, m22 = rotation[2]
-
-    trace = m00 + m11 + m22
-    if trace > 0.0:
-        s = np.sqrt(trace + 1.0) * 2.0
-        w = 0.25 * s
-        x = (m21 - m12) / s
-        y = (m02 - m20) / s
-        z = (m10 - m01) / s
-    elif (m00 > m11) and (m00 > m22):
-        s = np.sqrt(1.0 + m00 - m11 - m22) * 2.0
-        w = (m21 - m12) / s
-        x = 0.25 * s
-        y = (m01 + m10) / s
-        z = (m02 + m20) / s
-    elif m11 > m22:
-        s = np.sqrt(1.0 + m11 - m00 - m22) * 2.0
-        w = (m02 - m20) / s
-        x = (m01 + m10) / s
-        y = 0.25 * s
-        z = (m12 + m21) / s
-    else:
-        s = np.sqrt(1.0 + m22 - m00 - m11) * 2.0
-        w = (m10 - m01) / s
-        x = (m02 + m20) / s
-        y = (m12 + m21) / s
-        z = 0.25 * s
-
-    return _normalize_quat_xyzw(np.array([x, y, z, w], dtype=np.float64))
-
-
-def _extract_flipped_pv_pose_components(pose_value) -> tuple[list[float] | None, list[float] | None]:
+def _extract_unity_pv_pose_components(pose_value) -> tuple[list[float] | None, list[float] | None]:
     if pose_value is None:
         return None, None
 
-    pose = np.asarray(pose_value, dtype=np.float64)
-    if pose.shape != (4, 4):
-        raise ValueError("PVCamera.pose must be 4x4")
-
-    position = pose[3, :3].astype(np.float64)
-    position[2] *= -1.0
-
-    rotation = pose[:3, :3].astype(np.float64)
-    quat_xyzw = _rotation_matrix_to_quat_xyzw(rotation)
-    quat_xyzw[2] *= -1.0
-    quat_xyzw = _normalize_quat_xyzw(quat_xyzw)
-
+    position, _rotation, quat_xyzw = convert_windows_pose_matrix_to_unity_pose_components(
+        pose_value
+    )
     return [float(v) for v in position], [float(v) for v in quat_xyzw]
 
 
@@ -211,7 +155,7 @@ def generate_model():
         dj = _parse_json_field("DepthCameraJ")
         devj = _parse_json_field("deviceJ")
         sbj = _parse_json_field("SelectionBoxJ")
-        pv_position, pv_rotation_quaternion_xyzw = _extract_flipped_pv_pose_components(pvj.get("pose"))
+        pv_position, pv_rotation_quaternion_xyzw = _extract_unity_pv_pose_components(pvj.get("pose"))
 
         top_left = sbj.get("top_left")
         bottom_right = sbj.get("bottom_right")

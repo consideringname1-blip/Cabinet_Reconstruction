@@ -17,7 +17,9 @@ from task_json import load_task_json, resolve_task_json_path, save_task_json
 try:
     from aruco_common import (
         ARUCO_LOCAL_COORDINATE_BASIS,
+        OPENCV_CAMERA_TO_UNITY_TRANSFORM,
         UNITY_WORLD_COORDINATE_BASIS,
+        WINDOWS_POSE_TO_UNITY_TRANSFORM,
         compose_world_pose,
         convert_cv_pose_to_unity_pose,
         ensure_raw_output_dir,
@@ -33,7 +35,9 @@ try:
 except ModuleNotFoundError:
     from .aruco_common import (
         ARUCO_LOCAL_COORDINATE_BASIS,
+        OPENCV_CAMERA_TO_UNITY_TRANSFORM,
         UNITY_WORLD_COORDINATE_BASIS,
+        WINDOWS_POSE_TO_UNITY_TRANSFORM,
         compose_world_pose,
         convert_cv_pose_to_unity_pose,
         ensure_raw_output_dir,
@@ -146,6 +150,9 @@ def main(argv: list[str]) -> int:
         "matched_marker_id": None,
         "coordinate_basis_local": ARUCO_LOCAL_COORDINATE_BASIS,
         "coordinate_basis_world": UNITY_WORLD_COORDINATE_BASIS,
+        "pv_pose_basis_transform": WINDOWS_POSE_TO_UNITY_TRANSFORM,
+        "marker_camera_basis_transform": OPENCV_CAMERA_TO_UNITY_TRANSFORM,
+        "marker_axes_definition": "origin=center, +x=marker right, +y=marker up, +z=marker front normal",
         "short_circuit": False,
         "raw_record_path": str(record_path),
         "roi_image_path": str(roi_path),
@@ -215,10 +222,10 @@ def main(argv: list[str]) -> int:
             half = marker_size_m * 0.5
             object_points = np.array(
                 [
-                    [-half, -half, 0.0],
-                    [half, -half, 0.0],
-                    [half, half, 0.0],
                     [-half, half, 0.0],
+                    [half, half, 0.0],
+                    [half, -half, 0.0],
+                    [-half, -half, 0.0],
                 ],
                 dtype=np.float64,
             )

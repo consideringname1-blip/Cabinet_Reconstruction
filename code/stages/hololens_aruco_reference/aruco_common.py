@@ -14,14 +14,18 @@ except ModuleNotFoundError:
 from config import ARUCO_RAW_ROOT, ARUCO_TEMPLATE_PATH, UPLOAD_FOLDER
 from hololens3d_reconstruction.pose_math import (
     quat_xyzw_to_rotation_matrix,
-    rotation_matrix_to_quat_xyzw,
     serialize_pose,
+)
+from unity_coordinate_utils import (
+    convert_opencv_camera_pose_to_unity_camera_pose,
+    convert_windows_pose_matrix_to_unity_pose_components,
 )
 
 
 ARUCO_LOCAL_COORDINATE_BASIS = "aruco_local_x_right_y_up_z_forward"
 UNITY_WORLD_COORDINATE_BASIS = "unity_world_x_right_y_up_z_forward"
-_CV_TO_UNITY_BASIS = np.diag([1.0, -1.0, 1.0]).astype(np.float64)
+WINDOWS_POSE_TO_UNITY_TRANSFORM = "windows_spatial_to_unity_flip_z"
+OPENCV_CAMERA_TO_UNITY_TRANSFORM = "opencv_camera_to_unity_camera_flip_y"
 
 
 def default_aruco_template() -> dict[str, Any]:
@@ -157,6 +161,13 @@ def orthonormalize_rotation(rotation: np.ndarray) -> np.ndarray:
 
 def resolve_pv_camera_world_pose(task: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
     pv_info = task.get("PVCamera") or {}
+    pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
+    if pv_pose.shape == (4, 4):
+        translation, rotation, _quat_xyzw = convert_windows_pose_matrix_to_unity_pose_components(
+            pv_pose
+        )
+        return translation.astype(np.float64), rotation.astype(np.float64)
+
     translation = np.asarray(pv_info.get("position"), dtype=np.float64)
     quat_xyzw = np.asarray(pv_info.get("rotation_quaternion_xyzw"), dtype=np.float64)
 
@@ -164,29 +175,17 @@ def resolve_pv_camera_world_pose(task: dict[str, Any]) -> tuple[np.ndarray, np.n
         rotation = quat_xyzw_to_rotation_matrix(quat_xyzw)
         return translation.astype(np.float64), rotation.astype(np.float64)
 
-    pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
-    if pv_pose.shape != (4, 4):
-        raise ValueError(
-            "PVCamera must include either position+rotation_quaternion_xyzw or pose(4x4)"
-        )
-
-    rotation = pv_pose[:3, :3].astype(np.float64)
-    translation = pv_pose[3, :3].astype(np.float64)
-    quat_xyzw = rotation_matrix_to_quat_xyzw(rotation)
-    translation[2] *= -1.0
-    quat_xyzw[2] *= -1.0
-    rotation = quat_xyzw_to_rotation_matrix(quat_xyzw)
-    return translation.astype(np.float64), rotation.astype(np.float64)
+    raise ValueError(
+        "PVCamera must include either pose(4x4) or position+rotation_quaternion_xyzw"
+    )
 
 
 def convert_cv_pose_to_unity_pose(rotation_cv: np.ndarray, translation_cv: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    rotation_cv = np.asarray(rotation_cv, dtype=np.float64)
-    translation_cv = np.asarray(translation_cv, dtype=np.float64).reshape(3)
-    rotation_unity = orthonormalize_rotation(
-        _CV_TO_UNITY_BASIS @ rotation_cv @ _CV_TO_UNITY_BASIS
+    rotation_unity, translation_unity = convert_opencv_camera_pose_to_unity_camera_pose(
+        rotation_cv,
+        translation_cv,
     )
-    translation_unity = (_CV_TO_UNITY_BASIS @ translation_cv.reshape(3, 1)).reshape(3)
-    return rotation_unity, translation_unity.astype(np.float64)
+    return rotation_unity.astype(np.float64), translation_unity.astype(np.float64)
 
 
 def compose_world_pose(
