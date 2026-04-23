@@ -38,7 +38,10 @@ dvc remote list
 日常流程：
 上传：
 conda activate dvc
-dvc add data
+dvc add data/database
+dvc add data/output
+dvc add data/RecordPhotoAndVideo
+dvc add data/upload
 git add .
 git commit -m "update data"
 dvc push
@@ -48,6 +51,9 @@ conda activate dvc
 git pull
 dvc pull
 
+
+rm -rf /root/.cache/pydrive2fs/*
+Remove-Item -Recurse -Force "$env:LOCALAPPDATA\pydrive2fs\Cache\*"
 
 /root/.cache/pydrive2fs
 C:\Users\hwang.CV\AppData\Local\pydrive2fs\Cache
