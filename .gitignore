@@ -44,9 +44,10 @@ __pycache__/
 # ========== Data ==========
 ########################################
 
-/data/*
-!/data/aruco/
-!/data/config/
+/data/database/
+/data/output/
+/data/RecordPhotoAndVideo/
+/data/upload/
 ########################################
 # ========== Logs ==========
 ########################################

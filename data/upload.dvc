@@ -1,0 +1,6 @@
+outs:
+- md5: 0905d0caf54d4768f19c92875f540da0.dir
+  size: 28048962
+  nfiles: 174
+  hash: md5
+  path: upload
