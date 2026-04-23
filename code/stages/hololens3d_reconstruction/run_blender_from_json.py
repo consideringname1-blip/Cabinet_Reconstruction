@@ -15,6 +15,8 @@ def run_blender(json_path: Path) -> None:
     command = [
         str(blender_bin),
         "--background",
+        "--python-exit-code",
+        "1",
         "--python",
         str(CONVERT_SCRIPT),
         "--",
@@ -36,7 +38,10 @@ def run_blender(json_path: Path) -> None:
     blender_info = task.get("Blender") or {}
     fbx_name = blender_info.get("fbx")
     if not fbx_name:
-        raise ValueError("Blender.fbx is missing")
+        raise RuntimeError(
+            "Blender stage finished without producing Blender.fbx. "
+            "Check Blender Python imports/export logs from convert_obj_to_fbx.py."
+        )
 
     ensure_file(BLENDER_FBX_DIR / fbx_name, "Blender fbx")
 

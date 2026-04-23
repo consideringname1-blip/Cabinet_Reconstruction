@@ -1,6 +1,17 @@
 import sys
 from pathlib import Path
 
+_BOOTSTRAP_ROOTS = (
+    Path(__file__).resolve().parent,
+    Path(__file__).resolve().parent.parent,
+    Path(__file__).resolve().parent.parent.parent,
+)
+for _bootstrap_root in _BOOTSTRAP_ROOTS:
+    _bootstrap_root_str = str(_bootstrap_root)
+    if _bootstrap_root_str not in sys.path:
+        sys.path.insert(0, _bootstrap_root_str)
+
+import _bootstrap
 import bpy
 
 from blender_common import clean_scene, ensure_file
