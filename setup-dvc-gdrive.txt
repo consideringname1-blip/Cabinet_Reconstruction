@@ -38,6 +38,7 @@ dvc remote list
 日常流程：
 上传：
 conda activate dvc
+dvc add data/aruco/runtime
 dvc add data/database
 dvc add data/output
 dvc add data/RecordPhotoAndVideo
@@ -51,7 +52,7 @@ conda activate dvc
 git pull
 dvc pull
 
-
+关于google drive缓存刷新：
 rm -rf /root/.cache/pydrive2fs/*
 Remove-Item -Recurse -Force "$env:LOCALAPPDATA\pydrive2fs\Cache\*"
 

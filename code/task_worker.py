@@ -219,7 +219,7 @@ def _process_one_task(task_id: str) -> None:
     if task_record is None:
         raise ValueError(f"Task not found in database: {task_id}")
 
-    json_path = Path(task_record["json_path"]).expanduser().resolve()
+    json_path = resolve_task_json_path(task_record["json_path"])
     if not json_path.is_file():
         raise FileNotFoundError(f"JSON file not found: {json_path}")
 
@@ -330,10 +330,10 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     if task_record is None:
         return None
 
-    json_path = Path(task_record["json_path"])
-    if json_path.is_file():
+    try:
+        json_path = resolve_task_json_path(task_record["json_path"])
         task_json = load_task_json(json_path)
-    else:
+    except FileNotFoundError:
         task_json = {}
 
     task_record["task_json"] = task_json
@@ -350,10 +350,10 @@ def get_latest_completed_task_data() -> Optional[Dict[str, Any]]:
     if task_record is None:
         return None
 
-    json_path = Path(task_record["json_path"])
-    if json_path.is_file():
+    try:
+        json_path = resolve_task_json_path(task_record["json_path"])
         task_json = load_task_json(json_path)
-    else:
+    except FileNotFoundError:
         task_json = {}
 
     task_record["task_json"] = task_json

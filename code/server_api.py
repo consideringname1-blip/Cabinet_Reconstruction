@@ -4,9 +4,17 @@ import base64
 import json
 from datetime import datetime, timezone
 
+import cv2
+import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
 
 from config import (
+    AHAT_ENABLE_UPLOAD_GUARD,
+    AHAT_MAX_RELIABLE_DEPTH_MM,
+    AHAT_MAX_UPLOAD_PNG_BYTES,
+    AHAT_MIN_DEPTH_MM,
+    AHAT_MIN_USABLE_DEPTH_PIXELS,
+    AHAT_SENSOR_NAME,
     BLENDER_FBX_DIR,
     FOLDER_MAP,
     INSTANTMESH_OUTPUT_MESHES,
@@ -45,6 +53,47 @@ def _append_pose_fields(response: dict, task_json: dict) -> None:
     for key in ("object", "object_world", "object_aruco", "aruco_reference", "debug"):
         value = task_json.get(key)
         response[key] = value if value else None
+
+
+def _sanitize_ahat_depth_png(depth_png_bytes: bytes) -> tuple[bytes, dict]:
+    depth_png = np.frombuffer(depth_png_bytes, dtype=np.uint8)
+    depth_image = cv2.imdecode(depth_png, cv2.IMREAD_UNCHANGED)
+    if depth_image is None:
+        raise ValueError("DepthCameraJ.image is not a valid PNG")
+    if depth_image.dtype != np.uint16:
+        raise ValueError(f"DepthCameraJ.image must be uint16 depth, got {depth_image.dtype}")
+    if depth_image.ndim != 2:
+        raise ValueError(f"DepthCameraJ.image must be a single-channel image, got shape {depth_image.shape}")
+
+    valid_mask = (depth_image >= AHAT_MIN_DEPTH_MM) & (depth_image <= AHAT_MAX_RELIABLE_DEPTH_MM)
+    sanitized_depth = np.where(valid_mask, depth_image, 0).astype(np.uint16)
+
+    encoded_ok, encoded_png = cv2.imencode(".png", sanitized_depth)
+    if not encoded_ok:
+        raise ValueError("Failed to re-encode sanitized AHAT depth image")
+
+    stats = {
+        "width": int(depth_image.shape[1]),
+        "height": int(depth_image.shape[0]),
+        "raw_nonzero_pixels": int(np.count_nonzero(depth_image)),
+        "valid_depth_pixels": int(valid_mask.sum()),
+        "clipped_depth_pixels": int(np.count_nonzero(depth_image) - valid_mask.sum()),
+        "min_depth_mm": int(AHAT_MIN_DEPTH_MM),
+        "max_reliable_depth_mm": int(AHAT_MAX_RELIABLE_DEPTH_MM),
+        "input_png_bytes": int(len(depth_png_bytes)),
+        "sanitized_png_bytes": int(encoded_png.size),
+    }
+
+    if AHAT_ENABLE_UPLOAD_GUARD and stats["valid_depth_pixels"] < int(AHAT_MIN_USABLE_DEPTH_PIXELS):
+        raise ValueError(
+            f"AHAT depth is not usable. Move the object closer and keep it within {AHAT_MAX_RELIABLE_DEPTH_MM / 1000.0:.1f} m."
+        )
+    if AHAT_ENABLE_UPLOAD_GUARD and stats["sanitized_png_bytes"] > int(AHAT_MAX_UPLOAD_PNG_BYTES):
+        raise ValueError(
+            f"AHAT depth is still too large after near-range filtering. Move the object closer and keep it within {AHAT_MAX_RELIABLE_DEPTH_MM / 1000.0:.1f} m."
+        )
+
+    return encoded_png.tobytes(), stats
 
 
 def _build_completed_task_response(task_data: dict) -> dict:
@@ -156,6 +205,9 @@ def generate_model():
         devj = _parse_json_field("deviceJ")
         sbj = _parse_json_field("SelectionBoxJ")
         pv_position, pv_rotation_quaternion_xyzw = _extract_unity_pv_pose_components(pvj.get("pose"))
+        requested_sensor = str(dj.get("sensor") or AHAT_SENSOR_NAME).strip().upper()
+        if requested_sensor != AHAT_SENSOR_NAME:
+            raise ValueError(f"Only {AHAT_SENSOR_NAME} depth uploads are supported in this build")
 
         top_left = sbj.get("top_left")
         bottom_right = sbj.get("bottom_right")
@@ -178,9 +230,11 @@ def generate_model():
             f.write(pv_png_bytes)
 
         depth_path = None
+        depth_stats = None
         depth_b64 = dj.get("image", "")
         if isinstance(depth_b64, str) and depth_b64:
             depth_png_bytes = _b64_to_bytes(depth_b64)
+            depth_png_bytes, depth_stats = _sanitize_ahat_depth_png(depth_png_bytes)
             depth_path = UPLOAD_FOLDER / f"{base}_depth.png"
             with open(depth_path, "wb") as f:
                 f.write(depth_png_bytes)
@@ -208,7 +262,8 @@ def generate_model():
             "DepthCamera": {
                 "name": str(depth_path.name) if depth_path else None,
                 "pose": dj.get("pose"),
-                "sensor": "AHAT",
+                "sensor": AHAT_SENSOR_NAME,
+                "stats": depth_stats,
             },
             "SelectionBox": {
                 "top_left": top_left,

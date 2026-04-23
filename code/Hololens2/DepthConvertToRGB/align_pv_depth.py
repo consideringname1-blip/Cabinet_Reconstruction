@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from config import (
+    AHAT_MAX_RELIABLE_DEPTH_MM,
+    AHAT_MIN_DEPTH_MM,
     CALIBRATION_DIR,
     UPLOAD_FOLDER,
     HOLOLENS2_OUTPUT_DEPTH_IMAGES,
@@ -122,8 +124,15 @@ def DepthConvertToRGB(json_path,calibration_base_path = CALIBRATION_DIR,data_bas
     print('Depth type: %s, shape : %s, max : %s' % (type(pv_z), str(pv_z.shape), np.max(pv_z)))
 
     align_depth = (pv_z * 1000).astype(np.uint16)
+    valid_align_mask = (align_depth >= AHAT_MIN_DEPTH_MM) & (align_depth <= AHAT_MAX_RELIABLE_DEPTH_MM)
+    align_depth = np.where(valid_align_mask, align_depth, 0).astype(np.uint16)
     align_depth_name = f"{data['task_name']}_align_depth.png"
     data["DepthCamera"]["align_depth_name"] = align_depth_name
+    data["DepthCamera"]["align_depth_stats"] = {
+        "min_depth_mm": int(AHAT_MIN_DEPTH_MM),
+        "max_reliable_depth_mm": int(AHAT_MAX_RELIABLE_DEPTH_MM),
+        "valid_depth_pixels": int(valid_align_mask.sum()),
+    }
     cv2.imwrite(os.path.join(HOLOLENS2_OUTPUT_DEPTH_IMAGES, align_depth_name), align_depth)
 
     align_depth_turbo = (pv_z * 256).astype(np.uint8)

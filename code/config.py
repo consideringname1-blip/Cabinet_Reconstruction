@@ -20,6 +20,14 @@ IS_RUN_FLASK_SERVER = True
 # Fraction cropped inward from the SAM3 mask periphery before depth->pointcloud
 # conversion. Set to 0.0 to disable.
 ICP_DEPTH_BORDER_CROP_RATIO = 0.03
+AHAT_SENSOR_NAME = "AHAT"
+AHAT_MIN_DEPTH_MM = 200
+AHAT_MAX_RELIABLE_DEPTH_MM = 1000
+AHAT_MIN_USABLE_DEPTH_PIXELS = 4096
+AHAT_MAX_UPLOAD_PNG_BYTES = 450000
+AHAT_ENABLE_UPLOAD_GUARD = False
+ARUCO_ROI_PADDING_RATIO = 0.18
+ARUCO_ROI_PADDING_MIN_PX = 24
 # camera_refine = camera-view local rotation+translation+scale adjustment.
 # off = measured-distance placement without ICP. The runtime only keeps one
 # active ICP path plus the skip-ICP path.
@@ -82,8 +90,11 @@ OUTPUT_ROOT = DATA_ROOT / "output"
 ENV_CONFIG_ROOT = DATA_ROOT / "config"
 DATABASE_ROOT = DATA_ROOT / "database"
 ARUCO_DATA_ROOT = DATA_ROOT / "aruco"
-ARUCO_TEMPLATE_PATH = ARUCO_DATA_ROOT / "aruco_template.json"
-ARUCO_RAW_ROOT = ARUCO_DATA_ROOT / "raw"
+ARUCO_REFERENCE_ROOT = ARUCO_DATA_ROOT / "reference"
+ARUCO_RUNTIME_ROOT = ARUCO_DATA_ROOT / "runtime"
+ARUCO_TEMPLATE_PATH = ARUCO_REFERENCE_ROOT / "aruco.json"
+ARUCO_REFERENCE_MARKER_IMAGE_PATH = ARUCO_REFERENCE_ROOT / "ar_marker_7x7_1.png"
+ARUCO_RAW_ROOT = ARUCO_RUNTIME_ROOT
 MODELS_ROOT = PROJECT_ROOT / "models"
 
 
@@ -175,6 +186,8 @@ for path in [
     ENV_CONFIG_ROOT,
     DATABASE_ROOT,
     ARUCO_DATA_ROOT,
+    ARUCO_REFERENCE_ROOT,
+    ARUCO_RUNTIME_ROOT,
     ARUCO_RAW_ROOT,
     INSTANTMESH_INPUT_ROOT,
     INSTANTMESH_OUTPUT_MESHES,

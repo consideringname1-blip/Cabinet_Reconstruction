@@ -10,9 +10,18 @@ try:
 except ModuleNotFoundError:
     from . import _bootstrap  # type: ignore
 
-from config import ARUCO_TEMPLATE_PATH
+from config import (
+    ARUCO_ROI_PADDING_MIN_PX,
+    ARUCO_ROI_PADDING_RATIO,
+    ARUCO_TEMPLATE_PATH,
+)
 from task_db import create_aruco_reference
-from task_json import load_task_json, resolve_task_json_path, save_task_json
+from task_json import (
+    load_task_json,
+    normalize_path_for_storage,
+    resolve_task_json_path,
+    save_task_json,
+)
 
 try:
     from aruco_common import (
@@ -70,14 +79,66 @@ def _resolve_dictionary(aruco_module, dictionary_name: str):
     return aruco_module.getPredefinedDictionary(getattr(aruco_module, dictionary_name))
 
 
-def _detect_markers(cv2, roi_image: np.ndarray, dictionary):
-    if hasattr(cv2.aruco, "ArucoDetector"):
+def _build_detector_parameters(cv2):
+    if hasattr(cv2.aruco, "DetectorParameters"):
         parameters = cv2.aruco.DetectorParameters()
-        detector = cv2.aruco.ArucoDetector(dictionary, parameters)
-        return detector.detectMarkers(roi_image)[:2]
+    else:
+        parameters = cv2.aruco.DetectorParameters_create()
 
-    parameters = cv2.aruco.DetectorParameters_create()
-    corners, ids, _rejected = cv2.aruco.detectMarkers(roi_image, dictionary, parameters=parameters)
+    tuned_values = {
+        "adaptiveThreshWinSizeMin": 3,
+        "adaptiveThreshWinSizeMax": 53,
+        "adaptiveThreshWinSizeStep": 4,
+        "adaptiveThreshConstant": 7,
+        "minMarkerPerimeterRate": 0.015,
+        "maxMarkerPerimeterRate": 4.0,
+        "polygonalApproxAccuracyRate": 0.05,
+        "minCornerDistanceRate": 0.03,
+        "minDistanceToBorder": 1,
+    }
+    for name, value in tuned_values.items():
+        if hasattr(parameters, name):
+            setattr(parameters, name, value)
+
+    if hasattr(cv2.aruco, "CORNER_REFINE_SUBPIX") and hasattr(parameters, "cornerRefinementMethod"):
+        parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
+    if hasattr(parameters, "cornerRefinementWinSize"):
+        parameters.cornerRefinementWinSize = 5
+    if hasattr(parameters, "cornerRefinementMaxIterations"):
+        parameters.cornerRefinementMaxIterations = 30
+    if hasattr(parameters, "cornerRefinementMinAccuracy"):
+        parameters.cornerRefinementMinAccuracy = 0.01
+    return parameters
+
+
+def _expand_roi(
+    x0: int,
+    y0: int,
+    x1: int,
+    y1: int,
+    image_width: int,
+    image_height: int,
+) -> tuple[int, int, int, int]:
+    width = max(x1 - x0, 1)
+    height = max(y1 - y0, 1)
+    pad_x = max(int(round(width * float(ARUCO_ROI_PADDING_RATIO))), int(ARUCO_ROI_PADDING_MIN_PX))
+    pad_y = max(int(round(height * float(ARUCO_ROI_PADDING_RATIO))), int(ARUCO_ROI_PADDING_MIN_PX))
+    return (
+        max(0, x0 - pad_x),
+        max(0, y0 - pad_y),
+        min(image_width, x1 + pad_x),
+        min(image_height, y1 + pad_y),
+    )
+
+
+def _detect_markers(cv2, roi_image: np.ndarray, dictionary):
+    gray = cv2.cvtColor(roi_image, cv2.COLOR_BGR2GRAY) if roi_image.ndim == 3 else roi_image
+    parameters = _build_detector_parameters(cv2)
+    if hasattr(cv2.aruco, "ArucoDetector"):
+        detector = cv2.aruco.ArucoDetector(dictionary, parameters)
+        return detector.detectMarkers(gray)[:2]
+
+    corners, ids, _rejected = cv2.aruco.detectMarkers(gray, dictionary, parameters=parameters)
     return corners, ids
 
 
@@ -135,18 +196,20 @@ def main(argv: list[str]) -> int:
 
     raw_dir = ensure_raw_output_dir(task_name)
     roi_path = raw_dir / "roi.png"
+    search_roi_path = raw_dir / "search_roi.png"
     annotated_path = raw_dir / "annotated.png"
     record_path = raw_dir / "record.json"
 
     template = load_aruco_template()
     template_state = evaluate_aruco_template(template)
     aruco_stage = {
-        "template_path": str(ARUCO_TEMPLATE_PATH),
+        "template_path": normalize_path_for_storage(ARUCO_TEMPLATE_PATH),
         "template_enabled": template_state["enabled"],
         "configured": template_state["configured"],
         "config_reason": template_state["reason"],
         "detected": False,
         "detected_ids": [],
+        "full_image_detected_ids": [],
         "matched_marker_id": None,
         "coordinate_basis_local": ARUCO_LOCAL_COORDINATE_BASIS,
         "coordinate_basis_world": UNITY_WORLD_COORDINATE_BASIS,
@@ -154,9 +217,11 @@ def main(argv: list[str]) -> int:
         "marker_camera_basis_transform": OPENCV_CAMERA_TO_UNITY_TRANSFORM,
         "marker_axes_definition": "origin=center, +x=marker right, +y=marker up, +z=marker front normal",
         "short_circuit": False,
-        "raw_record_path": str(record_path),
-        "roi_image_path": str(roi_path),
-        "annotated_image_path": str(annotated_path),
+        "marker_visible_outside_selection": False,
+        "raw_record_path": normalize_path_for_storage(record_path),
+        "roi_image_path": normalize_path_for_storage(roi_path),
+        "search_roi_image_path": normalize_path_for_storage(search_roi_path),
+        "annotated_image_path": normalize_path_for_storage(annotated_path),
     }
     record = {
         "task_id": task_id,
@@ -183,11 +248,15 @@ def main(argv: list[str]) -> int:
 
     image_height, image_width = image_bgr.shape[:2]
     x0, y0, x1, y1 = resolve_selection_roi(task, image_width, image_height)
+    sx0, sy0, sx1, sy1 = _expand_roi(x0, y0, x1, y1, image_width, image_height)
     aruco_stage["roi_pixel_bounds"] = {"x0": x0, "y0": y0, "x1": x1, "y1": y1}
+    aruco_stage["search_roi_pixel_bounds"] = {"x0": sx0, "y0": sy0, "x1": sx1, "y1": sy1}
 
     roi_image = image_bgr[y0:y1, x0:x1].copy()
+    search_roi_image = image_bgr[sy0:sy1, sx0:sx1].copy()
     cv2.imwrite(str(roi_path), roi_image)
-    cv2.imwrite(str(annotated_path), roi_image)
+    cv2.imwrite(str(search_roi_path), search_roi_image)
+    cv2.imwrite(str(annotated_path), search_roi_image)
 
     if not template_state["configured"]:
         _write_debug(task, aruco_stage)
@@ -207,16 +276,22 @@ def main(argv: list[str]) -> int:
     try:
         expected_marker_id = int(template["marker_id"])
         dictionary = _resolve_dictionary(cv2.aruco, str(template.get("dictionary") or ""))
-        corners, ids = _detect_markers(cv2, roi_image, dictionary)
+        corners, ids = _detect_markers(cv2, search_roi_image, dictionary)
         ids_list = [int(v) for v in ids.flatten().tolist()] if ids is not None else []
         aruco_stage["detected_ids"] = ids_list
+        full_corners, full_ids = _detect_markers(cv2, image_bgr, dictionary)
+        full_ids_list = [int(v) for v in full_ids.flatten().tolist()] if full_ids is not None else []
+        aruco_stage["full_image_detected_ids"] = full_ids_list
+        aruco_stage["marker_visible_outside_selection"] = bool(
+            expected_marker_id in full_ids_list and expected_marker_id not in ids_list
+        )
         matched_index = next((idx for idx, marker_id in enumerate(ids_list) if marker_id == expected_marker_id), None)
 
         if matched_index is not None and corners:
             matched_roi_corners = np.asarray(corners[matched_index], dtype=np.float64).reshape(-1, 2)
             matched_full_corners = matched_roi_corners.copy()
-            matched_full_corners[:, 0] += float(x0)
-            matched_full_corners[:, 1] += float(y0)
+            matched_full_corners[:, 0] += float(sx0)
+            matched_full_corners[:, 1] += float(sy0)
 
             marker_size_m = float(template["marker_size_mm"]) / 1000.0
             half = marker_size_m * 0.5
@@ -231,8 +306,8 @@ def main(argv: list[str]) -> int:
             )
             camera_matrix = resolve_pv_camera_matrix(task)
             annotated_camera_matrix = camera_matrix.copy()
-            annotated_camera_matrix[0, 2] -= float(x0)
-            annotated_camera_matrix[1, 2] -= float(y0)
+            annotated_camera_matrix[0, 2] -= float(sx0)
+            annotated_camera_matrix[1, 2] -= float(sy0)
             ok, rvec, tvec = cv2.solvePnP(
                 object_points,
                 matched_full_corners.astype(np.float64),
@@ -290,7 +365,7 @@ def main(argv: list[str]) -> int:
 
     annotated = _annotate_image(
         cv2,
-        roi_image,
+        search_roi_image,
         corners,
         ids,
         matched_rvec,

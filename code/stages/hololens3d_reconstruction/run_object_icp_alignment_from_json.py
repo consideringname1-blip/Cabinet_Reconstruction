@@ -1042,6 +1042,7 @@ def main(argv: list[str]) -> int:
         "icp_rmse": float(best["rmse"]),
         "icp_fit_model_point_count": int(len(alignment_model_points)) if bool(ICP_ENABLE) else 0,
     }
+    preview_render_errors: list[dict[str, str]] = []
     task["object_alignment"] = object_alignment
 
     debug_section = dict(task.get("debug") or {})
@@ -1053,63 +1054,92 @@ def main(argv: list[str]) -> int:
     task["debug"] = debug_section
 
     if ENABLE_ALIGNMENT_RENDER_OUTPUTS:
-        render_overlay_preview_image(
-            mesh_path=paths["mesh_path"],
-            discarded_pointcloud_path=discarded_points_preview_path,
-            icp_pointcloud_path=icp_points_preview_path,
-            render_path=overlay_preview_path,
-            blender_translation=blender_translation,
-            blender_delta_euler_deg=blender_delta_euler_deg,
-            scale=float(best["scale"]),
-            task=task,
-            blender_arg=argv[2] if len(argv) == 3 else None,
-            title=(
-                "Camera-local Refine Preview"
-                if bool(ICP_ENABLE)
-                else "ICP Skipped Preview"
-            ),
-            header_line=(
-                "Camera-view preview: two-color point cloud + refined model"
-                if bool(ICP_ENABLE)
-                else "Camera-view preview: two-color point cloud + initial model"
-            ),
-            model_legend_line=(
-                "Orange = mask-border-discarded points, green = ICP-used points, blue = refined model"
-                if bool(ICP_ENABLE)
-                else "Orange = mask-border-discarded points, green = ICP-used points, blue = initial model"
-            ),
-        )
-        render_model_compare_preview_image(
-            mesh_path=paths["mesh_path"],
-            render_path=unaligned_preview_path,
-            aligned_blender_translation=blender_translation,
-            aligned_blender_delta_euler_deg=blender_delta_euler_deg,
-            aligned_scale=float(best["scale"]),
-            reference_blender_translation=unity_to_blender_world_vector(preview_initial_translation),
-            reference_blender_delta_euler_deg=np.zeros(3, dtype=np.float32),
-            reference_scale=float(overall_scale),
-            task=task,
-            blender_arg=argv[2] if len(argv) == 3 else None,
-            title=(
-                "Before/After Model Preview"
-                if bool(ICP_ENABLE)
-                else "Model Preview (ICP Skipped)"
-            ),
-            header_line=(
-                "Camera-view preview: aligned model overlaid with initial model"
-                if bool(ICP_ENABLE)
-                else "Camera-view preview: initial model only (before/after identical)"
-            ),
-            model_legend_line=(
-                "Blue = aligned model, orange = initial model"
-                if bool(ICP_ENABLE)
-                else "Blue = current model, orange = initial model"
-            ),
-        )
+        try:
+            render_overlay_preview_image(
+                mesh_path=paths["mesh_path"],
+                discarded_pointcloud_path=discarded_points_preview_path,
+                icp_pointcloud_path=icp_points_preview_path,
+                render_path=overlay_preview_path,
+                blender_translation=blender_translation,
+                blender_delta_euler_deg=blender_delta_euler_deg,
+                scale=float(best["scale"]),
+                task=task,
+                blender_arg=argv[2] if len(argv) == 3 else None,
+                title=(
+                    "Camera-local Refine Preview"
+                    if bool(ICP_ENABLE)
+                    else "ICP Skipped Preview"
+                ),
+                header_line=(
+                    "Camera-view preview: two-color point cloud + refined model"
+                    if bool(ICP_ENABLE)
+                    else "Camera-view preview: two-color point cloud + initial model"
+                ),
+                model_legend_line=(
+                    "Orange = mask-border-discarded points, green = ICP-used points, blue = refined model"
+                    if bool(ICP_ENABLE)
+                    else "Orange = mask-border-discarded points, green = ICP-used points, blue = initial model"
+                ),
+            )
+        except Exception as exc:
+            preview_render_errors.append(
+                {
+                    "preview": "overlay_preview",
+                    "path": overlay_preview_name,
+                    "error": str(exc),
+                }
+            )
+            object_alignment["preview_image_name"] = None
+            if overlay_preview_path.exists():
+                overlay_preview_path.unlink()
+
+        try:
+            render_model_compare_preview_image(
+                mesh_path=paths["mesh_path"],
+                render_path=unaligned_preview_path,
+                aligned_blender_translation=blender_translation,
+                aligned_blender_delta_euler_deg=blender_delta_euler_deg,
+                aligned_scale=float(best["scale"]),
+                reference_blender_translation=unity_to_blender_world_vector(preview_initial_translation),
+                reference_blender_delta_euler_deg=np.zeros(3, dtype=np.float32),
+                reference_scale=float(overall_scale),
+                task=task,
+                blender_arg=argv[2] if len(argv) == 3 else None,
+                title=(
+                    "Before/After Model Preview"
+                    if bool(ICP_ENABLE)
+                    else "Model Preview (ICP Skipped)"
+                ),
+                header_line=(
+                    "Camera-view preview: aligned model overlaid with initial model"
+                    if bool(ICP_ENABLE)
+                    else "Camera-view preview: initial model only (before/after identical)"
+                ),
+                model_legend_line=(
+                    "Blue = aligned model, orange = initial model"
+                    if bool(ICP_ENABLE)
+                    else "Blue = current model, orange = initial model"
+                ),
+            )
+        except Exception as exc:
+            preview_render_errors.append(
+                {
+                    "preview": "model_compare_preview",
+                    "path": unaligned_preview_name,
+                    "error": str(exc),
+                }
+            )
+            object_alignment["preview_image_unaligned_name"] = None
+            if unaligned_preview_path.exists():
+                unaligned_preview_path.unlink()
     elif overlay_preview_path.exists():
         overlay_preview_path.unlink()
         if unaligned_preview_path.exists():
             unaligned_preview_path.unlink()
+
+    if preview_render_errors:
+        object_alignment["preview_render_errors"] = preview_render_errors
+        pose_debug["object_alignment"]["preview_render_errors"] = preview_render_errors
 
     save_task_json(json_path, task)
 

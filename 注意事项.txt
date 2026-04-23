@@ -58,3 +58,11 @@ pip install pyzdepth
     quat_xyzw[2] *= -1.0
     quat_xyzw = normalize_quat_xyzw(quat_xyzw)”
 但是好像只修改了相机的部分，并没有修正物体的部分。按照这个，继续修改这个链路中的相关项（只反转这个z值，不要做任何其他事情）。
+
+260423
+1.修改文件目录以及git和dvc追踪文件夹：sotsuken-hololens2-system\data\aruco内改成一个git追踪的包含原始marker图片ar_marker_7x7_1.png和数据的aruco.json的文件夹，和一个dvc追踪的放计算数据文件夹，并在setup-dvc-gdrive.txt中的日常流程：上传：中进行修正
+2.清理git追踪的sotsuken-hololens2-system\data\aruco内历史数据，直接从最新版开始追踪
+3.检查database里的数据，指出并修正程序中错误的地方
+4.在拍摄距离过远时，显示上传文件过大，深度怀疑是深度图片的问题，尝试在网上搜索相关问题并修正
+5.database里有一次好像出现图片里有marker，却没识别出来的情况，这种应该怎么解决？新增一个marker按钮吗？
+6.说明：近距离AHAT的“距离过远/上传文件过大”拦截目前先保持不启用；相关代码只保留深度清洗与统计，不主动阻止上传。若之后要恢复拦截，需要同时重新启用Unity端和server端的AHAT上传拦截。

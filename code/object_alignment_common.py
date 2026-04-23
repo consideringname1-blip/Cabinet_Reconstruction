@@ -9,6 +9,8 @@ import cv2
 import numpy as np
 
 from config import (
+    AHAT_MAX_RELIABLE_DEPTH_MM,
+    AHAT_MIN_DEPTH_MM,
     BLENDER_BIN,
     ICP_DEPTH_BORDER_CROP_RATIO,
     ICP_IGNORE_OCCLUDED_MODEL_POINTS,
@@ -24,8 +26,8 @@ from task_json import (
 )
 
 
-MIN_DEPTH_MM = 200
-MAX_DEPTH_MM = 1200
+MIN_DEPTH_MM = AHAT_MIN_DEPTH_MM
+MAX_DEPTH_MM = AHAT_MAX_RELIABLE_DEPTH_MM
 
 # Canonical internal basis for measurement / alignment:
 # X = right, Y = up, Z = forward

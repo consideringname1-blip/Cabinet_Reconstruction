@@ -3,7 +3,8 @@ import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from config import DATABASE_PATH
+from config import DATABASE_PATH, UPLOAD_FOLDER
+from task_json import normalize_path_for_storage
 
 
 TABLE_NAME = "tasks"
@@ -152,6 +153,35 @@ def _migrate_task_table(conn: sqlite3.Connection) -> None:
     conn.execute(f"DROP TABLE {legacy_table}")
 
 
+def _normalize_stored_paths(conn: sqlite3.Connection) -> None:
+    task_rows = conn.execute(f"SELECT id, json_path FROM {TABLE_NAME}").fetchall()
+    for row in task_rows:
+        current = str(row["json_path"])
+        normalized = normalize_path_for_storage(current)
+        if normalized == current:
+            continue
+        conn.execute(
+            f"UPDATE {TABLE_NAME} SET json_path = ? WHERE id = ?",
+            (normalized, int(row["id"])),
+        )
+
+    if _table_sql(conn, ARUCO_REFERENCE_TABLE) is None:
+        return
+
+    ref_rows = conn.execute(
+        f"SELECT id, raw_record_path FROM {ARUCO_REFERENCE_TABLE}"
+    ).fetchall()
+    for row in ref_rows:
+        current = str(row["raw_record_path"])
+        normalized = normalize_path_for_storage(current)
+        if normalized == current:
+            continue
+        conn.execute(
+            f"UPDATE {ARUCO_REFERENCE_TABLE} SET raw_record_path = ? WHERE id = ?",
+            (normalized, int(row["id"])),
+        )
+
+
 def initialize_task_table() -> None:
     with _get_connection() as conn:
         if _table_sql(conn, TABLE_NAME) is None:
@@ -167,6 +197,8 @@ def initialize_task_table() -> None:
                 ON {ARUCO_REFERENCE_TABLE} (startup_session_id)
                 """
             )
+
+        _normalize_stored_paths(conn)
         conn.commit()
 
 
@@ -204,7 +236,7 @@ def create_task(
     startup_session_id: str | None = None,
 ) -> Dict[str, Any]:
     initialize_task_table()
-    json_path_str = str(json_path)
+    json_path_str = normalize_path_for_storage(json_path, default_base=UPLOAD_FOLDER)
     startup_session_id = str(startup_session_id or "").strip() or None
     with _get_connection() as conn:
         conn.execute(
@@ -370,7 +402,7 @@ def create_aruco_reference(
                 startup_session_id,
                 task_id,
                 json.dumps(marker_pose_json, ensure_ascii=False),
-                raw_record_path,
+                normalize_path_for_storage(raw_record_path),
                 json.dumps(config_snapshot_json, ensure_ascii=False),
             ),
         )

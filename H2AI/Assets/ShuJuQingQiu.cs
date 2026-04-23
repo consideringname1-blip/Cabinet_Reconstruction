@@ -113,6 +113,43 @@ public class ShuJuQingQiu : MonoBehaviour
         return outer;
     }
 
+    void ShowFrontMessage(string message)
+    {
+        if (string.IsNullOrEmpty(message))
+        {
+            return;
+        }
+
+        if (Game_M.initialize != null)
+        {
+            Game_M.initialize.XianShi(message);
+        }
+    }
+
+    string NormalizeServerErrorForFrontMessage(string serverError, string fallbackMessage)
+    {
+        string normalized = string.IsNullOrEmpty(serverError) ? "" : serverError.Trim();
+        if (string.IsNullOrEmpty(normalized))
+        {
+            return fallbackMessage;
+        }
+
+        string lower = normalized.ToLowerInvariant();
+        if (lower.Contains("move the object closer") || lower.Contains("within 1.0 m"))
+        {
+            return "shangchuan_ERR_ahat_move_closer";
+        }
+        if (lower.Contains("only ahat"))
+        {
+            return "shangchuan_ERR_depth_sensor_not_ahat";
+        }
+        if (lower.Contains("too large"))
+        {
+            return "shangchuan_ERR_ahat_png_too_large_move_closer";
+        }
+        return normalized;
+    }
+
     /// <summary>
     /// 上传图片
     /// </summary>
@@ -135,8 +172,34 @@ public class ShuJuQingQiu : MonoBehaviour
         // 设备相关信息
         // ==========================================================
         Game_M.initialize.XianShi("shangchuan_Device");
-        PV_controler.FreezeCurrentFrame();
-        DP_controler.FreezeCurrentFrame();
+        bool pvFrozen = PV_controler.FreezeCurrentFrame();
+        bool depthFrozen = DP_controler.FreezeCurrentFrame();
+        if (!pvFrozen)
+        {
+            Game_M.initialize.XianShi("shangchuan_ERR_pv_freeze");
+            yield break;
+        }
+        if (!depthFrozen)
+        {
+            Game_M.initialize.XianShi("shangchuan_ERR_depth_freeze");
+            yield break;
+        }
+        if (!DP_controler.IsUsingAhatSensor())
+        {
+            Game_M.initialize.XianShi("shangchuan_ERR_depth_sensor_not_ahat");
+            yield break;
+        }
+        if (HoloLensDepthAquirer.EnableAhatUploadGuard && !DP_controler.IsFrozenAhatDepthUsable())
+        {
+            Debug.LogWarning(
+                "[UPLOAD] AHAT depth rejected before upload. valid="
+                + DP_controler.lastFrozenDepthValidPixels
+                + " clipped="
+                + DP_controler.lastFrozenDepthClippedPixels
+            );
+            Game_M.initialize.XianShi("shangchuan_ERR_ahat_move_closer");
+            yield break;
+        }
 
 
         string ip = GetDeviceIpCached();
@@ -172,6 +235,22 @@ public class ShuJuQingQiu : MonoBehaviour
             yield break;
         }
         byte[] image_dp_P_C_F = ImageConversion.EncodeToPNG(DP_controler.tex_grayscale_publish);
+        if (image_dp_P_C_F == null || image_dp_P_C_F.Length == 0)
+        {
+            Game_M.initialize.XianShi("shangchuan_ERR_depth_png_empty");
+            yield break;
+        }
+        if (HoloLensDepthAquirer.EnableAhatUploadGuard && image_dp_P_C_F.Length > HoloLensDepthAquirer.AHATMaxUploadPngBytes)
+        {
+            Debug.LogWarning(
+                "[UPLOAD] AHAT depth PNG too large after sanitizing. bytes="
+                + image_dp_P_C_F.Length
+                + " valid="
+                + DP_controler.lastFrozenDepthValidPixels
+            );
+            Game_M.initialize.XianShi("shangchuan_ERR_ahat_png_too_large_move_closer");
+            yield break;
+        }
         float[,] pose_dp_C_F = DP_controler.pose_publish;
         const string SENSOR_TYPE = "AHAT";
         // ==========================================================
@@ -291,7 +370,25 @@ public class ShuJuQingQiu : MonoBehaviour
         }
         else
         {
-            Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
+            string serverError = response.Message;
+            if (!string.IsNullOrEmpty(response.DataAsText))
+            {
+                try
+                {
+                    JObject errorJo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
+                    string detailed = errorJo?["error"]?.ToString();
+                    if (!string.IsNullOrEmpty(detailed))
+                    {
+                        serverError = detailed;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            Debug.LogError("Error: " + response.StatusCode + " - " + serverError);
+            ShowFrontMessage(NormalizeServerErrorForFrontMessage(serverError, "shangchuan_ERR_request_failed"));
         }
     }
 
@@ -515,6 +612,7 @@ public class ShuJuQingQiu : MonoBehaviour
         if (string.IsNullOrEmpty(fbxUrl))
         {
             Debug.LogWarning("[" + sourceTag + "] completed response missing fbx_url.");
+            ShowFrontMessage("download_ERR_missing_fbx_url");
             return false;
         }
 
@@ -526,6 +624,7 @@ public class ShuJuQingQiu : MonoBehaviour
         if (objectToken == null || objectToken.Type == JTokenType.Null)
         {
             Debug.LogWarning("[" + sourceTag + "] completed response missing object.");
+            ShowFrontMessage("pose_WARN_missing_object");
         }
 
         return true;
@@ -535,6 +634,7 @@ public class ShuJuQingQiu : MonoBehaviour
         if (!response.IsSuccess)
         {
             Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
+            ShowFrontMessage("check_ERR_request_failed");
             return;
         }
 
@@ -546,6 +646,7 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             string err = jo["error"]?.ToString();
             Debug.LogError("[CHECK] task failed: " + err);
+            ShowFrontMessage(NormalizeServerErrorForFrontMessage(err, "check_ERR_task_failed"));
             CancelInvoke();
             return;
         }
@@ -555,6 +656,7 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             ApplyDebugInfo(jo);
             ApplyResponsePoses(jo, true);
+            ShowFrontMessage("aruco_completed");
             CancelInvoke();
             return;
         }
@@ -580,6 +682,7 @@ public class ShuJuQingQiu : MonoBehaviour
         if (!response.IsSuccess)
         {
             Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
+            ShowFrontMessage("latest_completed_ERR_request_failed");
             return;
         }
 
@@ -589,6 +692,7 @@ public class ShuJuQingQiu : MonoBehaviour
         if (status != "completed")
         {
             Debug.LogWarning("[LATEST] latest-completed returned status = " + status);
+            ShowFrontMessage("latest_completed_ERR_not_completed");
             return;
         }
 
@@ -652,6 +756,7 @@ public class ShuJuQingQiu : MonoBehaviour
         else
         {
             Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
+            ShowFrontMessage("download_ERR_request_failed");
         }
     }
 
@@ -675,6 +780,7 @@ public class ShuJuQingQiu : MonoBehaviour
         else
         {
             Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
+            ShowFrontMessage("image_ERR_request_failed");
         }
     }
 

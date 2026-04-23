@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using TMPro;
+using Unity.Collections;
 using UnityEngine;
 
 enum DepthSensorType
@@ -13,6 +14,12 @@ enum DepthSensorType
 
 public class HoloLensDepthAquirer : MonoBehaviour
 {
+    public const bool EnableAhatUploadGuard = false;
+    public const int AHATMinDepthMm = 200;
+    public const int AHATMaxReliableDepthMm = 1000;
+    public const int AHATMinUsableDepthPixels = 4096;
+    public const int AHATMaxUploadPngBytes = 450000;
+
     [SerializeField] bool _enable_sensor_update = false;
 
     // set Depth Sensor Mode (default All)
@@ -49,6 +56,10 @@ public class HoloLensDepthAquirer : MonoBehaviour
     private Dictionary<hl2da.SENSOR_ID, float[,]> rm_mapxy = new Dictionary<hl2da.SENSOR_ID, float[,]>();
     private Dictionary<hl2da.SENSOR_ID, float[]> rm_intrinsics = new Dictionary<hl2da.SENSOR_ID, float[]>();
     private bool _depthInitialized;
+    public int lastFrozenDepthRawNonzeroPixels { get; private set; }
+    public int lastFrozenDepthValidPixels { get; private set; }
+    public int lastFrozenDepthClippedPixels { get; private set; }
+    public bool lastFrozenAhatDepthUsable { get; private set; }
 
     // Start is called before the first frame update
     void Start()
@@ -147,6 +158,52 @@ public class HoloLensDepthAquirer : MonoBehaviour
 
             System.Buffer.BlockCopy(src, srcOffset, dst, dstOffset, rowBytes);
         }
+    }
+
+    private void ResetFrozenDepthStats()
+    {
+        lastFrozenDepthRawNonzeroPixels = 0;
+        lastFrozenDepthValidPixels = 0;
+        lastFrozenDepthClippedPixels = 0;
+        lastFrozenAhatDepthUsable = false;
+    }
+
+    private void SanitizeFrozenAhatDepthTexture(Texture2D texture)
+    {
+        ResetFrozenDepthStats();
+
+        NativeArray<byte> rawBytes = texture.GetRawTextureData<byte>();
+        for (int i = 0; i + 1 < rawBytes.Length; i += 2)
+        {
+            ushort depthMm = (ushort)(rawBytes[i] | (rawBytes[i + 1] << 8));
+            if (depthMm == 0)
+            {
+                continue;
+            }
+
+            lastFrozenDepthRawNonzeroPixels++;
+            if (depthMm >= AHATMinDepthMm && depthMm <= AHATMaxReliableDepthMm)
+            {
+                lastFrozenDepthValidPixels++;
+                continue;
+            }
+
+            rawBytes[i] = 0;
+            rawBytes[i + 1] = 0;
+            lastFrozenDepthClippedPixels++;
+        }
+
+        lastFrozenAhatDepthUsable = lastFrozenDepthValidPixels >= AHATMinUsableDepthPixels;
+    }
+
+    public bool IsUsingAhatSensor()
+    {
+        return _depthSensorType == DepthSensorType.AHAT;
+    }
+
+    public bool IsFrozenAhatDepthUsable()
+    {
+        return IsUsingAhatSensor() && lastFrozenAhatDepthUsable;
     }
 
     /// <summary>
@@ -357,6 +414,13 @@ public class HoloLensDepthAquirer : MonoBehaviour
 
     public bool FreezeCurrentFrame()
     {
+        if (!IsUsingAhatSensor())
+        {
+            ResetFrozenDepthStats();
+            Game_M.initialize.XianShi("dp_freeze_ERR_sensor_not_ahat");
+            return false;
+        }
+
         if (tex_grayscale == null)
         {
             Game_M.initialize.XianShi("dp_freeze_ERR_tex_null");
@@ -384,11 +448,19 @@ public class HoloLensDepthAquirer : MonoBehaviour
         }
 
         tex_grayscale_publish.LoadRawTextureData(tex_grayscale.GetRawTextureData());
+        SanitizeFrozenAhatDepthTexture(tex_grayscale_publish);
         tex_grayscale_publish.Apply(false);
 
         pose_publish = CloneFloat2D(pose_latest);
 
-        Game_M.initialize.XianShi("dp_freeze_02_done");
+        if (lastFrozenAhatDepthUsable || !EnableAhatUploadGuard)
+        {
+            Game_M.initialize.XianShi("dp_freeze_02_done");
+        }
+        else
+        {
+            Game_M.initialize.XianShi("dp_freeze_ahat_move_closer");
+        }
         return true;
     }
 
