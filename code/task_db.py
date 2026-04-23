@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -6,30 +7,33 @@ from config import DATABASE_PATH
 
 
 TABLE_NAME = "tasks"
+ARUCO_REFERENCE_TABLE = "aruco_references"
 ALLOWED_STATUSES = (
     "pending",
     "hololens2depth",
+    "aruco_detect",
     "sam3mask",
     "instantmesh",
     "depthpointcloud",
     "modelscale",
     "icpalignment",
     "pose",
+    "aruco_sync",
     "blender",
     "completed",
+    "aruco_completed",
     "failed",
 )
+TERMINAL_STATUSES = ("completed", "aruco_completed", "failed")
 
 
 def _get_connection() -> sqlite3.Connection:
-    """获取数据库连接，并确保数据库目录存在。"""
     conn = sqlite3.connect(DATABASE_PATH)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def _row_to_dict(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
-    """将 sqlite 查询结果行转换为字典。"""
     if row is None:
         return None
     return dict(row)
@@ -39,7 +43,7 @@ def _status_list_sql() -> str:
     return ", ".join(f"'{status}'" for status in ALLOWED_STATUSES)
 
 
-def _create_table_sql() -> str:
+def _create_task_table_sql() -> str:
     return f"""
         CREATE TABLE {TABLE_NAME} (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,6 +51,8 @@ def _create_table_sql() -> str:
             status TEXT NOT NULL DEFAULT 'pending'
                 CHECK (status IN ({_status_list_sql()})),
             json_path TEXT NOT NULL,
+            startup_session_id TEXT,
+            aruco_coordinate_synced INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             started_at TEXT,
             completed_at TEXT,
@@ -56,30 +62,63 @@ def _create_table_sql() -> str:
     """
 
 
-def _table_sql(conn: sqlite3.Connection) -> Optional[str]:
+def _create_aruco_reference_table_sql() -> str:
+    return f"""
+        CREATE TABLE {ARUCO_REFERENCE_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            startup_session_id TEXT NOT NULL,
+            task_id TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            marker_pose_json TEXT NOT NULL,
+            raw_record_path TEXT NOT NULL,
+            config_snapshot_json TEXT NOT NULL
+        )
+    """
+
+
+def _table_sql(conn: sqlite3.Connection, table_name: str) -> Optional[str]:
     row = conn.execute(
         """
         SELECT sql
         FROM sqlite_master
         WHERE type = 'table' AND name = ?
         """,
-        (TABLE_NAME,),
+        (table_name,),
     ).fetchone()
     return row["sql"] if row else None
 
 
-def _table_needs_status_migration(conn: sqlite3.Connection) -> bool:
-    sql = _table_sql(conn)
+def _get_table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {str(row["name"]) for row in rows}
+
+
+def _task_table_needs_migration(conn: sqlite3.Connection) -> bool:
+    sql = _table_sql(conn, TABLE_NAME)
     if not sql:
         return False
-    return any(f"'{status}'" not in sql for status in ALLOWED_STATUSES)
+
+    required_columns = {"startup_session_id", "aruco_coordinate_synced"}
+    existing_columns = _get_table_columns(conn, TABLE_NAME)
+    return (
+        any(f"'{status}'" not in sql for status in ALLOWED_STATUSES)
+        or not required_columns.issubset(existing_columns)
+    )
 
 
 def _migrate_task_table(conn: sqlite3.Connection) -> None:
     legacy_table = f"{TABLE_NAME}_legacy"
     conn.execute(f"DROP TABLE IF EXISTS {legacy_table}")
     conn.execute(f"ALTER TABLE {TABLE_NAME} RENAME TO {legacy_table}")
-    conn.execute(_create_table_sql())
+    conn.execute(_create_task_table_sql())
+
+    legacy_columns = _get_table_columns(conn, legacy_table)
+    has_startup_session_id = "startup_session_id" in legacy_columns
+    has_aruco_coordinate_synced = "aruco_coordinate_synced" in legacy_columns
+
+    startup_select = "startup_session_id" if has_startup_session_id else "NULL"
+    synced_select = "aruco_coordinate_synced" if has_aruco_coordinate_synced else "0"
+
     conn.execute(
         f"""
         INSERT INTO {TABLE_NAME} (
@@ -87,6 +126,8 @@ def _migrate_task_table(conn: sqlite3.Connection) -> None:
             task_id,
             status,
             json_path,
+            startup_session_id,
+            aruco_coordinate_synced,
             created_at,
             started_at,
             completed_at,
@@ -98,6 +139,8 @@ def _migrate_task_table(conn: sqlite3.Connection) -> None:
             task_id,
             status,
             json_path,
+            {startup_select},
+            {synced_select},
             created_at,
             started_at,
             completed_at,
@@ -110,27 +153,31 @@ def _migrate_task_table(conn: sqlite3.Connection) -> None:
 
 
 def initialize_task_table() -> None:
-    """初始化任务表；如果表不存在则自动创建。"""
     with _get_connection() as conn:
-        if _table_sql(conn) is None:
-            conn.execute(_create_table_sql())
-        elif _table_needs_status_migration(conn):
+        if _table_sql(conn, TABLE_NAME) is None:
+            conn.execute(_create_task_table_sql())
+        elif _task_table_needs_migration(conn):
             _migrate_task_table(conn)
+
+        if _table_sql(conn, ARUCO_REFERENCE_TABLE) is None:
+            conn.execute(_create_aruco_reference_table_sql())
+            conn.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{ARUCO_REFERENCE_TABLE}_startup_session
+                ON {ARUCO_REFERENCE_TABLE} (startup_session_id)
+                """
+            )
         conn.commit()
 
 
 def get_latest_10_records() -> List[Dict[str, Any]]:
-    """按主键 id 倒序查询最新的 10 条任务记录。"""
     initialize_task_table()
     with _get_connection() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM {TABLE_NAME} ORDER BY id DESC LIMIT 10"
-        ).fetchall()
+        rows = conn.execute(f"SELECT * FROM {TABLE_NAME} ORDER BY id DESC LIMIT 10").fetchall()
     return [dict(row) for row in rows]
 
 
 def get_status_by_task_id(task_id: str) -> Optional[str]:
-    """根据 task_id 查询任务当前状态。"""
     initialize_task_table()
     with _get_connection() as conn:
         row = conn.execute(
@@ -141,7 +188,6 @@ def get_status_by_task_id(task_id: str) -> Optional[str]:
 
 
 def get_json_path_by_task_id(task_id: str) -> Optional[str]:
-    """根据 task_id 查询对应的 json_path。"""
     initialize_task_table()
     with _get_connection() as conn:
         row = conn.execute(
@@ -151,17 +197,28 @@ def get_json_path_by_task_id(task_id: str) -> Optional[str]:
     return row["json_path"] if row else None
 
 
-def create_task(task_id: str, json_path: Path | str) -> Dict[str, Any]:
-    """使用 task_id 和 json_path 创建一条新的任务记录。"""
+def create_task(
+    task_id: str,
+    json_path: Path | str,
+    *,
+    startup_session_id: str | None = None,
+) -> Dict[str, Any]:
     initialize_task_table()
     json_path_str = str(json_path)
+    startup_session_id = str(startup_session_id or "").strip() or None
     with _get_connection() as conn:
         conn.execute(
             f"""
-            INSERT INTO {TABLE_NAME} (task_id, status, json_path)
-            VALUES (?, 'pending', ?)
+            INSERT INTO {TABLE_NAME} (
+                task_id,
+                status,
+                json_path,
+                startup_session_id,
+                aruco_coordinate_synced
+            )
+            VALUES (?, 'pending', ?, ?, 0)
             """,
-            (task_id, json_path_str),
+            (task_id, json_path_str, startup_session_id),
         )
         conn.commit()
         row = conn.execute(
@@ -172,14 +229,14 @@ def create_task(task_id: str, json_path: Path | str) -> Dict[str, Any]:
 
 
 def get_latest_unfinished_task() -> Optional[Dict[str, Any]]:
-    """查询最新一条未完成且未失败的任务。"""
     initialize_task_table()
+    terminal_list = ", ".join(f"'{status}'" for status in TERMINAL_STATUSES)
     with _get_connection() as conn:
         row = conn.execute(
             f"""
             SELECT task_id, json_path, status
             FROM {TABLE_NAME}
-            WHERE status NOT IN ('completed', 'failed')
+            WHERE status NOT IN ({terminal_list})
             ORDER BY id DESC
             LIMIT 1
             """
@@ -188,7 +245,6 @@ def get_latest_unfinished_task() -> Optional[Dict[str, Any]]:
 
 
 def get_latest_completed_task() -> Optional[Dict[str, Any]]:
-    """Query the most recent completed task."""
     initialize_task_table()
     with _get_connection() as conn:
         row = conn.execute(
@@ -204,14 +260,14 @@ def get_latest_completed_task() -> Optional[Dict[str, Any]]:
 
 
 def get_unfinished_tasks() -> List[Dict[str, Any]]:
-    """按创建顺序查询全部未完成且未失败的任务。"""
     initialize_task_table()
+    terminal_list = ", ".join(f"'{status}'" for status in TERMINAL_STATUSES)
     with _get_connection() as conn:
         rows = conn.execute(
             f"""
             SELECT *
             FROM {TABLE_NAME}
-            WHERE status NOT IN ('completed', 'failed')
+            WHERE status NOT IN ({terminal_list})
             ORDER BY id ASC
             """
         ).fetchall()
@@ -223,7 +279,6 @@ def update_task_status(
     status: str,
     error_message: Optional[str] = None,
 ) -> bool:
-    """根据 task_id 更新任务状态，并按需要写入错误信息与时间戳。"""
     if status not in ALLOWED_STATUSES:
         raise ValueError(f"Invalid status: {status}")
 
@@ -241,7 +296,7 @@ def update_task_status(
             "started_at = CASE WHEN started_at IS NULL THEN CURRENT_TIMESTAMP ELSE started_at END"
         )
 
-    if status == "completed":
+    if status in {"completed", "aruco_completed"}:
         set_parts.append("completed_at = CURRENT_TIMESTAMP")
     else:
         set_parts.append("completed_at = NULL")
@@ -261,12 +316,85 @@ def update_task_status(
     return cursor.rowcount > 0
 
 
+def update_task_aruco_coordinate_synced(task_id: str, synced: bool) -> bool:
+    initialize_task_table()
+    with _get_connection() as conn:
+        cursor = conn.execute(
+            f"""
+            UPDATE {TABLE_NAME}
+            SET aruco_coordinate_synced = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE task_id = ?
+            """,
+            (1 if synced else 0, task_id),
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
 def get_task_by_task_id(task_id: str) -> Optional[Dict[str, Any]]:
-    """根据 task_id 查询整条任务记录。"""
     initialize_task_table()
     with _get_connection() as conn:
         row = conn.execute(
             f"SELECT * FROM {TABLE_NAME} WHERE task_id = ?",
             (task_id,),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def create_aruco_reference(
+    *,
+    startup_session_id: str,
+    task_id: str | None,
+    marker_pose_json: Any,
+    raw_record_path: str,
+    config_snapshot_json: Any,
+) -> Dict[str, Any]:
+    initialize_task_table()
+    startup_session_id = str(startup_session_id or "").strip()
+    if not startup_session_id:
+        raise ValueError("startup_session_id is required to store an ArUco reference")
+
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {ARUCO_REFERENCE_TABLE} (
+                startup_session_id,
+                task_id,
+                marker_pose_json,
+                raw_record_path,
+                config_snapshot_json
+            )
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                startup_session_id,
+                task_id,
+                json.dumps(marker_pose_json, ensure_ascii=False),
+                raw_record_path,
+                json.dumps(config_snapshot_json, ensure_ascii=False),
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            f"SELECT * FROM {ARUCO_REFERENCE_TABLE} WHERE id = last_insert_rowid()"
+        ).fetchone()
+    return dict(row)
+
+
+def get_latest_aruco_reference(startup_session_id: str) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    startup_session_id = str(startup_session_id or "").strip()
+    if not startup_session_id:
+        return None
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"""
+            SELECT *
+            FROM {ARUCO_REFERENCE_TABLE}
+            WHERE startup_session_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (startup_session_id,),
         ).fetchone()
     return _row_to_dict(row)

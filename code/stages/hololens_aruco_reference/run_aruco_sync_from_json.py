@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+import sys
+
+import numpy as np
+
+try:
+    import _bootstrap  # type: ignore
+except ModuleNotFoundError:
+    from . import _bootstrap  # type: ignore
+
+from hololens3d_reconstruction.pose_math import quat_xyzw_to_rotation_matrix
+from task_db import get_latest_aruco_reference, update_task_aruco_coordinate_synced
+from task_json import load_task_json, resolve_task_json_path, save_task_json
+
+try:
+    from aruco_common import (
+        ARUCO_LOCAL_COORDINATE_BASIS,
+        UNITY_WORLD_COORDINATE_BASIS,
+        invert_pose,
+        load_json_payload,
+        pose_to_payload,
+    )
+except ModuleNotFoundError:
+    from .aruco_common import (
+        ARUCO_LOCAL_COORDINATE_BASIS,
+        UNITY_WORLD_COORDINATE_BASIS,
+        invert_pose,
+        load_json_payload,
+        pose_to_payload,
+    )
+
+
+def _write_debug(task: dict, aruco_stage: dict) -> None:
+    debug_section = dict(task.get("debug") or {})
+    pose_transform_stages = dict(debug_section.get("pose_transform_stages") or {})
+    pose_transform_stages["aruco_stage"] = aruco_stage
+    debug_section["pose_transform_stages"] = pose_transform_stages
+    task["debug"] = debug_section
+
+
+def _extract_pose(pose: dict) -> tuple[np.ndarray, np.ndarray, list[float] | None]:
+    position = np.asarray(pose.get("position"), dtype=np.float64)
+    quaternion = np.asarray(
+        pose.get("rotation_quaternion_xyzw") or pose.get("rotation"),
+        dtype=np.float64,
+    )
+    if position.shape != (3,):
+        raise ValueError("pose.position must have 3 values")
+    if quaternion.shape != (4,):
+        raise ValueError("pose quaternion must have 4 values")
+    rotation = quat_xyzw_to_rotation_matrix(quaternion)
+    scale_value = pose.get("scale")
+    scale = [float(v) for v in scale_value] if isinstance(scale_value, list) and len(scale_value) == 3 else None
+    return position.astype(np.float64), rotation.astype(np.float64), scale
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 2:
+        print(
+            "Usage: python code/stages/hololens_aruco_reference/run_aruco_sync_from_json.py <task_meta.json or filename>",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    json_path = resolve_task_json_path(argv[1])
+    task = load_task_json(json_path)
+    task_id = str(task.get("task_id") or "")
+    startup_session_id = str((task.get("device") or {}).get("startup_session_id") or "").strip()
+    object_world = task.get("object_world") or task.get("object")
+
+    debug_section = dict(task.get("debug") or {})
+    pose_transform_stages = dict(debug_section.get("pose_transform_stages") or {})
+    aruco_stage = dict(pose_transform_stages.get("aruco_stage") or {})
+    aruco_stage.setdefault("coordinate_basis_local", ARUCO_LOCAL_COORDINATE_BASIS)
+    aruco_stage.setdefault("coordinate_basis_world", UNITY_WORLD_COORDINATE_BASIS)
+    aruco_stage["sync_stage_ran"] = True
+    aruco_stage["synced_to_reference"] = False
+
+    latest_reference_row = get_latest_aruco_reference(startup_session_id) if startup_session_id else None
+    aruco_reference = (
+        load_json_payload(latest_reference_row.get("marker_pose_json")) if latest_reference_row else None
+    )
+
+    if aruco_reference is None:
+        if object_world is not None:
+            task["object"] = object_world
+        aruco_stage["sync_reason"] = "reference_not_found"
+        _write_debug(task, aruco_stage)
+        save_task_json(json_path, task)
+        if task_id:
+            update_task_aruco_coordinate_synced(task_id, False)
+        print("[INFO] aruco_sync : no ArUco reference found for this startup session")
+        print("[OK] aruco_sync")
+        return 0
+
+    task["aruco_reference"] = aruco_reference
+    aruco_stage["reference_task_id"] = latest_reference_row.get("task_id")
+    aruco_stage["reference_created_at"] = latest_reference_row.get("created_at")
+
+    if object_world is None:
+        aruco_stage["sync_reason"] = "object_world_missing"
+        _write_debug(task, aruco_stage)
+        save_task_json(json_path, task)
+        if task_id:
+            update_task_aruco_coordinate_synced(task_id, False)
+        print("[INFO] aruco_sync : attached reference only because object_world is missing")
+        print("[OK] aruco_sync")
+        return 0
+
+    object_world_position, object_world_rotation, object_scale = _extract_pose(object_world)
+    marker_world_position, marker_world_rotation, _marker_scale = _extract_pose(aruco_reference)
+    marker_inverse_rotation, marker_inverse_translation = invert_pose(
+        marker_world_rotation,
+        marker_world_position,
+    )
+    object_local_position = (marker_inverse_rotation @ object_world_position) + marker_inverse_translation
+    object_local_rotation = marker_inverse_rotation @ object_world_rotation
+    object_local_scale = object_scale or [1.0, 1.0, 1.0]
+
+    object_aruco = pose_to_payload(
+        object_local_rotation,
+        object_local_position,
+        ARUCO_LOCAL_COORDINATE_BASIS,
+        scale=object_local_scale,
+    )
+
+    task["object_world"] = object_world
+    task["object_aruco"] = object_aruco
+    task["object"] = object_aruco
+    aruco_stage["synced_to_reference"] = True
+    aruco_stage["sync_reason"] = "reference_applied"
+    aruco_stage["object_aruco"] = object_aruco
+
+    _write_debug(task, aruco_stage)
+    save_task_json(json_path, task)
+
+    if task_id:
+        update_task_aruco_coordinate_synced(task_id, True)
+
+    print("[INFO] aruco_sync : object pose converted into ArUco-local coordinates")
+    print("[OK] aruco_sync")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

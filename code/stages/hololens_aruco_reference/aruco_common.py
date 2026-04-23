@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+
+try:
+    import _bootstrap  # type: ignore
+except ModuleNotFoundError:
+    from . import _bootstrap  # type: ignore
+
+from config import ARUCO_RAW_ROOT, ARUCO_TEMPLATE_PATH, UPLOAD_FOLDER
+from hololens3d_reconstruction.pose_math import (
+    quat_xyzw_to_rotation_matrix,
+    rotation_matrix_to_quat_xyzw,
+    serialize_pose,
+)
+
+
+ARUCO_LOCAL_COORDINATE_BASIS = "aruco_local_x_right_y_up_z_forward"
+UNITY_WORLD_COORDINATE_BASIS = "unity_world_x_right_y_up_z_forward"
+_CV_TO_UNITY_BASIS = np.diag([1.0, -1.0, 1.0]).astype(np.float64)
+
+
+def default_aruco_template() -> dict[str, Any]:
+    return {
+        "enabled": False,
+        "dictionary": "",
+        "marker_id": None,
+        "marker_size_mm": None,
+        "reference_image_name": "",
+        "notes": "",
+    }
+
+
+def load_aruco_template() -> dict[str, Any]:
+    if not ARUCO_TEMPLATE_PATH.is_file():
+        return default_aruco_template()
+
+    with ARUCO_TEMPLATE_PATH.open("r", encoding="utf-8") as file:
+        loaded = json.load(file)
+    if not isinstance(loaded, dict):
+        raise ValueError(f"ArUco template must be a JSON object: {ARUCO_TEMPLATE_PATH}")
+    template = default_aruco_template()
+    template.update(loaded)
+    return template
+
+
+def evaluate_aruco_template(template: dict[str, Any]) -> dict[str, Any]:
+    enabled = bool(template.get("enabled"))
+    dictionary = str(template.get("dictionary") or "").strip()
+    marker_id = template.get("marker_id")
+    marker_size_mm = template.get("marker_size_mm")
+
+    configured = (
+        enabled
+        and bool(dictionary)
+        and marker_id is not None
+        and marker_size_mm is not None
+        and float(marker_size_mm) > 0.0
+    )
+
+    reason = ""
+    if not enabled:
+        reason = "template_disabled"
+    elif not dictionary:
+        reason = "dictionary_missing"
+    elif marker_id is None:
+        reason = "marker_id_missing"
+    elif marker_size_mm is None:
+        reason = "marker_size_mm_missing"
+    elif float(marker_size_mm) <= 0.0:
+        reason = "marker_size_mm_invalid"
+
+    return {
+        "enabled": enabled,
+        "configured": configured,
+        "reason": reason,
+    }
+
+
+def resolve_task_name(task: dict[str, Any], fallback: str) -> str:
+    return str(task.get("task_name") or fallback)
+
+
+def resolve_pv_image_path(task: dict[str, Any]) -> Path:
+    pv_info = task.get("PVCamera") or {}
+    name = str(pv_info.get("name") or "").strip()
+    if not name:
+        raise ValueError("PVCamera.name is required")
+
+    candidate = Path(name).expanduser()
+    if candidate.is_file():
+        return candidate.resolve()
+
+    upload_candidate = (UPLOAD_FOLDER / candidate).resolve()
+    if upload_candidate.is_file():
+        return upload_candidate
+
+    raise FileNotFoundError(f"PVCamera image not found: {name}")
+
+
+def resolve_pv_camera_matrix(task: dict[str, Any]) -> np.ndarray:
+    k = np.asarray((task.get("PVCamera") or {}).get("k"), dtype=np.float64)
+    if k.shape == (3, 3):
+        return k.astype(np.float64)
+    if k.ndim == 2 and k.shape[0] >= 3 and k.shape[1] >= 3:
+        return k[:3, :3].astype(np.float64)
+
+    flat = np.asarray((task.get("PVCamera") or {}).get("k"), dtype=np.float64).reshape(-1)
+    if flat.size == 9:
+        return flat.reshape(3, 3).astype(np.float64)
+
+    raise ValueError("PVCamera.k must be a 3x3 matrix or contain at least 9 values")
+
+
+def resolve_selection_roi(task: dict[str, Any], image_width: int, image_height: int) -> tuple[int, int, int, int]:
+    selection = task.get("SelectionBox") or {}
+    top_left = np.asarray(selection.get("top_left"), dtype=np.float64)
+    bottom_right = np.asarray(selection.get("bottom_right"), dtype=np.float64)
+    if top_left.shape != (2,) or bottom_right.shape != (2,):
+        raise ValueError("SelectionBox.top_left and bottom_right must each contain 2 values")
+
+    left = float(np.clip(min(top_left[0], bottom_right[0]), 0.0, 1.0))
+    right = float(np.clip(max(top_left[0], bottom_right[0]), 0.0, 1.0))
+    top = float(np.clip(min(top_left[1], bottom_right[1]), 0.0, 1.0))
+    bottom = float(np.clip(max(top_left[1], bottom_right[1]), 0.0, 1.0))
+
+    x0 = int(np.floor(left * image_width))
+    x1 = int(np.ceil(right * image_width))
+    y0 = int(np.floor(top * image_height))
+    y1 = int(np.ceil(bottom * image_height))
+
+    x0 = int(np.clip(x0, 0, max(image_width - 1, 0)))
+    y0 = int(np.clip(y0, 0, max(image_height - 1, 0)))
+    x1 = int(np.clip(x1, x0 + 1, image_width))
+    y1 = int(np.clip(y1, y0 + 1, image_height))
+    return x0, y0, x1, y1
+
+
+def ensure_raw_output_dir(task_name: str) -> Path:
+    target_dir = ARUCO_RAW_ROOT / task_name
+    target_dir.mkdir(parents=True, exist_ok=True)
+    return target_dir
+
+
+def orthonormalize_rotation(rotation: np.ndarray) -> np.ndarray:
+    u, _, vh = np.linalg.svd(np.asarray(rotation, dtype=np.float64))
+    normalized = u @ vh
+    if np.linalg.det(normalized) < 0.0:
+        u[:, -1] *= -1.0
+        normalized = u @ vh
+    return normalized.astype(np.float64)
+
+
+def resolve_pv_camera_world_pose(task: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    pv_info = task.get("PVCamera") or {}
+    translation = np.asarray(pv_info.get("position"), dtype=np.float64)
+    quat_xyzw = np.asarray(pv_info.get("rotation_quaternion_xyzw"), dtype=np.float64)
+
+    if translation.shape == (3,) and quat_xyzw.shape == (4,):
+        rotation = quat_xyzw_to_rotation_matrix(quat_xyzw)
+        return translation.astype(np.float64), rotation.astype(np.float64)
+
+    pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
+    if pv_pose.shape != (4, 4):
+        raise ValueError(
+            "PVCamera must include either position+rotation_quaternion_xyzw or pose(4x4)"
+        )
+
+    rotation = pv_pose[:3, :3].astype(np.float64)
+    translation = pv_pose[3, :3].astype(np.float64)
+    quat_xyzw = rotation_matrix_to_quat_xyzw(rotation)
+    translation[2] *= -1.0
+    quat_xyzw[2] *= -1.0
+    rotation = quat_xyzw_to_rotation_matrix(quat_xyzw)
+    return translation.astype(np.float64), rotation.astype(np.float64)
+
+
+def convert_cv_pose_to_unity_pose(rotation_cv: np.ndarray, translation_cv: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    rotation_cv = np.asarray(rotation_cv, dtype=np.float64)
+    translation_cv = np.asarray(translation_cv, dtype=np.float64).reshape(3)
+    rotation_unity = orthonormalize_rotation(
+        _CV_TO_UNITY_BASIS @ rotation_cv @ _CV_TO_UNITY_BASIS
+    )
+    translation_unity = (_CV_TO_UNITY_BASIS @ translation_cv.reshape(3, 1)).reshape(3)
+    return rotation_unity, translation_unity.astype(np.float64)
+
+
+def compose_world_pose(
+    camera_world_translation: np.ndarray,
+    camera_world_rotation: np.ndarray,
+    local_translation: np.ndarray,
+    local_rotation: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    world_translation = (camera_world_rotation @ np.asarray(local_translation, dtype=np.float64)) + np.asarray(
+        camera_world_translation,
+        dtype=np.float64,
+    )
+    world_rotation = orthonormalize_rotation(
+        np.asarray(camera_world_rotation, dtype=np.float64) @ np.asarray(local_rotation, dtype=np.float64)
+    )
+    return world_translation.astype(np.float64), world_rotation.astype(np.float64)
+
+
+def invert_pose(rotation: np.ndarray, translation: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    rotation = orthonormalize_rotation(rotation)
+    translation = np.asarray(translation, dtype=np.float64)
+    inverse_rotation = rotation.T
+    inverse_translation = -(inverse_rotation @ translation)
+    return inverse_rotation.astype(np.float64), inverse_translation.astype(np.float64)
+
+
+def pose_to_payload(
+    rotation: np.ndarray,
+    translation: np.ndarray,
+    coordinate_basis: str,
+    *,
+    scale: list[float] | None = None,
+) -> dict[str, Any]:
+    payload = serialize_pose(rotation, translation, coordinate_basis)
+    payload["rotation"] = list(payload["rotation_quaternion_xyzw"])
+    if scale is not None:
+        payload["scale"] = [float(v) for v in scale]
+    return payload
+
+
+def load_json_payload(raw_json: str | None) -> dict[str, Any] | None:
+    if not raw_json:
+        return None
+    loaded = json.loads(raw_json)
+    return loaded if isinstance(loaded, dict) else None

@@ -166,7 +166,9 @@ def main(argv: list[str]) -> int:
 
     world_pose = compute_world_pose(task)
     world_pose["coordinate_basis"] = "unity_world_x_right_y_up_z_forward"
-    task["object"] = world_pose
+    world_pose["rotation_quaternion_xyzw"] = list(world_pose["rotation"])
+    task["object_world"] = dict(world_pose)
+    task["object"] = dict(world_pose)
     debug_section = dict(task.get("debug") or {})
     pose_debug = dict(debug_section.get("pose_transform_stages") or {})
     pose_debug["pose_stage"] = build_pose_debug(task)

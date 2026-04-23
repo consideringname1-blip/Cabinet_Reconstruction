@@ -2,6 +2,7 @@ using BestHTTP;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using UnityEngine;
@@ -22,6 +23,10 @@ public class ShuJuQingQiu : MonoBehaviour
     public bool hasServerCameraPose = false;
     public Vector3 serverCameraPosition = Vector3.zero;
     public Quaternion serverCameraRotation = Quaternion.identity;
+    public string startup_session_id = "";
+    public bool hasArucoReferencePose = false;
+    public Vector3 arucoReferencePosition = Vector3.zero;
+    public Quaternion arucoReferenceRotation = Quaternion.identity;
 
     public HoloLensPVAquirer PV_controler;
     public HoloLensDepthAquirer DP_controler;
@@ -31,11 +36,19 @@ public class ShuJuQingQiu : MonoBehaviour
     void Start()
     {
         initialize = this;
+        startup_session_id = BuildStartupSessionId();
 
         // =========================
         // 新增：开始采样设备位姿（ring buffer）
         // =========================
         //StartPoseSampling();
+    }
+
+    private static string BuildStartupSessionId()
+    {
+        string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture);
+        string randomSuffix = Guid.NewGuid().ToString("N").Substring(0, 8);
+        return timestamp + "_" + randomSuffix;
     }
 
     // =========================
@@ -239,11 +252,12 @@ public class ShuJuQingQiu : MonoBehaviour
         request.AddField("DepthCameraJ", DepthCameraJ.ToString(Formatting.None));
         JObject deviceJ = new JObject
         {
-            ["type"] = "DEVICE_TYPE",
+            ["type"] = DEVICE_TYPE,
             ["ip"] = string.IsNullOrEmpty(ip) ? "" : ip,
             ["time"] = photoTimeUtc,
             ["pose"] = new JArray(camPos.x, camPos.y, camPos.z),
             ["rotation"] = new JArray(camRot.x, camRot.y, camRot.z, camRot.w),
+            ["startup_session_id"] = startup_session_id,
         };
         request.AddField("deviceJ", deviceJ.ToString(Formatting.None));
         // ==========================================================
@@ -324,6 +338,9 @@ public class ShuJuQingQiu : MonoBehaviour
     [Header("Object Alignment Debug JSON")]
     [TextArea(3, 12)]
     public string object_alignment_debug_json;
+    [Header("ArUco Stage Debug JSON")]
+    [TextArea(3, 12)]
+    public string aruco_stage_debug_json;
 
     void ApplyDebugInfo(JObject jo)
     {
@@ -334,6 +351,7 @@ public class ShuJuQingQiu : MonoBehaviour
             pose_transform_stages_json = "";
             pose_stage_debug_json = "";
             object_alignment_debug_json = "";
+            aruco_stage_debug_json = "";
             return;
         }
 
@@ -356,46 +374,130 @@ public class ShuJuQingQiu : MonoBehaviour
             objectAlignmentToken == null || objectAlignmentToken.Type == JTokenType.Null
             ? ""
             : objectAlignmentToken.ToString(Formatting.Indented);
+
+        JToken arucoStageToken = poseTransformStagesToken?["aruco_stage"];
+        aruco_stage_debug_json =
+            arucoStageToken == null || arucoStageToken.Type == JTokenType.Null
+            ? ""
+            : arucoStageToken.ToString(Formatting.Indented);
     }
 
-    void ApplyJson(string jsonString)
+    bool TryReadVector3(JToken token, out Vector3 value)
     {
-        JObject jo = JObject.Parse(jsonString);
+        value = Vector3.zero;
+        JArray arr = token as JArray;
+        if (arr == null || arr.Count < 3)
+        {
+            return false;
+        }
 
-        JArray pos = (JArray)jo["object"]["position"];
-        JArray rot = (JArray)jo["object"]["rotation"];
-
-        serverObjectPosition = new Vector3(
-            (float)pos[0],
-            (float)pos[1],
-            (float)pos[2]
+        value = new Vector3(
+            arr[0].Value<float>(),
+            arr[1].Value<float>(),
+            arr[2].Value<float>()
         );
+        return true;
+    }
 
-        serverObjectRotation = new Quaternion(
-            (float)rot[0],
-            (float)rot[1],
-            (float)rot[2],
-            (float)rot[3]
+    bool TryReadQuaternion(JToken token, out Quaternion value)
+    {
+        value = Quaternion.identity;
+        JArray arr = token as JArray;
+        if (arr == null || arr.Count < 4)
+        {
+            return false;
+        }
+
+        value = new Quaternion(
+            arr[0].Value<float>(),
+            arr[1].Value<float>(),
+            arr[2].Value<float>(),
+            arr[3].Value<float>()
         );
+        return true;
+    }
+
+    bool TryParsePoseToken(JToken poseToken, out Vector3 position, out Quaternion rotation)
+    {
+        position = Vector3.zero;
+        rotation = Quaternion.identity;
+        if (poseToken == null || poseToken.Type == JTokenType.Null)
+        {
+            return false;
+        }
+
+        JToken positionToken = poseToken["position"];
+        JToken rotationToken = poseToken["rotation_quaternion_xyzw"] ?? poseToken["rotation"];
+        return TryReadVector3(positionToken, out position) && TryReadQuaternion(rotationToken, out rotation);
+    }
+
+    void ApplyArucoReference(JObject jo, bool updateCurrentSession)
+    {
+        if (!TryParsePoseToken(jo["aruco_reference"], out Vector3 arucoPosition, out Quaternion arucoRotation))
+        {
+            return;
+        }
+
+        if (updateCurrentSession)
+        {
+            arucoReferencePosition = arucoPosition;
+            arucoReferenceRotation = arucoRotation;
+            hasArucoReferencePose = true;
+        }
+
+        if (CameraPoseDebugMarker.Instance != null)
+        {
+            CameraPoseDebugMarker.Instance.PlaceArucoMarker(arucoPosition, arucoRotation);
+        }
+    }
+
+    bool TryResolveObjectWorldPose(JObject jo, out Vector3 position, out Quaternion rotation)
+    {
+        position = Vector3.zero;
+        rotation = Quaternion.identity;
+
+        JToken objectToken = jo["object"];
+        string coordinateBasis = objectToken?["coordinate_basis"]?.ToString();
+        if (coordinateBasis == "aruco_local_x_right_y_up_z_forward")
+        {
+            if (hasArucoReferencePose && TryParsePoseToken(objectToken, out Vector3 localPosition, out Quaternion localRotation))
+            {
+                position = arucoReferencePosition + (arucoReferenceRotation * localPosition);
+                rotation = arucoReferenceRotation * localRotation;
+                return true;
+            }
+
+            return TryParsePoseToken(jo["object_world"], out position, out rotation);
+        }
+
+        if (TryParsePoseToken(objectToken, out position, out rotation))
+        {
+            return true;
+        }
+
+        return TryParsePoseToken(jo["object_world"], out position, out rotation);
+    }
+
+    void ApplyResponsePoses(JObject jo, bool updateCurrentSessionArucoReference)
+    {
+        ApplyArucoReference(jo, updateCurrentSessionArucoReference);
+
+        if (TryResolveObjectWorldPose(jo, out Vector3 objectPosition, out Quaternion objectRotation))
+        {
+            serverObjectPosition = objectPosition;
+            serverObjectRotation = objectRotation;
+            hasServerPose = true;
+        }
+        else
+        {
+            hasServerPose = false;
+        }
 
         JToken pvCameraPoseToken = jo["debug"]?["pose_transform_stages"]?["pose_stage"]?["pv_camera_world"]?["pose"];
-        JArray pvPos = (JArray)pvCameraPoseToken?["position"];
-        JArray pvRot = (JArray)pvCameraPoseToken?["rotation_quaternion_xyzw"];
-        if (pvPos != null && pvPos.Count >= 3 && pvRot != null && pvRot.Count >= 4)
+        if (TryParsePoseToken(pvCameraPoseToken, out Vector3 cameraPosition, out Quaternion cameraRotation))
         {
-            serverCameraPosition = new Vector3(
-                (float)pvPos[0],
-                (float)pvPos[1],
-                (float)pvPos[2]
-            );
-
-            serverCameraRotation = new Quaternion(
-                (float)pvRot[0],
-                (float)pvRot[1],
-                (float)pvRot[2],
-                (float)pvRot[3]
-            );
-
+            serverCameraPosition = cameraPosition;
+            serverCameraRotation = cameraRotation;
             hasServerCameraPose = true;
         }
         else
@@ -419,15 +521,10 @@ public class ShuJuQingQiu : MonoBehaviour
         urlModel = fbxUrl;
         image_url = imgUrl;
         ApplyDebugInfo(jo);
+        ApplyResponsePoses(jo, false);
 
-        if (objectToken != null && objectToken.Type != JTokenType.Null)
+        if (objectToken == null || objectToken.Type == JTokenType.Null)
         {
-            ApplyJson(jo.ToString());
-            hasServerPose = true;
-        }
-        else
-        {
-            hasServerPose = false;
             Debug.LogWarning("[" + sourceTag + "] completed response missing object.");
         }
 
@@ -454,6 +551,14 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         // 还没完成，继续等下一次轮询
+        if (status == "aruco_completed")
+        {
+            ApplyDebugInfo(jo);
+            ApplyResponsePoses(jo, true);
+            CancelInvoke();
+            return;
+        }
+
         if (status != "completed")
         {
             Debug.Log("[CHECK] still processing... status = " + status);
@@ -461,28 +566,9 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         // completed 了，但结果字段还要继续检查
-        string fbxUrl = jo["fbx_url"]?.ToString();
-        string imgUrl = jo["image_url"]?.ToString();
-        JToken objectToken = jo["object"];
-
-        if (string.IsNullOrEmpty(fbxUrl))
+        if (!ApplyCompletedTaskResponse(jo, "CHECK"))
         {
-            Debug.LogWarning("[CHECK] completed but fbx_url is missing, keep waiting...");
             return;
-        }
-
-        urlModel = fbxUrl;
-        image_url = imgUrl;
-        ApplyDebugInfo(jo);
-
-        if (objectToken != null && objectToken.Type != JTokenType.Null)
-        {
-            ApplyJson(jo.ToString());
-            hasServerPose = true;
-        }
-        else
-        {
-            Debug.LogWarning("[CHECK] completed but object is missing.");
         }
 
         CancelInvoke();
@@ -541,14 +627,24 @@ public class ShuJuQingQiu : MonoBehaviour
             File.WriteAllBytes(Application.streamingAssetsPath + "/model.fbx", receiver);
 #endif
             print("保存");
-            if (hasServerCameraPose && hasServerPose && CameraPoseDebugMarker.Instance != null)
+            if (CameraPoseDebugMarker.Instance != null)
             {
-                CameraPoseDebugMarker.Instance.PlaceMarkers(
-                    serverCameraPosition,
-                    serverCameraRotation,
-                    serverObjectPosition,
-                    serverObjectRotation
-                );
+                if (hasServerCameraPose && hasServerPose)
+                {
+                    CameraPoseDebugMarker.Instance.PlaceMarkers(
+                        serverCameraPosition,
+                        serverCameraRotation,
+                        serverObjectPosition,
+                        serverObjectRotation
+                    );
+                }
+                if (hasArucoReferencePose)
+                {
+                    CameraPoseDebugMarker.Instance.PlaceArucoMarker(
+                        arucoReferencePosition,
+                        arucoReferenceRotation
+                    );
+                }
             }
             LoadModel.initialize.YanChiJiaZai();
             Game_M.initialize.XianShi("download completes");

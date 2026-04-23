@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from config import (
+    ARUCO_DETECT_STAGE_PY,
+    ARUCO_DETECT_STAGE_RUN,
+    ARUCO_SYNC_STAGE_PY,
+    ARUCO_SYNC_STAGE_RUN,
     BLENDER_STAGE_PY,
     BLENDER_STAGE_RUN,
     DEPTHPOINTCLOUD_STAGE_PY,
@@ -37,17 +41,22 @@ from task_db import (
 )
 from task_json import (
     ensure_task_id_in_json,
+    load_task_json,
+    resolve_task_json_path,
+    save_task_json,
 )
 
 
 STAGE_ORDER = [
     "hololens2depth",
+    "aruco_detect",
     "sam3mask",
     "instantmesh",
     "depthpointcloud",
     "modelscale",
     "icpalignment",
     "pose",
+    "aruco_sync",
     "blender",
 ]
 
@@ -85,6 +94,7 @@ def _run_python_script(python_path: str, script_path: Path, json_path: Path, cwd
         cwd=str(cwd),
         check=True,
         text=True,
+        capture_output=True,
     )
     if result.stdout:
         print(result.stdout)
@@ -98,6 +108,15 @@ def _run_hololens2depth(json_path: Path) -> None:
         script_path=HOLOLENS2_CONVERT_RUN,
         json_path=json_path,
         cwd=HOLOLENS2_CONVERT_DIR,
+    )
+
+
+def _run_aruco_detect(json_path: Path) -> None:
+    _run_python_script(
+        python_path=ARUCO_DETECT_STAGE_PY,
+        script_path=ARUCO_DETECT_STAGE_RUN,
+        json_path=json_path,
+        cwd=ARUCO_DETECT_STAGE_RUN.parent,
     )
 
 
@@ -155,6 +174,15 @@ def _run_pose(json_path: Path) -> None:
     )
 
 
+def _run_aruco_sync(json_path: Path) -> None:
+    _run_python_script(
+        python_path=ARUCO_SYNC_STAGE_PY,
+        script_path=ARUCO_SYNC_STAGE_RUN,
+        json_path=json_path,
+        cwd=ARUCO_SYNC_STAGE_RUN.parent,
+    )
+
+
 def _run_blender(json_path: Path) -> None:
     _run_python_script(
         python_path=BLENDER_STAGE_PY,
@@ -166,14 +194,24 @@ def _run_blender(json_path: Path) -> None:
 
 STAGE_RUNNERS = {
     "hololens2depth": _run_hololens2depth,
+    "aruco_detect": _run_aruco_detect,
     "sam3mask": _run_sam3mask,
     "instantmesh": _run_instantmesh,
     "depthpointcloud": _run_depthpointcloud,
     "modelscale": _run_modelscale,
     "icpalignment": _run_icpalignment,
     "pose": _run_pose,
+    "aruco_sync": _run_aruco_sync,
     "blender": _run_blender,
 }
+
+
+def _should_short_circuit_after_aruco_detect(json_path: Path) -> bool:
+    task_json = load_task_json(json_path)
+    debug_info = task_json.get("debug") or {}
+    pose_transform_stages = debug_info.get("pose_transform_stages") or {}
+    aruco_stage = pose_transform_stages.get("aruco_stage") or {}
+    return bool(aruco_stage.get("short_circuit"))
 
 
 def _process_one_task(task_id: str) -> None:
@@ -201,6 +239,10 @@ def _process_one_task(task_id: str) -> None:
         stage_name = STAGE_ORDER[index]
         update_task_status(task_id, stage_name)
         STAGE_RUNNERS[stage_name](json_path)
+
+        if stage_name == "aruco_detect" and _should_short_circuit_after_aruco_detect(json_path):
+            update_task_status(task_id, "aruco_completed")
+            return
 
         next_status = "completed"
         if index + 1 < len(STAGE_ORDER):
@@ -246,7 +288,6 @@ def _process_tasks_loop() -> None:
 
 
 def start_worker() -> threading.Thread:
-    """启动后台任务线程；重复调用时复用同一个线程。"""
     global _worker_thread
 
     initialize_task_table()
@@ -261,18 +302,22 @@ def start_worker() -> threading.Thread:
 
 
 def create_task(json_path: Path | str) -> str:
-    """创建任务记录并加入内存队列。"""
     task_json_path = resolve_task_json_path(json_path)
     if not task_json_path.is_file():
         raise FileNotFoundError(f"JSON file not found: {task_json_path}")
 
     data = load_task_json(task_json_path)
     task_id = str(data.get("task_id") or uuid.uuid4())
+    startup_session_id = str((data.get("device") or {}).get("startup_session_id") or "").strip() or None
 
     data["task_id"] = task_id
     save_task_json(task_json_path, data)
 
-    create_task_record(task_id=task_id, json_path=task_json_path)
+    create_task_record(
+        task_id=task_id,
+        json_path=task_json_path,
+        startup_session_id=startup_session_id,
+    )
 
     with _task_lock:
         _task_queue.append(task_id)
@@ -281,7 +326,6 @@ def create_task(json_path: Path | str) -> str:
 
 
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
-    """根据 task_id 查询数据库记录，并附带 json 内容。"""
     task_record = get_task_by_task_id(task_id)
     if task_record is None:
         return None
@@ -302,7 +346,6 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
 
 
 def get_latest_completed_task_data() -> Optional[Dict[str, Any]]:
-    """Return the most recent completed task with loaded JSON outputs."""
     task_record = get_latest_completed_task()
     if task_record is None:
         return None
@@ -328,6 +371,5 @@ def get_current_task_id() -> Optional[str]:
 
 
 def get_queue_snapshot() -> list[str]:
-    """返回当前等待队列，列表第一个元素就是下一个任务。"""
     with _task_lock:
         return _queue_snapshot_no_lock()

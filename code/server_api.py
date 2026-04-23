@@ -97,6 +97,12 @@ def _extract_flipped_pv_pose_components(pose_value) -> tuple[list[float] | None,
     return [float(v) for v in position], [float(v) for v in quat_xyzw]
 
 
+def _append_pose_fields(response: dict, task_json: dict) -> None:
+    for key in ("object", "object_world", "object_aruco", "aruco_reference", "debug"):
+        value = task_json.get(key)
+        response[key] = value if value else None
+
+
 def _build_completed_task_response(task_data: dict) -> dict:
     response = {
         "status": task_data["status"],
@@ -113,10 +119,7 @@ def _build_completed_task_response(task_data: dict) -> dict:
     video_name = instantmesh_info.get("video")
     fbx_name = blender_info.get("fbx")
 
-    object_info = task_json.get("object")
-    response["object"] = object_info if object_info else None
-    debug_info = task_json.get("debug")
-    response["debug"] = debug_info if debug_info else None
+    _append_pose_fields(response, task_json)
 
     mesh_path = INSTANTMESH_OUTPUT_MESHES / mesh_name if mesh_name else None
     mtl_path = INSTANTMESH_OUTPUT_MESHES / mtl_name if mtl_name else None
@@ -149,6 +152,15 @@ def _build_completed_task_response(task_data: dict) -> dict:
     if fbx_path and fbx_path.exists():
         response["fbx_url"] = f"{host}/files/fbx/{fbx_name}"
 
+    return response
+
+
+def _build_aruco_completed_task_response(task_data: dict) -> dict:
+    response = {
+        "status": task_data["status"],
+        "task_id": task_data.get("task_id"),
+    }
+    _append_pose_fields(response, task_data.get("task_json") or {})
     return response
 
 @app.route("/", methods=["GET"], strict_slashes=False)
@@ -238,6 +250,7 @@ def generate_model():
                 "time": devj.get("time", ""),
                 "pose": devj.get("pose"),
                 "rotation": devj.get("rotation"),
+                "startup_session_id": devj.get("startup_session_id", ""),
             },
             "PVCamera": {
                 "name": str(color_path.name),
@@ -285,10 +298,11 @@ def check_task(task_id):
 
         status = task_data["status"]
         response = {"status": status}
-        task_json = task_data.get("task_json") or {}
 
         if status == "completed":
             response = _build_completed_task_response(task_data)
+        elif status == "aruco_completed":
+            response = _build_aruco_completed_task_response(task_data)
 
         elif status == "failed":
             response["error"] = task_data.get("error_message") or "Unknown error"

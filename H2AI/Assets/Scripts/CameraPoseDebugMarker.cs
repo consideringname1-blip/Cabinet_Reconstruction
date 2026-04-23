@@ -11,9 +11,11 @@ public class CameraPoseDebugMarker : MonoBehaviour
     [SerializeField] private Transform markerParent;
     [SerializeField] private string cameraMarkerName = "RecordedCameraPoseMarker";
     [SerializeField] private string modelMarkerName = "RecordedFinalModelMarker";
+    [SerializeField] private string arucoMarkerName = "RecordedArucoReferenceMarker";
 
     private GameObject _cameraMarker;
     private GameObject _modelMarker;
+    private GameObject _arucoMarker;
 
     private void Awake()
     {
@@ -54,6 +56,24 @@ public class CameraPoseDebugMarker : MonoBehaviour
         );
     }
 
+    public void PlaceArucoMarker(Vector3 arucoPosition, Quaternion arucoRotation)
+    {
+        EnsureMarkers();
+        if (_arucoMarker == null)
+        {
+            Debug.LogWarning("[CameraPoseDebugMarker] Failed to create ArUco marker.");
+            return;
+        }
+
+        _arucoMarker.transform.SetPositionAndRotation(arucoPosition, arucoRotation);
+        _arucoMarker.name = arucoMarkerName;
+        _arucoMarker.SetActive(true);
+
+        Debug.Log(
+            $"[CameraPoseDebugMarker] ArUco marker pos={arucoPosition}, rot={arucoRotation.eulerAngles}"
+        );
+    }
+
     private void EnsureMarkers()
     {
         if (_cameraMarker == null)
@@ -64,6 +84,11 @@ public class CameraPoseDebugMarker : MonoBehaviour
         if (_modelMarker == null)
         {
             _modelMarker = CreateMarkerClone(modelMarkerName);
+        }
+
+        if (_arucoMarker == null)
+        {
+            _arucoMarker = CreateMarkerClone(arucoMarkerName);
         }
     }
 
