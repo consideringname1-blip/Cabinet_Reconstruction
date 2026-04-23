@@ -17,8 +17,8 @@ from hololens3d_reconstruction.pose_math import (
     serialize_pose,
 )
 from unity_coordinate_utils import (
+    convert_hololens_pv_pose_matrix_to_unity_pose_components,
     convert_opencv_camera_pose_to_unity_camera_pose,
-    convert_windows_pose_matrix_to_unity_pose_components,
 )
 
 
@@ -163,7 +163,7 @@ def resolve_pv_camera_world_pose(task: dict[str, Any]) -> tuple[np.ndarray, np.n
     pv_info = task.get("PVCamera") or {}
     pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
     if pv_pose.shape == (4, 4):
-        translation, rotation, _quat_xyzw = convert_windows_pose_matrix_to_unity_pose_components(
+        translation, rotation, _quat_xyzw = convert_hololens_pv_pose_matrix_to_unity_pose_components(
             pv_pose
         )
         return translation.astype(np.float64), rotation.astype(np.float64)

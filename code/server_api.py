@@ -30,7 +30,7 @@ from task_worker import (
     start_worker,
 )
 from task_json import save_task_json
-from unity_coordinate_utils import convert_windows_pose_matrix_to_unity_pose_components
+from unity_coordinate_utils import convert_hololens_pv_pose_matrix_to_unity_pose_components
 
 
 app = Flask(__name__)
@@ -43,7 +43,7 @@ def _extract_unity_pv_pose_components(pose_value) -> tuple[list[float] | None, l
     if pose_value is None:
         return None, None
 
-    position, _rotation, quat_xyzw = convert_windows_pose_matrix_to_unity_pose_components(
+    position, _rotation, quat_xyzw = convert_hololens_pv_pose_matrix_to_unity_pose_components(
         pose_value
     )
     return [float(v) for v in position], [float(v) for v in quat_xyzw]

@@ -66,6 +66,22 @@ def rotation_matrix_to_quat_xyzw(rotation: np.ndarray) -> np.ndarray:
     return normalize_quat_xyzw(np.array([x, y, z, w], dtype=np.float64))
 
 
+def quat_xyzw_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
+    x, y, z, w = normalize_quat_xyzw(q)
+    xx, yy, zz = x * x, y * y, z * z
+    xy, xz, yz = x * y, x * z, y * z
+    wx, wy, wz = w * x, w * y, w * z
+
+    return np.array(
+        [
+            [1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)],
+            [2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)],
+            [2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)],
+        ],
+        dtype=np.float64,
+    )
+
+
 def convert_rotation_between_bases(rotation: np.ndarray, basis_change: np.ndarray) -> np.ndarray:
     rotation = np.asarray(rotation, dtype=np.float64)
     basis_change = np.asarray(basis_change, dtype=np.float64)
@@ -102,6 +118,28 @@ def convert_windows_pose_matrix_to_unity_pose_components(
         WINDOWS_TO_UNITY_BASIS,
     )
     quaternion_unity = rotation_matrix_to_quat_xyzw(rotation_unity)
+    return translation_unity, rotation_unity, quaternion_unity
+
+
+def convert_hololens_pv_pose_matrix_to_unity_pose_components(
+    pose_matrix: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    pose_matrix = np.asarray(pose_matrix, dtype=np.float64)
+    if pose_matrix.shape != (4, 4):
+        raise ValueError("pose matrix must be 4x4")
+
+    # HoloLens PV pose matrices in this pipeline have historically been
+    # consumed with only the world-space Z axis flipped. The downstream ICP /
+    # runtime composition and previously captured task JSONs were tuned around
+    # that convention, so keep this explicit conversion for compatibility.
+    rotation_windows = pose_matrix[:3, :3].astype(np.float64)
+    translation_unity = pose_matrix[3, :3].astype(np.float64)
+    translation_unity[2] *= -1.0
+
+    quaternion_unity = rotation_matrix_to_quat_xyzw(rotation_windows)
+    quaternion_unity[2] *= -1.0
+    quaternion_unity = normalize_quat_xyzw(quaternion_unity)
+    rotation_unity = quat_xyzw_to_rotation_matrix(quaternion_unity)
     return translation_unity, rotation_unity, quaternion_unity
 
 

@@ -16,7 +16,7 @@ from pose_math import (
 )
 from stage_common import load_stage_task
 from task_json import save_task_json
-from unity_coordinate_utils import convert_windows_pose_matrix_to_unity_pose_components
+from unity_coordinate_utils import convert_hololens_pv_pose_matrix_to_unity_pose_components
 
 
 CUSTOM_RUNTIME_LOCAL_AXIS_REMAP_TO_UNITY = np.array(
@@ -71,7 +71,7 @@ def resolve_pv_camera_world_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
     pv_info = task.get("PVCamera") or {}
     pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
     if pv_pose.shape == (4, 4):
-        translation, rotation, _quat_xyzw = convert_windows_pose_matrix_to_unity_pose_components(
+        translation, rotation, _quat_xyzw = convert_hololens_pv_pose_matrix_to_unity_pose_components(
             pv_pose
         )
         return translation, rotation
@@ -142,7 +142,7 @@ def build_pose_debug(task: dict) -> dict:
                 pv_position,
                 "unity_world_x_right_y_up_z_forward",
             ),
-            "notes": "PVCamera world pose is converted from the raw Windows/hl2da pose matrix into the Unity world basis before composition.",
+            "notes": "PVCamera world pose is reconstructed from the raw HoloLens PV pose using the pipeline's legacy Z-flip conversion before composition.",
         },
         "final_object_world": {
             "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,
