@@ -276,18 +276,31 @@ def get_latest_unfinished_task() -> Optional[Dict[str, Any]]:
     return _row_to_dict(row)
 
 
-def get_latest_completed_task() -> Optional[Dict[str, Any]]:
+def get_latest_completed_task(startup_session_id: str | None = None) -> Optional[Dict[str, Any]]:
     initialize_task_table()
+    startup_session_id = str(startup_session_id or "").strip()
     with _get_connection() as conn:
-        row = conn.execute(
-            f"""
-            SELECT *
-            FROM {TABLE_NAME}
-            WHERE status = 'completed'
-            ORDER BY id DESC
-            LIMIT 1
-            """
-        ).fetchone()
+        if startup_session_id:
+            row = conn.execute(
+                f"""
+                SELECT *
+                FROM {TABLE_NAME}
+                WHERE status = 'completed' AND startup_session_id = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (startup_session_id,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                f"""
+                SELECT *
+                FROM {TABLE_NAME}
+                WHERE status = 'completed'
+                ORDER BY id DESC
+                LIMIT 1
+                """
+            ).fetchone()
     return _row_to_dict(row)
 
 

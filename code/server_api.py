@@ -332,8 +332,16 @@ def check_task_query():
 @app.route("/latest-completed", methods=["GET"], strict_slashes=False)
 def latest_completed_task():
     try:
-        task_data = get_latest_completed_task_data()
+        startup_session_id = str(request.args.get("startup_session_id") or "").strip() or None
+        task_data = get_latest_completed_task_data(startup_session_id=startup_session_id)
         if not task_data:
+            if startup_session_id:
+                return jsonify(
+                    {
+                        "error": "No completed task found for this startup session",
+                        "startup_session_id": startup_session_id,
+                    }
+                ), 404
             return jsonify({"error": "No completed task found"}), 404
 
         response = _build_completed_task_response(task_data)

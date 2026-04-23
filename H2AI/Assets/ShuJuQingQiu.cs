@@ -410,7 +410,7 @@ public class ShuJuQingQiu : MonoBehaviour
 
     public void XiaZaiZuiXinChengGongMoXing()
     {
-        string url = "http://10.40.1.122:7355/latest-completed";
+        string url = "http://10.40.1.122:7355/latest-completed?startup_session_id=" + Uri.EscapeDataString(startup_session_id ?? "");
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRequestLatestCompleted);
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
         request.Send();
@@ -681,8 +681,32 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         if (!response.IsSuccess)
         {
-            Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
-            ShowFrontMessage("latest_completed_ERR_request_failed");
+            string serverError = response.Message;
+            if (!string.IsNullOrEmpty(response.DataAsText))
+            {
+                try
+                {
+                    JObject errorJo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
+                    string detailed = errorJo?["error"]?.ToString();
+                    if (!string.IsNullOrEmpty(detailed))
+                    {
+                        serverError = detailed;
+                    }
+                }
+                catch
+                {
+                }
+            }
+
+            Debug.LogError("Error: " + response.StatusCode + " - " + serverError);
+            if (!string.IsNullOrEmpty(serverError) && serverError.Contains("startup session"))
+            {
+                ShowFrontMessage("latest_completed_ERR_no_session_model");
+            }
+            else
+            {
+                ShowFrontMessage("latest_completed_ERR_request_failed");
+            }
             return;
         }
 
