@@ -1,0 +1,23 @@
+av==16.1.0
+blinker==1.9.0
+certifi==2025.11.12
+charset-normalizer==3.4.4
+click==8.3.1
+Flask==3.1.2
+gunicorn==23.0.0
+idna==3.11
+itsdangerous==2.2.0
+Jinja2==3.1.6
+MarkupSafe==3.0.3
+mkl-service==2.5.2
+mkl_fft @ file:///home/task_176159252575002/conda-bld/mkl_fft_1761592901585/work
+mkl_random @ file:///home/task_176159293813909/conda-bld/mkl_random_1761592952512/work
+numpy @ file:///home/task_176157872663408/conda-bld/numpy_and_numpy_base_1761579342634/work/dist/numpy-2.2.5-cp310-cp310-linux_x86_64.whl#sha256=fb5b85b589f86e6404be6a37347b98be70b32c4ae837bb26e1180e9f9a7fb718
+opencv-python==4.13.0.92
+packaging==25.0
+pillow==12.1.1
+requests==2.32.5
+scipy @ file:///home/task_175922117955695/conda-bld/scipy_1759221925481/work/dist/scipy-1.15.3-cp310-cp310-linux_x86_64.whl#sha256=3e3aede3ac8e5825c2bfd3c3c70b0a467e1895afeed7002cea1edf0156b79fdb
+urllib3==2.5.0
+Werkzeug==3.1.4
+
