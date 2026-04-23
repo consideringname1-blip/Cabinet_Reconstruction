@@ -1,0 +1,37 @@
+{
+  "task_id": "10846660-a928-4a6f-8aab-05ffc8b883d6",
+  "task_name": "20260423_055626_798799Z",
+  "startup_session_id": "20260423_054549_802_d070635d",
+  "template": {
+    "enabled": true,
+    "dictionary": "DICT_7X7_1000",
+    "marker_id": 1,
+    "marker_size_mm": 200.0,
+    "reference_image_name": "raw/ar_marker_7x7_1.png",
+    "notes": "Configured from local ar_marker_detection-master files. Printed marker side length is 20 cm. Image validates as id=1 when padded with a white border."
+  },
+  "aruco_stage": {
+    "template_path": "/workspace/data/aruco/aruco_template.json",
+    "template_enabled": true,
+    "configured": true,
+    "config_reason": "",
+    "detected": false,
+    "detected_ids": [],
+    "matched_marker_id": null,
+    "coordinate_basis_local": "aruco_local_x_right_y_up_z_forward",
+    "coordinate_basis_world": "unity_world_x_right_y_up_z_forward",
+    "pv_pose_basis_transform": "windows_spatial_to_unity_flip_z",
+    "marker_camera_basis_transform": "opencv_camera_to_unity_camera_flip_y",
+    "marker_axes_definition": "origin=center, +x=marker right, +y=marker up, +z=marker front normal",
+    "short_circuit": false,
+    "raw_record_path": "/workspace/data/aruco/raw/20260423_055626_798799Z/record.json",
+    "roi_image_path": "/workspace/data/aruco/raw/20260423_055626_798799Z/roi.png",
+    "annotated_image_path": "/workspace/data/aruco/raw/20260423_055626_798799Z/annotated.png",
+    "roi_pixel_bounds": {
+      "x0": 162,
+      "y0": 71,
+      "x1": 434,
+      "y1": 357
+    }
+  }
+}
