@@ -10,7 +10,11 @@ except ModuleNotFoundError:
     from . import _bootstrap  # type: ignore
 
 from hololens3d_reconstruction.pose_math import quat_xyzw_to_rotation_matrix
-from task_db import get_latest_aruco_reference, update_task_aruco_coordinate_synced
+from task_db import (
+    get_completed_tasks_for_startup,
+    get_latest_aruco_reference,
+    update_task_aruco_coordinate_synced,
+)
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 try:
@@ -55,15 +59,8 @@ def _extract_pose(pose: dict) -> tuple[np.ndarray, np.ndarray, list[float] | Non
     return position.astype(np.float64), rotation.astype(np.float64), scale
 
 
-def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print(
-            "Usage: python code/stages/hololens_aruco_reference/run_aruco_sync_from_json.py <task_meta.json or filename>",
-            file=sys.stderr,
-        )
-        raise SystemExit(2)
-
-    json_path = resolve_task_json_path(argv[1])
+def sync_task_json_with_latest_reference(json_path_arg: str) -> bool:
+    json_path = resolve_task_json_path(json_path_arg)
     task = load_task_json(json_path)
     task_id = str(task.get("task_id") or "")
     startup_session_id = str((task.get("device") or {}).get("startup_session_id") or "").strip()
@@ -92,7 +89,7 @@ def main(argv: list[str]) -> int:
             update_task_aruco_coordinate_synced(task_id, False)
         print("[INFO] aruco_sync : no ArUco reference found for this startup session")
         print("[OK] aruco_sync")
-        return 0
+        return False
 
     task["aruco_reference"] = aruco_reference
     aruco_stage["reference_task_id"] = latest_reference_row.get("task_id")
@@ -106,7 +103,7 @@ def main(argv: list[str]) -> int:
             update_task_aruco_coordinate_synced(task_id, False)
         print("[INFO] aruco_sync : attached reference only because object_world is missing")
         print("[OK] aruco_sync")
-        return 0
+        return False
 
     object_world_position, object_world_rotation, object_scale = _extract_pose(object_world)
     marker_world_position, marker_world_rotation, _marker_scale = _extract_pose(aruco_reference)
@@ -140,6 +137,35 @@ def main(argv: list[str]) -> int:
 
     print("[INFO] aruco_sync : object pose converted into ArUco-local coordinates")
     print("[OK] aruco_sync")
+    return True
+
+
+def sync_completed_tasks_for_startup(startup_session_id: str) -> int:
+    synced_count = 0
+    for task_row in get_completed_tasks_for_startup(startup_session_id, require_unsynced=True):
+        json_path = task_row.get("json_path")
+        if not json_path:
+            continue
+        try:
+            if sync_task_json_with_latest_reference(str(json_path)):
+                synced_count += 1
+        except Exception as exc:
+            print(
+                f"[WARN] aruco_sync : failed to retro-sync task {task_row.get('task_id')}: {exc}",
+                file=sys.stderr,
+            )
+    return synced_count
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) != 2:
+        print(
+            "Usage: python code/stages/hololens_aruco_reference/run_aruco_sync_from_json.py <task_meta.json or filename>",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
+    sync_task_json_with_latest_reference(argv[1])
     return 0
 
 

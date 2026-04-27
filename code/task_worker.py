@@ -33,9 +33,11 @@ from config import (
 )
 from task_db import (
     create_task as create_task_record,
+    get_completed_tasks_for_startup,
     get_latest_completed_task,
     get_task_by_task_id,
     get_unfinished_tasks,
+    get_unsynced_completed_tasks,
     initialize_task_table,
     update_task_status,
 )
@@ -355,6 +357,27 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     return task_record
 
 
+def _sync_completed_tasks_for_startup(startup_session_id: str | None = None) -> int:
+    synced_count = 0
+    task_rows = (
+        get_completed_tasks_for_startup(startup_session_id, require_unsynced=True)
+        if startup_session_id
+        else get_unsynced_completed_tasks()
+    )
+    for task_row in task_rows:
+        json_path = task_row.get("json_path")
+        if not json_path:
+            continue
+        try:
+            _run_aruco_sync(resolve_task_json_path(json_path))
+            synced_count += 1
+        except Exception as exc:
+            print(
+                f"[worker] failed to sync completed task {task_row.get('task_id')} to ArUco reference: {exc}"
+            )
+    return synced_count
+
+
 def get_latest_completed_task_data(
     startup_session_id: str | None = None,
     require_aruco_coordinate_synced: bool = False,
@@ -363,6 +386,18 @@ def get_latest_completed_task_data(
         startup_session_id=startup_session_id,
         require_aruco_coordinate_synced=require_aruco_coordinate_synced,
     )
+    if task_record is None and startup_session_id and require_aruco_coordinate_synced:
+        _sync_completed_tasks_for_startup(startup_session_id)
+        task_record = get_latest_completed_task(
+            startup_session_id=startup_session_id,
+            require_aruco_coordinate_synced=True,
+        )
+    if task_record is None and require_aruco_coordinate_synced:
+        _sync_completed_tasks_for_startup()
+        task_record = get_latest_completed_task(
+            startup_session_id=startup_session_id,
+            require_aruco_coordinate_synced=True,
+        )
     if task_record is None:
         return None
 

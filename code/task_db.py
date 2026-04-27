@@ -304,6 +304,48 @@ def get_latest_completed_task(
     return _row_to_dict(row)
 
 
+def get_completed_tasks_for_startup(
+    startup_session_id: str,
+    *,
+    require_unsynced: bool = False,
+) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    startup_session_id = str(startup_session_id or "").strip()
+    if not startup_session_id:
+        return []
+
+    where_clauses = ["status = 'completed'", "startup_session_id = ?"]
+    params: List[Any] = [startup_session_id]
+    if require_unsynced:
+        where_clauses.append("aruco_coordinate_synced = 0")
+
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {TABLE_NAME}
+            WHERE {' AND '.join(where_clauses)}
+            ORDER BY id DESC
+            """,
+            tuple(params),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_unsynced_completed_tasks() -> List[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {TABLE_NAME}
+            WHERE status = 'completed' AND aruco_coordinate_synced = 0
+            ORDER BY id DESC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_unfinished_tasks() -> List[Dict[str, Any]]:
     initialize_task_table()
     terminal_list = ", ".join(f"'{status}'" for status in TERMINAL_STATUSES)

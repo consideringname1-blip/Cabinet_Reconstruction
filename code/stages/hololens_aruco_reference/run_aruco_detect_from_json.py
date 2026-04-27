@@ -41,6 +41,7 @@ try:
         resolve_selection_roi,
         resolve_task_name,
     )
+    from run_aruco_sync_from_json import sync_completed_tasks_for_startup
 except ModuleNotFoundError:
     from .aruco_common import (
         ARUCO_LOCAL_COORDINATE_BASIS,
@@ -59,6 +60,7 @@ except ModuleNotFoundError:
         resolve_selection_roi,
         resolve_task_name,
     )
+    from .run_aruco_sync_from_json import sync_completed_tasks_for_startup
 
 
 def _load_cv2():
@@ -354,6 +356,9 @@ def main(argv: list[str]) -> int:
                         marker_pose_json=aruco_reference,
                         raw_record_path=str(record_path),
                         config_snapshot_json=template,
+                    )
+                    aruco_stage["retro_synced_completed_task_count"] = sync_completed_tasks_for_startup(
+                        startup_session_id
                     )
 
                 matched_rvec = np.asarray(rvec, dtype=np.float64).reshape(3, 1)
