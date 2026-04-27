@@ -40,6 +40,8 @@ start_worker()
 
 
 TERMINAL_STATUSES = frozenset({"completed", "aruco_completed", "failed"})
+PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction"
+PURPOSE_ARUCO_REFERENCE = "aruco_reference"
 
 
 def _is_truthy_query_value(value) -> bool:
@@ -54,6 +56,15 @@ def _extract_unity_pv_pose_components(pose_value) -> tuple[list[float] | None, l
         pose_value
     )
     return [float(v) for v in position], [float(v) for v in quat_xyzw]
+
+
+def _normalize_purpose(value) -> str:
+    purpose = str(value or "").strip()
+    if not purpose:
+        return PURPOSE_OBJECT_RECONSTRUCTION
+    if purpose not in {PURPOSE_OBJECT_RECONSTRUCTION, PURPOSE_ARUCO_REFERENCE}:
+        raise ValueError(f"Unsupported purpose: {purpose}")
+    return purpose
 
 
 def _append_pose_fields(response: dict, task_json: dict) -> None:
@@ -107,6 +118,7 @@ def _build_completed_task_response(task_data: dict) -> dict:
     response = {
         "status": task_data["status"],
         "task_id": task_data.get("task_id"),
+        "purpose": (task_data.get("task_json") or {}).get("purpose"),
         "terminal": True,
     }
     task_json = task_data.get("task_json") or {}
@@ -160,6 +172,7 @@ def _build_aruco_completed_task_response(task_data: dict) -> dict:
     response = {
         "status": task_data["status"],
         "task_id": task_data.get("task_id"),
+        "purpose": (task_data.get("task_json") or {}).get("purpose"),
         "terminal": True,
     }
     _append_pose_fields(response, task_data.get("task_json") or {})
@@ -209,23 +222,31 @@ def generate_model():
             except Exception as exc:
                 raise ValueError(f"invalid base64 image: {exc}")
 
+        purpose = _normalize_purpose(request.form.get("purpose"))
         pvj = _parse_json_field("PVCameraJ")
-        dj = _parse_json_field("DepthCameraJ")
         devj = _parse_json_field("deviceJ")
-        sbj = _parse_json_field("SelectionBoxJ")
         pv_position, pv_rotation_quaternion_xyzw = _extract_unity_pv_pose_components(pvj.get("pose"))
-        requested_sensor = str(dj.get("sensor") or AHAT_SENSOR_NAME).strip().upper()
-        if requested_sensor != AHAT_SENSOR_NAME:
-            raise ValueError(f"Only {AHAT_SENSOR_NAME} depth uploads are supported in this build")
 
-        top_left = sbj.get("top_left")
-        bottom_right = sbj.get("bottom_right")
+        dj = None
+        sbj = None
+        top_left = None
+        bottom_right = None
+        if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
+            dj = _parse_json_field("DepthCameraJ")
+            sbj = _parse_json_field("SelectionBoxJ")
 
-        if not (isinstance(top_left, list) and len(top_left) == 2):
-            raise ValueError("SelectionBoxJ.top_left must be a list of length 2")
+            requested_sensor = str(dj.get("sensor") or AHAT_SENSOR_NAME).strip().upper()
+            if requested_sensor != AHAT_SENSOR_NAME:
+                raise ValueError(f"Only {AHAT_SENSOR_NAME} depth uploads are supported in this build")
 
-        if not (isinstance(bottom_right, list) and len(bottom_right) == 2):
-            raise ValueError("SelectionBoxJ.bottom_right must be a list of length 2")
+            top_left = sbj.get("top_left")
+            bottom_right = sbj.get("bottom_right")
+
+            if not (isinstance(top_left, list) and len(top_left) == 2):
+                raise ValueError("SelectionBoxJ.top_left must be a list of length 2")
+
+            if not (isinstance(bottom_right, list) and len(bottom_right) == 2):
+                raise ValueError("SelectionBoxJ.bottom_right must be a list of length 2")
 
         now_utc = datetime.now(timezone.utc)
         server_received_utc = now_utc.isoformat().replace("+00:00", "Z")
@@ -240,8 +261,8 @@ def generate_model():
 
         depth_path = None
         depth_stats = None
-        depth_b64 = dj.get("image", "")
-        if isinstance(depth_b64, str) and depth_b64:
+        depth_b64 = dj.get("image", "") if dj else ""
+        if purpose == PURPOSE_OBJECT_RECONSTRUCTION and isinstance(depth_b64, str) and depth_b64:
             depth_png_bytes = _b64_to_bytes(depth_b64)
             depth_png_bytes, depth_stats = _sanitize_ahat_depth_png(depth_png_bytes)
             depth_path = UPLOAD_FOLDER / f"{base}_depth.png"
@@ -251,6 +272,7 @@ def generate_model():
         out_json = {
             "server_received_utc": server_received_utc,
             "task_name": base,
+            "purpose": purpose,
             "device": {
                 "type": devj.get("type", ""),
                 "ip": devj.get("ip", ""),
@@ -268,16 +290,24 @@ def generate_model():
                 "position": pv_position,
                 "rotation_quaternion_xyzw": pv_rotation_quaternion_xyzw,
             },
-            "DepthCamera": {
-                "name": str(depth_path.name) if depth_path else None,
-                "pose": dj.get("pose"),
-                "sensor": AHAT_SENSOR_NAME,
-                "stats": depth_stats,
-            },
-            "SelectionBox": {
-                "top_left": top_left,
-                "bottom_right": bottom_right,
-            },
+            "DepthCamera": (
+                {
+                    "name": str(depth_path.name) if depth_path else None,
+                    "pose": dj.get("pose") if dj else None,
+                    "sensor": AHAT_SENSOR_NAME,
+                    "stats": depth_stats,
+                }
+                if purpose == PURPOSE_OBJECT_RECONSTRUCTION
+                else None
+            ),
+            "SelectionBox": (
+                {
+                    "top_left": top_left,
+                    "bottom_right": bottom_right,
+                }
+                if purpose == PURPOSE_OBJECT_RECONSTRUCTION
+                else None
+            ),
             "object": {
                 "position": [0, 0, 0],
                 "rotation": [0, 0, 0, 1.0],

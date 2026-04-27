@@ -60,6 +60,9 @@ STAGE_ORDER = [
     "blender",
 ]
 
+PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction"
+PURPOSE_ARUCO_REFERENCE = "aruco_reference"
+
 _task_queue = deque()
 _task_lock = threading.Lock()
 _current_task_id: Optional[str] = None
@@ -214,6 +217,18 @@ def _should_short_circuit_after_aruco_detect(json_path: Path) -> bool:
     return bool(aruco_stage.get("short_circuit"))
 
 
+def _resolve_task_purpose(task_json: dict) -> str:
+    purpose = str(task_json.get("purpose") or "").strip()
+    return purpose or PURPOSE_OBJECT_RECONSTRUCTION
+
+
+def _resolve_stage_order(task_json: dict) -> list[str]:
+    purpose = _resolve_task_purpose(task_json)
+    if purpose == PURPOSE_ARUCO_REFERENCE:
+        return ["aruco_detect"]
+    return STAGE_ORDER
+
+
 def _process_one_task(task_id: str) -> None:
     task_record = get_task_by_task_id(task_id)
     if task_record is None:
@@ -224,29 +239,36 @@ def _process_one_task(task_id: str) -> None:
         raise FileNotFoundError(f"JSON file not found: {json_path}")
 
     ensure_task_id_in_json(json_path, task_id)
+    task_json = load_task_json(json_path)
+    purpose = _resolve_task_purpose(task_json)
+    stage_order = _resolve_stage_order(task_json)
 
     current_status = str(task_record["status"])
     if current_status == "pending":
-        current_status = STAGE_ORDER[0]
+        current_status = stage_order[0]
         update_task_status(task_id, current_status)
 
-    if current_status not in STAGE_RUNNERS:
+    if current_status not in STAGE_RUNNERS or current_status not in stage_order:
         raise ValueError(f"Task {task_id} has unsupported status: {current_status}")
 
-    start_index = STAGE_ORDER.index(current_status)
+    start_index = stage_order.index(current_status)
 
-    for index in range(start_index, len(STAGE_ORDER)):
-        stage_name = STAGE_ORDER[index]
+    for index in range(start_index, len(stage_order)):
+        stage_name = stage_order[index]
         update_task_status(task_id, stage_name)
         STAGE_RUNNERS[stage_name](json_path)
 
-        if stage_name == "aruco_detect" and _should_short_circuit_after_aruco_detect(json_path):
-            update_task_status(task_id, "aruco_completed")
-            return
+        if stage_name == "aruco_detect":
+            if purpose == PURPOSE_ARUCO_REFERENCE:
+                update_task_status(task_id, "aruco_completed")
+                return
+            if _should_short_circuit_after_aruco_detect(json_path):
+                update_task_status(task_id, "aruco_completed")
+                return
 
         next_status = "completed"
-        if index + 1 < len(STAGE_ORDER):
-            next_status = STAGE_ORDER[index + 1]
+        if index + 1 < len(stage_order):
+            next_status = stage_order[index + 1]
         update_task_status(task_id, next_status)
 
 

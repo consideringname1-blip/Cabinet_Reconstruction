@@ -15,6 +15,11 @@ using System.Collections;
 /// </summary>
 public class ShuJuQingQiu : MonoBehaviour
 {
+    // object_reconstruction: regular reconstruction upload with depth + selection box.
+    // aruco_reference: marker localization/reference upload with PV image + camera pose only.
+    const string TASK_PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction";
+    const string TASK_PURPOSE_ARUCO_REFERENCE = "aruco_reference";
+
     public static ShuJuQingQiu initialize;
     // Start is called before the first frame update
     public bool hasServerPose = false;
@@ -185,6 +190,133 @@ public class ShuJuQingQiu : MonoBehaviour
         }
         StartCoroutine(ShangChuanTuPianCoroutine());
     }
+
+    public void ShangChuanDingWeiMarkTuPian()
+    {
+        if (selectionPanelManager != null && selectionPanelManager.IsBusy)
+        {
+            Game_M.initialize.XianShi("shangchuan_ERR_selection_busy");
+            return;
+        }
+
+        Game_M.initialize.XianShi("shangchuan_mark");
+        Game_M.initialize.XianShi("shangchuan_Device");
+        bool pvFrozen = PV_controler.FreezeCurrentFrame();
+        if (!pvFrozen)
+        {
+            Game_M.initialize.XianShi("shangchuan_ERR_pv_freeze");
+            return;
+        }
+
+        string ip = GetDeviceIpCached();
+        string photoTimeUtc = DateTime.UtcNow.ToString("o");
+
+        Camera cam = Camera.main;
+        if (cam == null)
+        {
+            Game_M.initialize.XianShi("select_box_no_main_camera");
+            return;
+        }
+
+        Vector3 camPos = cam.transform.position;
+        Quaternion camRot = cam.transform.rotation;
+
+        Game_M.initialize.XianShi("shangchuan_PV");
+        if (PV_controler.tex_pv_frozen == null)
+        {
+            Game_M.initialize.XianShi("select_box_ERR_tex_null");
+            return;
+        }
+
+        byte[] tex_pv_P_C_F = ImageConversion.EncodeToPNG(PV_controler.tex_pv_frozen);
+        ushort width_pv_C_F = PV_controler.width_pv_frozen;
+        ushort height_pv_C_F = PV_controler.height_pv_frozen;
+        float[,] k_pv_C_F = PV_controler.k_pv_frozen;
+        float[,] pose_pv_C_F = PV_controler.pose_pv_frozen;
+
+        SendGenerateRequest(
+            TASK_PURPOSE_ARUCO_REFERENCE,
+            tex_pv_P_C_F,
+            width_pv_C_F,
+            height_pv_C_F,
+            k_pv_C_F,
+            pose_pv_C_F,
+            camPos,
+            camRot,
+            ip,
+            photoTimeUtc
+        );
+    }
+
+    void SendGenerateRequest(
+        string purpose,
+        byte[] texPvPng,
+        ushort pvWidth,
+        ushort pvHeight,
+        float[,] pvK,
+        float[,] pvPose,
+        Vector3 camPos,
+        Quaternion camRot,
+        string ip,
+        string photoTimeUtc,
+        byte[] depthPng = null,
+        float[,] depthPose = null,
+        string sensorType = null,
+        Vector2? boxTL = null,
+        Vector2? boxBR = null
+    )
+    {
+        string url = "http://10.40.1.122:7355/generate";
+        var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnRequestFinished);
+
+        Game_M.initialize.XianShi("shangchuan_Dabao");
+        request.AddField("purpose", purpose);
+
+        JObject PVCameraJ = new JObject
+        {
+            ["image"] = Convert.ToBase64String(texPvPng),
+            ["width"] = pvWidth,
+            ["height"] = pvHeight,
+            ["k"] = Float2DToJArray(pvK),
+            ["pose"] = Float2DToJArray(pvPose),
+        };
+        request.AddField("PVCameraJ", PVCameraJ.ToString(Formatting.None));
+
+        JObject deviceJ = new JObject
+        {
+            ["type"] = DEVICE_TYPE,
+            ["ip"] = string.IsNullOrEmpty(ip) ? "" : ip,
+            ["time"] = photoTimeUtc,
+            ["pose"] = new JArray(camPos.x, camPos.y, camPos.z),
+            ["rotation"] = new JArray(camRot.x, camRot.y, camRot.z, camRot.w),
+            ["startup_session_id"] = startup_session_id,
+        };
+        request.AddField("deviceJ", deviceJ.ToString(Formatting.None));
+
+        if (depthPng != null && depthPose != null && !string.IsNullOrEmpty(sensorType))
+        {
+            JObject DepthCameraJ = new JObject
+            {
+                ["image"] = Convert.ToBase64String(depthPng),
+                ["pose"] = Float2DToJArray(depthPose),
+                ["sensor"] = sensorType,
+            };
+            request.AddField("DepthCameraJ", DepthCameraJ.ToString(Formatting.None));
+        }
+
+        if (boxTL.HasValue && boxBR.HasValue)
+        {
+            JObject selectionBoxJ = new JObject
+            {
+                ["top_left"] = new JArray(boxTL.Value.x, boxTL.Value.y),
+                ["bottom_right"] = new JArray(boxBR.Value.x, boxBR.Value.y)
+            };
+            request.AddField("SelectionBoxJ", selectionBoxJ.ToString(Formatting.None));
+        }
+
+        request.Send();
+        Game_M.initialize.XianShi("generate");
+    }
     private IEnumerator ShangChuanTuPianCoroutine()
     {
         Game_M.initialize.XianShi("shangchuan");
@@ -334,6 +466,7 @@ public class ShuJuQingQiu : MonoBehaviour
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnRequestFinished);
 
         Game_M.initialize.XianShi("shangchuan_Dabao");
+        request.AddField("purpose", TASK_PURPOSE_OBJECT_RECONSTRUCTION);
         JObject PVCameraJ = new JObject
         {
             ["image"] = Convert.ToBase64String(tex_pv_P_C_F),

@@ -121,10 +121,13 @@ def resolve_pv_camera_matrix(task: dict[str, Any]) -> np.ndarray:
 
 
 def resolve_selection_roi(task: dict[str, Any], image_width: int, image_height: int) -> tuple[int, int, int, int]:
+    purpose = str(task.get("purpose") or "").strip()
     selection = task.get("SelectionBox") or {}
     top_left = np.asarray(selection.get("top_left"), dtype=np.float64)
     bottom_right = np.asarray(selection.get("bottom_right"), dtype=np.float64)
     if top_left.shape != (2,) or bottom_right.shape != (2,):
+        if purpose == "aruco_reference":
+            return 0, 0, int(image_width), int(image_height)
         raise ValueError("SelectionBox.top_left and bottom_right must each contain 2 values")
 
     left = float(np.clip(min(top_left[0], bottom_right[0]), 0.0, 1.0))
