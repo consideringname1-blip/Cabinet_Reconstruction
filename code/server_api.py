@@ -1,6 +1,5 @@
 """Flask API entrypoint for task creation and status polling."""
 
-import base64
 import json
 from datetime import datetime, timezone
 
@@ -78,11 +77,11 @@ def _sanitize_ahat_depth_png(depth_png_bytes: bytes) -> tuple[bytes, dict]:
     depth_png = np.frombuffer(depth_png_bytes, dtype=np.uint8)
     depth_image = cv2.imdecode(depth_png, cv2.IMREAD_UNCHANGED)
     if depth_image is None:
-        raise ValueError("DepthCameraJ.image is not a valid PNG")
+        raise ValueError("depth_image is not a valid PNG")
     if depth_image.dtype != np.uint16:
-        raise ValueError(f"DepthCameraJ.image must be uint16 depth, got {depth_image.dtype}")
+        raise ValueError(f"depth_image must be uint16 depth, got {depth_image.dtype}")
     if depth_image.ndim != 2:
-        raise ValueError(f"DepthCameraJ.image must be a single-channel image, got shape {depth_image.shape}")
+        raise ValueError(f"depth_image must be a single-channel image, got shape {depth_image.shape}")
 
     valid_mask = (depth_image >= AHAT_MIN_DEPTH_MM) & (depth_image <= AHAT_MAX_RELIABLE_DEPTH_MM)
     sanitized_depth = np.where(valid_mask, depth_image, 0).astype(np.uint16)
@@ -222,15 +221,14 @@ def generate_model():
                 raise ValueError(f"{field_name} must be a JSON object")
             return obj
 
-        def _b64_to_bytes(value: str) -> bytes:
-            if not isinstance(value, str) or len(value) == 0:
-                raise ValueError("image base64 is empty")
-            if "," in value and value.strip().lower().startswith("data:"):
-                value = value.split(",", 1)[1]
-            try:
-                return base64.b64decode(value, validate=False)
-            except Exception as exc:
-                raise ValueError(f"invalid base64 image: {exc}")
+        def _read_upload_file(field_name: str) -> bytes:
+            file_storage = request.files.get(field_name)
+            if file_storage is None:
+                raise ValueError(f"missing uploaded file {field_name}")
+            data = file_storage.read()
+            if not data:
+                raise ValueError(f"uploaded file {field_name} is empty")
+            return data
 
         purpose = _normalize_purpose(request.form.get("purpose"))
         pvj = _parse_json_field("PVCameraJ")
@@ -264,16 +262,15 @@ def generate_model():
 
         UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
-        pv_png_bytes = _b64_to_bytes(pvj.get("image", ""))
+        pv_png_bytes = _read_upload_file("pv_image")
         color_path = UPLOAD_FOLDER / f"{base}_color.png"
         with open(color_path, "wb") as f:
             f.write(pv_png_bytes)
 
         depth_path = None
         depth_stats = None
-        depth_b64 = dj.get("image", "") if dj else ""
-        if purpose == PURPOSE_OBJECT_RECONSTRUCTION and isinstance(depth_b64, str) and depth_b64:
-            depth_png_bytes = _b64_to_bytes(depth_b64)
+        if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
+            depth_png_bytes = _read_upload_file("depth_image")
             depth_png_bytes, depth_stats = _sanitize_ahat_depth_png(depth_png_bytes)
             depth_path = UPLOAD_FOLDER / f"{base}_depth.png"
             with open(depth_path, "wb") as f:

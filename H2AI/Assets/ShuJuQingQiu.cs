@@ -149,9 +149,13 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             return "shangchuan_ERR_depth_sensor_not_ahat";
         }
-        if (isObjectReconstruction && lower.Contains("too large"))
+        if (isObjectReconstruction && lower.Contains("too large") && (lower.Contains("ahat") || lower.Contains("depth")))
         {
             return "shangchuan_ERR_ahat_png_too_large_move_closer";
+        }
+        if (isObjectReconstruction && lower.Contains("too large"))
+        {
+            return "shangchuan_ERR_upload_too_large";
         }
         if (purpose == TASK_PURPOSE_ARUCO_REFERENCE && lower.Contains("too large"))
         {
@@ -287,13 +291,14 @@ public class ShuJuQingQiu : MonoBehaviour
 
         JObject PVCameraJ = new JObject
         {
-            ["image"] = Convert.ToBase64String(texPvPng),
             ["width"] = pvWidth,
             ["height"] = pvHeight,
             ["k"] = Float2DToJArray(pvK),
             ["pose"] = Float2DToJArray(pvPose),
         };
         request.AddField("PVCameraJ", PVCameraJ.ToString(Formatting.None));
+        request.AddBinaryData("pv_image", texPvPng, "pv.png", "image/png");
+        Debug.Log("[UPLOAD] PV PNG bytes=" + (texPvPng != null ? texPvPng.Length : 0));
 
         JObject deviceJ = new JObject
         {
@@ -314,11 +319,12 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             JObject DepthCameraJ = new JObject
             {
-                ["image"] = Convert.ToBase64String(depthPng),
                 ["pose"] = Float2DToJArray(depthPose),
                 ["sensor"] = sensorType,
             };
             request.AddField("DepthCameraJ", DepthCameraJ.ToString(Formatting.None));
+            request.AddBinaryData("depth_image", depthPng, "depth.png", "image/png");
+            Debug.Log("[UPLOAD] Depth PNG bytes=" + (depthPng != null ? depthPng.Length : 0));
         }
 
         bool includeSelectionBox = purpose == TASK_PURPOSE_OBJECT_RECONSTRUCTION
@@ -490,20 +496,22 @@ public class ShuJuQingQiu : MonoBehaviour
         request.AddField("purpose", TASK_PURPOSE_OBJECT_RECONSTRUCTION);
         JObject PVCameraJ = new JObject
         {
-            ["image"] = Convert.ToBase64String(tex_pv_P_C_F),
             ["width"] = width_pv_C_F,
             ["height"] = height_pv_C_F,
             ["k"] = Float2DToJArray(k_pv_C_F),
             ["pose"] = Float2DToJArray(pose_pv_C_F),
         };
         request.AddField("PVCameraJ", PVCameraJ.ToString(Formatting.None));
+        request.AddBinaryData("pv_image", tex_pv_P_C_F, "pv.png", "image/png");
+        Debug.Log("[UPLOAD] PV PNG bytes=" + (tex_pv_P_C_F != null ? tex_pv_P_C_F.Length : 0));
         JObject DepthCameraJ = new JObject
         {
-            ["image"] = Convert.ToBase64String(image_dp_P_C_F),
             ["pose"] = Float2DToJArray(pose_dp_C_F),
             ["sensor"] = SENSOR_TYPE,
         };
         request.AddField("DepthCameraJ", DepthCameraJ.ToString(Formatting.None));
+        request.AddBinaryData("depth_image", image_dp_P_C_F, "depth.png", "image/png");
+        Debug.Log("[UPLOAD] Depth PNG bytes=" + (image_dp_P_C_F != null ? image_dp_P_C_F.Length : 0));
         JObject deviceJ = new JObject
         {
             ["type"] = DEVICE_TYPE,
