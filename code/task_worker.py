@@ -345,8 +345,14 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     return task_record
 
 
-def get_latest_completed_task_data(startup_session_id: str | None = None) -> Optional[Dict[str, Any]]:
-    task_record = get_latest_completed_task(startup_session_id=startup_session_id)
+def get_latest_completed_task_data(
+    startup_session_id: str | None = None,
+    require_aruco_coordinate_synced: bool = False,
+) -> Optional[Dict[str, Any]]:
+    task_record = get_latest_completed_task(
+        startup_session_id=startup_session_id,
+        require_aruco_coordinate_synced=require_aruco_coordinate_synced,
+    )
     if task_record is None:
         return None
 

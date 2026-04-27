@@ -39,6 +39,13 @@ app = Flask(__name__)
 start_worker()
 
 
+TERMINAL_STATUSES = frozenset({"completed", "aruco_completed", "failed"})
+
+
+def _is_truthy_query_value(value) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _extract_unity_pv_pose_components(pose_value) -> tuple[list[float] | None, list[float] | None]:
     if pose_value is None:
         return None, None
@@ -100,6 +107,7 @@ def _build_completed_task_response(task_data: dict) -> dict:
     response = {
         "status": task_data["status"],
         "task_id": task_data.get("task_id"),
+        "terminal": True,
     }
     task_json = task_data.get("task_json") or {}
 
@@ -152,6 +160,7 @@ def _build_aruco_completed_task_response(task_data: dict) -> dict:
     response = {
         "status": task_data["status"],
         "task_id": task_data.get("task_id"),
+        "terminal": True,
     }
     _append_pose_fields(response, task_data.get("task_json") or {})
     return response
@@ -315,6 +324,7 @@ def check_task(task_id):
                 response["position"] = queue_snapshot.index(task_id) + 1
                 response["message"] = f"In queue, position {response['position']}"
 
+        response["terminal"] = status in TERMINAL_STATUSES
         return jsonify(response)
     except Exception as exc:
         print(f"Error in check_task: {exc}")
@@ -333,16 +343,30 @@ def check_task_query():
 def latest_completed_task():
     try:
         startup_session_id = str(request.args.get("startup_session_id") or "").strip() or None
-        task_data = get_latest_completed_task_data(startup_session_id=startup_session_id)
+        require_aruco_coordinate_synced = _is_truthy_query_value(
+            request.args.get("require_aruco_coordinate_synced")
+        )
+        task_data = get_latest_completed_task_data(
+            startup_session_id=startup_session_id,
+            require_aruco_coordinate_synced=require_aruco_coordinate_synced,
+        )
         if not task_data:
             if startup_session_id:
+                error_message = "No completed task found for this startup session"
+                if require_aruco_coordinate_synced:
+                    error_message = (
+                        "No completed task with synced ArUco coordinates found for this startup session"
+                    )
                 return jsonify(
                     {
-                        "error": "No completed task found for this startup session",
+                        "error": error_message,
                         "startup_session_id": startup_session_id,
                     }
                 ), 404
-            return jsonify({"error": "No completed task found"}), 404
+            error_message = "No completed task found"
+            if require_aruco_coordinate_synced:
+                error_message = "No completed task with synced ArUco coordinates found"
+            return jsonify({"error": error_message}), 404
 
         response = _build_completed_task_response(task_data)
         return jsonify(response)

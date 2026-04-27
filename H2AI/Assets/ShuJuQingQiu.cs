@@ -150,6 +150,27 @@ public class ShuJuQingQiu : MonoBehaviour
         return normalized;
     }
 
+    bool IsTerminalStatus(string status)
+    {
+        return status == "completed" || status == "aruco_completed" || status == "failed";
+    }
+
+    bool IsTerminalResponse(JObject jo, string status)
+    {
+        JToken terminalToken = jo["terminal"];
+        if (terminalToken != null && terminalToken.Type == JTokenType.Boolean)
+        {
+            return terminalToken.Value<bool>();
+        }
+
+        return IsTerminalStatus(status);
+    }
+
+    void StopCheckPolling()
+    {
+        CancelInvoke(nameof(GetJieGuo));
+    }
+
     /// <summary>
     /// 上传图片
     /// </summary>
@@ -366,7 +387,8 @@ public class ShuJuQingQiu : MonoBehaviour
             print(task_id);
 
             //巡检检查
-            InvokeRepeating("GetJieGuo", 1, 1);
+            StopCheckPolling();
+            InvokeRepeating(nameof(GetJieGuo), 1, 1);
         }
         else
         {
@@ -410,7 +432,10 @@ public class ShuJuQingQiu : MonoBehaviour
 
     public void XiaZaiZuiXinChengGongMoXing()
     {
-        string url = "http://10.40.1.122:7355/latest-completed?startup_session_id=" + Uri.EscapeDataString(startup_session_id ?? "");
+        string url =
+            "http://10.40.1.122:7355/latest-completed?startup_session_id="
+            + Uri.EscapeDataString(startup_session_id ?? "")
+            + "&require_aruco_coordinate_synced=1";
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRequestLatestCompleted);
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
         request.Send();
@@ -555,9 +580,26 @@ public class ShuJuQingQiu : MonoBehaviour
 
         JToken objectToken = jo["object"];
         string coordinateBasis = objectToken?["coordinate_basis"]?.ToString();
+        Vector3 responseArucoPosition;
+        Quaternion responseArucoRotation;
+        bool hasResponseArucoReference = TryParsePoseToken(
+            jo["aruco_reference"],
+            out responseArucoPosition,
+            out responseArucoRotation
+        );
+        Vector3 localPosition;
+        Quaternion localRotation;
+        bool hasLocalObjectPose = TryParsePoseToken(objectToken, out localPosition, out localRotation);
         if (coordinateBasis == "aruco_local_x_right_y_up_z_forward")
         {
-            if (hasArucoReferencePose && TryParsePoseToken(objectToken, out Vector3 localPosition, out Quaternion localRotation))
+            if (hasResponseArucoReference && hasLocalObjectPose)
+            {
+                position = responseArucoPosition + (responseArucoRotation * localPosition);
+                rotation = responseArucoRotation * localRotation;
+                return true;
+            }
+
+            if (hasArucoReferencePose && hasLocalObjectPose)
             {
                 position = arucoReferencePosition + (arucoReferenceRotation * localPosition);
                 rotation = arucoReferenceRotation * localRotation;
@@ -603,7 +645,7 @@ public class ShuJuQingQiu : MonoBehaviour
         }
     }
 
-    bool ApplyCompletedTaskResponse(JObject jo, string sourceTag)
+    bool ApplyCompletedTaskResponse(JObject jo, string sourceTag, bool updateCurrentSessionArucoReference)
     {
         string fbxUrl = jo["fbx_url"]?.ToString();
         string imgUrl = jo["image_url"]?.ToString();
@@ -619,7 +661,7 @@ public class ShuJuQingQiu : MonoBehaviour
         urlModel = fbxUrl;
         image_url = imgUrl;
         ApplyDebugInfo(jo);
-        ApplyResponsePoses(jo, false);
+        ApplyResponsePoses(jo, updateCurrentSessionArucoReference);
 
         if (objectToken == null || objectToken.Type == JTokenType.Null)
         {
@@ -635,11 +677,13 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
             ShowFrontMessage("check_ERR_request_failed");
+            StopCheckPolling();
             return;
         }
 
         JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
         string status = jo["status"]?.ToString();
+        bool isTerminal = IsTerminalResponse(jo, status);
 
         // 任务失败
         if (status == "failed")
@@ -647,7 +691,7 @@ public class ShuJuQingQiu : MonoBehaviour
             string err = jo["error"]?.ToString();
             Debug.LogError("[CHECK] task failed: " + err);
             ShowFrontMessage(NormalizeServerErrorForFrontMessage(err, "check_ERR_task_failed"));
-            CancelInvoke();
+            StopCheckPolling();
             return;
         }
 
@@ -657,23 +701,42 @@ public class ShuJuQingQiu : MonoBehaviour
             ApplyDebugInfo(jo);
             ApplyResponsePoses(jo, true);
             ShowFrontMessage("aruco_completed");
-            CancelInvoke();
+            StopCheckPolling();
             return;
         }
 
         if (status != "completed")
         {
+            if (isTerminal)
+            {
+                Debug.LogWarning("[CHECK] terminal response without supported handler. status = " + status);
+                ShowFrontMessage("check_ERR_unknown_terminal_status");
+                StopCheckPolling();
+                return;
+            }
+
             Debug.Log("[CHECK] still processing... status = " + status);
             return;
         }
 
         // completed 了，但结果字段还要继续检查
-        if (!ApplyCompletedTaskResponse(jo, "CHECK"))
+        if (!ApplyCompletedTaskResponse(jo, "CHECK", false))
         {
+            string completedError = jo["error"]?.ToString();
+            if (!string.IsNullOrEmpty(completedError))
+            {
+                Debug.LogError("[CHECK] completed response missing required outputs: " + completedError);
+                ShowFrontMessage(completedError);
+            }
+
+            if (isTerminal)
+            {
+                StopCheckPolling();
+            }
             return;
         }
 
-        CancelInvoke();
+        StopCheckPolling();
         XiaZaiModel();
     }
 
@@ -720,7 +783,7 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
-        if (!ApplyCompletedTaskResponse(jo, "LATEST"))
+        if (!ApplyCompletedTaskResponse(jo, "LATEST", true))
         {
             return;
         }

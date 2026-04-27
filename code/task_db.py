@@ -276,31 +276,31 @@ def get_latest_unfinished_task() -> Optional[Dict[str, Any]]:
     return _row_to_dict(row)
 
 
-def get_latest_completed_task(startup_session_id: str | None = None) -> Optional[Dict[str, Any]]:
+def get_latest_completed_task(
+    startup_session_id: str | None = None,
+    require_aruco_coordinate_synced: bool = False,
+) -> Optional[Dict[str, Any]]:
     initialize_task_table()
     startup_session_id = str(startup_session_id or "").strip()
+    where_clauses = ["status = 'completed'"]
+    params: List[Any] = []
+    if startup_session_id:
+        where_clauses.append("startup_session_id = ?")
+        params.append(startup_session_id)
+    if require_aruco_coordinate_synced:
+        where_clauses.append("aruco_coordinate_synced = 1")
+
     with _get_connection() as conn:
-        if startup_session_id:
-            row = conn.execute(
-                f"""
-                SELECT *
-                FROM {TABLE_NAME}
-                WHERE status = 'completed' AND startup_session_id = ?
-                ORDER BY id DESC
-                LIMIT 1
-                """,
-                (startup_session_id,),
-            ).fetchone()
-        else:
-            row = conn.execute(
-                f"""
-                SELECT *
-                FROM {TABLE_NAME}
-                WHERE status = 'completed'
-                ORDER BY id DESC
-                LIMIT 1
-                """
-            ).fetchone()
+        row = conn.execute(
+            f"""
+            SELECT *
+            FROM {TABLE_NAME}
+            WHERE {' AND '.join(where_clauses)}
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            tuple(params),
+        ).fetchone()
     return _row_to_dict(row)
 
 
