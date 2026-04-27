@@ -3060,7 +3060,6 @@ GameObject:
   - component: {fileID: 223974228}
   - component: {fileID: 223974227}
   - component: {fileID: 223974230}
-  - component: {fileID: 223974231}
   - component: {fileID: 223974232}
   m_Layer: 0
   m_Name: Scripts
@@ -3141,21 +3140,6 @@ MonoBehaviour:
   panelDistance: 0.8
   panelVerticalOffset: 0.05
   panelHorizontalOffset: 0
---- !u!114 &223974231
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 223974226}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 159d5b7c550bb9f4bb5eadbeed9b2637, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  settingsPanel: {fileID: 0}
-  distanceFromCamera: 0.8
-  hideOnStart: 1
 --- !u!114 &223974232
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -3170,6 +3154,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   selectionBoxRoot: {fileID: 242384126}
   distanceFromCamera: 0.8
+  hideOnStart: 1
 --- !u!1 &232507214
 GameObject:
   m_ObjectHideFlags: 0
@@ -20202,9 +20187,9 @@ MonoBehaviour:
   OnClick:
     m_PersistentCalls:
       m_Calls:
-      - m_Target: {fileID: 223974231}
-        m_TargetAssemblyTypeName: SettingsPanelToggle, Assembly-CSharp
-        m_MethodName: ToggleSettingsPanel
+      - m_Target: {fileID: 223974232}
+        m_TargetAssemblyTypeName: SelectionBoxDebugActions, Assembly-CSharp
+        m_MethodName: MoveSelectionBoxInFrontOfCamera
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}
