@@ -49,7 +49,6 @@ from task_json import (
 
 STAGE_ORDER = [
     "hololens2depth",
-    "aruco_detect",
     "sam3mask",
     "instantmesh",
     "depthpointcloud",
@@ -209,14 +208,6 @@ STAGE_RUNNERS = {
 }
 
 
-def _should_short_circuit_after_aruco_detect(json_path: Path) -> bool:
-    task_json = load_task_json(json_path)
-    debug_info = task_json.get("debug") or {}
-    pose_transform_stages = debug_info.get("pose_transform_stages") or {}
-    aruco_stage = pose_transform_stages.get("aruco_stage") or {}
-    return bool(aruco_stage.get("short_circuit"))
-
-
 def _resolve_task_purpose(task_json: dict) -> str:
     purpose = str(task_json.get("purpose") or "").strip()
     return purpose or PURPOSE_OBJECT_RECONSTRUCTION
@@ -260,9 +251,6 @@ def _process_one_task(task_id: str) -> None:
 
         if stage_name == "aruco_detect":
             if purpose == PURPOSE_ARUCO_REFERENCE:
-                update_task_status(task_id, "aruco_completed")
-                return
-            if _should_short_circuit_after_aruco_detect(json_path):
                 update_task_status(task_id, "aruco_completed")
                 return
 

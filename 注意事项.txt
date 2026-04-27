@@ -72,3 +72,7 @@ pip install pyzdepth
 2.急需添加相关按钮专门进行marker适配
 3.check依旧无法停止，可能需要重写这块的停止条件等
 4.加载最新一次含有有效marker数据的那块还是有问题，似乎写成加载上次有效数据了
+
+260427
+1.在拍摄mark后，unity还是一直在check，但是本地有坐标系了，看看check的流程和终止条件
+2.setting没有正常显示，怀疑unity没有绑定啥的
