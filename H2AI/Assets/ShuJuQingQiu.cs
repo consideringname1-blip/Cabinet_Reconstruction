@@ -131,7 +131,7 @@ public class ShuJuQingQiu : MonoBehaviour
         }
     }
 
-    string NormalizeServerErrorForFrontMessage(string serverError, string fallbackMessage)
+    string NormalizeServerErrorForFrontMessage(string serverError, string fallbackMessage, string purpose)
     {
         string normalized = string.IsNullOrEmpty(serverError) ? "" : serverError.Trim();
         if (string.IsNullOrEmpty(normalized))
@@ -140,19 +140,30 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         string lower = normalized.ToLowerInvariant();
-        if (lower.Contains("move the object closer") || lower.Contains("within 1.0 m"))
+        bool isObjectReconstruction = purpose == TASK_PURPOSE_OBJECT_RECONSTRUCTION;
+        if (isObjectReconstruction && (lower.Contains("move the object closer") || lower.Contains("within 1.0 m")))
         {
             return "shangchuan_ERR_ahat_move_closer";
         }
-        if (lower.Contains("only ahat"))
+        if (isObjectReconstruction && lower.Contains("only ahat"))
         {
             return "shangchuan_ERR_depth_sensor_not_ahat";
         }
-        if (lower.Contains("too large"))
+        if (isObjectReconstruction && lower.Contains("too large"))
         {
             return "shangchuan_ERR_ahat_png_too_large_move_closer";
         }
+        if (purpose == TASK_PURPOSE_ARUCO_REFERENCE && lower.Contains("too large"))
+        {
+            return "shangchuan_mark_ERR_upload_too_large";
+        }
         return normalized;
+    }
+
+    string GetRequestPurpose(HTTPRequest request)
+    {
+        string purpose = request != null ? request.Tag as string : null;
+        return string.IsNullOrEmpty(purpose) ? TASK_PURPOSE_OBJECT_RECONSTRUCTION : purpose;
     }
 
     bool IsTerminalStatus(string status)
@@ -269,6 +280,7 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         string url = "http://10.40.1.122:7355/generate";
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnRequestFinished);
+        request.Tag = purpose;
 
         Game_M.initialize.XianShi("shangchuan_Dabao");
         request.AddField("purpose", purpose);
@@ -294,7 +306,11 @@ public class ShuJuQingQiu : MonoBehaviour
         };
         request.AddField("deviceJ", deviceJ.ToString(Formatting.None));
 
-        if (depthPng != null && depthPose != null && !string.IsNullOrEmpty(sensorType))
+        bool includeDepthPayload = purpose == TASK_PURPOSE_OBJECT_RECONSTRUCTION
+            && depthPng != null
+            && depthPose != null
+            && !string.IsNullOrEmpty(sensorType);
+        if (includeDepthPayload)
         {
             JObject DepthCameraJ = new JObject
             {
@@ -305,7 +321,10 @@ public class ShuJuQingQiu : MonoBehaviour
             request.AddField("DepthCameraJ", DepthCameraJ.ToString(Formatting.None));
         }
 
-        if (boxTL.HasValue && boxBR.HasValue)
+        bool includeSelectionBox = purpose == TASK_PURPOSE_OBJECT_RECONSTRUCTION
+            && boxTL.HasValue
+            && boxBR.HasValue;
+        if (includeSelectionBox)
         {
             JObject selectionBoxJ = new JObject
             {
@@ -465,6 +484,7 @@ public class ShuJuQingQiu : MonoBehaviour
         // ==========================================================
         string url = "http://10.40.1.122:7355/generate";
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnRequestFinished);
+        request.Tag = TASK_PURPOSE_OBJECT_RECONSTRUCTION;
 
         Game_M.initialize.XianShi("shangchuan_Dabao");
         request.AddField("purpose", TASK_PURPOSE_OBJECT_RECONSTRUCTION);
@@ -512,14 +532,17 @@ public class ShuJuQingQiu : MonoBehaviour
 
     public string task_id;
     private bool isCheckPollingActive = false;
+    private string currentTaskPurpose = TASK_PURPOSE_OBJECT_RECONSTRUCTION;
 
     private void OnRequestFinished(HTTPRequest request, HTTPResponse response)
     {
-        if (response.IsSuccess)
+        string requestPurpose = GetRequestPurpose(request);
+        if (response != null && response.IsSuccess)
         {
             Debug.Log("Response: " + System.Text.Encoding.UTF8.GetString(response.Data));
             JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
             task_id = jo["task_id"].ToString();
+            currentTaskPurpose = requestPurpose;
             print(task_id);
 
             //巡检检查
@@ -529,12 +552,13 @@ public class ShuJuQingQiu : MonoBehaviour
         }
         else
         {
-            string serverError = response.Message;
-            if (!string.IsNullOrEmpty(response.DataAsText))
+            string serverError = response != null ? response.Message : "No response from server";
+            string responseText = response != null ? response.DataAsText : "";
+            if (!string.IsNullOrEmpty(responseText))
             {
                 try
                 {
-                    JObject errorJo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
+                    JObject errorJo = (JObject)JsonConvert.DeserializeObject(responseText);
                     string detailed = errorJo?["error"]?.ToString();
                     if (!string.IsNullOrEmpty(detailed))
                     {
@@ -546,8 +570,9 @@ public class ShuJuQingQiu : MonoBehaviour
                 }
             }
 
-            Debug.LogError("Error: " + response.StatusCode + " - " + serverError);
-            ShowFrontMessage(NormalizeServerErrorForFrontMessage(serverError, "shangchuan_ERR_request_failed"));
+            string statusCode = response != null ? response.StatusCode.ToString() : "no_response";
+            Debug.LogError("Error: " + statusCode + " - " + serverError);
+            ShowFrontMessage(NormalizeServerErrorForFrontMessage(serverError, "shangchuan_ERR_request_failed", requestPurpose));
         }
     }
 
@@ -841,7 +866,7 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             string err = jo["error"]?.ToString();
             Debug.LogError("[CHECK] task failed: " + err);
-            ShowFrontMessage(NormalizeServerErrorForFrontMessage(err, "check_ERR_task_failed"));
+            ShowFrontMessage(NormalizeServerErrorForFrontMessage(err, "check_ERR_task_failed", currentTaskPurpose));
             StopCheckPolling();
             return;
         }

@@ -300,30 +300,23 @@ def generate_model():
                 "position": pv_position,
                 "rotation_quaternion_xyzw": pv_rotation_quaternion_xyzw,
             },
-            "DepthCamera": (
-                {
-                    "name": str(depth_path.name) if depth_path else None,
-                    "pose": dj.get("pose") if dj else None,
-                    "sensor": AHAT_SENSOR_NAME,
-                    "stats": depth_stats,
-                }
-                if purpose == PURPOSE_OBJECT_RECONSTRUCTION
-                else None
-            ),
-            "SelectionBox": (
-                {
-                    "top_left": top_left,
-                    "bottom_right": bottom_right,
-                }
-                if purpose == PURPOSE_OBJECT_RECONSTRUCTION
-                else None
-            ),
             "object": {
                 "position": [0, 0, 0],
                 "rotation": [0, 0, 0, 1.0],
                 "scale": [1.0, 1.0, 1.0],
             },
         }
+        if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
+            out_json["DepthCamera"] = {
+                "name": str(depth_path.name) if depth_path else None,
+                "pose": dj.get("pose") if dj else None,
+                "sensor": AHAT_SENSOR_NAME,
+                "stats": depth_stats,
+            }
+            out_json["SelectionBox"] = {
+                "top_left": top_left,
+                "bottom_right": bottom_right,
+            }
 
         meta_path = UPLOAD_FOLDER / f"{base}_meta.json"
         save_task_json(meta_path, out_json)
