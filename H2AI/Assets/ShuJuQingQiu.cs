@@ -173,6 +173,7 @@ public class ShuJuQingQiu : MonoBehaviour
 
     void StopCheckPolling()
     {
+        isCheckPollingActive = false;
         CancelInvoke(nameof(GetJieGuo));
     }
 
@@ -510,6 +511,8 @@ public class ShuJuQingQiu : MonoBehaviour
     // ========================= 下面旧代码原样保留 =========================
 
     public string task_id;
+    private bool isCheckPollingActive = false;
+
     private void OnRequestFinished(HTTPRequest request, HTTPResponse response)
     {
         if (response.IsSuccess)
@@ -521,6 +524,7 @@ public class ShuJuQingQiu : MonoBehaviour
 
             //巡检检查
             StopCheckPolling();
+            isCheckPollingActive = true;
             InvokeRepeating(nameof(GetJieGuo), 1, 1);
         }
         else
@@ -552,6 +556,11 @@ public class ShuJuQingQiu : MonoBehaviour
     /// </summary>
     public void GetJieGuo()
     {
+        if (!isCheckPollingActive || string.IsNullOrEmpty(task_id))
+        {
+            return;
+        }
+
         string url = "http://10.40.1.122:7355/check/?task_id=" + task_id;
         // string url = "http://10.40.1.122:7355/check";
         print(url);
@@ -806,6 +815,11 @@ public class ShuJuQingQiu : MonoBehaviour
     }
     private void OnRequestJieGuo(HTTPRequest request, HTTPResponse response)
     {
+        if (!isCheckPollingActive)
+        {
+            return;
+        }
+
         if (!response.IsSuccess)
         {
             Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
@@ -817,6 +831,10 @@ public class ShuJuQingQiu : MonoBehaviour
         JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
         string status = jo["status"]?.ToString();
         bool isTerminal = IsTerminalResponse(jo, status);
+        if (isTerminal)
+        {
+            StopCheckPolling();
+        }
 
         // 任务失败
         if (status == "failed")
