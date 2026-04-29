@@ -16563,6 +16563,7 @@ MonoBehaviour:
   PV_controler: {fileID: 223974228}
   DP_controler: {fileID: 223974227}
   selectionPanelManager: {fileID: 223974230}
+  checkPollingIntervalSeconds: 10
   task_id: 
   image_url: 
   texture2DTuPian: {fileID: 2800000, guid: 7beab324a3ae347418d5bd86646a4c13, type: 3}
