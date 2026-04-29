@@ -22,6 +22,7 @@ public class ShuJuQingQiu : MonoBehaviour
     const float MARKER_CAPTURE_TOTAL_SECONDS = 3.0f;
     const float MARKER_CAPTURE_INTERVAL_SECONDS = 0.5f;
     const int MARKER_CAPTURE_MIN_SUCCESS = 1;
+    const int COMPLETED_MODEL_HISTORY_LIMIT = 5;
 
     public static ShuJuQingQiu initialize;
     // Start is called before the first frame update
@@ -58,9 +59,12 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         public RuntimeModelInstance instance;
         public string localPath;
+        public bool showDebugMarkers;
     }
 
     private RuntimeModelInstance pendingModelInstance;
+    private bool pendingModelShouldPlaceDebugMarkers = true;
+    private int latestCompletedHistoryOffset = 0;
 
     void Start()
     {
@@ -723,14 +727,60 @@ public class ShuJuQingQiu : MonoBehaviour
 
     public void XiaZaiZuiXinChengGongMoXing()
     {
+        XiaZaiLiShiChengGongMoXing(0);
+    }
+
+    public void XiaZaiShangYiGeChengGongMoXing()
+    {
+        int historyOffset = latestCompletedHistoryOffset;
+        XiaZaiLiShiChengGongMoXing(historyOffset);
+        latestCompletedHistoryOffset = (historyOffset + 1) % COMPLETED_MODEL_HISTORY_LIMIT;
+    }
+
+    public void XiaZaiLiShiChengGongMoXing0()
+    {
+        XiaZaiLiShiChengGongMoXing(0);
+    }
+
+    public void XiaZaiLiShiChengGongMoXing1()
+    {
+        XiaZaiLiShiChengGongMoXing(1);
+    }
+
+    public void XiaZaiLiShiChengGongMoXing2()
+    {
+        XiaZaiLiShiChengGongMoXing(2);
+    }
+
+    public void XiaZaiLiShiChengGongMoXing3()
+    {
+        XiaZaiLiShiChengGongMoXing(3);
+    }
+
+    public void XiaZaiLiShiChengGongMoXing4()
+    {
+        XiaZaiLiShiChengGongMoXing(4);
+    }
+
+    public void XiaZaiLiShiChengGongMoXing(int historyOffset)
+    {
+        latestCompletedHistoryOffset = Mathf.Clamp(historyOffset, 0, COMPLETED_MODEL_HISTORY_LIMIT - 1);
+        pendingModelShouldPlaceDebugMarkers = false;
+        if (CameraPoseDebugMarker.Instance != null)
+        {
+            CameraPoseDebugMarker.Instance.HideMarkers();
+        }
+
         string url =
             "http://10.40.1.122:7355/latest-completed?startup_session_id="
             + Uri.EscapeDataString(startup_session_id ?? "")
-            + "&require_aruco_coordinate_synced=1";
+            + "&require_aruco_coordinate_synced=1"
+            + "&history_offset="
+            + latestCompletedHistoryOffset.ToString(CultureInfo.InvariantCulture);
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRequestLatestCompleted);
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
         request.Send();
-        Game_M.initialize.XianShi("latest_completed");
+        Game_M.initialize.XianShi("latest_completed_" + (latestCompletedHistoryOffset + 1).ToString(CultureInfo.InvariantCulture));
     }
 
     [Header("图片下载地址")]
@@ -847,7 +897,7 @@ public class ShuJuQingQiu : MonoBehaviour
         return token == null || token.Type == JTokenType.Null ? null : token;
     }
 
-    void ApplyArucoReference(JObject jo, bool updateCurrentSession)
+    void ApplyArucoReference(JObject jo, bool updateCurrentSession, bool showDebugMarkers)
     {
         if (!TryParsePoseToken(jo["aruco_reference"], out Vector3 arucoPosition, out Quaternion arucoRotation))
         {
@@ -871,7 +921,7 @@ public class ShuJuQingQiu : MonoBehaviour
             }
         }
 
-        if (CameraPoseDebugMarker.Instance != null)
+        if (showDebugMarkers && CameraPoseDebugMarker.Instance != null)
         {
             CameraPoseDebugMarker.Instance.PlaceArucoMarker(arucoPosition, arucoRotation);
         }
@@ -982,9 +1032,9 @@ public class ShuJuQingQiu : MonoBehaviour
         return true;
     }
 
-    void ApplyResponsePoses(JObject jo, bool updateCurrentSessionArucoReference)
+    void ApplyResponsePoses(JObject jo, bool updateCurrentSessionArucoReference, bool showDebugMarkers)
     {
-        ApplyArucoReference(jo, updateCurrentSessionArucoReference);
+        ApplyArucoReference(jo, updateCurrentSessionArucoReference, showDebugMarkers);
 
         if (TryResolveObjectWorldPose(jo, out Vector3 objectPosition, out Quaternion objectRotation))
         {
@@ -1010,7 +1060,12 @@ public class ShuJuQingQiu : MonoBehaviour
         }
     }
 
-    bool ApplyCompletedTaskResponse(JObject jo, string sourceTag, bool updateCurrentSessionArucoReference)
+    bool ApplyCompletedTaskResponse(
+        JObject jo,
+        string sourceTag,
+        bool updateCurrentSessionArucoReference,
+        bool showDebugMarkers
+    )
     {
         string imgUrl = jo["image_url"]?.ToString();
 
@@ -1024,7 +1079,7 @@ public class ShuJuQingQiu : MonoBehaviour
         pendingModelInstance = modelInstance;
         image_url = imgUrl;
         ApplyDebugInfo(jo);
-        ApplyResponsePoses(jo, updateCurrentSessionArucoReference);
+        ApplyResponsePoses(jo, updateCurrentSessionArucoReference, showDebugMarkers);
 
         if (!modelInstance.Pose.HasWorldPose && !modelInstance.Pose.HasArucoPose)
         {
@@ -1071,7 +1126,7 @@ public class ShuJuQingQiu : MonoBehaviour
         if (status == "aruco_completed")
         {
             ApplyDebugInfo(jo);
-            ApplyResponsePoses(jo, true);
+            ApplyResponsePoses(jo, true, true);
             ShowFrontMessage("aruco_completed");
             StopCheckPolling();
             return;
@@ -1092,7 +1147,8 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         // completed 了，但结果字段还要继续检查
-        if (!ApplyCompletedTaskResponse(jo, "CHECK", false))
+        pendingModelShouldPlaceDebugMarkers = true;
+        if (!ApplyCompletedTaskResponse(jo, "CHECK", false, true))
         {
             string completedError = jo["error"]?.ToString();
             if (!string.IsNullOrEmpty(completedError))
@@ -1155,7 +1211,8 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
-        if (!ApplyCompletedTaskResponse(jo, "LATEST", true))
+        pendingModelShouldPlaceDebugMarkers = false;
+        if (!ApplyCompletedTaskResponse(jo, "LATEST", true, false))
         {
             return;
         }
@@ -1189,6 +1246,7 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             instance = pendingModelInstance,
             localPath = manager.CreateUniqueModelPath(pendingModelInstance.ModelKey),
+            showDebugMarkers = pendingModelShouldPlaceDebugMarkers,
         };
 
         var request = new HTTPRequest(new Uri(pendingModelInstance.FbxUrl), HTTPMethods.Get, OnRequestXiaZai);
@@ -1226,7 +1284,7 @@ public class ShuJuQingQiu : MonoBehaviour
             Game_M.initialize.XianShi("download " + receiver.Length);
             File.WriteAllBytes(pendingDownload.localPath, receiver);
             print("保存");
-            if (CameraPoseDebugMarker.Instance != null)
+            if (pendingDownload.showDebugMarkers && CameraPoseDebugMarker.Instance != null)
             {
                 if (hasServerCameraPose && hasServerPose)
                 {

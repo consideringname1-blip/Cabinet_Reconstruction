@@ -597,9 +597,11 @@ def get_latest_unfinished_task() -> Optional[Dict[str, Any]]:
 def get_latest_completed_task(
     startup_session_id: str | None = None,
     require_aruco_coordinate_synced: bool = False,
+    history_offset: int = 0,
 ) -> Optional[Dict[str, Any]]:
     initialize_task_table()
     startup_session_id = str(startup_session_id or "").strip()
+    history_offset = max(0, int(history_offset or 0))
     where_clauses = ["status = 'completed'"]
     params: List[Any] = []
     if startup_session_id:
@@ -615,9 +617,9 @@ def get_latest_completed_task(
             FROM {TABLE_NAME}
             WHERE {' AND '.join(where_clauses)}
             ORDER BY id DESC
-            LIMIT 1
+            LIMIT 1 OFFSET ?
             """,
-            tuple(params),
+            tuple(params + [history_offset]),
         ).fetchone()
     return _row_to_dict(row)
 

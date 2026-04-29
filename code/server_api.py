@@ -221,7 +221,7 @@ def index():
                 "/generate",
                 "/check/<task_id>",
                 "/check?task_id=<task_id>",
-                "/latest-completed",
+                "/latest-completed?history_offset=<0-4>",
                 "/aruco/markers",
                 "/aruco/markers/sync",
                 "/files/<folder>/<filename>",
@@ -475,18 +475,21 @@ def sync_aruco_markers():
 def latest_completed_task():
     try:
         startup_session_id = str(request.args.get("startup_session_id") or "").strip() or None
+        history_offset = max(0, request.args.get("history_offset", default=0, type=int) or 0)
         require_aruco_coordinate_synced = _is_truthy_query_value(
             request.args.get("require_aruco_coordinate_synced")
         )
         task_data = get_latest_completed_task_data(
             startup_session_id=startup_session_id,
             require_aruco_coordinate_synced=require_aruco_coordinate_synced,
+            history_offset=history_offset,
         )
         fallback_from_other_session = False
         if not task_data and startup_session_id and require_aruco_coordinate_synced:
             task_data = get_latest_completed_task_data(
                 startup_session_id=None,
                 require_aruco_coordinate_synced=True,
+                history_offset=history_offset,
             )
             fallback_from_other_session = task_data is not None
         if not task_data:
@@ -500,6 +503,7 @@ def latest_completed_task():
                     {
                         "error": error_message,
                         "startup_session_id": startup_session_id,
+                        "history_offset": history_offset,
                     }
                 ), 404
             error_message = "No completed task found"
@@ -508,6 +512,7 @@ def latest_completed_task():
             return jsonify({"error": error_message}), 404
 
         response = _build_completed_task_response(task_data)
+        response["history_offset"] = history_offset
         if startup_session_id and require_aruco_coordinate_synced:
             latest_reference_row = get_latest_aruco_reference(startup_session_id)
             current_aruco_reference = _load_marker_pose_json(

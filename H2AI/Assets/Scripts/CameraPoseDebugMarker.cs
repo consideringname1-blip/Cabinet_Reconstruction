@@ -12,6 +12,7 @@ public class CameraPoseDebugMarker : MonoBehaviour
     [SerializeField] private string cameraMarkerName = "RecordedCameraPoseMarker";
     [SerializeField] private string modelMarkerName = "RecordedFinalModelMarker";
     [SerializeField] private string arucoMarkerName = "RecordedArucoReferenceMarker";
+    [SerializeField] private bool hideTemplateOnStart = true;
 
     private GameObject _cameraMarker;
     private GameObject _modelMarker;
@@ -26,6 +27,10 @@ public class CameraPoseDebugMarker : MonoBehaviour
         }
 
         Instance = this;
+        if (hideTemplateOnStart)
+        {
+            gameObject.SetActive(false);
+        }
     }
 
     public void PlaceMarkers(
@@ -74,6 +79,13 @@ public class CameraPoseDebugMarker : MonoBehaviour
         );
     }
 
+    public void HideMarkers()
+    {
+        SetMarkerActive(_cameraMarker, false);
+        SetMarkerActive(_modelMarker, false);
+        SetMarkerActive(_arucoMarker, false);
+    }
+
     private void EnsureMarkers()
     {
         if (_cameraMarker == null)
@@ -110,5 +122,13 @@ public class CameraPoseDebugMarker : MonoBehaviour
         clone.name = cloneName;
         clone.SetActive(false);
         return clone;
+    }
+
+    private void SetMarkerActive(GameObject marker, bool active)
+    {
+        if (marker != null)
+        {
+            marker.SetActive(active);
+        }
     }
 }

@@ -3157,6 +3157,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   selectionBoxRoot: {fileID: 242384126}
+  selectionBoxController: {fileID: 983785832}
   distanceFromCamera: 0.8
   hideOnStart: 1
 --- !u!114 &223974233
@@ -11567,7 +11568,7 @@ MonoBehaviour:
       m_Calls:
       - m_Target: {fileID: 223974232}
         m_TargetAssemblyTypeName: SelectionBoxDebugActions, Assembly-CSharp
-        m_MethodName: MoveSelectionBoxInFrontOfCamera
+        m_MethodName: ResetSelectionBoxInPlace
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}
@@ -12524,6 +12525,7 @@ MonoBehaviour:
   cameraMarkerName: RecordedCameraPoseMarker
   modelMarkerName: RecordedFinalModelMarker
   arucoMarkerName: RecordedArucoReferenceMarker
+  hideTemplateOnStart: 1
 --- !u!1 &1376868777
 GameObject:
   m_ObjectHideFlags: 0
@@ -18192,7 +18194,7 @@ MonoBehaviour:
       m_Calls:
       - m_Target: {fileID: 1912203437}
         m_TargetAssemblyTypeName: ShuJuQingQiu, Assembly-CSharp
-        m_MethodName: XiaZaiZuiXinChengGongMoXing
+        m_MethodName: XiaZaiShangYiGeChengGongMoXing
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}
