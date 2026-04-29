@@ -252,10 +252,12 @@ def generate_model():
         devj = _parse_json_field("deviceJ")
         pv_frames_input = _parse_optional_json_array_field("PVCameraFramesJ")
 
-        if purpose == PURPOSE_OBJECT_RECONSTRUCTION or not pv_frames_input:
+        if purpose == PURPOSE_OBJECT_RECONSTRUCTION or pv_frames_input is None:
             pvj = _parse_json_field("PVCameraJ")
             pv_frames_input = [pvj]
         else:
+            if not pv_frames_input:
+                raise ValueError("PVCameraFramesJ must contain at least one frame")
             pvj = pv_frames_input[0] if pv_frames_input else None
             if not isinstance(pvj, dict):
                 raise ValueError("PVCameraFramesJ must contain JSON objects")

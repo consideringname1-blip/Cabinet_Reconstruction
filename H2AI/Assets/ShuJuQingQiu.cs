@@ -3,6 +3,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
 using System.Globalization;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using UnityEngine;
@@ -44,7 +45,6 @@ public class ShuJuQingQiu : MonoBehaviour
 
     private class MarkerCaptureFrame
     {
-        public int index;
         public byte[] pvPng;
         public ushort pvWidth;
         public ushort pvHeight;
@@ -305,7 +305,6 @@ public class ShuJuQingQiu : MonoBehaviour
 
             frames.Add(new MarkerCaptureFrame
             {
-                index = frames.Count,
                 pvPng = pvPng,
                 pvWidth = PV_controler.width_pv_frozen,
                 pvHeight = PV_controler.height_pv_frozen,
