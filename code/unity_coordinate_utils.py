@@ -3,12 +3,23 @@ from __future__ import annotations
 import numpy as np
 
 
-# Windows spatial poses use +Z backward relative to Unity's +Z forward.
-WINDOWS_TO_UNITY_BASIS = np.diag([1.0, 1.0, -1.0]).astype(np.float64)
+# Canonical reconstruction camera basis:
+# +X right, +Y up, -Z camera-forward. This is right-handed.
+OPENCV_CAMERA_TO_CANONICAL_RH_BASIS = np.diag([1.0, -1.0, -1.0]).astype(np.float64)
+CANONICAL_RH_TO_OPENCV_CAMERA_BASIS = OPENCV_CAMERA_TO_CANONICAL_RH_BASIS.copy()
 
-# OpenCV camera coordinates use +X right, +Y down, +Z forward. For our
-# Unity-facing camera-local calculations we keep +Z forward and flip Y upward.
-OPENCV_CAMERA_TO_UNITY_CAMERA_BASIS = np.diag([1.0, -1.0, 1.0]).astype(np.float64)
+# Unity runtime / Windows spatial use +Z forward at the boundary.
+CANONICAL_RH_TO_UNITY_BASIS = np.diag([1.0, 1.0, -1.0]).astype(np.float64)
+UNITY_TO_CANONICAL_RH_BASIS = CANONICAL_RH_TO_UNITY_BASIS.copy()
+
+# Windows spatial poses use +Z backward relative to Unity's +Z forward.
+WINDOWS_TO_UNITY_BASIS = CANONICAL_RH_TO_UNITY_BASIS.copy()
+
+# OpenCV camera coordinates use +X right, +Y down, +Z forward. This direct
+# OpenCV->Unity boundary conversion is kept for marker runtime output.
+OPENCV_CAMERA_TO_UNITY_CAMERA_BASIS = (
+    CANONICAL_RH_TO_UNITY_BASIS @ OPENCV_CAMERA_TO_CANONICAL_RH_BASIS
+)
 
 
 def normalize_quat_xyzw(q: np.ndarray) -> np.ndarray:
@@ -89,7 +100,7 @@ def convert_rotation_between_bases(rotation: np.ndarray, basis_change: np.ndarra
         raise ValueError("rotation matrix must be 3x3")
     if basis_change.shape != (3, 3):
         raise ValueError("basis change matrix must be 3x3")
-    return orthonormalize_rotation(basis_change @ rotation @ basis_change)
+    return orthonormalize_rotation(basis_change @ rotation @ basis_change.T)
 
 
 def convert_translation_between_bases(
@@ -167,5 +178,44 @@ def convert_opencv_camera_pose_to_unity_camera_pose(
     translation_unity = convert_translation_between_bases(
         translation_cv,
         OPENCV_CAMERA_TO_UNITY_CAMERA_BASIS,
+    )
+    return rotation_unity.astype(np.float64), translation_unity.astype(np.float64)
+
+
+def convert_opencv_camera_pose_to_canonical_rh_pose(
+    rotation_cv: np.ndarray,
+    translation_cv: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    rotation_cv = np.asarray(rotation_cv, dtype=np.float64)
+    translation_cv = np.asarray(translation_cv, dtype=np.float64).reshape(3)
+    rotation_rh = convert_rotation_between_bases(
+        rotation_cv,
+        OPENCV_CAMERA_TO_CANONICAL_RH_BASIS,
+    )
+    translation_rh = convert_translation_between_bases(
+        translation_cv,
+        OPENCV_CAMERA_TO_CANONICAL_RH_BASIS,
+    )
+    return rotation_rh.astype(np.float64), translation_rh.astype(np.float64)
+
+
+def convert_canonical_rh_pose_to_unity_pose(
+    rotation_rh: np.ndarray,
+    translation_rh: np.ndarray,
+    *,
+    convert_child_basis: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    rotation_rh = np.asarray(rotation_rh, dtype=np.float64)
+    translation_rh = np.asarray(translation_rh, dtype=np.float64).reshape(3)
+    if convert_child_basis:
+        rotation_unity = convert_rotation_between_bases(
+            rotation_rh,
+            CANONICAL_RH_TO_UNITY_BASIS,
+        )
+    else:
+        rotation_unity = orthonormalize_rotation(CANONICAL_RH_TO_UNITY_BASIS @ rotation_rh)
+    translation_unity = convert_translation_between_bases(
+        translation_rh,
+        CANONICAL_RH_TO_UNITY_BASIS,
     )
     return rotation_unity.astype(np.float64), translation_unity.astype(np.float64)

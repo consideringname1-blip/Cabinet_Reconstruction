@@ -5,7 +5,7 @@ import sys
 import _bootstrap
 from object_alignment_common import (
     compute_front_view_extents,
-    obj_vertices_to_unity,
+    obj_vertices_to_canonical_rh,
     read_obj_vertices,
     resolve_task_paths,
 )
@@ -25,8 +25,8 @@ def main(argv: list[str]) -> int:
 
     paths = resolve_task_paths(task)
     model_vertices_raw = read_obj_vertices(paths["mesh_path"])
-    model_vertices_unity = obj_vertices_to_unity(model_vertices_raw)
-    extents = compute_front_view_extents(model_vertices_unity)
+    model_vertices_canonical = obj_vertices_to_canonical_rh(model_vertices_raw)
+    extents = compute_front_view_extents(model_vertices_canonical)
 
     real_width = float((task.get("depthpointcloud") or {}).get("real_width_measured") or 0.0)
     real_height = float((task.get("depthpointcloud") or {}).get("real_height_measured") or 0.0)
@@ -41,13 +41,9 @@ def main(argv: list[str]) -> int:
     overall_scale = (width_scale + height_scale) / 2.0
 
     model_info = {
-        "coordinate_basis": "unity_x_right_y_up_z_forward",
-        "blender_import_axes": {"forward": "-X", "up": "+Z"},
         "width_model_units": extents["width_units"],
         "height_model_units": extents["height_units"],
         "depth_model_units": extents["depth_units"],
-        "bbox_min": extents["bbox_min"],
-        "bbox_max": extents["bbox_max"],
         "width_measured": width_measured,
         "height_measured": height_measured,
         "width_scale": width_scale,

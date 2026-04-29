@@ -93,17 +93,12 @@ def make_row_transform_matrix(rotation: np.ndarray, translation: np.ndarray) -> 
 def serialize_pose(
     rotation: np.ndarray,
     translation: np.ndarray,
-    coordinate_basis: str,
-) -> dict[str, list[float] | list[list[float]] | str]:
+    coordinate_basis: str | None = None,
+) -> dict[str, list[float]]:
     rotation = np.asarray(rotation, dtype=np.float64)
     translation = np.asarray(translation, dtype=np.float64)
     quat_xyzw = rotation_matrix_to_quat_xyzw(rotation)
-    euler_deg = rotation_matrix_to_euler_xyz_deg(rotation)
-    matrix = make_row_transform_matrix(rotation, translation)
     return {
-        "coordinate_basis": coordinate_basis,
         "position": [float(v) for v in translation],
-        "rotation_euler_deg": [float(v) for v in euler_deg],
         "rotation_quaternion_xyzw": [float(v) for v in quat_xyzw],
-        "transform_matrix": [[float(v) for v in row] for row in matrix],
     }

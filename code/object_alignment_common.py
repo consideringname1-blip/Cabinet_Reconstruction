@@ -24,72 +24,46 @@ from task_json import (
     resolve_task_json_path as resolve_json_path,
     save_task_json as save_json,
 )
+from unity_coordinate_utils import (
+    CANONICAL_RH_TO_UNITY_BASIS,
+    UNITY_TO_CANONICAL_RH_BASIS,
+)
 
 
 MIN_DEPTH_MM = AHAT_MIN_DEPTH_MM
 MAX_DEPTH_MM = AHAT_MAX_RELIABLE_DEPTH_MM
 
 # Canonical internal basis for measurement / alignment:
-# X = right, Y = up, Z = forward
-POINTCLOUD_INPUT_TO_UNITY_BASIS = np.array(
+# right-handed camera local, X=right, Y=up, -Z=forward.
+POINTCLOUD_EXPORT_TO_CANONICAL_RH_BASIS = np.array(
     [
         [0.0, 0.0, -1.0],
         [0.0, 1.0, 0.0],
-        [-1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
     ],
     dtype=np.float32,
 )
-UNITY_TO_POINTCLOUD_INPUT_BASIS = POINTCLOUD_INPUT_TO_UNITY_BASIS.T
+CANONICAL_RH_TO_POINTCLOUD_EXPORT_BASIS = POINTCLOUD_EXPORT_TO_CANONICAL_RH_BASIS.T
 
-# Legacy/export basis consumed by the pose stage for object_alignment output.
-# Rotation must stay in a proper right-handed frame after conversion, so we
-# preserve the previous basis for orientation.
-OBJECT_ALIGNMENT_ROTATION_POINTCLOUD_INPUT_TO_UNITY_BASIS = np.array(
-    [
-        [0.0, 0.0, -1.0],
-        [0.0, 1.0, 0.0],
-        [-1.0, 0.0, 0.0],
-    ],
-    dtype=np.float32,
-)
-UNITY_TO_OBJECT_ALIGNMENT_ROTATION_POINTCLOUD_INPUT_BASIS = (
-    OBJECT_ALIGNMENT_ROTATION_POINTCLOUD_INPUT_TO_UNITY_BASIS.T
-)
-
-# Position must use the same basis conversion as rotation. The previous
-# translation-only vertical flip made the exported camera-local pose internally
-# inconsistent and pushed the final world-space Y value in the wrong direction.
-OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_TO_UNITY_BASIS = np.array(
-    [
-        [0.0, 0.0, -1.0],
-        [0.0, 1.0, 0.0],
-        [-1.0, 0.0, 0.0],
-    ],
-    dtype=np.float32,
-)
-UNITY_TO_OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_BASIS = (
-    OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_TO_UNITY_BASIS.T
-)
-
-UNITY_TO_BLENDER_WORLD = np.array(
+CANONICAL_RH_TO_BLENDER_WORLD = np.array(
     [
         [1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0],
+        [0.0, 0.0, -1.0],
         [0.0, 1.0, 0.0],
     ],
     dtype=np.float32,
 )
-BLENDER_WORLD_TO_UNITY = UNITY_TO_BLENDER_WORLD.copy()
+BLENDER_WORLD_TO_CANONICAL_RH = CANONICAL_RH_TO_BLENDER_WORLD.T
 
-MODEL_INPUT_TO_UNITY_BASIS = np.array(
+MODEL_INPUT_TO_CANONICAL_RH_BASIS = np.array(
     [
         [0.0, 1.0, 0.0],
         [0.0, 0.0, 1.0],
-        [-1.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0],
     ],
     dtype=np.float32,
 )
-UNITY_TO_MODEL_INPUT_BASIS = MODEL_INPUT_TO_UNITY_BASIS.T
+CANONICAL_RH_TO_MODEL_INPUT_BASIS = MODEL_INPUT_TO_CANONICAL_RH_BASIS.T
 
 # Axis declarations used across the pipeline.
 # ICP/debug rendering imports OBJ with `forward=-X`, `up=+Z`.
@@ -104,7 +78,7 @@ FBX_EXPORT_UP_AXIS = "Y"
 
 # OBJ -> Blender world basis used by the ICP/debug path
 # (`bpy.ops.wm.obj_import(..., forward_axis="NEGATIVE_X", up_axis="Z")`).
-ICP_OBJ_IMPORT_TO_BLENDER_WORLD = UNITY_TO_BLENDER_WORLD @ MODEL_INPUT_TO_UNITY_BASIS
+ICP_OBJ_IMPORT_TO_BLENDER_WORLD = CANONICAL_RH_TO_BLENDER_WORLD @ MODEL_INPUT_TO_CANONICAL_RH_BASIS
 
 # OBJ -> Blender world basis used when wrapping the reconstructed OBJ into FBX.
 # This mirrors Blender's default OBJ import orientation
@@ -141,7 +115,9 @@ FBX_RUNTIME_LOCAL_TO_MODEL_INPUT = MODEL_INPUT_TO_FBX_RUNTIME_LOCAL.T
 # rotation. It has determinant -1, so it must not be multiplied directly into a
 # runtime world quaternion.
 FBX_RUNTIME_LOCAL_TO_UNITY_BASIS = (
-    MODEL_INPUT_TO_UNITY_BASIS @ FBX_RUNTIME_LOCAL_TO_MODEL_INPUT
+    np.asarray(CANONICAL_RH_TO_UNITY_BASIS, dtype=np.float32)
+    @ MODEL_INPUT_TO_CANONICAL_RH_BASIS
+    @ FBX_RUNTIME_LOCAL_TO_MODEL_INPUT
 )
 # The current OBJ -> FBX wrapper path bakes axis conversion into the exported
 # mesh/file, and Unity/TriLib loads that FBX as a standard runtime object. So
@@ -386,13 +362,13 @@ def build_depth_pointcloud_from_valid_mask(
     x_cam = (uu - cx) * z_m / fx
     y_cam = (vv - cy) * z_m / fy
 
-    unity_points = np.stack((x_cam, -y_cam, z_m), axis=-1)[valid]
+    canonical_points = np.stack((x_cam, -y_cam, -z_m), axis=-1)[valid]
 
     # Exported PLY coordinates are chosen so that importing with
     # forward=-X, up=+Y lands in Blender world as:
-    # X=right, Z=up, Y=forward, which corresponds to the same object pose.
+    # X=right, Z=up, Y=forward, matching canonical [x, y, z] -> [x, -z, y].
     export_points = np.stack((-z_m, -y_cam, -x_cam), axis=-1)[valid]
-    return export_points.astype(np.float32), unity_points.astype(np.float32)
+    return export_points.astype(np.float32), canonical_points.astype(np.float32)
 
 
 def select_front_visible_points(
@@ -410,14 +386,15 @@ def select_front_visible_points(
         ignore_occluded_points = bool(ICP_IGNORE_OCCLUDED_MODEL_POINTS)
 
     if ignore_occluded_points:
-        # Extract the camera-visible surface when the camera looks along +Z in
-        # Unity camera-local space.
+        # Extract the camera-visible surface when the camera looks along -Z in
+        # canonical right-handed camera-local space. Larger Z is closer to the
+        # camera because points in front of the camera have negative Z.
         min_xy = points[:, :2].min(axis=0)
         max_xy = points[:, :2].max(axis=0)
         span_xy = np.maximum(max_xy - min_xy, 1e-6)
         uv = np.floor((points[:, :2] - min_xy) / span_xy * (bins - 1)).astype(np.int32)
         flat = uv[:, 1] * bins + uv[:, 0]
-        order = np.lexsort((points[:, 2], flat))
+        order = np.lexsort((-points[:, 2], flat))
         flat_sorted = flat[order]
 
         keep = np.empty(len(order), dtype=bool)
@@ -452,131 +429,114 @@ def extract_front_visible_points(
     return selected_points
 
 
-def pointcloud_export_to_unity(points: np.ndarray) -> np.ndarray:
+def pointcloud_export_to_canonical_rh(points: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float32)
-    return (points @ POINTCLOUD_INPUT_TO_UNITY_BASIS.T).astype(np.float32)
+    return (points @ POINTCLOUD_EXPORT_TO_CANONICAL_RH_BASIS.T).astype(np.float32)
 
 
 def pointcloud_export_to_blender_world(points: np.ndarray) -> np.ndarray:
-    points_unity = pointcloud_export_to_unity(points)
-    return unity_to_blender_world_points(points_unity)
+    points_canonical = pointcloud_export_to_canonical_rh(points)
+    return canonical_rh_to_blender_world_points(points_canonical)
 
 
-def unity_to_pointcloud_export_points(points: np.ndarray) -> np.ndarray:
+def canonical_rh_to_pointcloud_export_points(points: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float32)
-    return (points @ UNITY_TO_POINTCLOUD_INPUT_BASIS.T).astype(np.float32)
+    return (points @ CANONICAL_RH_TO_POINTCLOUD_EXPORT_BASIS.T).astype(np.float32)
 
 
-def obj_vertices_to_unity(points: np.ndarray) -> np.ndarray:
+def obj_vertices_to_canonical_rh(points: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float32)
-    return (points @ MODEL_INPUT_TO_UNITY_BASIS.T).astype(np.float32)
+    return (points @ MODEL_INPUT_TO_CANONICAL_RH_BASIS.T).astype(np.float32)
 
 
 def obj_vertices_to_blender_world(points: np.ndarray) -> np.ndarray:
-    points_unity = obj_vertices_to_unity(points)
-    return unity_to_blender_world_points(points_unity)
+    points_canonical = obj_vertices_to_canonical_rh(points)
+    return canonical_rh_to_blender_world_points(points_canonical)
 
 
-def model_pose_unity_to_pointcloud_input(
+def model_pose_canonical_rh_to_unity_camera(
+    rotation_canonical: np.ndarray,
+    translation_canonical: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    rotation_canonical = np.asarray(rotation_canonical, dtype=np.float32)
+    translation_canonical = np.asarray(translation_canonical, dtype=np.float32)
+    basis = np.asarray(CANONICAL_RH_TO_UNITY_BASIS, dtype=np.float32)
+    rotation_unity = basis @ rotation_canonical @ basis
+    translation_unity = basis @ translation_canonical.reshape(3, 1)
+    return rotation_unity.astype(np.float32), translation_unity.reshape(3).astype(np.float32)
+
+
+def model_pose_unity_camera_to_canonical_rh(
     rotation_unity: np.ndarray,
     translation_unity: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    # Convert the final ICP pose from the internal Unity basis to the
-    # object_alignment export basis consumed by downstream pose code.
-    # Rotation and translation share the same basis mapping so the exported
-    # pose stays self-consistent when the pose stage reconstructs Unity-local
-    # coordinates.
     rotation_unity = np.asarray(rotation_unity, dtype=np.float32)
     translation_unity = np.asarray(translation_unity, dtype=np.float32)
-    rotation_pointcloud = (
-        UNITY_TO_OBJECT_ALIGNMENT_ROTATION_POINTCLOUD_INPUT_BASIS
-        @ rotation_unity
-        @ MODEL_INPUT_TO_UNITY_BASIS
-    )
-    translation_pointcloud = (
-        translation_unity @ OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_TO_UNITY_BASIS
-    )
-    return rotation_pointcloud.astype(np.float32), translation_pointcloud.astype(np.float32)
+    basis = np.asarray(UNITY_TO_CANONICAL_RH_BASIS, dtype=np.float32)
+    rotation_canonical = basis @ rotation_unity @ basis
+    translation_canonical = basis @ translation_unity.reshape(3, 1)
+    return rotation_canonical.astype(np.float32), translation_canonical.reshape(3).astype(np.float32)
 
 
-def model_pose_pointcloud_input_to_unity(
-    rotation_pointcloud: np.ndarray,
-    translation_pointcloud: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    # Inverse of model_pose_unity_to_pointcloud_input for downstream consumers
-    # that still expect the internal Unity basis.
-    rotation_pointcloud = np.asarray(rotation_pointcloud, dtype=np.float32)
-    translation_pointcloud = np.asarray(translation_pointcloud, dtype=np.float32)
-    rotation_unity = (
-        OBJECT_ALIGNMENT_ROTATION_POINTCLOUD_INPUT_TO_UNITY_BASIS
-        @ rotation_pointcloud
-        @ UNITY_TO_MODEL_INPUT_BASIS
-    )
-    translation_unity = (
-        translation_pointcloud @ UNITY_TO_OBJECT_ALIGNMENT_TRANSLATION_POINTCLOUD_INPUT_BASIS
-    )
-    return rotation_unity.astype(np.float32), translation_unity.astype(np.float32)
-
-
-def unity_to_blender_world_points(points: np.ndarray) -> np.ndarray:
+def canonical_rh_to_blender_world_points(points: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float32)
-    return points[:, [0, 2, 1]].copy()
+    return np.stack((points[:, 0], -points[:, 2], points[:, 1]), axis=-1).astype(np.float32)
 
 
-def unity_to_blender_world_vector(vector: np.ndarray) -> np.ndarray:
+def canonical_rh_to_blender_world_vector(vector: np.ndarray) -> np.ndarray:
     vector = np.asarray(vector, dtype=np.float32)
-    return vector[[0, 2, 1]].copy()
+    return np.array([vector[0], -vector[2], vector[1]], dtype=np.float32)
 
 
-def blender_world_to_unity_vector(vector: np.ndarray) -> np.ndarray:
+def blender_world_to_canonical_rh_vector(vector: np.ndarray) -> np.ndarray:
     vector = np.asarray(vector, dtype=np.float32)
-    return vector[[0, 2, 1]].copy()
+    return np.array([vector[0], vector[2], -vector[1]], dtype=np.float32)
 
 
-def rotation_unity_to_blender_world(rotation: np.ndarray) -> np.ndarray:
+def rotation_canonical_rh_to_blender_world(rotation: np.ndarray) -> np.ndarray:
     rotation = np.asarray(rotation, dtype=np.float32)
-    return UNITY_TO_BLENDER_WORLD @ rotation @ BLENDER_WORLD_TO_UNITY
+    return CANONICAL_RH_TO_BLENDER_WORLD @ rotation @ BLENDER_WORLD_TO_CANONICAL_RH
 
 
-def rotation_blender_world_to_unity(rotation: np.ndarray) -> np.ndarray:
+def rotation_blender_world_to_canonical_rh(rotation: np.ndarray) -> np.ndarray:
     rotation = np.asarray(rotation, dtype=np.float32)
-    return BLENDER_WORLD_TO_UNITY @ rotation @ UNITY_TO_BLENDER_WORLD
+    return BLENDER_WORLD_TO_CANONICAL_RH @ rotation @ CANONICAL_RH_TO_BLENDER_WORLD
 
 
-def model_pose_unity_to_blender_world(
-    rotation_unity: np.ndarray,
-    translation_unity: np.ndarray,
+def model_pose_canonical_rh_to_blender_world(
+    rotation_canonical: np.ndarray,
+    translation_canonical: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    rotation_blender = rotation_unity_to_blender_world(rotation_unity)
-    translation_blender = unity_to_blender_world_vector(translation_unity)
+    rotation_blender = rotation_canonical_rh_to_blender_world(rotation_canonical)
+    translation_blender = canonical_rh_to_blender_world_vector(translation_canonical)
     return rotation_blender.astype(np.float32), translation_blender.astype(np.float32)
 
 
-def model_pose_blender_world_to_unity(
+def model_pose_blender_world_to_canonical_rh(
     rotation_blender: np.ndarray,
     translation_blender: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
-    rotation_unity = rotation_blender_world_to_unity(rotation_blender)
-    translation_unity = blender_world_to_unity_vector(translation_blender)
-    return rotation_unity.astype(np.float32), translation_unity.astype(np.float32)
+    rotation_canonical = rotation_blender_world_to_canonical_rh(rotation_blender)
+    translation_canonical = blender_world_to_canonical_rh_vector(translation_blender)
+    return rotation_canonical.astype(np.float32), translation_canonical.astype(np.float32)
 
 
-def rotation_unity_to_blender_obj_import(
+def rotation_canonical_rh_to_blender_obj_import(
     rotation: np.ndarray,
     obj_import_to_blender_world: np.ndarray,
 ) -> np.ndarray:
     rotation = np.asarray(rotation, dtype=np.float32)
     obj_import_to_blender_world = np.asarray(obj_import_to_blender_world, dtype=np.float32)
     return (
-        UNITY_TO_BLENDER_WORLD
+        CANONICAL_RH_TO_BLENDER_WORLD
         @ rotation
-        @ MODEL_INPUT_TO_UNITY_BASIS
+        @ MODEL_INPUT_TO_CANONICAL_RH_BASIS
         @ obj_import_to_blender_world.T
     ).astype(np.float32)
 
 
-def rotation_unity_to_blender_default_obj_import(rotation: np.ndarray) -> np.ndarray:
-    return rotation_unity_to_blender_obj_import(
+def rotation_canonical_rh_to_blender_default_obj_import(rotation: np.ndarray) -> np.ndarray:
+    return rotation_canonical_rh_to_blender_obj_import(
         rotation,
         FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD,
     )
@@ -836,22 +796,42 @@ def read_obj_mesh(path: Path) -> tuple[np.ndarray, list[list[int]]]:
     return np.asarray(vertices, dtype=np.float32), faces
 
 
+def transform_model_vertices_to_canonical_rh_space(
+    model_vertices: np.ndarray,
+    rotation_canonical: np.ndarray,
+    translation_canonical: np.ndarray,
+    uniform_scale: float,
+) -> np.ndarray:
+    model_vertices = np.asarray(model_vertices, dtype=np.float32)
+    rotation_canonical = np.asarray(rotation_canonical, dtype=np.float32)
+    translation_canonical = np.asarray(translation_canonical, dtype=np.float32)
+    scale_value = float(uniform_scale)
+    if rotation_canonical.shape != (3, 3):
+        raise ValueError(f"rotation_canonical must be 3x3, got {rotation_canonical.shape}")
+    if translation_canonical.shape != (3,):
+        raise ValueError(
+            f"translation_canonical must have 3 values, got {translation_canonical.shape}"
+        )
+    vertices_canonical = model_vertices @ MODEL_INPUT_TO_CANONICAL_RH_BASIS.T
+    return (
+        (vertices_canonical * scale_value) @ rotation_canonical.T
+        + translation_canonical
+    ).astype(np.float32)
+
+
 def transform_model_vertices_to_unity_space(
     model_vertices: np.ndarray,
     rotation_unity: np.ndarray,
     translation_unity: np.ndarray,
     uniform_scale: float,
 ) -> np.ndarray:
-    model_vertices = np.asarray(model_vertices, dtype=np.float32)
-    rotation_unity = np.asarray(rotation_unity, dtype=np.float32)
-    translation_unity = np.asarray(translation_unity, dtype=np.float32)
-    scale_value = float(uniform_scale)
-    if rotation_unity.shape != (3, 3):
-        raise ValueError(f"rotation_unity must be 3x3, got {rotation_unity.shape}")
-    if translation_unity.shape != (3,):
-        raise ValueError(f"translation_unity must have 3 values, got {translation_unity.shape}")
-    vertices_unity = model_vertices @ MODEL_INPUT_TO_UNITY_BASIS.T
-    return ((vertices_unity * scale_value) @ rotation_unity.T + translation_unity).astype(np.float32)
+    """Compatibility wrapper for older scripts; the new pipeline uses RH space."""
+    return transform_model_vertices_to_canonical_rh_space(
+        model_vertices,
+        rotation_unity,
+        translation_unity,
+        uniform_scale,
+    )
 
 
 def write_binary_scene_ply(
@@ -906,21 +886,23 @@ def write_binary_scene_ply(
                 f.write(struct.pack("<i", int(index)))
 
 
-def write_transformed_obj_in_unity_space(
+def write_transformed_obj_in_canonical_rh_space(
     source_obj_path: Path,
     output_obj_path: Path,
-    rotation_unity: np.ndarray,
-    translation_unity: np.ndarray,
+    rotation_canonical: np.ndarray,
+    translation_canonical: np.ndarray,
     uniform_scale: float,
 ) -> None:
-    rotation_unity = np.asarray(rotation_unity, dtype=np.float32)
-    translation_unity = np.asarray(translation_unity, dtype=np.float32)
+    rotation_canonical = np.asarray(rotation_canonical, dtype=np.float32)
+    translation_canonical = np.asarray(translation_canonical, dtype=np.float32)
     scale_value = float(uniform_scale)
 
-    if rotation_unity.shape != (3, 3):
-        raise ValueError(f"rotation_unity must be 3x3, got {rotation_unity.shape}")
-    if translation_unity.shape != (3,):
-        raise ValueError(f"translation_unity must have 3 values, got {translation_unity.shape}")
+    if rotation_canonical.shape != (3, 3):
+        raise ValueError(f"rotation_canonical must be 3x3, got {rotation_canonical.shape}")
+    if translation_canonical.shape != (3,):
+        raise ValueError(
+            f"translation_canonical must have 3 values, got {translation_canonical.shape}"
+        )
     if scale_value <= 0.0:
         raise ValueError("uniform_scale must be positive")
 
@@ -931,14 +913,13 @@ def write_transformed_obj_in_unity_space(
         encoding="utf-8",
         newline="\n",
     ) as dst:
-        dst.write("# Transformed OBJ exported in Unity camera-local coordinates.\n")
-        dst.write("# coordinate_basis: unity_camera_local_x_right_y_up_z_forward\n")
+        dst.write("# Transformed OBJ exported in canonical right-handed camera-local coordinates.\n")
         dst.write(
             "# transform: uniform_scale={:.9f} translation=({:.9f}, {:.9f}, {:.9f})\n".format(
                 scale_value,
-                float(translation_unity[0]),
-                float(translation_unity[1]),
-                float(translation_unity[2]),
+                float(translation_canonical[0]),
+                float(translation_canonical[1]),
+                float(translation_canonical[2]),
             )
         )
 
@@ -950,8 +931,11 @@ def write_transformed_obj_in_unity_space(
                 if len(parts) < 4:
                     continue
                 vertex_model = np.asarray([float(parts[1]), float(parts[2]), float(parts[3])], dtype=np.float32)
-                vertex_unity = vertex_model @ MODEL_INPUT_TO_UNITY_BASIS.T
-                transformed = (vertex_unity * scale_value) @ rotation_unity.T + translation_unity
+                vertex_canonical = vertex_model @ MODEL_INPUT_TO_CANONICAL_RH_BASIS.T
+                transformed = (
+                    (vertex_canonical * scale_value) @ rotation_canonical.T
+                    + translation_canonical
+                )
                 dst.write("v {:.9f} {:.9f} {:.9f}\n".format(*[float(v) for v in transformed]))
                 continue
             if line.startswith("vn "):
@@ -959,14 +943,31 @@ def write_transformed_obj_in_unity_space(
                 if len(parts) < 4:
                     continue
                 normal_model = np.asarray([float(parts[1]), float(parts[2]), float(parts[3])], dtype=np.float32)
-                normal_unity = normal_model @ MODEL_INPUT_TO_UNITY_BASIS.T
-                rotated = normal_unity @ rotation_unity.T
+                normal_canonical = normal_model @ MODEL_INPUT_TO_CANONICAL_RH_BASIS.T
+                rotated = normal_canonical @ rotation_canonical.T
                 length = float(np.linalg.norm(rotated))
                 if length > 1e-8:
                     rotated = rotated / length
                 dst.write("vn {:.9f} {:.9f} {:.9f}\n".format(*[float(v) for v in rotated]))
                 continue
             dst.write(line)
+
+
+def write_transformed_obj_in_unity_space(
+    source_obj_path: Path,
+    output_obj_path: Path,
+    rotation_unity: np.ndarray,
+    translation_unity: np.ndarray,
+    uniform_scale: float,
+) -> None:
+    """Compatibility wrapper for older scripts; the new pipeline uses RH space."""
+    write_transformed_obj_in_canonical_rh_space(
+        source_obj_path,
+        output_obj_path,
+        rotation_unity,
+        translation_unity,
+        uniform_scale,
+    )
 
 
 def resolve_blender_path(cli_arg: str | None = None) -> Path:

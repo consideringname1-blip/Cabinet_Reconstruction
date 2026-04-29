@@ -45,10 +45,10 @@ def get_imported_mesh_objects() -> list:
 
 
 def _parse_blender_scale(task: dict) -> tuple[float, float, float]:
-    object_info = task.get("object") or {}
+    object_info = task.get("object_world") or task.get("object") or {}
     scale = object_info.get("scale") or [1.0, 1.0, 1.0]
     if len(scale) != 3:
-        raise ValueError("object.scale must have 3 values")
+        raise ValueError("object_world.scale must have 3 values")
     return tuple(float(v) for v in scale)
 
 
@@ -104,17 +104,7 @@ def export_fbx_from_json(json_path: Path) -> Path:
     if not fbx_path.is_file():
         raise RuntimeError(f"FBX export failed: {fbx_path}")
 
-    task["Blender"] = {
-        "fbx": fbx_path.name,
-        "obj_import_axes": {
-            "forward": FBX_CONVERT_OBJ_IMPORT_FORWARD_AXIS,
-            "up": FBX_CONVERT_OBJ_IMPORT_UP_AXIS,
-        },
-        "fbx_export_axes": {
-            "forward": FBX_EXPORT_FORWARD_AXIS,
-            "up": FBX_EXPORT_UP_AXIS,
-        },
-    }
+    task["Blender"] = {"fbx": fbx_path.name}
     save_task_json(json_path, task)
     return fbx_path
 

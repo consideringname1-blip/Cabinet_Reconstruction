@@ -9,7 +9,10 @@ try:
 except ModuleNotFoundError:
     from . import _bootstrap  # type: ignore
 
-from hololens3d_reconstruction.pose_math import quat_xyzw_to_rotation_matrix
+from hololens3d_reconstruction.pose_math import (
+    quat_xyzw_to_rotation_matrix,
+    rotation_matrix_to_quat_xyzw,
+)
 from task_db import (
     get_completed_tasks_for_startup,
     get_latest_aruco_reference,
@@ -59,29 +62,45 @@ def _extract_pose(pose: dict) -> tuple[np.ndarray, np.ndarray, list[float] | Non
     return position.astype(np.float64), rotation.astype(np.float64), scale
 
 
+def _minimal_pose_payload(pose: dict, *, include_scale: bool) -> dict:
+    position, rotation, scale = _extract_pose(pose)
+    payload = {
+        "position": [float(v) for v in position],
+        "rotation_quaternion_xyzw": [
+            float(v) for v in rotation_matrix_to_quat_xyzw(rotation)
+        ],
+    }
+    if include_scale and scale is not None:
+        payload["scale"] = [float(v) for v in scale]
+    return payload
+
+
 def sync_task_json_with_latest_reference(json_path_arg: str) -> bool:
     json_path = resolve_task_json_path(json_path_arg)
     task = load_task_json(json_path)
     task_id = str(task.get("task_id") or "")
     startup_session_id = str((task.get("device") or {}).get("startup_session_id") or "").strip()
     object_world = task.get("object_world") or task.get("object")
+    if object_world is not None:
+        object_world = _minimal_pose_payload(object_world, include_scale=True)
 
     debug_section = dict(task.get("debug") or {})
     pose_transform_stages = dict(debug_section.get("pose_transform_stages") or {})
     aruco_stage = dict(pose_transform_stages.get("aruco_stage") or {})
-    aruco_stage.setdefault("coordinate_basis_local", ARUCO_LOCAL_COORDINATE_BASIS)
-    aruco_stage.setdefault("coordinate_basis_world", UNITY_WORLD_COORDINATE_BASIS)
     aruco_stage["sync_stage_ran"] = True
     aruco_stage["synced_to_reference"] = False
 
     latest_reference_row = get_latest_aruco_reference(startup_session_id) if startup_session_id else None
-    aruco_reference = (
+    aruco_reference_raw = (
         load_json_payload(latest_reference_row.get("marker_pose_json")) if latest_reference_row else None
+    )
+    aruco_reference = (
+        _minimal_pose_payload(aruco_reference_raw, include_scale=False)
+        if aruco_reference_raw is not None
+        else None
     )
 
     if aruco_reference is None:
-        if object_world is not None:
-            task["object"] = object_world
         aruco_stage["sync_reason"] = "reference_not_found"
         _write_debug(task, aruco_stage)
         save_task_json(json_path, task)
@@ -124,7 +143,6 @@ def sync_task_json_with_latest_reference(json_path_arg: str) -> bool:
 
     task["object_world"] = object_world
     task["object_aruco"] = object_aruco
-    task["object"] = object_aruco
     aruco_stage["synced_to_reference"] = True
     aruco_stage["sync_reason"] = "reference_applied"
     aruco_stage["object_aruco"] = object_aruco

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import sys
+import shutil
+import uuid
 import warnings
+from pathlib import Path
 
 import _bootstrap
 from alignment_preview import render_model_compare_preview_image, render_overlay_preview_image
@@ -26,33 +29,26 @@ from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 
 from object_alignment_common import (
+    build_depth_pointcloud,
     build_depth_border_keep_mask,
     build_depth_pointcloud_from_valid_mask,
     compute_front_view_extents,
     extract_front_visible_points,
-    model_pose_unity_to_blender_world,
-    model_pose_unity_to_pointcloud_input,
+    model_pose_canonical_rh_to_blender_world,
     MAX_DEPTH_MM,
     MIN_DEPTH_MM,
-    obj_vertices_to_unity,
+    obj_vertices_to_canonical_rh,
     object_alignment_output_path,
-    pointcloud_export_to_unity,
     read_depth_image,
-    read_binary_ply_points,
     read_mask,
-    read_obj_mesh,
     read_obj_vertices,
     resolve_task_paths,
     select_front_visible_points,
     task_prefix,
-    transform_model_vertices_to_unity_space,
-    write_binary_scene_ply,
-    unity_to_blender_world_vector,
+    canonical_rh_to_blender_world_vector,
     write_binary_ply,
-    write_transformed_obj_in_unity_space,
 )
 from pose_math import (
-    rotation_matrix_to_euler_xyz_deg,
     rotation_matrix_to_quat_xyzw,
     serialize_pose,
 )
@@ -587,7 +583,7 @@ def compute_confidence(task: dict, best: dict) -> float:
     return float(np.clip(confidence, 0.0, 1.0))
 
 
-def build_final_camera_local_unity_debug(
+def build_final_camera_local_rh_debug(
     rotation: np.ndarray,
     translation: np.ndarray,
     scale: float,
@@ -599,7 +595,6 @@ def build_final_camera_local_unity_debug(
         "pose": serialize_pose(
             rotation,
             translation,
-            "unity_camera_local_x_right_y_up_z_forward",
         ),
         "front_view_rmse_2d": float(metrics["rmse_2d"]),
         "surface_rmse_3d": float(metrics["surface_rmse_3d"]),
@@ -772,7 +767,7 @@ def solve_camera_local_alignment(
             target_context=target_context,
         )
 
-    final_debug = build_final_camera_local_unity_debug(
+    final_debug = build_final_camera_local_rh_debug(
         best["rotation"],
         best["translation"],
         float(best["scale"]),
@@ -834,7 +829,7 @@ def build_distance_only_alignment(
         "center_error": float(metrics["center_error"]),
         "initial_rotation_penalty": float(metrics["initial_rotation_penalty"]),
     }
-    final_debug = build_final_camera_local_unity_debug(
+    final_debug = build_final_camera_local_rh_debug(
         best["rotation"],
         best["translation"],
         float(best["scale"]),
@@ -862,45 +857,40 @@ def main(argv: list[str]) -> int:
 
     paths = resolve_task_paths(task)
     prefix = task_prefix(task, json_path)
-    pointcloud_name = (task.get("depthpointcloud") or {}).get("pointcloud_name")
-    if not pointcloud_name:
-        raise ValueError("depthpointcloud.pointcloud_name is missing")
-    precomputed_discarded_name = (task.get("depthpointcloud") or {}).get("icp_discarded_pointcloud_name")
-    precomputed_used_name = (task.get("depthpointcloud") or {}).get("icp_used_pointcloud_name")
 
     k = np.asarray((task.get("PVCamera") or {}).get("k"), dtype=np.float32)
     if k.shape != (3, 3):
         raise ValueError(f"PVCamera.k must be 3x3, got {k.shape}")
 
-    pointcloud_path = object_alignment_output_path(pointcloud_name)
-    pointcloud_points_export = read_binary_ply_points(pointcloud_path)
-    pointcloud_points_unity = pointcloud_export_to_unity(pointcloud_points_export)
-    model_vertices_raw_full, model_faces = read_obj_mesh(paths["mesh_path"])
+    mask_bool = read_mask(paths["mask_path"])
+    depth_mm = read_depth_image(paths["depth_path"])
+    pointcloud_points_export, pointcloud_points_unity = build_depth_pointcloud(
+        depth_mm,
+        mask_bool,
+        k,
+    )
+    valid_all = mask_bool & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
+    discarded_mask = valid_all & ~build_depth_border_keep_mask(mask_bool)
+    discarded_points_export, _discarded_points_canonical = build_depth_pointcloud_from_valid_mask(
+        depth_mm,
+        discarded_mask,
+        k,
+    )
+    target_front_fit, target_front_indices = select_front_visible_points(
+        pointcloud_points_unity,
+        bins=160,
+        max_points=ICP_TARGET_FRONT_MAX_POINTS,
+        seed=7,
+    )
+    icp_used_points_export = pointcloud_points_export[target_front_indices]
+
     model_vertices_raw = read_obj_vertices(paths["mesh_path"])
-    model_vertices_unity = obj_vertices_to_unity(model_vertices_raw)
+    model_vertices_unity = obj_vertices_to_canonical_rh(model_vertices_raw)
     alignment_model_points = (
         build_alignment_model_points(model_vertices_unity)
         if bool(ICP_ENABLE)
         else np.empty((0, 3), dtype=np.float32)
     )
-
-    if precomputed_discarded_name and precomputed_used_name:
-        discarded_points_export = read_binary_ply_points(object_alignment_output_path(precomputed_discarded_name))
-        icp_used_points_export = read_binary_ply_points(object_alignment_output_path(precomputed_used_name))
-        target_front_fit = pointcloud_export_to_unity(icp_used_points_export)
-    else:
-        mask_bool = read_mask(paths["mask_path"])
-        depth_mm = read_depth_image(paths["depth_path"])
-        valid_all = mask_bool & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
-        discarded_mask = valid_all & ~build_depth_border_keep_mask(mask_bool)
-        discarded_points_export, _ = build_depth_pointcloud_from_valid_mask(depth_mm, discarded_mask, k)
-        target_front_fit, target_front_indices = select_front_visible_points(
-            pointcloud_points_unity,
-            bins=160,
-            max_points=ICP_TARGET_FRONT_MAX_POINTS,
-            seed=7,
-        )
-        icp_used_points_export = pointcloud_points_export[target_front_indices]
 
     target_context = build_target_context(target_front_fit)
     overall_scale = float((task.get("model") or {}).get("overall_scale") or 1.0)
@@ -941,14 +931,8 @@ def main(argv: list[str]) -> int:
     else:
         raise ValueError(f"Unsupported ICP_MODE: {ICP_MODE}")
 
-    pointcloud_rotation, pointcloud_translation = model_pose_unity_to_pointcloud_input(
-        best["rotation"],
-        best["translation"],
-    )
-    pointcloud_euler_deg = rotation_matrix_to_euler_xyz_deg(pointcloud_rotation)
-    pointcloud_quat_xyzw = rotation_matrix_to_quat_xyzw(pointcloud_rotation)
-
-    blender_rotation, blender_translation = model_pose_unity_to_blender_world(
+    camera_local_quat_xyzw = rotation_matrix_to_quat_xyzw(best["rotation"])
+    blender_rotation, blender_translation = model_pose_canonical_rh_to_blender_world(
         best["rotation"],
         best["translation"],
     )
@@ -958,89 +942,27 @@ def main(argv: list[str]) -> int:
     )
 
     confidence = compute_confidence(task, best)
-    discarded_points_preview_name = f"{prefix}_icp_discarded_points.ply"
-    discarded_points_preview_path = object_alignment_output_path(discarded_points_preview_name)
-    icp_points_preview_name = f"{prefix}_icp_used_points.ply"
-    icp_points_preview_path = object_alignment_output_path(icp_points_preview_name)
     overlay_preview_name = f"{prefix}_alignment_preview_pointcloud_model.png"
     overlay_preview_path = object_alignment_output_path(overlay_preview_name)
     unaligned_preview_name = f"{prefix}_alignment_preview_model_compare.png"
     unaligned_preview_path = object_alignment_output_path(unaligned_preview_name)
-    preview_aligned_model_name = f"{prefix}_alignment_preview_aligned_model.obj"
-    preview_aligned_model_path = object_alignment_output_path(preview_aligned_model_name)
-    preview_initial_model_name = f"{prefix}_alignment_preview_initial_model.obj"
-    preview_initial_model_path = object_alignment_output_path(preview_initial_model_name)
-    preview_overlay_scene_name = f"{prefix}_alignment_preview_pointcloud_aligned_scene.ply"
-    preview_overlay_scene_path = object_alignment_output_path(preview_overlay_scene_name)
-    write_binary_ply(discarded_points_preview_path, discarded_points_export)
-    write_binary_ply(icp_points_preview_path, icp_used_points_export)
-    write_transformed_obj_in_unity_space(
-        paths["mesh_path"],
-        preview_aligned_model_path,
-        best["rotation"],
-        best["translation"],
-        float(best["scale"]),
-    )
-    write_transformed_obj_in_unity_space(
-        paths["mesh_path"],
-        preview_initial_model_path,
-        preview_initial_rotation,
-        preview_initial_translation,
-        float(overall_scale),
-    )
-    aligned_model_vertices_unity = transform_model_vertices_to_unity_space(
-        model_vertices_raw_full,
-        best["rotation"],
-        best["translation"],
-        float(best["scale"]),
-    )
-    discarded_points_unity = pointcloud_export_to_unity(discarded_points_export)
-    icp_used_points_unity = pointcloud_export_to_unity(icp_used_points_export)
-
-    overlay_vertices = np.concatenate(
-        [
-            discarded_points_unity,
-            icp_used_points_unity,
-            aligned_model_vertices_unity,
-        ],
-        axis=0,
-    )
-    overlay_colors = np.concatenate(
-        [
-            np.tile(np.array([[255, 71, 26]], dtype=np.uint8), (len(discarded_points_unity), 1)),
-            np.tile(np.array([[46, 204, 113]], dtype=np.uint8), (len(icp_used_points_unity), 1)),
-            np.tile(np.array([[64, 140, 255]], dtype=np.uint8), (len(aligned_model_vertices_unity), 1)),
-        ],
-        axis=0,
-    )
-    overlay_face_offset = len(discarded_points_unity) + len(icp_used_points_unity)
-    overlay_faces = [[overlay_face_offset + idx for idx in face] for face in model_faces]
-    write_binary_scene_ply(
-        preview_overlay_scene_path,
-        overlay_vertices,
-        overlay_colors,
-        overlay_faces,
-    )
     preview_image_name: str | None = overlay_preview_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
     preview_image_unaligned_name: str | None = unaligned_preview_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
 
     object_alignment = {
-        "coordinate_basis": "pointcloud_input_pre_blender_import",
-        "model_position": [float(v) for v in pointcloud_translation],
-        "model_rotation_euler_deg": [float(v) for v in pointcloud_euler_deg],
-        "model_rotation_quaternion_xyzw": [float(v) for v in pointcloud_quat_xyzw],
+        "camera_local_position": [float(v) for v in best["translation"]],
+        "camera_local_rotation_quaternion_xyzw": [float(v) for v in camera_local_quat_xyzw],
         "model_real_scale": float(best["scale"]),
         "icp_mode": str(ICP_MODE),
         "icp_enabled": bool(ICP_ENABLE),
         "preview_image_name": preview_image_name,
         "preview_image_unaligned_name": preview_image_unaligned_name,
-        "preview_aligned_model_name": preview_aligned_model_name,
-        "preview_initial_distance_model_name": preview_initial_model_name,
-        "preview_pointcloud_aligned_scene_name": preview_overlay_scene_name,
-        "preview_model_coordinate_basis": "unity_camera_local_x_right_y_up_z_forward",
         "confidence": confidence,
         "icp_rmse": float(best["rmse"]),
         "icp_fit_model_point_count": int(len(alignment_model_points)) if bool(ICP_ENABLE) else 0,
+        "target_point_count": int(len(pointcloud_points_unity)),
+        "target_front_point_count": int(len(target_front_fit)),
+        "discarded_point_count": int(len(discarded_points_export)),
     }
     preview_render_errors: list[dict[str, str]] = []
     task["object_alignment"] = object_alignment
@@ -1048,50 +970,60 @@ def main(argv: list[str]) -> int:
     debug_section = dict(task.get("debug") or {})
     pose_debug = dict(debug_section.get("pose_transform_stages") or {})
     pose_debug["object_alignment"] = {
-        "final_camera_local_unity": final_camera_local_unity_debug,
+        "final_camera_local_rh": final_camera_local_unity_debug,
     }
     debug_section["pose_transform_stages"] = pose_debug
     task["debug"] = debug_section
 
     if ENABLE_ALIGNMENT_RENDER_OUTPUTS:
+        preview_tmp_root = object_alignment_output_path("_tmp_preview_root").parent
+        tmp_dir_path = preview_tmp_root / f"{prefix}_alignment_{uuid.uuid4().hex}"
+        tmp_dir_path.mkdir(parents=False, exist_ok=False)
         try:
-            render_overlay_preview_image(
-                mesh_path=paths["mesh_path"],
-                discarded_pointcloud_path=discarded_points_preview_path,
-                icp_pointcloud_path=icp_points_preview_path,
-                render_path=overlay_preview_path,
-                blender_translation=blender_translation,
-                blender_delta_euler_deg=blender_delta_euler_deg,
-                scale=float(best["scale"]),
-                task=task,
-                blender_arg=argv[2] if len(argv) == 3 else None,
-                title=(
-                    "Camera-local Refine Preview"
-                    if bool(ICP_ENABLE)
-                    else "ICP Skipped Preview"
-                ),
-                header_line=(
-                    "Camera-view preview: two-color point cloud + refined model"
-                    if bool(ICP_ENABLE)
-                    else "Camera-view preview: two-color point cloud + initial model"
-                ),
-                model_legend_line=(
-                    "Orange = mask-border-discarded points, green = ICP-used points, blue = refined model"
-                    if bool(ICP_ENABLE)
-                    else "Orange = mask-border-discarded points, green = ICP-used points, blue = initial model"
-                ),
-            )
-        except Exception as exc:
-            preview_render_errors.append(
-                {
-                    "preview": "overlay_preview",
-                    "path": overlay_preview_name,
-                    "error": str(exc),
-                }
-            )
-            object_alignment["preview_image_name"] = None
-            if overlay_preview_path.exists():
-                overlay_preview_path.unlink()
+            discarded_points_preview_path = tmp_dir_path / "icp_discarded_points.ply"
+            icp_points_preview_path = tmp_dir_path / "icp_used_points.ply"
+            write_binary_ply(discarded_points_preview_path, discarded_points_export)
+            write_binary_ply(icp_points_preview_path, icp_used_points_export)
+            try:
+                render_overlay_preview_image(
+                    mesh_path=paths["mesh_path"],
+                    discarded_pointcloud_path=discarded_points_preview_path,
+                    icp_pointcloud_path=icp_points_preview_path,
+                    render_path=overlay_preview_path,
+                    blender_translation=blender_translation,
+                    blender_delta_euler_deg=blender_delta_euler_deg,
+                    scale=float(best["scale"]),
+                    task=task,
+                    blender_arg=argv[2] if len(argv) == 3 else None,
+                    title=(
+                        "Camera-local Refine Preview"
+                        if bool(ICP_ENABLE)
+                        else "ICP Skipped Preview"
+                    ),
+                    header_line=(
+                        "Camera-view preview: two-color point cloud + refined model"
+                        if bool(ICP_ENABLE)
+                        else "Camera-view preview: two-color point cloud + initial model"
+                    ),
+                    model_legend_line=(
+                        "Orange = mask-border-discarded points, green = ICP-used points, blue = refined model"
+                        if bool(ICP_ENABLE)
+                        else "Orange = mask-border-discarded points, green = ICP-used points, blue = initial model"
+                    ),
+                )
+            except Exception as exc:
+                preview_render_errors.append(
+                    {
+                        "preview": "overlay_preview",
+                        "path": overlay_preview_name,
+                        "error": str(exc),
+                    }
+                )
+                object_alignment["preview_image_name"] = None
+                if overlay_preview_path.exists():
+                    overlay_preview_path.unlink()
+        finally:
+            shutil.rmtree(tmp_dir_path, ignore_errors=True)
 
         try:
             render_model_compare_preview_image(
@@ -1100,7 +1032,7 @@ def main(argv: list[str]) -> int:
                 aligned_blender_translation=blender_translation,
                 aligned_blender_delta_euler_deg=blender_delta_euler_deg,
                 aligned_scale=float(best["scale"]),
-                reference_blender_translation=unity_to_blender_world_vector(preview_initial_translation),
+                reference_blender_translation=canonical_rh_to_blender_world_vector(preview_initial_translation),
                 reference_blender_delta_euler_deg=np.zeros(3, dtype=np.float32),
                 reference_scale=float(overall_scale),
                 task=task,
@@ -1152,7 +1084,11 @@ def main(argv: list[str]) -> int:
         f"scale={object_alignment['model_real_scale']:.6f} confidence={confidence:.3f} "
         f"rmse={object_alignment['icp_rmse']:.6f} preview={object_alignment.get('preview_image_name') or 'not-generated'}"
     )
-    print(f"[INFO] pose-local      : pos={object_alignment['model_position']} rot={object_alignment['model_rotation_euler_deg']}")
+    print(
+        "[INFO] pose-local-rh   : "
+        f"pos={object_alignment['camera_local_position']} "
+        f"quat={object_alignment['camera_local_rotation_quaternion_xyzw']}"
+    )
     print("[OK] icpalignment")
     return 0
 

@@ -20,6 +20,17 @@ def _format_vec3(values: object, precision: int = 3) -> str:
     return f"({arr[0]:.{precision}f}, {arr[1]:.{precision}f}, {arr[2]:.{precision}f})"
 
 
+def _format_vec4(values: object, precision: int = 3) -> str:
+    arr = np.asarray(values if values is not None else [0.0, 0.0, 0.0, 1.0], dtype=np.float32).reshape(-1)
+    if arr.size < 4:
+        arr = np.pad(arr, (0, 4 - arr.size), constant_values=0.0)
+    arr = arr[:4]
+    return (
+        f"({arr[0]:.{precision}f}, {arr[1]:.{precision}f}, "
+        f"{arr[2]:.{precision}f}, {arr[3]:.{precision}f})"
+    )
+
+
 def build_preview_info_lines(
     task: dict,
     *,
@@ -34,8 +45,8 @@ def build_preview_info_lines(
         model_legend_line,
         f"Mode         : {str(object_alignment.get('icp_mode') or 'off')}",
         f"Scale        : {float(object_alignment.get('model_real_scale') or 0.0):.4f}",
-        f"Position xyz : {_format_vec3(object_alignment.get('model_position'))}",
-        f"Rotation xyz : {_format_vec3(object_alignment.get('model_rotation_euler_deg'))} deg",
+        f"Camera pos   : {_format_vec3(object_alignment.get('camera_local_position'))}",
+        f"Camera quat  : {_format_vec4(object_alignment.get('camera_local_rotation_quaternion_xyzw'))}",
         f"Depth mean   : {float(depthpointcloud.get('mean_depth_measured') or 0.0):.4f} m",
         f"ICP rmse     : {float(object_alignment.get('icp_rmse') or 0.0):.4f} m",
         f"Confidence   : {float(object_alignment.get('confidence') or 0.0):.3f}",

@@ -294,7 +294,6 @@ def pose_to_payload(
     scale: list[float] | None = None,
 ) -> dict[str, Any]:
     payload = serialize_pose(rotation, translation, coordinate_basis)
-    payload["rotation"] = list(payload["rotation_quaternion_xyzw"])
     if scale is not None:
         payload["scale"] = [float(v) for v in scale]
     return payload

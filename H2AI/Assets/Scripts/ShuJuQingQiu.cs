@@ -1106,11 +1106,9 @@ public class ShuJuQingQiu : MonoBehaviour
         rotation = Quaternion.identity;
 
         JToken modelInstanceToken = NonNullToken(jo["model_instance"]);
-        JToken objectToken = NonNullToken(jo["object"]) ?? NonNullToken(modelInstanceToken?["object_aruco"]);
+        JToken objectArucoToken = NonNullToken(jo["object_aruco"]) ?? NonNullToken(modelInstanceToken?["object_aruco"]);
         JToken objectWorldToken = NonNullToken(jo["object_world"]) ?? NonNullToken(modelInstanceToken?["object_world"]);
         JToken arucoReferenceToken = NonNullToken(jo["aruco_reference"]) ?? NonNullToken(modelInstanceToken?["aruco_reference"]);
-        JObject objectJ = objectToken as JObject;
-        string coordinateBasis = objectJ?["coordinate_basis"]?.ToString();
         Vector3 responseArucoPosition;
         Quaternion responseArucoRotation;
         bool hasResponseArucoReference = TryParsePoseToken(
@@ -1120,32 +1118,57 @@ public class ShuJuQingQiu : MonoBehaviour
         );
         Vector3 localPosition;
         Quaternion localRotation;
-        bool hasLocalObjectPose = TryParsePoseToken(objectToken, out localPosition, out localRotation);
-        if (coordinateBasis == "aruco_local_x_right_y_up_z_forward")
+        bool hasArucoObjectPose = TryParsePoseToken(objectArucoToken, out localPosition, out localRotation);
+        if (hasArucoObjectPose && hasResponseArucoReference)
         {
-            if (hasResponseArucoReference && hasLocalObjectPose)
+            position = responseArucoPosition + (responseArucoRotation * localPosition);
+            rotation = responseArucoRotation * localRotation;
+            return true;
+        }
+
+        if (hasArucoObjectPose && hasArucoReferencePose)
+        {
+            position = arucoReferencePosition + (arucoReferenceRotation * localPosition);
+            rotation = arucoReferenceRotation * localRotation;
+            return true;
+        }
+
+        if (TryParsePoseToken(objectWorldToken, out position, out rotation))
+        {
+            return true;
+        }
+
+        JToken objectToken = NonNullToken(jo["object"]);
+        JObject objectJ = objectToken as JObject;
+        string coordinateBasis = objectJ?["coordinate_basis"]?.ToString();
+        bool hasLegacyObjectPose = TryParsePoseToken(objectToken, out localPosition, out localRotation);
+        if (hasLegacyObjectPose && coordinateBasis == "aruco_local_x_right_y_up_z_forward")
+        {
+            if (hasResponseArucoReference)
             {
                 position = responseArucoPosition + (responseArucoRotation * localPosition);
                 rotation = responseArucoRotation * localRotation;
                 return true;
             }
 
-            if (hasArucoReferencePose && hasLocalObjectPose)
+            if (hasArucoReferencePose)
             {
                 position = arucoReferencePosition + (arucoReferenceRotation * localPosition);
                 rotation = arucoReferenceRotation * localRotation;
                 return true;
             }
 
-            return TryParsePoseToken(objectWorldToken, out position, out rotation);
+            return false;
         }
 
-        if (TryParsePoseToken(objectToken, out position, out rotation))
+        if (hasLegacyObjectPose)
         {
+            position = localPosition;
+            rotation = localRotation;
             return true;
         }
 
-        return TryParsePoseToken(objectWorldToken, out position, out rotation);
+        return false;
     }
 
     bool TryBuildRuntimeModelInstance(JObject jo, out RuntimeModelInstance instance, out string errorMessage)
