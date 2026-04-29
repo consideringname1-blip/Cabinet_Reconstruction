@@ -14,8 +14,6 @@ except ModuleNotFoundError:
 
 from config import (
     ARUCO_ANCHOR_MARKER_ID,
-    ARUCO_ROI_PADDING_MIN_PX,
-    ARUCO_ROI_PADDING_RATIO,
     ARUCO_TEMPLATE_PATH,
 )
 from hololens3d_reconstruction.pose_math import quat_xyzw_to_rotation_matrix
@@ -51,7 +49,6 @@ try:
         resolve_pv_camera_world_pose,
         resolve_pv_frames,
         resolve_pv_image_path,
-        resolve_selection_roi,
         resolve_task_name,
     )
     from run_aruco_sync_from_json import sync_completed_tasks_for_startup
@@ -74,7 +71,6 @@ except ModuleNotFoundError:
         resolve_pv_camera_world_pose,
         resolve_pv_frames,
         resolve_pv_image_path,
-        resolve_selection_roi,
         resolve_task_name,
     )
     from .run_aruco_sync_from_json import sync_completed_tasks_for_startup
@@ -128,26 +124,6 @@ def _build_detector_parameters(cv2):
     if hasattr(parameters, "cornerRefinementMinAccuracy"):
         parameters.cornerRefinementMinAccuracy = 0.01
     return parameters
-
-
-def _expand_roi(
-    x0: int,
-    y0: int,
-    x1: int,
-    y1: int,
-    image_width: int,
-    image_height: int,
-) -> tuple[int, int, int, int]:
-    width = max(x1 - x0, 1)
-    height = max(y1 - y0, 1)
-    pad_x = max(int(round(width * float(ARUCO_ROI_PADDING_RATIO))), int(ARUCO_ROI_PADDING_MIN_PX))
-    pad_y = max(int(round(height * float(ARUCO_ROI_PADDING_RATIO))), int(ARUCO_ROI_PADDING_MIN_PX))
-    return (
-        max(0, x0 - pad_x),
-        max(0, y0 - pad_y),
-        min(image_width, x1 + pad_x),
-        min(image_height, y1 + pad_y),
-    )
 
 
 def _detect_markers(cv2, roi_image: np.ndarray, dictionary):
@@ -359,8 +335,6 @@ def main(argv: list[str]) -> int:
 
     raw_dir = ensure_raw_output_dir(task_name)
     record_path = raw_dir / "record.json"
-    legacy_roi_path = raw_dir / "roi.png"
-    legacy_search_roi_path = raw_dir / "search_roi.png"
     legacy_annotated_path = raw_dir / "annotated.png"
 
     template = load_aruco_template()
@@ -379,7 +353,6 @@ def main(argv: list[str]) -> int:
         "registered_marker_ids": [int(marker["marker_id"]) for marker in marker_configs],
         "detected": False,
         "detected_ids": [],
-        "full_image_detected_ids": [],
         "matched_marker_id": None,
         "coordinate_basis_local": ARUCO_LOCAL_COORDINATE_BASIS,
         "coordinate_basis_world": UNITY_WORLD_COORDINATE_BASIS,
@@ -387,12 +360,9 @@ def main(argv: list[str]) -> int:
         "marker_camera_basis_transform": OPENCV_CAMERA_TO_UNITY_TRANSFORM,
         "marker_axes_definition": "origin=center, +x=marker right, +y=marker up, +z=marker front normal",
         "short_circuit": False,
-        "marker_visible_outside_selection": False,
         "frame_count": 0,
         "detections": [],
         "raw_record_path": normalize_path_for_storage(record_path),
-        "roi_image_path": normalize_path_for_storage(legacy_roi_path),
-        "search_roi_image_path": normalize_path_for_storage(legacy_search_roi_path),
         "annotated_image_path": normalize_path_for_storage(legacy_annotated_path),
     }
     record = {
@@ -452,26 +422,13 @@ def main(argv: list[str]) -> int:
                 )
                 continue
 
-            image_height, image_width = image_bgr.shape[:2]
-            x0, y0, x1, y1 = resolve_selection_roi(task, image_width, image_height)
-            sx0, sy0, sx1, sy1 = _expand_roi(x0, y0, x1, y1, image_width, image_height)
-            search_roi_image = image_bgr[sy0:sy1, sx0:sx1].copy()
-            if frame_index == 0:
-                cv2.imwrite(str(legacy_roi_path), image_bgr[y0:y1, x0:x1].copy())
-                cv2.imwrite(str(legacy_search_roi_path), search_roi_image)
-                aruco_stage["roi_pixel_bounds"] = {"x0": x0, "y0": y0, "x1": x1, "y1": y1}
-                aruco_stage["search_roi_pixel_bounds"] = {"x0": sx0, "y0": sy0, "x1": sx1, "y1": sy1}
-
-            annotated = search_roi_image.copy()
+            annotated = image_bgr.copy()
             frame_detected_ids: list[int] = []
             camera_matrix = resolve_pv_camera_matrix(frame)
 
             for dictionary_name, dictionary in dictionaries.items():
-                corners, ids = _detect_markers(cv2, search_roi_image, dictionary)
+                corners, ids = _detect_markers(cv2, image_bgr, dictionary)
                 ids_list = [int(v) for v in ids.flatten().tolist()] if ids is not None else []
-                full_corners, full_ids = _detect_markers(cv2, image_bgr, dictionary)
-                full_ids_list = [int(v) for v in full_ids.flatten().tolist()] if full_ids is not None else []
-                aruco_stage["full_image_detected_ids"].extend(full_ids_list)
 
                 if corners:
                     cv2.aruco.drawDetectedMarkers(annotated, corners, ids)
@@ -482,10 +439,7 @@ def main(argv: list[str]) -> int:
                         continue
 
                     frame_detected_ids.append(marker_id)
-                    matched_roi_corners = np.asarray(corners[detected_index], dtype=np.float64).reshape(-1, 2)
-                    matched_full_corners = matched_roi_corners.copy()
-                    matched_full_corners[:, 0] += float(sx0)
-                    matched_full_corners[:, 1] += float(sy0)
+                    matched_full_corners = np.asarray(corners[detected_index], dtype=np.float64).reshape(-1, 2)
 
                     detection = _estimate_marker_detection(
                         cv2,
@@ -501,9 +455,6 @@ def main(argv: list[str]) -> int:
                     detections_by_frame[frame_index].append(detection)
 
                     if hasattr(cv2, "drawFrameAxes"):
-                        annotated_camera_matrix = camera_matrix.copy()
-                        annotated_camera_matrix[0, 2] -= float(sx0)
-                        annotated_camera_matrix[1, 2] -= float(sy0)
                         axis_length = (
                             float(np.linalg.norm(detection["tvec"])) * 0.5
                             if np.linalg.norm(detection["tvec"]) > 0
@@ -511,7 +462,7 @@ def main(argv: list[str]) -> int:
                         )
                         cv2.drawFrameAxes(
                             annotated,
-                            annotated_camera_matrix,
+                            camera_matrix,
                             np.zeros((5, 1), dtype=np.float64),
                             detection["rvec"],
                             detection["tvec"],
@@ -536,7 +487,6 @@ def main(argv: list[str]) -> int:
     aruco_stage["detections"] = [_build_detection_record(detection) for detection in all_detections]
     detected_ids = sorted({int(detection["marker_id"]) for detection in all_detections})
     aruco_stage["detected_ids"] = detected_ids
-    aruco_stage["full_image_detected_ids"] = sorted(set(int(v) for v in aruco_stage["full_image_detected_ids"]))
 
     anchor_candidates: list[dict[str, Any]] = []
     learned_relations: dict[int, list[dict[str, Any]]] = defaultdict(list)
