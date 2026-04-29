@@ -174,8 +174,8 @@ MonoBehaviour:
   m_Enabled: 1
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 2cf098d972aeb8b4daa70b00381af006, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
+  m_Name:
+  m_EditorClassIdentifier:
   mainLabelText: {fileID: 68739096}
   interactable: {fileID: 3290253}
   seeItSayItLabel: {fileID: 313308052}
@@ -343,9 +343,9 @@ MonoBehaviour:
   OnClick:
     m_PersistentCalls:
       m_Calls:
-      - m_Target: {fileID: 1912203438}
-        m_TargetAssemblyTypeName: 
-        m_MethodName: YanChiJiaZai
+      - m_Target: {fileID: 1912203437}
+        m_TargetAssemblyTypeName: ShuJuQingQiu, Assembly-CSharp
+        m_MethodName: XiaZaiZuiXinChengGongMoXing
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}
@@ -3061,6 +3061,7 @@ GameObject:
   - component: {fileID: 223974227}
   - component: {fileID: 223974230}
   - component: {fileID: 223974232}
+  - component: {fileID: 223974233}
   m_Layer: 0
   m_Name: Scripts
   m_TagString: Untagged
@@ -3155,6 +3156,20 @@ MonoBehaviour:
   selectionBoxRoot: {fileID: 242384126}
   distanceFromCamera: 0.8
   hideOnStart: 1
+--- !u!114 &223974233
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 223974226}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b784a6a64a0d4a5a9d1f487cd9bb2f91, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  maxVisibleModels: 5
+  maxCachedModelFiles: 5
 --- !u!1 &232507214
 GameObject:
   m_ObjectHideFlags: 0
@@ -16578,7 +16593,6 @@ MonoBehaviour:
   DP_controler: {fileID: 223974227}
   selectionPanelManager: {fileID: 223974230}
   task_id: 
-  urlModel: 
   image_url: 
   texture2DTuPian: {fileID: 2800000, guid: 7beab324a3ae347418d5bd86646a4c13, type: 3}
   debug_json: 
@@ -16598,10 +16612,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c2c5227aea5abac4f92b1320d45ee4fd, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  hasServerPose: 0
-  serverObjectPosition: {x: 0, y: 0, z: 0}
-  serverObjectRotation: {x: 0, y: 0, z: 0, w: 1}
-  xiaZaiModel: {fileID: 0}
 --- !u!114 &1912203439
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -1,179 +1,208 @@
+using System.IO;
 using Microsoft.MixedReality.Toolkit.Input;
 using Microsoft.MixedReality.Toolkit.UI;
-using System.Collections;
-using System.Collections.Generic;
-using System.IO;
 using TriLibCore;
 using UnityEngine;
-/// <summary>
-/// 加载
-/// </summary>
+
 public class LoadModel : MonoBehaviour
 {
-
     public static LoadModel initialize;
 
+    private AssetLoaderOptions _assetLoaderOptions;
+    private bool _isLoading;
+    private RuntimeModelInstance _pendingInstance;
+    private string _pendingLocalPath = "";
 
-    public bool hasServerPose = false;
-    public Vector3 serverObjectPosition = Vector3.zero;
-    public Quaternion serverObjectRotation = Quaternion.identity;
-
-    /// <summary>
-    /// Loads the "Models/TriLibSample.obj" Model using the given AssetLoaderOptions.
-    /// </summary>
-    /// <remarks>
-    /// You can create the AssetLoaderOptions by right clicking on the Assets Explorer and selecting "TriLib->Create->AssetLoaderOptions->Pre-Built AssetLoaderOptions".
-    /// </remarks>
-    private void Start()
+    public static LoadModel Instance
     {
-        initialize = this;
-        assetLoaderOptions = AssetLoader.CreateDefaultLoaderOptions();
-
-    }
-
-    public void Update()
-    {
-        if (Input.GetKeyDown(KeyCode.M))
+        get
         {
-            YanChiJiaZai();
+            if (initialize != null)
+            {
+                return initialize;
+            }
+
+            GameObject loaderObject = new GameObject("LoadModel");
+            return loaderObject.AddComponent<LoadModel>();
         }
     }
-    AssetLoaderOptions assetLoaderOptions;
-    private bool _isLoading;
-    /// <summary>
-    /// 延迟加载
-    /// </summary>
-    public void YanChiJiaZai()
+
+    private void Awake()
+    {
+        if (initialize != null && initialize != this)
+        {
+            Destroy(this);
+            return;
+        }
+
+        initialize = this;
+        _assetLoaderOptions = AssetLoader.CreateDefaultLoaderOptions();
+    }
+
+    private void OnDestroy()
+    {
+        if (initialize == this)
+        {
+            initialize = null;
+        }
+    }
+
+    public bool LoadRuntimeModel(RuntimeModelInstance instance, string localPath)
     {
         if (_isLoading)
         {
             Debug.LogWarning("[LoadModel] A model is already loading.");
-            return;
+            ShowFrontMessage("load_ERR_busy");
+            return false;
         }
 
-        if (xiaZaiModel!=null)
+        if (instance == null || string.IsNullOrEmpty(instance.ModelKey))
         {
-            Destroy(xiaZaiModel);
-            xiaZaiModel = null;
+            Debug.LogError("[LoadModel] Runtime model instance is missing.");
+            ShowFrontMessage("load_ERR_missing_model_instance");
+            return false;
         }
-        Game_M.initialize.XianShi("zaiRu");
-        CancelInvoke();
-        Invoke("OnJiaZai", 1);
-    }
 
-    /// <summary>
-    /// 加载
-    /// </summary>
-     void OnJiaZai()
-    {
-   
-        string ModelPath = Application.streamingAssetsPath + "/model.fbx";
-
-#if !UNITY_EDITOR
-          ModelPath = Windows.Storage.ApplicationData.Current.RoamingFolder.Path + "/model.fbx";
-#endif
-
-        if (!File.Exists(ModelPath))
+        if (string.IsNullOrEmpty(localPath) || !File.Exists(localPath))
         {
-            Debug.LogError("[LoadModel] Model file not found: " + ModelPath);
-            return;
+            Debug.LogError("[LoadModel] Model file not found: " + localPath);
+            ShowFrontMessage("load_ERR_missing_file");
+            return false;
         }
 
+        _pendingInstance = instance;
+        _pendingLocalPath = localPath;
         _isLoading = true;
 
-        AssetLoader.LoadModelFromFile(ModelPath, OnLoad, OnMaterialsLoad, OnProgress, OnError, null, assetLoaderOptions);
+        ShowFrontMessage("zaiRu");
+        AssetLoader.LoadModelFromFile(
+            localPath,
+            OnLoad,
+            OnMaterialsLoad,
+            OnProgress,
+            OnError,
+            null,
+            _assetLoaderOptions
+        );
+        return true;
     }
-    /// <summary>
-    /// Called when any error occurs.
-    /// </summary>
-    /// <param name="obj">The contextualized error, containing the original exception and the context passed to the method where the error was thrown.</param>
+
     private void OnError(IContextualizedError obj)
     {
         _isLoading = false;
-        Debug.LogError($"An error occurred while loading your Model: {obj.GetInnerException()}");
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
+        if (manager != null)
+        {
+            manager.DeleteCachedFile(_pendingLocalPath);
+        }
+        ClearPendingModel();
+
+        Debug.LogError("An error occurred while loading your Model: " + obj.GetInnerException());
+        ShowFrontMessage("load_ERR_failed");
     }
 
-    /// <summary>
-    /// Called when the Model loading progress changes.
-    /// </summary>
-    /// <param name="assetLoaderContext">The context used to load the Model.</param>
-    /// <param name="progress">The loading progress.</param>
     private void OnProgress(AssetLoaderContext assetLoaderContext, float progress)
     {
-        Debug.Log($"Loading Model. Progress: {progress:P}");
-        Game_M.initialize.XianShi(progress.ToString());
+        Debug.Log("Loading Model. Progress: " + progress.ToString("P"));
+        ShowFrontMessage(progress.ToString("P0"));
     }
-    public GameObject xiaZaiModel;
-    /// <summary>
-    /// Called when the Model (including Textures and Materials) has been fully loaded, or after any error occurs.
-    /// </summary>
-    /// <remarks>The loaded GameObject is available on the assetLoaderContext.RootGameObject field.</remarks>
-    /// <param name="assetLoaderContext">The context used to load the Model.</param>
+
     private void OnMaterialsLoad(AssetLoaderContext assetLoaderContext)
     {
         _isLoading = false;
         Debug.Log("Materials loaded. Model fully loaded.");
 
         GameObject game = assetLoaderContext.RootGameObject;
+        game.name = "RuntimeModel_" + _pendingInstance.ModelKey;
         game.SetActive(true);
 
-        // 1. 默认值：放在原点，朝向世界Z轴
-        Vector3 targetPos = Vector3.zero;
-        Quaternion targetRot = Quaternion.identity;
-
-        // 2. 优先使用服务器返回的世界位姿
-        if (ShuJuQingQiu.initialize != null && ShuJuQingQiu.initialize.hasServerPose)
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
+        if (manager != null && manager.TryResolveWorldPose(
+            _pendingInstance.Pose,
+            out Vector3 targetPosition,
+            out Quaternion targetRotation
+        ))
         {
-            targetPos = ShuJuQingQiu.initialize.serverObjectPosition;
-            targetRot = ShuJuQingQiu.initialize.serverObjectRotation;
-
-            Debug.Log($"[POSE] Use server pose: pos={targetPos}, rot={targetRot}");
+            game.transform.SetPositionAndRotation(targetPosition, targetRotation);
+            Debug.Log("[LoadModel] Use runtime pose: pos=" + targetPosition + ", rot=" + targetRotation);
         }
         else
         {
-            // 3. 没有服务器位姿时的后备逻辑：放到相机前方 2 米
-            Camera cam = Camera.main;
-            if (cam != null)
-            {
-                Vector3 forwardFlat = new Vector3(cam.transform.forward.x, 0f, cam.transform.forward.z).normalized;
-                if (forwardFlat.sqrMagnitude < 1e-4f)
-                {
-                    forwardFlat = cam.transform.forward.normalized;
-                }
-
-                targetPos = cam.transform.position + forwardFlat * 2f;
-                // 朝向相机看向的方向（水平向前）
-                targetRot = Quaternion.LookRotation(forwardFlat, Vector3.up);
-
-                Debug.Log($"[POSE] Fallback pose: pos={targetPos}, rot={targetRot}");
-            }
-            else
-            {
-                Debug.LogWarning("[POSE] Camera.main 未找到，使用默认 (0,0,0)+identity。");
-            }
+            ApplyFallbackPose(game);
         }
 
-        // 4. 应用位姿
-        game.transform.SetPositionAndRotation(targetPos, targetRot);
-
-        // 5. 后续逻辑保持不变
         AddGameObjectCollider(game);
-        if (game.gameObject.GetComponent<ObjectManipulator>() == null)
+        if (game.GetComponent<ObjectManipulator>() == null)
         {
-            game.gameObject.AddComponent<ObjectManipulator>();
+            game.AddComponent<ObjectManipulator>();
         }
-        if (game.gameObject.GetComponent<NearInteractionGrabbable>() == null)
+        if (game.GetComponent<NearInteractionGrabbable>() == null)
         {
-            game.gameObject.AddComponent<NearInteractionGrabbable>();
+            game.AddComponent<NearInteractionGrabbable>();
         }
-        Game_M.initialize.GuanBi();
-        xiaZaiModel = game;
+
+        if (manager == null)
+        {
+            Debug.LogError("[RuntimeModelManager] Missing RuntimeModelManager component on scene Scripts object.");
+            ShowFrontMessage("runtime_model_mgr_missing");
+            Destroy(game);
+            ClearPendingModel();
+            return;
+        }
+
+        manager.RegisterLoadedModel(_pendingInstance, _pendingLocalPath, game);
+
+        if (Game_M.initialize != null)
+        {
+            Game_M.initialize.GuanBi();
+        }
+        ClearPendingModel();
     }
 
-    /// <summary>
-    /// 添加碰撞体
-    /// </summary>
-    /// <param name="gameObject"></param>  
+    private void OnLoad(AssetLoaderContext assetLoaderContext)
+    {
+        Debug.Log("Model loaded. Loading materials.");
+    }
+
+    private void ApplyFallbackPose(GameObject game)
+    {
+        Vector3 targetPosition = Vector3.zero;
+        Quaternion targetRotation = Quaternion.identity;
+
+        Camera cam = Camera.main;
+        if (cam != null)
+        {
+            Vector3 forwardFlat = new Vector3(cam.transform.forward.x, 0f, cam.transform.forward.z).normalized;
+            if (forwardFlat.sqrMagnitude < 1e-4f)
+            {
+                forwardFlat = cam.transform.forward.normalized;
+            }
+
+            targetPosition = cam.transform.position + forwardFlat * 2f;
+            targetRotation = Quaternion.LookRotation(forwardFlat, Vector3.up);
+        }
+        else
+        {
+            Debug.LogWarning("[LoadModel] Camera.main was not found. Using identity fallback pose.");
+        }
+
+        game.transform.SetPositionAndRotation(targetPosition, targetRotation);
+    }
+
+    private void ClearPendingModel()
+    {
+        _pendingInstance = null;
+        _pendingLocalPath = "";
+    }
+
+    private void ShowFrontMessage(string message)
+    {
+        if (Game_M.initialize != null)
+        {
+            Game_M.initialize.XianShi(message);
+        }
+    }
+
     public static void AddGameObjectCollider(GameObject gameObject)
     {
         Vector3 pos = gameObject.transform.localPosition;
@@ -183,47 +212,38 @@ public class LoadModel : MonoBehaviour
         gameObject.transform.position = Vector3.zero;
         gameObject.transform.eulerAngles = Vector3.zero;
         gameObject.transform.localScale = Vector3.one;
-        //获取物体的最小包围盒
+
         Bounds itemBound = GetLocalBounds(gameObject);
 
         gameObject.transform.localPosition = pos;
         gameObject.transform.localRotation = qt;
         gameObject.transform.localScale = ls;
-        //parent = null;
-        if (!gameObject.GetComponent<Collider>())
-            gameObject.AddComponent<BoxCollider>();
-        if (gameObject.GetComponent<BoxCollider>())
-        {
-            gameObject.GetComponent<BoxCollider>().size = itemBound.size;
 
-            gameObject.GetComponent<BoxCollider>().center = itemBound.center;
+        if (!gameObject.GetComponent<Collider>())
+        {
+            gameObject.AddComponent<BoxCollider>();
+        }
+
+        BoxCollider boxCollider = gameObject.GetComponent<BoxCollider>();
+        if (boxCollider != null)
+        {
+            boxCollider.size = itemBound.size;
+            boxCollider.center = itemBound.center;
         }
     }
 
-    /// <summary>
-    /// 获得对象的最小包围盒
-    /// </summary>
     public static Bounds GetLocalBounds(GameObject target)
     {
-        Renderer[] mfs = target.GetComponentsInChildren<Renderer>();
+        Renderer[] renderers = target.GetComponentsInChildren<Renderer>();
         Bounds bounds = new Bounds();
-        if (mfs.Length != 0)
+        if (renderers.Length != 0)
         {
-            bounds = mfs[0].bounds;
-            foreach (Renderer mf in mfs)
+            bounds = renderers[0].bounds;
+            foreach (Renderer renderer in renderers)
             {
-                bounds.Encapsulate(mf.bounds);
+                bounds.Encapsulate(renderer.bounds);
             }
         }
         return bounds;
-    }
-    /// <summary>
-    /// Called when the Model Meshes and hierarchy are loaded.
-    /// </summary>
-    /// <remarks>The loaded GameObject is available on the assetLoaderContext.RootGameObject field.</remarks>
-    /// <param name="assetLoaderContext">The context used to load the Model.</param>
-    private void OnLoad(AssetLoaderContext assetLoaderContext)
-    {
-        Debug.Log("Model loaded. Loading materials.");
     }
 }

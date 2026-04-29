@@ -77,6 +77,25 @@ def _append_pose_fields(response: dict, task_json: dict) -> None:
         response[key] = value if value else None
 
 
+def _build_model_key(task_id: str | None, fbx_url: str) -> str:
+    task_id_text = str(task_id or "").strip()
+    if task_id_text:
+        return task_id_text
+    return str(fbx_url or "").strip()
+
+
+def _build_model_instance(task_data: dict, task_json: dict, fbx_url: str) -> dict:
+    task_id = task_data.get("task_id")
+    return {
+        "model_key": _build_model_key(task_id, fbx_url),
+        "task_id": task_id,
+        "fbx_url": fbx_url,
+        "object_world": task_json.get("object_world") or None,
+        "object_aruco": task_json.get("object_aruco") or None,
+        "aruco_reference": task_json.get("aruco_reference") or None,
+    }
+
+
 def _sanitize_ahat_depth_png(depth_png_bytes: bytes) -> tuple[bytes, dict]:
     depth_png = np.frombuffer(depth_png_bytes, dtype=np.uint8)
     depth_image = cv2.imdecode(depth_png, cv2.IMREAD_UNCHANGED)
@@ -167,7 +186,9 @@ def _build_completed_task_response(task_data: dict) -> dict:
     if video_path and video_path.exists():
         response["video_url"] = f"{host}/files/videos/{video_name}"
     if fbx_path and fbx_path.exists():
-        response["fbx_url"] = f"{host}/files/fbx/{fbx_name}"
+        fbx_url = f"{host}/files/fbx/{fbx_name}"
+        response["fbx_url"] = fbx_url
+        response["model_instance"] = _build_model_instance(task_data, task_json, fbx_url)
 
     return response
 
@@ -494,6 +515,8 @@ def latest_completed_task():
             )
             if current_aruco_reference:
                 response["aruco_reference"] = current_aruco_reference
+                if isinstance(response.get("model_instance"), dict):
+                    response["model_instance"]["aruco_reference"] = current_aruco_reference
             if fallback_from_other_session:
                 response["fallback_from_other_startup_session"] = True
                 response["source_startup_session_id"] = task_data.get("startup_session_id")

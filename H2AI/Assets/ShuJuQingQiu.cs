@@ -5,7 +5,6 @@ using System;
 using System.Globalization;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using UnityEngine;
 using UnityEngine.XR;
 using UnityEngine.XR.OpenXR.Input;
@@ -54,6 +53,14 @@ public class ShuJuQingQiu : MonoBehaviour
         public Quaternion camRot;
         public string photoTimeUtc;
     }
+
+    private class PendingModelDownload
+    {
+        public RuntimeModelInstance instance;
+        public string localPath;
+    }
+
+    private RuntimeModelInstance pendingModelInstance;
 
     void Start()
     {
@@ -726,8 +733,6 @@ public class ShuJuQingQiu : MonoBehaviour
         Game_M.initialize.XianShi("latest_completed");
     }
 
-    [Header("模型下载地址")]
-    public string urlModel;
     [Header("图片下载地址")]
     public string image_url;
     [Header("图片")]
@@ -837,6 +842,11 @@ public class ShuJuQingQiu : MonoBehaviour
         return TryReadVector3(positionToken, out position) && TryReadQuaternion(rotationToken, out rotation);
     }
 
+    JToken NonNullToken(JToken token)
+    {
+        return token == null || token.Type == JTokenType.Null ? null : token;
+    }
+
     void ApplyArucoReference(JObject jo, bool updateCurrentSession)
     {
         if (!TryParsePoseToken(jo["aruco_reference"], out Vector3 arucoPosition, out Quaternion arucoRotation))
@@ -849,6 +859,16 @@ public class ShuJuQingQiu : MonoBehaviour
             arucoReferencePosition = arucoPosition;
             arucoReferenceRotation = arucoRotation;
             hasArucoReferencePose = true;
+            RuntimeModelManager manager = RuntimeModelManager.Instance;
+            if (manager != null)
+            {
+                manager.SetArucoReference(arucoPosition, arucoRotation);
+            }
+            else
+            {
+                Debug.LogError("[RuntimeModelManager] Missing RuntimeModelManager component on scene Scripts object.");
+                ShowFrontMessage("runtime_model_mgr_missing");
+            }
         }
 
         if (CameraPoseDebugMarker.Instance != null)
@@ -862,12 +882,16 @@ public class ShuJuQingQiu : MonoBehaviour
         position = Vector3.zero;
         rotation = Quaternion.identity;
 
-        JToken objectToken = jo["object"];
-        string coordinateBasis = objectToken?["coordinate_basis"]?.ToString();
+        JToken modelInstanceToken = NonNullToken(jo["model_instance"]);
+        JToken objectToken = NonNullToken(jo["object"]) ?? NonNullToken(modelInstanceToken?["object_aruco"]);
+        JToken objectWorldToken = NonNullToken(jo["object_world"]) ?? NonNullToken(modelInstanceToken?["object_world"]);
+        JToken arucoReferenceToken = NonNullToken(jo["aruco_reference"]) ?? NonNullToken(modelInstanceToken?["aruco_reference"]);
+        JObject objectJ = objectToken as JObject;
+        string coordinateBasis = objectJ?["coordinate_basis"]?.ToString();
         Vector3 responseArucoPosition;
         Quaternion responseArucoRotation;
         bool hasResponseArucoReference = TryParsePoseToken(
-            jo["aruco_reference"],
+            arucoReferenceToken,
             out responseArucoPosition,
             out responseArucoRotation
         );
@@ -890,7 +914,7 @@ public class ShuJuQingQiu : MonoBehaviour
                 return true;
             }
 
-            return TryParsePoseToken(jo["object_world"], out position, out rotation);
+            return TryParsePoseToken(objectWorldToken, out position, out rotation);
         }
 
         if (TryParsePoseToken(objectToken, out position, out rotation))
@@ -898,7 +922,64 @@ public class ShuJuQingQiu : MonoBehaviour
             return true;
         }
 
-        return TryParsePoseToken(jo["object_world"], out position, out rotation);
+        return TryParsePoseToken(objectWorldToken, out position, out rotation);
+    }
+
+    bool TryBuildRuntimeModelInstance(JObject jo, out RuntimeModelInstance instance, out string errorMessage)
+    {
+        instance = null;
+        errorMessage = "";
+
+        JObject modelJ = jo["model_instance"] as JObject;
+        if (modelJ == null)
+        {
+            errorMessage = "download_ERR_missing_model_instance";
+            return false;
+        }
+
+        string modelKey = modelJ["model_key"]?.ToString();
+        string fbxUrl = modelJ["fbx_url"]?.ToString();
+        if (string.IsNullOrEmpty(modelKey))
+        {
+            errorMessage = "download_ERR_missing_model_key";
+            return false;
+        }
+        if (string.IsNullOrEmpty(fbxUrl))
+        {
+            errorMessage = "download_ERR_missing_fbx_url";
+            return false;
+        }
+
+        RuntimeModelPoseData poseData = new RuntimeModelPoseData();
+        if (TryParsePoseToken(modelJ["object_world"], out Vector3 worldPosition, out Quaternion worldRotation))
+        {
+            poseData.HasWorldPose = true;
+            poseData.WorldPosition = worldPosition;
+            poseData.WorldRotation = worldRotation;
+        }
+
+        if (TryParsePoseToken(modelJ["object_aruco"], out Vector3 arucoLocalPosition, out Quaternion arucoLocalRotation))
+        {
+            poseData.HasArucoPose = true;
+            poseData.ArucoLocalPosition = arucoLocalPosition;
+            poseData.ArucoLocalRotation = arucoLocalRotation;
+        }
+
+        if (TryParsePoseToken(modelJ["aruco_reference"], out Vector3 arucoReferencePosition, out Quaternion arucoReferenceRotation))
+        {
+            poseData.HasResponseArucoReference = true;
+            poseData.ResponseArucoReferencePosition = arucoReferencePosition;
+            poseData.ResponseArucoReferenceRotation = arucoReferenceRotation;
+        }
+
+        instance = new RuntimeModelInstance
+        {
+            ModelKey = modelKey,
+            TaskId = modelJ["task_id"]?.ToString() ?? jo["task_id"]?.ToString() ?? "",
+            FbxUrl = fbxUrl,
+            Pose = poseData,
+        };
+        return true;
     }
 
     void ApplyResponsePoses(JObject jo, bool updateCurrentSessionArucoReference)
@@ -931,25 +1012,23 @@ public class ShuJuQingQiu : MonoBehaviour
 
     bool ApplyCompletedTaskResponse(JObject jo, string sourceTag, bool updateCurrentSessionArucoReference)
     {
-        string fbxUrl = jo["fbx_url"]?.ToString();
         string imgUrl = jo["image_url"]?.ToString();
-        JToken objectToken = jo["object"];
 
-        if (string.IsNullOrEmpty(fbxUrl))
+        if (!TryBuildRuntimeModelInstance(jo, out RuntimeModelInstance modelInstance, out string errorMessage))
         {
-            Debug.LogWarning("[" + sourceTag + "] completed response missing fbx_url.");
-            ShowFrontMessage("download_ERR_missing_fbx_url");
+            Debug.LogWarning("[" + sourceTag + "] completed response invalid model_instance: " + errorMessage);
+            ShowFrontMessage(errorMessage);
             return false;
         }
 
-        urlModel = fbxUrl;
+        pendingModelInstance = modelInstance;
         image_url = imgUrl;
         ApplyDebugInfo(jo);
         ApplyResponsePoses(jo, updateCurrentSessionArucoReference);
 
-        if (objectToken == null || objectToken.Type == JTokenType.Null)
+        if (!modelInstance.Pose.HasWorldPose && !modelInstance.Pose.HasArucoPose)
         {
-            Debug.LogWarning("[" + sourceTag + "] completed response missing object.");
+            Debug.LogWarning("[" + sourceTag + "] completed response missing model pose.");
             ShowFrontMessage("pose_WARN_missing_object");
         }
 
@@ -1030,7 +1109,7 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         StopCheckPolling();
-        XiaZaiModel();
+        DownloadPendingRuntimeModel();
     }
 
     private void OnRequestLatestCompleted(HTTPRequest request, HTTPResponse response)
@@ -1082,16 +1161,38 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         task_id = jo["task_id"]?.ToString();
-        XiaZaiModel();
+        DownloadPendingRuntimeModel();
     }
 
     /// <summary>
     /// 下载模型
     /// </summary>
-    public void XiaZaiModel()
+    private void DownloadPendingRuntimeModel()
     {
-        string url = urlModel;
-        var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRequestXiaZai);
+        if (pendingModelInstance == null || string.IsNullOrEmpty(pendingModelInstance.FbxUrl))
+        {
+            ShowFrontMessage("download_ERR_missing_model_instance");
+            return;
+        }
+
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
+        if (manager == null)
+        {
+            Debug.LogError("[RuntimeModelManager] Missing RuntimeModelManager component on scene Scripts object.");
+            ShowFrontMessage("runtime_model_mgr_missing");
+            return;
+        }
+
+        manager.PrepareForIncomingModel(pendingModelInstance);
+
+        PendingModelDownload pendingDownload = new PendingModelDownload
+        {
+            instance = pendingModelInstance,
+            localPath = manager.CreateUniqueModelPath(pendingModelInstance.ModelKey),
+        };
+
+        var request = new HTTPRequest(new Uri(pendingModelInstance.FbxUrl), HTTPMethods.Get, OnRequestXiaZai);
+        request.Tag = pendingDownload;
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
         request.Send();
         Game_M.initialize.XianShi("download");
@@ -1101,15 +1202,29 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         if (response.IsSuccess)
         {
+            PendingModelDownload pendingDownload = request.Tag as PendingModelDownload;
+            if (pendingDownload == null || pendingDownload.instance == null || string.IsNullOrEmpty(pendingDownload.localPath))
+            {
+                Debug.LogError("[DOWNLOAD] Missing pending model download metadata.");
+                ShowFrontMessage("download_ERR_missing_model_instance");
+                return;
+            }
+
             byte[] receiver = response.Data;
+            if (receiver == null || receiver.Length == 0)
+            {
+                Debug.LogError("[DOWNLOAD] Runtime model download returned empty data.");
+                ShowFrontMessage("download_ERR_empty_model");
+                RuntimeModelManager manager = RuntimeModelManager.Instance;
+                if (manager != null)
+                {
+                    manager.DeleteCachedFile(pendingDownload.localPath);
+                }
+                return;
+            }
             print(receiver.Length);
             Game_M.initialize.XianShi("download " + receiver.Length);
-#if !UNITY_EDITOR
-            File.WriteAllBytes(Windows.Storage.ApplicationData.Current.RoamingFolder.Path + "/model.fbx", receiver);
-#endif
-#if UNITY_EDITOR
-            File.WriteAllBytes(Application.streamingAssetsPath + "/model.fbx", receiver);
-#endif
+            File.WriteAllBytes(pendingDownload.localPath, receiver);
             print("保存");
             if (CameraPoseDebugMarker.Instance != null)
             {
@@ -1130,7 +1245,15 @@ public class ShuJuQingQiu : MonoBehaviour
                     );
                 }
             }
-            LoadModel.initialize.YanChiJiaZai();
+            if (!LoadModel.Instance.LoadRuntimeModel(pendingDownload.instance, pendingDownload.localPath))
+            {
+                RuntimeModelManager manager = RuntimeModelManager.Instance;
+                if (manager != null)
+                {
+                    manager.DeleteCachedFile(pendingDownload.localPath);
+                }
+                return;
+            }
             Game_M.initialize.XianShi("download completes");
         }
         else
@@ -1177,7 +1300,7 @@ public class ShuJuQingQiu : MonoBehaviour
         }
         if (Input.GetKeyDown(KeyCode.E))
         {
-            XiaZaiModel();
+            DownloadPendingRuntimeModel();
         }
         if (Input.GetKeyDown(KeyCode.R))
         {
