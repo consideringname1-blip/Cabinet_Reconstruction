@@ -1,14 +1,24 @@
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from config import DATABASE_PATH, UPLOAD_FOLDER
+from config import (
+    ARUCO_ANCHOR_MARKER_ID,
+    ARUCO_REFERENCE_ROOT,
+    ARUCO_SYNC_MARKER_REGISTRY_ON_START,
+    ARUCO_TEMPLATE_PATH,
+    DATABASE_PATH,
+    UPLOAD_FOLDER,
+)
 from task_json import normalize_path_for_storage
 
 
 TABLE_NAME = "tasks"
 ARUCO_REFERENCE_TABLE = "aruco_references"
+ARUCO_MARKER_TABLE = "aruco_markers"
+ARUCO_MARKER_RELATION_TABLE = "aruco_marker_relations"
 ALLOWED_STATUSES = (
     "pending",
     "hololens2depth",
@@ -73,6 +83,39 @@ def _create_aruco_reference_table_sql() -> str:
             marker_pose_json TEXT NOT NULL,
             raw_record_path TEXT NOT NULL,
             config_snapshot_json TEXT NOT NULL
+        )
+    """
+
+
+def _create_aruco_marker_table_sql() -> str:
+    return f"""
+        CREATE TABLE {ARUCO_MARKER_TABLE} (
+            marker_id INTEGER PRIMARY KEY,
+            dictionary TEXT NOT NULL,
+            marker_size_mm REAL NOT NULL,
+            reference_image_name TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            source_path TEXT,
+            config_json TEXT NOT NULL DEFAULT '{{}}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+
+
+def _create_aruco_marker_relation_table_sql() -> str:
+    return f"""
+        CREATE TABLE {ARUCO_MARKER_RELATION_TABLE} (
+            anchor_marker_id INTEGER NOT NULL,
+            marker_id INTEGER NOT NULL,
+            relation_pose_json TEXT NOT NULL,
+            sample_count INTEGER NOT NULL DEFAULT 0,
+            mean_error REAL,
+            last_observed_task_id TEXT,
+            raw_record_path TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (anchor_marker_id, marker_id)
         )
     """
 
@@ -181,6 +224,151 @@ def _normalize_stored_paths(conn: sqlite3.Connection) -> None:
             (normalized, int(row["id"])),
         )
 
+    if _table_sql(conn, ARUCO_MARKER_TABLE) is not None:
+        marker_rows = conn.execute(
+            f"SELECT marker_id, source_path FROM {ARUCO_MARKER_TABLE} WHERE source_path IS NOT NULL"
+        ).fetchall()
+        for row in marker_rows:
+            current = str(row["source_path"] or "")
+            if not current:
+                continue
+            normalized = normalize_path_for_storage(current)
+            if normalized == current:
+                continue
+            conn.execute(
+                f"UPDATE {ARUCO_MARKER_TABLE} SET source_path = ? WHERE marker_id = ?",
+                (normalized, int(row["marker_id"])),
+            )
+
+    if _table_sql(conn, ARUCO_MARKER_RELATION_TABLE) is not None:
+        relation_rows = conn.execute(
+            f"SELECT anchor_marker_id, marker_id, raw_record_path FROM {ARUCO_MARKER_RELATION_TABLE} WHERE raw_record_path IS NOT NULL"
+        ).fetchall()
+        for row in relation_rows:
+            current = str(row["raw_record_path"] or "")
+            if not current:
+                continue
+            normalized = normalize_path_for_storage(current)
+            if normalized == current:
+                continue
+            conn.execute(
+                f"""
+                UPDATE {ARUCO_MARKER_RELATION_TABLE}
+                SET raw_record_path = ?
+                WHERE anchor_marker_id = ? AND marker_id = ?
+                """,
+                (normalized, int(row["anchor_marker_id"]), int(row["marker_id"])),
+            )
+
+
+def _load_aruco_template_config() -> Dict[str, Any]:
+    if not ARUCO_TEMPLATE_PATH.is_file():
+        return {}
+    try:
+        with ARUCO_TEMPLATE_PATH.open("r", encoding="utf-8") as file:
+            loaded = json.load(file)
+        return loaded if isinstance(loaded, dict) else {}
+    except Exception:
+        return {}
+
+
+def _infer_marker_id_from_path(path: Path) -> Optional[int]:
+    matches = re.findall(r"\d+", path.stem)
+    if not matches:
+        return None
+    return int(matches[-1])
+
+
+def _marker_overrides_by_id(template: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
+    overrides: Dict[int, Dict[str, Any]] = {}
+    markers = template.get("markers")
+    if isinstance(markers, list):
+        for marker in markers:
+            if not isinstance(marker, dict):
+                continue
+            marker_id = marker.get("marker_id", marker.get("id"))
+            try:
+                marker_id_int = int(marker_id)
+            except Exception:
+                continue
+            overrides[marker_id_int] = marker
+    return overrides
+
+
+def _sync_marker_registry_from_reference_folder(conn: sqlite3.Connection) -> int:
+    template = _load_aruco_template_config()
+    overrides = _marker_overrides_by_id(template)
+    default_dictionary = str(template.get("dictionary") or "DICT_7X7_1000")
+    default_marker_size_mm = float(template.get("marker_size_mm") or 200.0)
+
+    seen_marker_ids: set[int] = set()
+    synced_count = 0
+    for image_path in sorted(ARUCO_REFERENCE_ROOT.glob("*")):
+        if not image_path.is_file() or image_path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
+            continue
+        marker_id = _infer_marker_id_from_path(image_path)
+        if marker_id is None:
+            continue
+
+        marker_config = dict(overrides.get(marker_id) or {})
+        dictionary = str(marker_config.get("dictionary") or default_dictionary)
+        marker_size_mm = float(marker_config.get("marker_size_mm") or default_marker_size_mm)
+        enabled = bool(marker_config.get("enabled", True))
+        reference_image_name = str(marker_config.get("reference_image_name") or image_path.name)
+        source_path = normalize_path_for_storage(image_path)
+
+        conn.execute(
+            f"""
+            INSERT INTO {ARUCO_MARKER_TABLE} (
+                marker_id,
+                dictionary,
+                marker_size_mm,
+                reference_image_name,
+                enabled,
+                source_path,
+                config_json,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(marker_id) DO UPDATE SET
+                dictionary = excluded.dictionary,
+                marker_size_mm = excluded.marker_size_mm,
+                reference_image_name = excluded.reference_image_name,
+                enabled = excluded.enabled,
+                source_path = excluded.source_path,
+                config_json = excluded.config_json,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                marker_id,
+                dictionary,
+                marker_size_mm,
+                reference_image_name,
+                1 if enabled else 0,
+                source_path,
+                json.dumps(marker_config, ensure_ascii=False),
+            ),
+        )
+        seen_marker_ids.add(marker_id)
+        synced_count += 1
+
+    if seen_marker_ids:
+        placeholders = ", ".join("?" for _ in seen_marker_ids)
+        conn.execute(
+            f"""
+            UPDATE {ARUCO_MARKER_TABLE}
+            SET enabled = 0, updated_at = CURRENT_TIMESTAMP
+            WHERE marker_id NOT IN ({placeholders})
+            """,
+            tuple(sorted(seen_marker_ids)),
+        )
+    else:
+        conn.execute(
+            f"UPDATE {ARUCO_MARKER_TABLE} SET enabled = 0, updated_at = CURRENT_TIMESTAMP"
+        )
+
+    return synced_count
+
 
 def initialize_task_table() -> None:
     with _get_connection() as conn:
@@ -198,6 +386,20 @@ def initialize_task_table() -> None:
                 """
             )
 
+        if _table_sql(conn, ARUCO_MARKER_TABLE) is None:
+            conn.execute(_create_aruco_marker_table_sql())
+        if _table_sql(conn, ARUCO_MARKER_RELATION_TABLE) is None:
+            conn.execute(_create_aruco_marker_relation_table_sql())
+            conn.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{ARUCO_MARKER_RELATION_TABLE}_marker
+                ON {ARUCO_MARKER_RELATION_TABLE} (marker_id)
+                """
+            )
+
+        if ARUCO_SYNC_MARKER_REGISTRY_ON_START:
+            _sync_marker_registry_from_reference_folder(conn)
+
         _normalize_stored_paths(conn)
         conn.commit()
 
@@ -207,6 +409,122 @@ def get_latest_10_records() -> List[Dict[str, Any]]:
     with _get_connection() as conn:
         rows = conn.execute(f"SELECT * FROM {TABLE_NAME} ORDER BY id DESC LIMIT 10").fetchall()
     return [dict(row) for row in rows]
+
+
+def sync_marker_registry_from_reference_folder() -> int:
+    initialize_task_table()
+    with _get_connection() as conn:
+        synced_count = _sync_marker_registry_from_reference_folder(conn)
+        conn.commit()
+    return synced_count
+
+
+def get_enabled_aruco_markers() -> List[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {ARUCO_MARKER_TABLE}
+            WHERE enabled = 1
+            ORDER BY marker_id ASC
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_aruco_marker_relation(
+    marker_id: int,
+    *,
+    anchor_marker_id: int = ARUCO_ANCHOR_MARKER_ID,
+) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"""
+            SELECT *
+            FROM {ARUCO_MARKER_RELATION_TABLE}
+            WHERE anchor_marker_id = ? AND marker_id = ?
+            """,
+            (int(anchor_marker_id), int(marker_id)),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def upsert_aruco_marker_relation(
+    *,
+    marker_id: int,
+    relation_pose_json: Any,
+    sample_error: float | None = None,
+    task_id: str | None = None,
+    raw_record_path: str | None = None,
+    anchor_marker_id: int = ARUCO_ANCHOR_MARKER_ID,
+) -> Dict[str, Any]:
+    initialize_task_table()
+    marker_id = int(marker_id)
+    anchor_marker_id = int(anchor_marker_id)
+    if marker_id == anchor_marker_id:
+        sample_count = 1
+        mean_error = float(sample_error) if sample_error is not None else 0.0
+    else:
+        existing = get_aruco_marker_relation(marker_id, anchor_marker_id=anchor_marker_id)
+        if existing:
+            old_count = int(existing.get("sample_count") or 0)
+            old_mean = existing.get("mean_error")
+            sample_count = old_count + 1
+            if sample_error is None:
+                mean_error = float(old_mean) if old_mean is not None else None
+            elif old_mean is None:
+                mean_error = float(sample_error)
+            else:
+                mean_error = ((float(old_mean) * old_count) + float(sample_error)) / max(sample_count, 1)
+        else:
+            sample_count = 1
+            mean_error = float(sample_error) if sample_error is not None else None
+
+    raw_path = normalize_path_for_storage(raw_record_path) if raw_record_path else None
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {ARUCO_MARKER_RELATION_TABLE} (
+                anchor_marker_id,
+                marker_id,
+                relation_pose_json,
+                sample_count,
+                mean_error,
+                last_observed_task_id,
+                raw_record_path,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(anchor_marker_id, marker_id) DO UPDATE SET
+                relation_pose_json = excluded.relation_pose_json,
+                sample_count = excluded.sample_count,
+                mean_error = excluded.mean_error,
+                last_observed_task_id = excluded.last_observed_task_id,
+                raw_record_path = excluded.raw_record_path,
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (
+                anchor_marker_id,
+                marker_id,
+                json.dumps(relation_pose_json, ensure_ascii=False),
+                sample_count,
+                mean_error,
+                task_id,
+                raw_path,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            f"""
+            SELECT *
+            FROM {ARUCO_MARKER_RELATION_TABLE}
+            WHERE anchor_marker_id = ? AND marker_id = ?
+            """,
+            (anchor_marker_id, marker_id),
+        ).fetchone()
+    return dict(row)
 
 
 def get_status_by_task_id(task_id: str) -> Optional[str]:

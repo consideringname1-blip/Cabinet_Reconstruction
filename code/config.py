@@ -28,6 +28,8 @@ AHAT_MAX_UPLOAD_PNG_BYTES = 450000
 AHAT_ENABLE_UPLOAD_GUARD = False
 ARUCO_ROI_PADDING_RATIO = 0.18
 ARUCO_ROI_PADDING_MIN_PX = 24
+ARUCO_ANCHOR_MARKER_ID = 1
+ARUCO_SYNC_MARKER_REGISTRY_ON_START = False
 # camera_refine = camera-view local rotation+translation+scale adjustment.
 # off = measured-distance placement without ICP. The runtime only keeps one
 # active ICP path plus the skip-ICP path.

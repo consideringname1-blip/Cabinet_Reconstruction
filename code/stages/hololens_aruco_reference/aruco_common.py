@@ -35,6 +35,7 @@ def default_aruco_template() -> dict[str, Any]:
         "marker_id": None,
         "marker_size_mm": None,
         "reference_image_name": "",
+        "markers": [],
         "notes": "",
     }
 
@@ -85,12 +86,81 @@ def evaluate_aruco_template(template: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def resolve_marker_configs(template: dict[str, Any], db_markers: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    markers: list[dict[str, Any]] = []
+    for marker in db_markers or []:
+        try:
+            marker_id = int(marker.get("marker_id"))
+            marker_size_mm = float(marker.get("marker_size_mm"))
+        except Exception:
+            continue
+        dictionary = str(marker.get("dictionary") or "").strip()
+        if not dictionary or marker_size_mm <= 0.0:
+            continue
+        markers.append(
+            {
+                "marker_id": marker_id,
+                "dictionary": dictionary,
+                "marker_size_mm": marker_size_mm,
+                "reference_image_name": marker.get("reference_image_name") or "",
+                "source": "database",
+            }
+        )
+
+    if markers:
+        return markers
+
+    configured_markers = template.get("markers")
+    if isinstance(configured_markers, list):
+        for marker in configured_markers:
+            if not isinstance(marker, dict) or not bool(marker.get("enabled", True)):
+                continue
+            try:
+                marker_id = int(marker.get("marker_id", marker.get("id")))
+                marker_size_mm = float(marker.get("marker_size_mm") or template.get("marker_size_mm"))
+            except Exception:
+                continue
+            dictionary = str(marker.get("dictionary") or template.get("dictionary") or "").strip()
+            if not dictionary or marker_size_mm <= 0.0:
+                continue
+            markers.append(
+                {
+                    "marker_id": marker_id,
+                    "dictionary": dictionary,
+                    "marker_size_mm": marker_size_mm,
+                    "reference_image_name": marker.get("reference_image_name") or "",
+                    "source": "template",
+                }
+            )
+
+    template_state = evaluate_aruco_template(template)
+    if not markers and template_state["configured"]:
+        markers.append(
+            {
+                "marker_id": int(template["marker_id"]),
+                "dictionary": str(template["dictionary"]),
+                "marker_size_mm": float(template["marker_size_mm"]),
+                "reference_image_name": template.get("reference_image_name") or "",
+                "source": "template_legacy",
+            }
+        )
+    return markers
+
+
 def resolve_task_name(task: dict[str, Any], fallback: str) -> str:
     return str(task.get("task_name") or fallback)
 
 
-def resolve_pv_image_path(task: dict[str, Any]) -> Path:
+def resolve_pv_frames(task: dict[str, Any]) -> list[dict[str, Any]]:
+    frames = task.get("PVCameraFrames")
+    if isinstance(frames, list) and frames:
+        return [dict(frame) for frame in frames if isinstance(frame, dict)]
     pv_info = task.get("PVCamera") or {}
+    return [dict(pv_info)] if pv_info else []
+
+
+def resolve_pv_image_path(task_or_frame: dict[str, Any]) -> Path:
+    pv_info = task_or_frame.get("PVCamera") or task_or_frame
     name = str(pv_info.get("name") or "").strip()
     if not name:
         raise ValueError("PVCamera.name is required")
@@ -106,8 +176,9 @@ def resolve_pv_image_path(task: dict[str, Any]) -> Path:
     raise FileNotFoundError(f"PVCamera image not found: {name}")
 
 
-def resolve_pv_camera_matrix(task: dict[str, Any]) -> np.ndarray:
-    k = np.asarray((task.get("PVCamera") or {}).get("k"), dtype=np.float64)
+def resolve_pv_camera_matrix(task_or_frame: dict[str, Any]) -> np.ndarray:
+    pv_info = task_or_frame.get("PVCamera") or task_or_frame
+    k = np.asarray(pv_info.get("k"), dtype=np.float64)
     if k.shape == (3, 3):
         return k.astype(np.float64)
     if k.ndim == 2 and k.shape[0] >= 3 and k.shape[1] >= 3:
@@ -162,8 +233,8 @@ def orthonormalize_rotation(rotation: np.ndarray) -> np.ndarray:
     return normalized.astype(np.float64)
 
 
-def resolve_pv_camera_world_pose(task: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
-    pv_info = task.get("PVCamera") or {}
+def resolve_pv_camera_world_pose(task_or_frame: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    pv_info = task_or_frame.get("PVCamera") or task_or_frame
     pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
     if pv_pose.shape == (4, 4):
         translation, rotation, _quat_xyzw = convert_hololens_pv_pose_matrix_to_unity_pose_components(

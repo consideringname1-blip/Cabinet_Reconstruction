@@ -28,7 +28,11 @@ from task_worker import (
     get_task,
     start_worker,
 )
-from task_db import get_latest_aruco_reference
+from task_db import (
+    get_enabled_aruco_markers,
+    get_latest_aruco_reference,
+    sync_marker_registry_from_reference_folder,
+)
 from task_json import save_task_json
 from unity_coordinate_utils import convert_hololens_pv_pose_matrix_to_unity_pose_components
 
@@ -197,6 +201,8 @@ def index():
                 "/check/<task_id>",
                 "/check?task_id=<task_id>",
                 "/latest-completed",
+                "/aruco/markers",
+                "/aruco/markers/sync",
                 "/files/<folder>/<filename>",
             ],
         }
@@ -221,6 +227,18 @@ def generate_model():
                 raise ValueError(f"{field_name} must be a JSON object")
             return obj
 
+        def _parse_optional_json_array_field(field_name: str) -> list | None:
+            raw = request.form.get(field_name, type=str)
+            if not raw:
+                return None
+            try:
+                obj = json.loads(raw)
+            except Exception as exc:
+                raise ValueError(f"{field_name} is not valid JSON: {exc}")
+            if not isinstance(obj, list):
+                raise ValueError(f"{field_name} must be a JSON array")
+            return obj
+
         def _read_upload_file(field_name: str) -> bytes:
             file_storage = request.files.get(field_name)
             if file_storage is None:
@@ -231,9 +249,39 @@ def generate_model():
             return data
 
         purpose = _normalize_purpose(request.form.get("purpose"))
-        pvj = _parse_json_field("PVCameraJ")
         devj = _parse_json_field("deviceJ")
-        pv_position, pv_rotation_quaternion_xyzw = _extract_unity_pv_pose_components(pvj.get("pose"))
+        pv_frames_input = _parse_optional_json_array_field("PVCameraFramesJ")
+
+        if purpose == PURPOSE_OBJECT_RECONSTRUCTION or not pv_frames_input:
+            pvj = _parse_json_field("PVCameraJ")
+            pv_frames_input = [pvj]
+        else:
+            pvj = pv_frames_input[0] if pv_frames_input else None
+            if not isinstance(pvj, dict):
+                raise ValueError("PVCameraFramesJ must contain JSON objects")
+
+        normalized_pv_frames = []
+        for index, frame in enumerate(pv_frames_input):
+            if not isinstance(frame, dict):
+                raise ValueError(f"PVCameraFramesJ[{index}] must be a JSON object")
+            frame_pose = frame.get("pose")
+            frame_position, frame_rotation_quaternion_xyzw = _extract_unity_pv_pose_components(frame_pose)
+            normalized_pv_frames.append(
+                {
+                    "frame_index": int(frame.get("index", index)),
+                    "width": frame.get("width", 0),
+                    "height": frame.get("height", 0),
+                    "k": frame.get("k"),
+                    "pose": frame_pose,
+                    "position": frame_position,
+                    "rotation_quaternion_xyzw": frame_rotation_quaternion_xyzw,
+                    "time": frame.get("time", ""),
+                    "device_pose": frame.get("device_pose"),
+                    "device_rotation": frame.get("device_rotation"),
+                }
+            )
+        if not normalized_pv_frames:
+            raise ValueError("at least one PV camera frame is required")
 
         dj = None
         sbj = None
@@ -262,10 +310,21 @@ def generate_model():
 
         UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
 
-        pv_png_bytes = _read_upload_file("pv_image")
-        color_path = UPLOAD_FOLDER / f"{base}_color.png"
-        with open(color_path, "wb") as f:
-            f.write(pv_png_bytes)
+        color_path = None
+        for index, frame in enumerate(normalized_pv_frames):
+            field_name = "pv_image" if purpose == PURPOSE_OBJECT_RECONSTRUCTION else f"pv_image_{index}"
+            if field_name not in request.files and index == 0:
+                field_name = "pv_image"
+            pv_png_bytes = _read_upload_file(field_name)
+            suffix = "color" if purpose == PURPOSE_OBJECT_RECONSTRUCTION else f"color_{index:03d}"
+            frame_color_path = UPLOAD_FOLDER / f"{base}_{suffix}.png"
+            with open(frame_color_path, "wb") as f:
+                f.write(pv_png_bytes)
+            frame["name"] = str(frame_color_path.name)
+            frame["upload_field"] = field_name
+            frame["png_bytes"] = int(len(pv_png_bytes))
+            if index == 0:
+                color_path = frame_color_path
 
         depth_path = None
         depth_stats = None
@@ -289,14 +348,15 @@ def generate_model():
                 "startup_session_id": devj.get("startup_session_id", ""),
             },
             "PVCamera": {
-                "name": str(color_path.name),
-                "width": pvj.get("width", 0),
-                "height": pvj.get("height", 0),
-                "k": pvj.get("k"),
-                "pose": pvj.get("pose"),
-                "position": pv_position,
-                "rotation_quaternion_xyzw": pv_rotation_quaternion_xyzw,
+                "name": str(color_path.name) if color_path else normalized_pv_frames[0].get("name"),
+                "width": normalized_pv_frames[0].get("width", 0),
+                "height": normalized_pv_frames[0].get("height", 0),
+                "k": normalized_pv_frames[0].get("k"),
+                "pose": normalized_pv_frames[0].get("pose"),
+                "position": normalized_pv_frames[0].get("position"),
+                "rotation_quaternion_xyzw": normalized_pv_frames[0].get("rotation_quaternion_xyzw"),
             },
+            "PVCameraFrames": normalized_pv_frames,
             "object": {
                 "position": [0, 0, 0],
                 "rotation": [0, 0, 0, 1.0],
@@ -367,6 +427,25 @@ def check_task_query():
     if not task_id:
         return jsonify({"error": "Missing task_id parameter"}), 400
     return check_task(task_id)
+
+
+@app.route("/aruco/markers", methods=["GET"], strict_slashes=False)
+def list_aruco_markers():
+    try:
+        return jsonify({"markers": get_enabled_aruco_markers()})
+    except Exception as exc:
+        print(f"Error in list_aruco_markers: {exc}")
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/aruco/markers/sync", methods=["POST"], strict_slashes=False)
+def sync_aruco_markers():
+    try:
+        synced_count = sync_marker_registry_from_reference_folder()
+        return jsonify({"synced_count": synced_count, "markers": get_enabled_aruco_markers()})
+    except Exception as exc:
+        print(f"Error in sync_aruco_markers: {exc}")
+        return jsonify({"error": str(exc)}), 500
 
 
 @app.route("/latest-completed", methods=["GET"], strict_slashes=False)

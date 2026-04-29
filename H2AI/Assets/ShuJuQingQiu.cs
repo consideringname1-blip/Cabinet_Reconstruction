@@ -19,6 +19,9 @@ public class ShuJuQingQiu : MonoBehaviour
     // aruco_reference: marker localization/reference upload with PV image + camera pose only.
     const string TASK_PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction";
     const string TASK_PURPOSE_ARUCO_REFERENCE = "aruco_reference";
+    const float MARKER_CAPTURE_TOTAL_SECONDS = 3.0f;
+    const float MARKER_CAPTURE_INTERVAL_SECONDS = 0.5f;
+    const int MARKER_CAPTURE_MIN_SUCCESS = 1;
 
     public static ShuJuQingQiu initialize;
     // Start is called before the first frame update
@@ -37,6 +40,20 @@ public class ShuJuQingQiu : MonoBehaviour
     public HoloLensDepthAquirer DP_controler;
 
     [SerializeField] private SelectionPanelManager selectionPanelManager;
+    private bool isMarkerCaptureActive = false;
+
+    private class MarkerCaptureFrame
+    {
+        public int index;
+        public byte[] pvPng;
+        public ushort pvWidth;
+        public ushort pvHeight;
+        public float[,] pvK;
+        public float[,] pvPose;
+        public Vector3 camPos;
+        public Quaternion camRot;
+        public string photoTimeUtc;
+    }
 
     void Start()
     {
@@ -116,6 +133,23 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         return outer;
+    }
+
+    private float[,] CloneFloat2D(float[,] src)
+    {
+        if (src == null) return null;
+
+        int rows = src.GetLength(0);
+        int cols = src.GetLength(1);
+        float[,] dst = new float[rows, cols];
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < cols; c++)
+            {
+                dst[r, c] = src[r, c];
+            }
+        }
+        return dst;
     }
 
     void ShowFrontMessage(string message)
@@ -215,53 +249,129 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
-        Game_M.initialize.XianShi("shangchuan_mark");
-        Game_M.initialize.XianShi("shangchuan_Device");
-        bool pvFrozen = PV_controler.FreezeCurrentFrame();
-        if (!pvFrozen)
+        if (isMarkerCaptureActive)
         {
-            Game_M.initialize.XianShi("shangchuan_ERR_pv_freeze");
+            Game_M.initialize.XianShi("shangchuan_mark_busy");
             return;
         }
+
+        StartCoroutine(ShangChuanDingWeiMarkTuPianCoroutine());
+    }
+
+    private IEnumerator ShangChuanDingWeiMarkTuPianCoroutine()
+    {
+        isMarkerCaptureActive = true;
+        Game_M.initialize.XianShi("shangchuan_mark");
 
         string ip = GetDeviceIpCached();
-        string photoTimeUtc = DateTime.UtcNow.ToString("o");
-
-        Camera cam = Camera.main;
-        if (cam == null)
-        {
-            Game_M.initialize.XianShi("select_box_no_main_camera");
-            return;
-        }
-
-        Vector3 camPos = cam.transform.position;
-        Quaternion camRot = cam.transform.rotation;
-
-        Game_M.initialize.XianShi("shangchuan_PV");
-        if (PV_controler.tex_pv_frozen == null)
-        {
-            Game_M.initialize.XianShi("select_box_ERR_tex_null");
-            return;
-        }
-
-        byte[] tex_pv_P_C_F = ImageConversion.EncodeToPNG(PV_controler.tex_pv_frozen);
-        ushort width_pv_C_F = PV_controler.width_pv_frozen;
-        ushort height_pv_C_F = PV_controler.height_pv_frozen;
-        float[,] k_pv_C_F = PV_controler.k_pv_frozen;
-        float[,] pose_pv_C_F = PV_controler.pose_pv_frozen;
-
-        SendGenerateRequest(
-            TASK_PURPOSE_ARUCO_REFERENCE,
-            tex_pv_P_C_F,
-            width_pv_C_F,
-            height_pv_C_F,
-            k_pv_C_F,
-            pose_pv_C_F,
-            camPos,
-            camRot,
-            ip,
-            photoTimeUtc
+        int targetFrameCount = Mathf.Max(
+            MARKER_CAPTURE_MIN_SUCCESS,
+            Mathf.FloorToInt(MARKER_CAPTURE_TOTAL_SECONDS / MARKER_CAPTURE_INTERVAL_SECONDS)
         );
+        List<MarkerCaptureFrame> frames = new List<MarkerCaptureFrame>();
+
+        for (int i = 0; i < targetFrameCount; i++)
+        {
+            float remaining = Mathf.Max(0f, MARKER_CAPTURE_TOTAL_SECONDS - (i * MARKER_CAPTURE_INTERVAL_SECONDS));
+            Game_M.initialize.XianShi($"shangchuan_mark_wait_{remaining:F1}");
+            yield return new WaitForSeconds(MARKER_CAPTURE_INTERVAL_SECONDS);
+
+            Camera cam = Camera.main;
+            if (cam == null)
+            {
+                Game_M.initialize.XianShi("select_box_no_main_camera");
+                continue;
+            }
+
+            Game_M.initialize.XianShi($"shangchuan_mark_capture_{i + 1}_{targetFrameCount}");
+            bool pvFrozen = PV_controler != null && PV_controler.FreezeCurrentFrame();
+            if (!pvFrozen || PV_controler.tex_pv_frozen == null)
+            {
+                Game_M.initialize.XianShi("shangchuan_ERR_pv_freeze");
+                continue;
+            }
+            if (PV_controler.k_pv_frozen == null || PV_controler.pose_pv_frozen == null)
+            {
+                Game_M.initialize.XianShi("shangchuan_mark_ERR_pose_null");
+                continue;
+            }
+
+            byte[] pvPng = ImageConversion.EncodeToPNG(PV_controler.tex_pv_frozen);
+            if (pvPng == null || pvPng.Length == 0)
+            {
+                Game_M.initialize.XianShi("shangchuan_mark_ERR_png_empty");
+                continue;
+            }
+
+            frames.Add(new MarkerCaptureFrame
+            {
+                index = frames.Count,
+                pvPng = pvPng,
+                pvWidth = PV_controler.width_pv_frozen,
+                pvHeight = PV_controler.height_pv_frozen,
+                pvK = CloneFloat2D(PV_controler.k_pv_frozen),
+                pvPose = CloneFloat2D(PV_controler.pose_pv_frozen),
+                camPos = cam.transform.position,
+                camRot = cam.transform.rotation,
+                photoTimeUtc = DateTime.UtcNow.ToString("o"),
+            });
+        }
+
+        if (frames.Count < MARKER_CAPTURE_MIN_SUCCESS)
+        {
+            Game_M.initialize.XianShi("shangchuan_mark_ERR_no_frames");
+            isMarkerCaptureActive = false;
+            yield break;
+        }
+
+        SendArucoBatchGenerateRequest(frames, ip);
+        isMarkerCaptureActive = false;
+    }
+
+    void SendArucoBatchGenerateRequest(List<MarkerCaptureFrame> frames, string ip)
+    {
+        string url = "http://10.40.1.122:7355/generate";
+        var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnRequestFinished);
+        request.Tag = TASK_PURPOSE_ARUCO_REFERENCE;
+
+        Game_M.initialize.XianShi("shangchuan_Dabao");
+        request.AddField("purpose", TASK_PURPOSE_ARUCO_REFERENCE);
+
+        JArray frameArray = new JArray();
+        for (int i = 0; i < frames.Count; i++)
+        {
+            MarkerCaptureFrame frame = frames[i];
+            JObject frameJ = new JObject
+            {
+                ["index"] = i,
+                ["width"] = frame.pvWidth,
+                ["height"] = frame.pvHeight,
+                ["k"] = Float2DToJArray(frame.pvK),
+                ["pose"] = Float2DToJArray(frame.pvPose),
+                ["time"] = frame.photoTimeUtc,
+                ["device_pose"] = new JArray(frame.camPos.x, frame.camPos.y, frame.camPos.z),
+                ["device_rotation"] = new JArray(frame.camRot.x, frame.camRot.y, frame.camRot.z, frame.camRot.w),
+            };
+            frameArray.Add(frameJ);
+            request.AddBinaryData("pv_image_" + i, frame.pvPng, "pv_" + i + ".png", "image/png");
+            Debug.Log("[UPLOAD] ArUco PV frame " + i + " PNG bytes=" + frame.pvPng.Length);
+        }
+        request.AddField("PVCameraFramesJ", frameArray.ToString(Formatting.None));
+
+        MarkerCaptureFrame deviceFrame = frames[frames.Count - 1];
+        JObject deviceJ = new JObject
+        {
+            ["type"] = DEVICE_TYPE,
+            ["ip"] = string.IsNullOrEmpty(ip) ? "" : ip,
+            ["time"] = deviceFrame.photoTimeUtc,
+            ["pose"] = new JArray(deviceFrame.camPos.x, deviceFrame.camPos.y, deviceFrame.camPos.z),
+            ["rotation"] = new JArray(deviceFrame.camRot.x, deviceFrame.camRot.y, deviceFrame.camRot.z, deviceFrame.camRot.w),
+            ["startup_session_id"] = startup_session_id,
+        };
+        request.AddField("deviceJ", deviceJ.ToString(Formatting.None));
+
+        request.Send();
+        Game_M.initialize.XianShi("generate");
     }
 
     void SendGenerateRequest(
