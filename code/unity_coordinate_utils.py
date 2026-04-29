@@ -128,18 +128,29 @@ def convert_hololens_pv_pose_matrix_to_unity_pose_components(
     if pose_matrix.shape != (4, 4):
         raise ValueError("pose matrix must be 4x4")
 
-    # HoloLens PV pose matrices in this pipeline have historically been
-    # consumed with only the world-space Z axis flipped. The downstream ICP /
-    # runtime composition and previously captured task JSONs were tuned around
-    # that convention, so keep this explicit conversion for compatibility.
     rotation_windows = pose_matrix[:3, :3].astype(np.float64)
-    translation_unity = pose_matrix[3, :3].astype(np.float64)
-    translation_unity[2] *= -1.0
+    translation_windows = pose_matrix[3, :3].astype(np.float64)
 
-    quaternion_unity = rotation_matrix_to_quat_xyzw(rotation_windows)
-    quaternion_unity[2] *= -1.0
-    quaternion_unity = normalize_quat_xyzw(quaternion_unity)
-    rotation_unity = quat_xyzw_to_rotation_matrix(quaternion_unity)
+    # PV poses in this pipeline are stored in the legacy hl2ss row-vector
+    # convention: translation lives in the last row and the 3x3 rotation is
+    # applied as p_local @ R. Downstream pose composition uses column-vector
+    # math, and Windows spatial coordinates have +Z opposite to Unity here.
+    # Therefore the compatibility transform is:
+    #
+    #   t_unity = S @ t_windows
+    #   R_unity = S @ R_windows.T @ S
+    #
+    # where S = diag(1, 1, -1). This is mathematically equivalent to the older
+    # implementation that converted R_windows to a quaternion and flipped only
+    # quaternion.z, but it makes the basis and row/column conversion explicit.
+    rotation_unity = orthonormalize_rotation(
+        WINDOWS_TO_UNITY_BASIS @ rotation_windows.T @ WINDOWS_TO_UNITY_BASIS
+    )
+    translation_unity = convert_translation_between_bases(
+        translation_windows,
+        WINDOWS_TO_UNITY_BASIS,
+    )
+    quaternion_unity = rotation_matrix_to_quat_xyzw(rotation_unity)
     return translation_unity, rotation_unity, quaternion_unity
 
 
