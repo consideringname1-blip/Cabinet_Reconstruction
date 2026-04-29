@@ -60,11 +60,22 @@ public class ShuJuQingQiu : MonoBehaviour
         public RuntimeModelInstance instance;
         public string localPath;
         public bool showDebugMarkers;
+        public bool isHistoryBatch;
+        public int historyOffset;
+    }
+
+    private class LatestCompletedRequest
+    {
+        public int historyOffset;
+        public bool isHistoryBatch;
     }
 
     private RuntimeModelInstance pendingModelInstance;
     private bool pendingModelShouldPlaceDebugMarkers = true;
     private int latestCompletedHistoryOffset = 0;
+    private bool isHistoryBatchDownloadActive = false;
+    private int historyBatchNextOffset = 0;
+    private int historyBatchLoadedCount = 0;
 
     void Start()
     {
@@ -727,10 +738,58 @@ public class ShuJuQingQiu : MonoBehaviour
 
     public void XiaZaiZuiXinChengGongMoXing()
     {
-        XiaZaiLiShiChengGongMoXing(0);
+        RequestLatestCompletedModel(0, false);
     }
 
     public void XiaZaiShangYiGeChengGongMoXing()
+    {
+        XiaZaiLiShiWuGeKeYongMoXing();
+    }
+
+    public void XiaZaiLiShiWuGeKeYongMoXing()
+    {
+        if (isHistoryBatchDownloadActive)
+        {
+            ShowFrontMessage("latest_completed_history_busy");
+            return;
+        }
+
+        isHistoryBatchDownloadActive = true;
+        historyBatchNextOffset = 0;
+        historyBatchLoadedCount = 0;
+        RequestNextHistoryBatchModel();
+    }
+
+    private void RequestNextHistoryBatchModel()
+    {
+        if (!isHistoryBatchDownloadActive)
+        {
+            return;
+        }
+
+        if (historyBatchNextOffset >= COMPLETED_MODEL_HISTORY_LIMIT)
+        {
+            ShowFrontMessage("latest_completed_history_done_" + historyBatchLoadedCount.ToString(CultureInfo.InvariantCulture));
+            isHistoryBatchDownloadActive = false;
+            return;
+        }
+
+        int historyOffset = historyBatchNextOffset;
+        historyBatchNextOffset++;
+        RequestLatestCompletedModel(historyOffset, true);
+    }
+
+    private void HandleHistoryBatchLoadCompleted(RuntimeModelInstance instance, bool success)
+    {
+        LoadModel.Instance.RuntimeModelLoadCompleted -= HandleHistoryBatchLoadCompleted;
+        if (success)
+        {
+            historyBatchLoadedCount++;
+        }
+        RequestNextHistoryBatchModel();
+    }
+
+    public void XiaZaiXiaYiGeLiShiChengGongMoXing()
     {
         int historyOffset = latestCompletedHistoryOffset;
         XiaZaiLiShiChengGongMoXing(historyOffset);
@@ -764,13 +823,13 @@ public class ShuJuQingQiu : MonoBehaviour
 
     public void XiaZaiLiShiChengGongMoXing(int historyOffset)
     {
-        latestCompletedHistoryOffset = Mathf.Clamp(historyOffset, 0, COMPLETED_MODEL_HISTORY_LIMIT - 1);
-        pendingModelShouldPlaceDebugMarkers = false;
-        if (CameraPoseDebugMarker.Instance != null)
-        {
-            CameraPoseDebugMarker.Instance.HideMarkers();
-        }
+        RequestLatestCompletedModel(historyOffset, false);
+    }
 
+    private void RequestLatestCompletedModel(int historyOffset, bool isHistoryBatch)
+    {
+        latestCompletedHistoryOffset = Mathf.Clamp(historyOffset, 0, COMPLETED_MODEL_HISTORY_LIMIT - 1);
+        pendingModelShouldPlaceDebugMarkers = true;
         string url =
             "http://10.40.1.122:7355/latest-completed?startup_session_id="
             + Uri.EscapeDataString(startup_session_id ?? "")
@@ -778,6 +837,11 @@ public class ShuJuQingQiu : MonoBehaviour
             + "&history_offset="
             + latestCompletedHistoryOffset.ToString(CultureInfo.InvariantCulture);
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRequestLatestCompleted);
+        request.Tag = new LatestCompletedRequest
+        {
+            historyOffset = latestCompletedHistoryOffset,
+            isHistoryBatch = isHistoryBatch,
+        };
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
         request.Send();
         Game_M.initialize.XianShi("latest_completed_" + (latestCompletedHistoryOffset + 1).ToString(CultureInfo.InvariantCulture));
@@ -1170,6 +1234,10 @@ public class ShuJuQingQiu : MonoBehaviour
 
     private void OnRequestLatestCompleted(HTTPRequest request, HTTPResponse response)
     {
+        LatestCompletedRequest latestRequest = request.Tag as LatestCompletedRequest;
+        bool isHistoryBatch = latestRequest != null && latestRequest.isHistoryBatch;
+        int historyOffset = latestRequest != null ? latestRequest.historyOffset : latestCompletedHistoryOffset;
+
         if (!response.IsSuccess)
         {
             string serverError = response.Message;
@@ -1187,6 +1255,13 @@ public class ShuJuQingQiu : MonoBehaviour
                 catch
                 {
                 }
+            }
+
+            if (isHistoryBatch && response.StatusCode == 404)
+            {
+                ShowFrontMessage("latest_completed_history_skip_" + (historyOffset + 1).ToString(CultureInfo.InvariantCulture));
+                RequestNextHistoryBatchModel();
+                return;
             }
 
             Debug.LogError("Error: " + response.StatusCode + " - " + serverError);
@@ -1208,17 +1283,25 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             Debug.LogWarning("[LATEST] latest-completed returned status = " + status);
             ShowFrontMessage("latest_completed_ERR_not_completed");
+            if (isHistoryBatch)
+            {
+                RequestNextHistoryBatchModel();
+            }
             return;
         }
 
-        pendingModelShouldPlaceDebugMarkers = false;
-        if (!ApplyCompletedTaskResponse(jo, "LATEST", true, false))
+        pendingModelShouldPlaceDebugMarkers = true;
+        if (!ApplyCompletedTaskResponse(jo, "LATEST", true, true))
         {
+            if (isHistoryBatch)
+            {
+                RequestNextHistoryBatchModel();
+            }
             return;
         }
 
         task_id = jo["task_id"]?.ToString();
-        DownloadPendingRuntimeModel();
+        DownloadPendingRuntimeModel(isHistoryBatch, historyOffset);
     }
 
     /// <summary>
@@ -1226,9 +1309,18 @@ public class ShuJuQingQiu : MonoBehaviour
     /// </summary>
     private void DownloadPendingRuntimeModel()
     {
+        DownloadPendingRuntimeModel(false, 0);
+    }
+
+    private void DownloadPendingRuntimeModel(bool isHistoryBatch, int historyOffset)
+    {
         if (pendingModelInstance == null || string.IsNullOrEmpty(pendingModelInstance.FbxUrl))
         {
             ShowFrontMessage("download_ERR_missing_model_instance");
+            if (isHistoryBatch)
+            {
+                RequestNextHistoryBatchModel();
+            }
             return;
         }
 
@@ -1237,6 +1329,10 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             Debug.LogError("[RuntimeModelManager] Missing RuntimeModelManager component on scene Scripts object.");
             ShowFrontMessage("runtime_model_mgr_missing");
+            if (isHistoryBatch)
+            {
+                RequestNextHistoryBatchModel();
+            }
             return;
         }
 
@@ -1247,6 +1343,8 @@ public class ShuJuQingQiu : MonoBehaviour
             instance = pendingModelInstance,
             localPath = manager.CreateUniqueModelPath(pendingModelInstance.ModelKey),
             showDebugMarkers = pendingModelShouldPlaceDebugMarkers,
+            isHistoryBatch = isHistoryBatch,
+            historyOffset = historyOffset,
         };
 
         var request = new HTTPRequest(new Uri(pendingModelInstance.FbxUrl), HTTPMethods.Get, OnRequestXiaZai);
@@ -1265,6 +1363,10 @@ public class ShuJuQingQiu : MonoBehaviour
             {
                 Debug.LogError("[DOWNLOAD] Missing pending model download metadata.");
                 ShowFrontMessage("download_ERR_missing_model_instance");
+                if (pendingDownload != null && pendingDownload.isHistoryBatch)
+                {
+                    RequestNextHistoryBatchModel();
+                }
                 return;
             }
 
@@ -1278,6 +1380,10 @@ public class ShuJuQingQiu : MonoBehaviour
                 {
                     manager.DeleteCachedFile(pendingDownload.localPath);
                 }
+                if (pendingDownload.isHistoryBatch)
+                {
+                    RequestNextHistoryBatchModel();
+                }
                 return;
             }
             print(receiver.Length);
@@ -1286,15 +1392,35 @@ public class ShuJuQingQiu : MonoBehaviour
             print("保存");
             if (pendingDownload.showDebugMarkers && CameraPoseDebugMarker.Instance != null)
             {
-                if (hasServerCameraPose && hasServerPose)
+                RuntimeModelManager manager = RuntimeModelManager.Instance;
+                Vector3 markerModelPosition = serverObjectPosition;
+                Quaternion markerModelRotation = serverObjectRotation;
+                bool hasMarkerModelPose = hasServerPose;
+                if (manager != null && manager.TryResolveWorldPose(
+                    pendingDownload.instance.Pose,
+                    out Vector3 resolvedModelPosition,
+                    out Quaternion resolvedModelRotation
+                ))
+                {
+                    markerModelPosition = resolvedModelPosition;
+                    markerModelRotation = resolvedModelRotation;
+                    hasMarkerModelPose = true;
+                }
+
+                if (hasServerCameraPose && hasMarkerModelPose)
                 {
                     CameraPoseDebugMarker.Instance.PlaceMarkers(
                         serverCameraPosition,
                         serverCameraRotation,
-                        serverObjectPosition,
-                        serverObjectRotation
+                        markerModelPosition,
+                        markerModelRotation
                     );
                 }
+                else if (hasMarkerModelPose)
+                {
+                    CameraPoseDebugMarker.Instance.PlaceModelMarker(markerModelPosition, markerModelRotation);
+                }
+
                 if (hasArucoReferencePose)
                 {
                     CameraPoseDebugMarker.Instance.PlaceArucoMarker(
@@ -1303,12 +1429,27 @@ public class ShuJuQingQiu : MonoBehaviour
                     );
                 }
             }
-            if (!LoadModel.Instance.LoadRuntimeModel(pendingDownload.instance, pendingDownload.localPath))
+            LoadModel loader = LoadModel.Instance;
+            if (pendingDownload.isHistoryBatch)
             {
+                loader.RuntimeModelLoadCompleted -= HandleHistoryBatchLoadCompleted;
+                loader.RuntimeModelLoadCompleted += HandleHistoryBatchLoadCompleted;
+            }
+
+            if (!loader.LoadRuntimeModel(pendingDownload.instance, pendingDownload.localPath))
+            {
+                if (pendingDownload.isHistoryBatch)
+                {
+                    loader.RuntimeModelLoadCompleted -= HandleHistoryBatchLoadCompleted;
+                }
                 RuntimeModelManager manager = RuntimeModelManager.Instance;
                 if (manager != null)
                 {
                     manager.DeleteCachedFile(pendingDownload.localPath);
+                }
+                if (pendingDownload.isHistoryBatch)
+                {
+                    RequestNextHistoryBatchModel();
                 }
                 return;
             }
@@ -1318,6 +1459,11 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
             ShowFrontMessage("download_ERR_request_failed");
+            PendingModelDownload pendingDownload = request.Tag as PendingModelDownload;
+            if (pendingDownload != null && pendingDownload.isHistoryBatch)
+            {
+                RequestNextHistoryBatchModel();
+            }
         }
     }
 

@@ -382,6 +382,7 @@ def get_latest_completed_task_data(
     startup_session_id: str | None = None,
     require_aruco_coordinate_synced: bool = False,
     history_offset: int = 0,
+    attempt_sync: bool = True,
 ) -> Optional[Dict[str, Any]]:
     history_offset = max(0, int(history_offset or 0))
     task_record = get_latest_completed_task(
@@ -389,14 +390,14 @@ def get_latest_completed_task_data(
         require_aruco_coordinate_synced=require_aruco_coordinate_synced,
         history_offset=history_offset,
     )
-    if task_record is None and startup_session_id and require_aruco_coordinate_synced:
+    if task_record is None and startup_session_id and require_aruco_coordinate_synced and attempt_sync:
         _sync_completed_tasks_for_startup(startup_session_id)
         task_record = get_latest_completed_task(
             startup_session_id=startup_session_id,
             require_aruco_coordinate_synced=True,
             history_offset=history_offset,
         )
-    if task_record is None and require_aruco_coordinate_synced:
+    if task_record is None and require_aruco_coordinate_synced and not startup_session_id and attempt_sync:
         _sync_completed_tasks_for_startup()
         task_record = get_latest_completed_task(
             startup_session_id=startup_session_id,

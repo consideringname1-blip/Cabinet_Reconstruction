@@ -12525,7 +12525,7 @@ MonoBehaviour:
   cameraMarkerName: RecordedCameraPoseMarker
   modelMarkerName: RecordedFinalModelMarker
   arucoMarkerName: RecordedArucoReferenceMarker
-  hideTemplateOnStart: 1
+  hideTemplateOnStart: 0
 --- !u!1 &1376868777
 GameObject:
   m_ObjectHideFlags: 0
@@ -18194,7 +18194,7 @@ MonoBehaviour:
       m_Calls:
       - m_Target: {fileID: 1912203437}
         m_TargetAssemblyTypeName: ShuJuQingQiu, Assembly-CSharp
-        m_MethodName: XiaZaiShangYiGeChengGongMoXing
+        m_MethodName: XiaZaiLiShiWuGeKeYongMoXing
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}

@@ -12,7 +12,7 @@ public class CameraPoseDebugMarker : MonoBehaviour
     [SerializeField] private string cameraMarkerName = "RecordedCameraPoseMarker";
     [SerializeField] private string modelMarkerName = "RecordedFinalModelMarker";
     [SerializeField] private string arucoMarkerName = "RecordedArucoReferenceMarker";
-    [SerializeField] private bool hideTemplateOnStart = true;
+    [SerializeField] private bool hideTemplateOnStart = false;
 
     private GameObject _cameraMarker;
     private GameObject _modelMarker;
@@ -76,6 +76,24 @@ public class CameraPoseDebugMarker : MonoBehaviour
 
         Debug.Log(
             $"[CameraPoseDebugMarker] ArUco marker pos={arucoPosition}, rot={arucoRotation.eulerAngles}"
+        );
+    }
+
+    public void PlaceModelMarker(Vector3 modelPosition, Quaternion modelRotation)
+    {
+        EnsureMarkers();
+        if (_modelMarker == null)
+        {
+            Debug.LogWarning("[CameraPoseDebugMarker] Failed to create model marker.");
+            return;
+        }
+
+        _modelMarker.transform.SetPositionAndRotation(modelPosition, modelRotation);
+        _modelMarker.name = modelMarkerName;
+        _modelMarker.SetActive(true);
+
+        Debug.Log(
+            $"[CameraPoseDebugMarker] Model marker pos={modelPosition}, rot={modelRotation.eulerAngles}"
         );
     }
 

@@ -8,6 +8,8 @@ public class LoadModel : MonoBehaviour
 {
     public static LoadModel initialize;
 
+    public event System.Action<RuntimeModelInstance, bool> RuntimeModelLoadCompleted;
+
     private AssetLoaderOptions _assetLoaderOptions;
     private bool _isLoading;
     private RuntimeModelInstance _pendingInstance;
@@ -25,6 +27,11 @@ public class LoadModel : MonoBehaviour
             GameObject loaderObject = new GameObject("LoadModel");
             return loaderObject.AddComponent<LoadModel>();
         }
+    }
+
+    public bool IsLoading
+    {
+        get { return _isLoading; }
     }
 
     private void Awake()
@@ -89,6 +96,7 @@ public class LoadModel : MonoBehaviour
 
     private void OnError(IContextualizedError obj)
     {
+        RuntimeModelInstance failedInstance = _pendingInstance;
         _isLoading = false;
         RuntimeModelManager manager = RuntimeModelManager.Instance;
         if (manager != null)
@@ -99,6 +107,7 @@ public class LoadModel : MonoBehaviour
 
         Debug.LogError("An error occurred while loading your Model: " + obj.GetInnerException());
         ShowFrontMessage("load_ERR_failed");
+        NotifyRuntimeModelLoadCompleted(failedInstance, false);
     }
 
     private void OnProgress(AssetLoaderContext assetLoaderContext, float progress)
@@ -109,6 +118,7 @@ public class LoadModel : MonoBehaviour
 
     private void OnMaterialsLoad(AssetLoaderContext assetLoaderContext)
     {
+        RuntimeModelInstance loadedInstance = _pendingInstance;
         _isLoading = false;
         Debug.Log("Materials loaded. Model fully loaded.");
 
@@ -147,6 +157,7 @@ public class LoadModel : MonoBehaviour
             ShowFrontMessage("runtime_model_mgr_missing");
             Destroy(game);
             ClearPendingModel();
+            NotifyRuntimeModelLoadCompleted(loadedInstance, false);
             return;
         }
 
@@ -157,6 +168,7 @@ public class LoadModel : MonoBehaviour
             Game_M.initialize.GuanBi();
         }
         ClearPendingModel();
+        NotifyRuntimeModelLoadCompleted(loadedInstance, true);
     }
 
     private void OnLoad(AssetLoaderContext assetLoaderContext)
@@ -200,6 +212,15 @@ public class LoadModel : MonoBehaviour
         if (Game_M.initialize != null)
         {
             Game_M.initialize.XianShi(message);
+        }
+    }
+
+    private void NotifyRuntimeModelLoadCompleted(RuntimeModelInstance instance, bool success)
+    {
+        System.Action<RuntimeModelInstance, bool> handler = RuntimeModelLoadCompleted;
+        if (handler != null)
+        {
+            handler.Invoke(instance, success);
         }
     }
 
