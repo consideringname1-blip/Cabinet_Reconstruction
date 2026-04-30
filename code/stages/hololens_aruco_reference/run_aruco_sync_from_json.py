@@ -22,16 +22,12 @@ from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 try:
     from aruco_common import (
-        ARUCO_LOCAL_COORDINATE_BASIS,
-        UNITY_WORLD_COORDINATE_BASIS,
         invert_pose,
         load_json_payload,
         pose_to_payload,
     )
 except ModuleNotFoundError:
     from .aruco_common import (
-        ARUCO_LOCAL_COORDINATE_BASIS,
-        UNITY_WORLD_COORDINATE_BASIS,
         invert_pose,
         load_json_payload,
         pose_to_payload,
@@ -48,10 +44,7 @@ def _write_debug(task: dict, aruco_stage: dict) -> None:
 
 def _extract_pose(pose: dict) -> tuple[np.ndarray, np.ndarray, list[float] | None]:
     position = np.asarray(pose.get("position"), dtype=np.float64)
-    quaternion = np.asarray(
-        pose.get("rotation_quaternion_xyzw") or pose.get("rotation"),
-        dtype=np.float64,
-    )
+    quaternion = np.asarray(pose.get("rotation_quaternion_xyzw"), dtype=np.float64)
     if position.shape != (3,):
         raise ValueError("pose.position must have 3 values")
     if quaternion.shape != (4,):
@@ -80,7 +73,7 @@ def sync_task_json_with_latest_reference(json_path_arg: str) -> bool:
     task = load_task_json(json_path)
     task_id = str(task.get("task_id") or "")
     startup_session_id = str((task.get("device") or {}).get("startup_session_id") or "").strip()
-    object_world = task.get("object_world") or task.get("object")
+    object_world = task.get("object_world")
     if object_world is not None:
         object_world = _minimal_pose_payload(object_world, include_scale=True)
 
@@ -125,6 +118,8 @@ def sync_task_json_with_latest_reference(json_path_arg: str) -> bool:
         return False
 
     object_world_position, object_world_rotation, object_scale = _extract_pose(object_world)
+    if object_scale is None:
+        raise ValueError("object_world.scale must have 3 values")
     marker_world_position, marker_world_rotation, _marker_scale = _extract_pose(aruco_reference)
     marker_inverse_rotation, marker_inverse_translation = invert_pose(
         marker_world_rotation,
@@ -132,13 +127,10 @@ def sync_task_json_with_latest_reference(json_path_arg: str) -> bool:
     )
     object_local_position = (marker_inverse_rotation @ object_world_position) + marker_inverse_translation
     object_local_rotation = marker_inverse_rotation @ object_world_rotation
-    object_local_scale = object_scale or [1.0, 1.0, 1.0]
-
     object_aruco = pose_to_payload(
         object_local_rotation,
         object_local_position,
-        ARUCO_LOCAL_COORDINATE_BASIS,
-        scale=object_local_scale,
+        scale=object_scale,
     )
 
     task["object_world"] = object_world

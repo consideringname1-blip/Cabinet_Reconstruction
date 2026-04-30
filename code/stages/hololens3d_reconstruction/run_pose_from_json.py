@@ -8,7 +8,6 @@ import numpy as np
 from object_alignment_common import (
     FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY,
     model_pose_canonical_rh_to_unity_camera,
-    model_pose_unity_camera_to_canonical_rh,
 )
 from pose_math import (
     quat_xyzw_to_rotation_matrix,
@@ -49,48 +48,12 @@ def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
     alignment = task.get("object_alignment") or {}
     position = np.asarray(alignment.get("camera_local_position"), dtype=np.float64)
     quat = np.asarray(alignment.get("camera_local_rotation_quaternion_xyzw"), dtype=np.float64)
-    if position.shape == (3,) and quat.shape == (4,):
-        rotation = quat_xyzw_to_rotation_matrix(quat)
-        return position.astype(np.float64), rotation.astype(np.float64)
-
-    coordinate_basis = str(alignment.get("coordinate_basis") or "")
-    if coordinate_basis == "pointcloud_input_pre_blender_import":
-        pointcloud_position = np.asarray(alignment.get("model_position"), dtype=np.float64)
-        pointcloud_quat = np.asarray(alignment.get("model_rotation_quaternion_xyzw"), dtype=np.float64)
-        if pointcloud_position.shape != (3,):
-            raise ValueError("object_alignment.model_position must have 3 values")
-        if pointcloud_quat.shape != (4,):
-            raise ValueError("object_alignment.model_rotation_quaternion_xyzw must have 4 values")
-
-        old_pointcloud_to_unity = np.array(
-            [
-                [0.0, 0.0, -1.0],
-                [0.0, 1.0, 0.0],
-                [-1.0, 0.0, 0.0],
-            ],
-            dtype=np.float64,
-        )
-        old_unity_to_model_input = np.array(
-            [
-                [0.0, 0.0, -1.0],
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-            ],
-            dtype=np.float64,
-        )
-        pointcloud_rotation = quat_xyzw_to_rotation_matrix(pointcloud_quat)
-        unity_rotation = old_pointcloud_to_unity @ pointcloud_rotation @ old_unity_to_model_input
-        unity_translation = pointcloud_position @ old_pointcloud_to_unity.T
-        canonical_rotation, canonical_translation = model_pose_unity_camera_to_canonical_rh(
-            unity_rotation,
-            unity_translation,
-        )
-        return canonical_translation.astype(np.float64), canonical_rotation.astype(np.float64)
-
-    raise ValueError(
-        "object_alignment must include camera_local_position and "
-        "camera_local_rotation_quaternion_xyzw"
-    )
+    if position.shape != (3,):
+        raise ValueError("object_alignment.camera_local_position must have 3 values")
+    if quat.shape != (4,):
+        raise ValueError("object_alignment.camera_local_rotation_quaternion_xyzw must have 4 values")
+    rotation = quat_xyzw_to_rotation_matrix(quat)
+    return position.astype(np.float64), rotation.astype(np.float64)
 
 
 def resolve_pv_camera_world_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
@@ -177,7 +140,6 @@ def build_pose_debug(task: dict) -> dict:
         },
         "pv_camera_world": {
             "pose": serialize_pose(pv_rotation, pv_position),
-            "notes": "PVCamera world pose is reconstructed from the raw HoloLens PV pose using the pipeline's legacy Z-flip conversion before composition.",
         },
         "final_object_world": {
             "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,
@@ -195,7 +157,6 @@ def main(argv: list[str]) -> int:
 
     world_pose = compute_world_pose(task)
     task["object_world"] = dict(world_pose)
-    task.pop("object", None)
     debug_section = dict(task.get("debug") or {})
     pose_debug = dict(debug_section.get("pose_transform_stages") or {})
     pose_debug["pose_stage"] = build_pose_debug(task)

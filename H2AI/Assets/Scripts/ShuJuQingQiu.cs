@@ -1061,7 +1061,7 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         JToken positionToken = poseToken["position"];
-        JToken rotationToken = poseToken["rotation_quaternion_xyzw"] ?? poseToken["rotation"];
+        JToken rotationToken = poseToken["rotation_quaternion_xyzw"];
         return TryReadVector3(positionToken, out position) && TryReadQuaternion(rotationToken, out rotation);
     }
 
@@ -1135,36 +1135,6 @@ public class ShuJuQingQiu : MonoBehaviour
 
         if (TryParsePoseToken(objectWorldToken, out position, out rotation))
         {
-            return true;
-        }
-
-        JToken objectToken = NonNullToken(jo["object"]);
-        JObject objectJ = objectToken as JObject;
-        string coordinateBasis = objectJ?["coordinate_basis"]?.ToString();
-        bool hasLegacyObjectPose = TryParsePoseToken(objectToken, out localPosition, out localRotation);
-        if (hasLegacyObjectPose && coordinateBasis == "aruco_local_x_right_y_up_z_forward")
-        {
-            if (hasResponseArucoReference)
-            {
-                position = responseArucoPosition + (responseArucoRotation * localPosition);
-                rotation = responseArucoRotation * localRotation;
-                return true;
-            }
-
-            if (hasArucoReferencePose)
-            {
-                position = arucoReferencePosition + (arucoReferenceRotation * localPosition);
-                rotation = arucoReferenceRotation * localRotation;
-                return true;
-            }
-
-            return false;
-        }
-
-        if (hasLegacyObjectPose)
-        {
-            position = localPosition;
-            rotation = localRotation;
             return true;
         }
 

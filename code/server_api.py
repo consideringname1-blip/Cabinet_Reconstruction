@@ -72,7 +72,7 @@ def _normalize_purpose(value) -> str:
 
 
 def _append_pose_fields(response: dict, task_json: dict) -> None:
-    for key in ("object", "object_world", "object_aruco", "aruco_reference", "debug"):
+    for key in ("object_world", "object_aruco", "aruco_reference", "debug"):
         value = task_json.get(key)
         response[key] = value if value else None
 
@@ -208,7 +208,19 @@ def _load_marker_pose_json(raw_json: str | None):
     if not raw_json:
         return None
     try:
-        return json.loads(raw_json)
+        loaded = json.loads(raw_json)
+        if not isinstance(loaded, dict):
+            return None
+        position = loaded.get("position")
+        rotation = loaded.get("rotation_quaternion_xyzw")
+        if not isinstance(position, list) or len(position) != 3:
+            return None
+        if not isinstance(rotation, list) or len(rotation) != 4:
+            return None
+        return {
+            "position": [float(v) for v in position],
+            "rotation_quaternion_xyzw": [float(v) for v in rotation],
+        }
     except Exception:
         return None
 
@@ -367,7 +379,6 @@ def generate_model():
                 "ip": devj.get("ip", ""),
                 "time": devj.get("time", ""),
                 "pose": devj.get("pose"),
-                "rotation": devj.get("rotation"),
                 "startup_session_id": devj.get("startup_session_id", ""),
             },
             "PVCamera": {
@@ -380,11 +391,6 @@ def generate_model():
                 "rotation_quaternion_xyzw": normalized_pv_frames[0].get("rotation_quaternion_xyzw"),
             },
             "PVCameraFrames": normalized_pv_frames,
-            "object": {
-                "position": [0, 0, 0],
-                "rotation": [0, 0, 0, 1.0],
-                "scale": [1.0, 1.0, 1.0],
-            },
         }
         if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
             out_json["DepthCamera"] = {

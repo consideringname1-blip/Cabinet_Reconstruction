@@ -45,9 +45,11 @@ def get_imported_mesh_objects() -> list:
 
 
 def _parse_blender_scale(task: dict) -> tuple[float, float, float]:
-    object_info = task.get("object_world") or task.get("object") or {}
-    scale = object_info.get("scale") or [1.0, 1.0, 1.0]
-    if len(scale) != 3:
+    object_info = task.get("object_world")
+    if not isinstance(object_info, dict):
+        raise ValueError("object_world is missing")
+    scale = object_info.get("scale")
+    if not isinstance(scale, list) or len(scale) != 3:
         raise ValueError("object_world.scale must have 3 values")
     return tuple(float(v) for v in scale)
 

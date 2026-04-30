@@ -22,12 +22,6 @@ from unity_coordinate_utils import (
 )
 
 
-ARUCO_LOCAL_COORDINATE_BASIS = "aruco_local_x_right_y_up_z_forward"
-UNITY_WORLD_COORDINATE_BASIS = "unity_world_x_right_y_up_z_forward"
-WINDOWS_POSE_TO_UNITY_TRANSFORM = "windows_spatial_to_unity_flip_z"
-OPENCV_CAMERA_TO_UNITY_TRANSFORM = "opencv_camera_to_unity_camera_flip_y"
-
-
 def default_aruco_template() -> dict[str, Any]:
     return {
         "enabled": False,
@@ -289,11 +283,10 @@ def invert_pose(rotation: np.ndarray, translation: np.ndarray) -> tuple[np.ndarr
 def pose_to_payload(
     rotation: np.ndarray,
     translation: np.ndarray,
-    coordinate_basis: str,
     *,
     scale: list[float] | None = None,
 ) -> dict[str, Any]:
-    payload = serialize_pose(rotation, translation, coordinate_basis)
+    payload = serialize_pose(rotation, translation)
     if scale is not None:
         payload["scale"] = [float(v) for v in scale]
     return payload

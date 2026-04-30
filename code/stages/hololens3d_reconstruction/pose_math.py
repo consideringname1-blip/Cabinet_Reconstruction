@@ -93,7 +93,6 @@ def make_row_transform_matrix(rotation: np.ndarray, translation: np.ndarray) -> 
 def serialize_pose(
     rotation: np.ndarray,
     translation: np.ndarray,
-    coordinate_basis: str | None = None,
 ) -> dict[str, list[float]]:
     rotation = np.asarray(rotation, dtype=np.float64)
     translation = np.asarray(translation, dtype=np.float64)

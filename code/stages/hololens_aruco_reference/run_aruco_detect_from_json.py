@@ -32,8 +32,6 @@ from task_json import (
 
 try:
     from aruco_common import (
-        ARUCO_LOCAL_COORDINATE_BASIS,
-        UNITY_WORLD_COORDINATE_BASIS,
         compose_world_pose,
         convert_cv_pose_to_unity_pose,
         ensure_raw_output_dir,
@@ -52,8 +50,6 @@ try:
     from run_aruco_sync_from_json import sync_completed_tasks_for_startup
 except ModuleNotFoundError:
     from .aruco_common import (
-        ARUCO_LOCAL_COORDINATE_BASIS,
-        UNITY_WORLD_COORDINATE_BASIS,
         compose_world_pose,
         convert_cv_pose_to_unity_pose,
         ensure_raw_output_dir,
@@ -202,14 +198,10 @@ def _estimate_marker_detection(
         "local_pose": pose_to_payload(
             local_rotation,
             local_translation,
-            ARUCO_LOCAL_COORDINATE_BASIS,
-            scale=[1.0, 1.0, 1.0],
         ),
         "world_pose": pose_to_payload(
             world_rotation,
             world_translation,
-            UNITY_WORLD_COORDINATE_BASIS,
-            scale=[1.0, 1.0, 1.0],
         ),
         "rvec": np.asarray(rvec, dtype=np.float64).reshape(3, 1),
         "tvec": np.asarray(tvec, dtype=np.float64).reshape(3, 1),
@@ -221,7 +213,7 @@ def _estimate_marker_detection(
 
 def _pose_payload_to_rt(payload: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
     position = np.asarray(payload.get("position"), dtype=np.float64)
-    quaternion = np.asarray(payload.get("rotation_quaternion_xyzw") or payload.get("rotation"), dtype=np.float64)
+    quaternion = np.asarray(payload.get("rotation_quaternion_xyzw"), dtype=np.float64)
     if position.shape != (3,) or quaternion.shape != (4,):
         raise ValueError("pose payload must include position and quaternion")
     return quat_xyzw_to_rotation_matrix(quaternion), position
@@ -237,8 +229,6 @@ def _relation_from_anchor_to_marker(anchor_detection: dict[str, Any], marker_det
     return pose_to_payload(
         relation_rotation,
         relation_translation,
-        ARUCO_LOCAL_COORDINATE_BASIS,
-        scale=[1.0, 1.0, 1.0],
     )
 
 
@@ -331,7 +321,7 @@ def main(argv: list[str]) -> int:
 
     raw_dir = ensure_raw_output_dir(task_name)
     record_path = raw_dir / "record.json"
-    legacy_annotated_path = raw_dir / "annotated.png"
+    annotated_path = raw_dir / "annotated.png"
 
     template = load_aruco_template()
     db_markers = get_enabled_aruco_markers()
@@ -354,7 +344,7 @@ def main(argv: list[str]) -> int:
         "frame_count": 0,
         "detections": [],
         "raw_record_path": normalize_path_for_storage(record_path),
-        "annotated_image_path": normalize_path_for_storage(legacy_annotated_path),
+        "annotated_image_path": normalize_path_for_storage(annotated_path),
     }
     record = {
         "task_id": task_id,
@@ -463,7 +453,7 @@ def main(argv: list[str]) -> int:
             annotated_path = raw_dir / f"annotated_{frame_index:03d}.png"
             cv2.imwrite(str(annotated_path), annotated)
             if frame_index == 0:
-                cv2.imwrite(str(legacy_annotated_path), annotated)
+                cv2.imwrite(str(annotated_path), annotated)
             aruco_stage.setdefault("frames", []).append(
                 {
                     "frame_index": frame_index,
@@ -545,7 +535,6 @@ def main(argv: list[str]) -> int:
         relation_pose = pose_to_payload(
             relation_rotation,
             relation_translation,
-            ARUCO_LOCAL_COORDINATE_BASIS,
         )
         mean_error = float(
             np.mean(
@@ -579,7 +568,6 @@ def main(argv: list[str]) -> int:
         aruco_reference = pose_to_payload(
             anchor_rotation,
             anchor_translation,
-            UNITY_WORLD_COORDINATE_BASIS,
         )
         aruco_stage["detected"] = True
         aruco_stage["matched_marker_id"] = int(ARUCO_ANCHOR_MARKER_ID)
@@ -595,7 +583,6 @@ def main(argv: list[str]) -> int:
             for candidate in anchor_candidates
         ]
         task["aruco_reference"] = aruco_reference
-        task["object"] = None
 
         if startup_session_id:
             create_aruco_reference(

@@ -26,7 +26,6 @@ from task_json import (
 )
 from unity_coordinate_utils import (
     CANONICAL_RH_TO_UNITY_BASIS,
-    UNITY_TO_CANONICAL_RH_BASIS,
 )
 
 
@@ -43,7 +42,6 @@ POINTCLOUD_EXPORT_TO_CANONICAL_RH_BASIS = np.array(
     ],
     dtype=np.float32,
 )
-CANONICAL_RH_TO_POINTCLOUD_EXPORT_BASIS = POINTCLOUD_EXPORT_TO_CANONICAL_RH_BASIS.T
 
 CANONICAL_RH_TO_BLENDER_WORLD = np.array(
     [
@@ -439,11 +437,6 @@ def pointcloud_export_to_blender_world(points: np.ndarray) -> np.ndarray:
     return canonical_rh_to_blender_world_points(points_canonical)
 
 
-def canonical_rh_to_pointcloud_export_points(points: np.ndarray) -> np.ndarray:
-    points = np.asarray(points, dtype=np.float32)
-    return (points @ CANONICAL_RH_TO_POINTCLOUD_EXPORT_BASIS.T).astype(np.float32)
-
-
 def obj_vertices_to_canonical_rh(points: np.ndarray) -> np.ndarray:
     points = np.asarray(points, dtype=np.float32)
     return (points @ MODEL_INPUT_TO_CANONICAL_RH_BASIS.T).astype(np.float32)
@@ -464,18 +457,6 @@ def model_pose_canonical_rh_to_unity_camera(
     rotation_unity = basis @ rotation_canonical @ basis
     translation_unity = basis @ translation_canonical.reshape(3, 1)
     return rotation_unity.astype(np.float32), translation_unity.reshape(3).astype(np.float32)
-
-
-def model_pose_unity_camera_to_canonical_rh(
-    rotation_unity: np.ndarray,
-    translation_unity: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    rotation_unity = np.asarray(rotation_unity, dtype=np.float32)
-    translation_unity = np.asarray(translation_unity, dtype=np.float32)
-    basis = np.asarray(UNITY_TO_CANONICAL_RH_BASIS, dtype=np.float32)
-    rotation_canonical = basis @ rotation_unity @ basis
-    translation_canonical = basis @ translation_unity.reshape(3, 1)
-    return rotation_canonical.astype(np.float32), translation_canonical.reshape(3).astype(np.float32)
 
 
 def canonical_rh_to_blender_world_points(points: np.ndarray) -> np.ndarray:
@@ -726,30 +707,6 @@ def write_binary_ply(path: Path, points: np.ndarray) -> None:
             f.write(struct.pack("<fff", float(point[0]), float(point[1]), float(point[2])))
 
 
-def read_binary_ply_points(path: Path) -> np.ndarray:
-    with path.open("rb") as f:
-        header_lines = []
-        while True:
-            line = f.readline()
-            if not line:
-                raise ValueError(f"Invalid PLY header: {path}")
-            header_lines.append(line.decode("ascii").strip())
-            if header_lines[-1] == "end_header":
-                break
-
-        vertex_count = None
-        for line in header_lines:
-            if line.startswith("element vertex "):
-                vertex_count = int(line.split()[-1])
-                break
-        if vertex_count is None:
-            raise ValueError(f"PLY vertex count missing: {path}")
-
-        data = f.read(vertex_count * 12)
-        points = np.frombuffer(data, dtype="<f4").reshape(vertex_count, 3)
-        return points.astype(np.float32)
-
-
 def read_obj_vertices(path: Path) -> np.ndarray:
     vertices = []
     with path.open("r", encoding="utf-8", errors="ignore") as f:
@@ -761,213 +718,6 @@ def read_obj_vertices(path: Path) -> np.ndarray:
     if not vertices:
         raise ValueError(f"No OBJ vertices found: {path}")
     return np.asarray(vertices, dtype=np.float32)
-
-
-def read_obj_mesh(path: Path) -> tuple[np.ndarray, list[list[int]]]:
-    vertices: list[list[float]] = []
-    faces: list[list[int]] = []
-
-    with path.open("r", encoding="utf-8", errors="ignore") as f:
-        for line in f:
-            if line.startswith("v "):
-                parts = line.strip().split()
-                if len(parts) >= 4:
-                    vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
-                continue
-            if line.startswith("f "):
-                parts = line.strip().split()[1:]
-                if len(parts) < 3:
-                    continue
-                face: list[int] = []
-                for token in parts:
-                    index_token = token.split("/")[0]
-                    if not index_token:
-                        continue
-                    raw_index = int(index_token)
-                    if raw_index > 0:
-                        face.append(raw_index - 1)
-                    else:
-                        face.append(len(vertices) + raw_index)
-                if len(face) >= 3:
-                    faces.append(face)
-
-    if not vertices:
-        raise ValueError(f"No OBJ vertices found: {path}")
-    return np.asarray(vertices, dtype=np.float32), faces
-
-
-def transform_model_vertices_to_canonical_rh_space(
-    model_vertices: np.ndarray,
-    rotation_canonical: np.ndarray,
-    translation_canonical: np.ndarray,
-    uniform_scale: float,
-) -> np.ndarray:
-    model_vertices = np.asarray(model_vertices, dtype=np.float32)
-    rotation_canonical = np.asarray(rotation_canonical, dtype=np.float32)
-    translation_canonical = np.asarray(translation_canonical, dtype=np.float32)
-    scale_value = float(uniform_scale)
-    if rotation_canonical.shape != (3, 3):
-        raise ValueError(f"rotation_canonical must be 3x3, got {rotation_canonical.shape}")
-    if translation_canonical.shape != (3,):
-        raise ValueError(
-            f"translation_canonical must have 3 values, got {translation_canonical.shape}"
-        )
-    vertices_canonical = model_vertices @ MODEL_INPUT_TO_CANONICAL_RH_BASIS.T
-    return (
-        (vertices_canonical * scale_value) @ rotation_canonical.T
-        + translation_canonical
-    ).astype(np.float32)
-
-
-def transform_model_vertices_to_unity_space(
-    model_vertices: np.ndarray,
-    rotation_unity: np.ndarray,
-    translation_unity: np.ndarray,
-    uniform_scale: float,
-) -> np.ndarray:
-    """Compatibility wrapper for older scripts; the new pipeline uses RH space."""
-    return transform_model_vertices_to_canonical_rh_space(
-        model_vertices,
-        rotation_unity,
-        translation_unity,
-        uniform_scale,
-    )
-
-
-def write_binary_scene_ply(
-    path: Path,
-    vertices: np.ndarray,
-    colors_rgb: np.ndarray,
-    faces: list[list[int]] | None = None,
-) -> None:
-    vertices = np.asarray(vertices, dtype=np.float32)
-    colors_rgb = np.asarray(colors_rgb, dtype=np.uint8)
-    faces = faces or []
-
-    if vertices.ndim != 2 or vertices.shape[1] != 3:
-        raise ValueError(f"vertices must have shape Nx3, got {vertices.shape}")
-    if colors_rgb.shape != vertices.shape:
-        raise ValueError(f"colors_rgb must match vertices shape, got {colors_rgb.shape} vs {vertices.shape}")
-
-    header = (
-        "ply\n"
-        "format binary_little_endian 1.0\n"
-        f"element vertex {len(vertices)}\n"
-        "property float x\n"
-        "property float y\n"
-        "property float z\n"
-        "property uchar red\n"
-        "property uchar green\n"
-        "property uchar blue\n"
-        f"element face {len(faces)}\n"
-        "property list uchar int vertex_indices\n"
-        "end_header\n"
-    ).encode("ascii")
-
-    with path.open("wb") as f:
-        f.write(header)
-        for point, color in zip(vertices, colors_rgb, strict=False):
-            f.write(
-                struct.pack(
-                    "<fffBBB",
-                    float(point[0]),
-                    float(point[1]),
-                    float(point[2]),
-                    int(color[0]),
-                    int(color[1]),
-                    int(color[2]),
-                )
-            )
-        for face in faces:
-            if len(face) > 255:
-                raise ValueError("PLY face vertex count cannot exceed 255")
-            f.write(struct.pack("<B", len(face)))
-            for index in face:
-                f.write(struct.pack("<i", int(index)))
-
-
-def write_transformed_obj_in_canonical_rh_space(
-    source_obj_path: Path,
-    output_obj_path: Path,
-    rotation_canonical: np.ndarray,
-    translation_canonical: np.ndarray,
-    uniform_scale: float,
-) -> None:
-    rotation_canonical = np.asarray(rotation_canonical, dtype=np.float32)
-    translation_canonical = np.asarray(translation_canonical, dtype=np.float32)
-    scale_value = float(uniform_scale)
-
-    if rotation_canonical.shape != (3, 3):
-        raise ValueError(f"rotation_canonical must be 3x3, got {rotation_canonical.shape}")
-    if translation_canonical.shape != (3,):
-        raise ValueError(
-            f"translation_canonical must have 3 values, got {translation_canonical.shape}"
-        )
-    if scale_value <= 0.0:
-        raise ValueError("uniform_scale must be positive")
-
-    output_obj_path.parent.mkdir(parents=True, exist_ok=True)
-
-    with source_obj_path.open("r", encoding="utf-8", errors="ignore") as src, output_obj_path.open(
-        "w",
-        encoding="utf-8",
-        newline="\n",
-    ) as dst:
-        dst.write("# Transformed OBJ exported in canonical right-handed camera-local coordinates.\n")
-        dst.write(
-            "# transform: uniform_scale={:.9f} translation=({:.9f}, {:.9f}, {:.9f})\n".format(
-                scale_value,
-                float(translation_canonical[0]),
-                float(translation_canonical[1]),
-                float(translation_canonical[2]),
-            )
-        )
-
-        for line in src:
-            if line.startswith("mtllib ") or line.startswith("usemtl "):
-                continue
-            if line.startswith("v "):
-                parts = line.strip().split()
-                if len(parts) < 4:
-                    continue
-                vertex_model = np.asarray([float(parts[1]), float(parts[2]), float(parts[3])], dtype=np.float32)
-                vertex_canonical = vertex_model @ MODEL_INPUT_TO_CANONICAL_RH_BASIS.T
-                transformed = (
-                    (vertex_canonical * scale_value) @ rotation_canonical.T
-                    + translation_canonical
-                )
-                dst.write("v {:.9f} {:.9f} {:.9f}\n".format(*[float(v) for v in transformed]))
-                continue
-            if line.startswith("vn "):
-                parts = line.strip().split()
-                if len(parts) < 4:
-                    continue
-                normal_model = np.asarray([float(parts[1]), float(parts[2]), float(parts[3])], dtype=np.float32)
-                normal_canonical = normal_model @ MODEL_INPUT_TO_CANONICAL_RH_BASIS.T
-                rotated = normal_canonical @ rotation_canonical.T
-                length = float(np.linalg.norm(rotated))
-                if length > 1e-8:
-                    rotated = rotated / length
-                dst.write("vn {:.9f} {:.9f} {:.9f}\n".format(*[float(v) for v in rotated]))
-                continue
-            dst.write(line)
-
-
-def write_transformed_obj_in_unity_space(
-    source_obj_path: Path,
-    output_obj_path: Path,
-    rotation_unity: np.ndarray,
-    translation_unity: np.ndarray,
-    uniform_scale: float,
-) -> None:
-    """Compatibility wrapper for older scripts; the new pipeline uses RH space."""
-    write_transformed_obj_in_canonical_rh_space(
-        source_obj_path,
-        output_obj_path,
-        rotation_unity,
-        translation_unity,
-        uniform_scale,
-    )
 
 
 def resolve_blender_path(cli_arg: str | None = None) -> Path:
