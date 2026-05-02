@@ -37,10 +37,14 @@ from task_db import (
     create_task as create_task_record,
     get_completed_tasks_for_startup,
     get_latest_completed_task,
+    get_task_stage_runs,
     get_task_by_task_id,
     get_unfinished_tasks,
     get_unsynced_completed_tasks,
     initialize_task_table,
+    mark_task_stage_completed,
+    mark_task_stage_failed,
+    mark_task_stage_started,
     update_task_status,
 )
 from task_json import (
@@ -262,7 +266,17 @@ def _process_one_task(task_id: str) -> None:
     for index in range(start_index, len(stage_order)):
         stage_name = stage_order[index]
         update_task_status(task_id, stage_name)
-        STAGE_RUNNERS[stage_name](json_path)
+        mark_task_stage_started(task_id, stage_name)
+        try:
+            STAGE_RUNNERS[stage_name](json_path)
+            mark_task_stage_completed(task_id, stage_name)
+        except Exception as exc:
+            if isinstance(exc, subprocess.CalledProcessError):
+                error_message = exc.stderr or exc.stdout or str(exc)
+            else:
+                error_message = str(exc)
+            mark_task_stage_failed(task_id, stage_name, error_message=error_message)
+            raise
 
         if stage_name == "aruco_detect":
             if purpose == PURPOSE_ARUCO_REFERENCE:
@@ -363,6 +377,7 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
 
     task_record["task_json"] = task_json
     task_record["error"] = task_record.get("error_message")
+    task_record["stage_runs"] = get_task_stage_runs(task_id)
     task_record["outputs"] = {
         "instantmesh": task_json.get("InstantMesh") or {},
         "runtime_mesh": task_json.get("RuntimeMesh") or {},
@@ -429,6 +444,7 @@ def get_latest_completed_task_data(
 
     task_record["task_json"] = task_json
     task_record["error"] = task_record.get("error_message")
+    task_record["stage_runs"] = get_task_stage_runs(str(task_record.get("task_id") or ""))
     task_record["outputs"] = {
         "instantmesh": task_json.get("InstantMesh") or {},
         "runtime_mesh": task_json.get("RuntimeMesh") or {},

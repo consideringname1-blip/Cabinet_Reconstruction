@@ -1,6 +1,7 @@
 import json
 import re
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +17,7 @@ from task_json import normalize_path_for_storage
 
 
 TABLE_NAME = "tasks"
+STAGE_RUN_TABLE = "task_stage_runs"
 ARUCO_REFERENCE_TABLE = "aruco_references"
 ARUCO_MARKER_TABLE = "aruco_markers"
 ARUCO_MARKER_RELATION_TABLE = "aruco_marker_relations"
@@ -30,6 +32,7 @@ ALLOWED_STATUSES = (
     "icpalignment",
     "pose",
     "aruco_sync",
+    "runtime_mesh",
     "blender",
     "completed",
     "aruco_completed",
@@ -48,6 +51,10 @@ def _row_to_dict(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
     if row is None:
         return None
     return dict(row)
+
+
+def _utc_now_text() -> str:
+    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="milliseconds")
 
 
 def _status_list_sql() -> str:
@@ -83,6 +90,25 @@ def _create_aruco_reference_table_sql() -> str:
             marker_pose_json TEXT NOT NULL,
             raw_record_path TEXT NOT NULL,
             config_snapshot_json TEXT NOT NULL
+        )
+    """
+
+
+def _create_stage_run_table_sql() -> str:
+    return f"""
+        CREATE TABLE {STAGE_RUN_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            stage_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running'
+                CHECK (status IN ('running', 'completed', 'failed')),
+            started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT,
+            duration_ms INTEGER,
+            error_message TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(task_id, stage_name)
         )
     """
 
@@ -386,6 +412,15 @@ def initialize_task_table() -> None:
                 """
             )
 
+        if _table_sql(conn, STAGE_RUN_TABLE) is None:
+            conn.execute(_create_stage_run_table_sql())
+            conn.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{STAGE_RUN_TABLE}_task
+                ON {STAGE_RUN_TABLE} (task_id)
+                """
+            )
+
         if _table_sql(conn, ARUCO_MARKER_TABLE) is None:
             conn.execute(_create_aruco_marker_table_sql())
         if _table_sql(conn, ARUCO_MARKER_RELATION_TABLE) is None:
@@ -525,6 +560,97 @@ def upsert_aruco_marker_relation(
             (anchor_marker_id, marker_id),
         ).fetchone()
     return dict(row)
+
+
+def mark_task_stage_started(task_id: str, stage_name: str) -> None:
+    initialize_task_table()
+    task_id = str(task_id)
+    stage_name = str(stage_name)
+    now = _utc_now_text()
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {STAGE_RUN_TABLE} (
+                task_id,
+                stage_name,
+                status,
+                started_at,
+                completed_at,
+                duration_ms,
+                error_message,
+                updated_at
+            )
+            VALUES (?, ?, 'running', ?, NULL, NULL, NULL, ?)
+            ON CONFLICT(task_id, stage_name) DO UPDATE SET
+                status = 'running',
+                started_at = excluded.started_at,
+                completed_at = NULL,
+                duration_ms = NULL,
+                error_message = NULL,
+                updated_at = excluded.updated_at
+            """,
+            (task_id, stage_name, now, now),
+        )
+        conn.commit()
+
+
+def mark_task_stage_completed(task_id: str, stage_name: str) -> None:
+    initialize_task_table()
+    task_id = str(task_id)
+    stage_name = str(stage_name)
+    now = _utc_now_text()
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            UPDATE {STAGE_RUN_TABLE}
+            SET
+                status = 'completed',
+                completed_at = ?,
+                duration_ms = CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER),
+                error_message = NULL,
+                updated_at = ?
+            WHERE task_id = ? AND stage_name = ?
+            """,
+            (now, now, now, task_id, stage_name),
+        )
+        conn.commit()
+
+
+def mark_task_stage_failed(task_id: str, stage_name: str, error_message: str | None = None) -> None:
+    initialize_task_table()
+    task_id = str(task_id)
+    stage_name = str(stage_name)
+    now = _utc_now_text()
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            UPDATE {STAGE_RUN_TABLE}
+            SET
+                status = 'failed',
+                completed_at = ?,
+                duration_ms = CAST((julianday(?) - julianday(started_at)) * 86400000 AS INTEGER),
+                error_message = ?,
+                updated_at = ?
+            WHERE task_id = ? AND stage_name = ?
+            """,
+            (now, now, error_message, now, task_id, stage_name),
+        )
+        conn.commit()
+
+
+def get_task_stage_runs(task_id: str) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {STAGE_RUN_TABLE}
+            WHERE task_id = ?
+            ORDER BY started_at ASC, id ASC
+            """,
+            (str(task_id),),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def get_status_by_task_id(task_id: str) -> Optional[str]:

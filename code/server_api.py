@@ -144,6 +144,7 @@ def _build_completed_task_response(task_data: dict) -> dict:
         "task_id": task_data.get("task_id"),
         "purpose": (task_data.get("task_json") or {}).get("purpose"),
         "terminal": True,
+        "stage_runs": task_data.get("stage_runs") or [],
     }
     task_json = task_data.get("task_json") or {}
 
@@ -223,6 +224,7 @@ def _build_aruco_completed_task_response(task_data: dict) -> dict:
         "task_id": task_data.get("task_id"),
         "purpose": (task_data.get("task_json") or {}).get("purpose"),
         "terminal": True,
+        "stage_runs": task_data.get("stage_runs") or [],
     }
     _append_pose_fields(response, task_data.get("task_json") or {})
     return response
@@ -448,7 +450,11 @@ def check_task(task_id):
             return jsonify({"error": "Invalid task ID"}), 404
 
         status = task_data["status"]
-        response = {"status": status}
+        response = {
+            "status": status,
+            "task_id": task_data.get("task_id"),
+            "stage_runs": task_data.get("stage_runs") or [],
+        }
 
         if status == "completed":
             response = _build_completed_task_response(task_data)
