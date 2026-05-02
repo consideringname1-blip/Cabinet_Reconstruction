@@ -21,6 +21,13 @@ STAGE_RUN_TABLE = "task_stage_runs"
 ARUCO_REFERENCE_TABLE = "aruco_references"
 ARUCO_MARKER_TABLE = "aruco_markers"
 ARUCO_MARKER_RELATION_TABLE = "aruco_marker_relations"
+MODEL_BOUNDS_TABLE = "model_bounds"
+MODEL_BOUNDS_STATUSES = (
+    "pending",
+    "ready",
+    "failed",
+    "pending_reference",
+)
 ALLOWED_STATUSES = (
     "pending",
     "hololens2depth",
@@ -34,6 +41,7 @@ ALLOWED_STATUSES = (
     "aruco_sync",
     "runtime_mesh",
     "blender",
+    "model_bounds",
     "completed",
     "aruco_completed",
     "failed",
@@ -44,6 +52,7 @@ TERMINAL_STATUSES = ("completed", "aruco_completed", "failed")
 def _get_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DATABASE_PATH)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout = 5000")
     return conn
 
 
@@ -142,6 +151,34 @@ def _create_aruco_marker_relation_table_sql() -> str:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (anchor_marker_id, marker_id)
+        )
+    """
+
+
+def _model_bounds_status_list_sql() -> str:
+    return ", ".join(f"'{status}'" for status in MODEL_BOUNDS_STATUSES)
+
+
+def _create_model_bounds_table_sql() -> str:
+    return f"""
+        CREATE TABLE {MODEL_BOUNDS_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL UNIQUE,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ({_model_bounds_status_list_sql()})),
+            uploaded_at TEXT,
+            model_name TEXT,
+            fbx_name TEXT,
+            coordinate_space TEXT NOT NULL DEFAULT 'aruco',
+            aruco_reference_task_id TEXT,
+            object_aruco_json TEXT,
+            aabb_min_aruco_json TEXT,
+            aabb_max_aruco_json TEXT,
+            corners_aruco_json TEXT,
+            source_model_path TEXT,
+            error_message TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """
 
@@ -398,6 +435,8 @@ def _sync_marker_registry_from_reference_folder(conn: sqlite3.Connection) -> int
 
 def initialize_task_table() -> None:
     with _get_connection() as conn:
+        conn.execute("PRAGMA journal_mode=WAL")
+
         if _table_sql(conn, TABLE_NAME) is None:
             conn.execute(_create_task_table_sql())
         elif _task_table_needs_migration(conn):
@@ -429,6 +468,21 @@ def initialize_task_table() -> None:
                 f"""
                 CREATE INDEX IF NOT EXISTS idx_{ARUCO_MARKER_RELATION_TABLE}_marker
                 ON {ARUCO_MARKER_RELATION_TABLE} (marker_id)
+                """
+            )
+
+        if _table_sql(conn, MODEL_BOUNDS_TABLE) is None:
+            conn.execute(_create_model_bounds_table_sql())
+            conn.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{MODEL_BOUNDS_TABLE}_status_uploaded
+                ON {MODEL_BOUNDS_TABLE} (status, uploaded_at)
+                """
+            )
+            conn.execute(
+                f"""
+                CREATE INDEX IF NOT EXISTS idx_{MODEL_BOUNDS_TABLE}_task
+                ON {MODEL_BOUNDS_TABLE} (task_id)
                 """
             )
 
@@ -931,3 +985,135 @@ def get_latest_aruco_reference(startup_session_id: str) -> Optional[Dict[str, An
             (startup_session_id,),
         ).fetchone()
     return _row_to_dict(row)
+
+
+def _dump_optional_json(value: Any) -> str | None:
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False)
+
+
+def upsert_model_bounds(
+    *,
+    task_id: str,
+    status: str,
+    uploaded_at: str | None = None,
+    model_name: str | None = None,
+    fbx_name: str | None = None,
+    coordinate_space: str = "aruco",
+    aruco_reference_task_id: str | None = None,
+    object_aruco_json: Any = None,
+    aabb_min_aruco_json: Any = None,
+    aabb_max_aruco_json: Any = None,
+    corners_aruco_json: Any = None,
+    source_model_path: str | None = None,
+    error_message: str | None = None,
+) -> Dict[str, Any]:
+    if status not in MODEL_BOUNDS_STATUSES:
+        raise ValueError(f"Invalid model bounds status: {status}")
+
+    initialize_task_table()
+    now = _utc_now_text()
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {MODEL_BOUNDS_TABLE} (
+                task_id,
+                status,
+                uploaded_at,
+                model_name,
+                fbx_name,
+                coordinate_space,
+                aruco_reference_task_id,
+                object_aruco_json,
+                aabb_min_aruco_json,
+                aabb_max_aruco_json,
+                corners_aruco_json,
+                source_model_path,
+                error_message,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(task_id) DO UPDATE SET
+                status = excluded.status,
+                uploaded_at = excluded.uploaded_at,
+                model_name = excluded.model_name,
+                fbx_name = excluded.fbx_name,
+                coordinate_space = excluded.coordinate_space,
+                aruco_reference_task_id = excluded.aruco_reference_task_id,
+                object_aruco_json = excluded.object_aruco_json,
+                aabb_min_aruco_json = excluded.aabb_min_aruco_json,
+                aabb_max_aruco_json = excluded.aabb_max_aruco_json,
+                corners_aruco_json = excluded.corners_aruco_json,
+                source_model_path = excluded.source_model_path,
+                error_message = excluded.error_message,
+                updated_at = excluded.updated_at
+            """,
+            (
+                str(task_id),
+                status,
+                uploaded_at,
+                model_name,
+                fbx_name,
+                coordinate_space,
+                aruco_reference_task_id,
+                _dump_optional_json(object_aruco_json),
+                _dump_optional_json(aabb_min_aruco_json),
+                _dump_optional_json(aabb_max_aruco_json),
+                _dump_optional_json(corners_aruco_json),
+                source_model_path,
+                error_message,
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            f"SELECT * FROM {MODEL_BOUNDS_TABLE} WHERE task_id = ?",
+            (str(task_id),),
+        ).fetchone()
+    return dict(row)
+
+
+def get_latest_ready_model_bounds(limit: int = 5) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    limit = max(1, min(int(limit or 5), 50))
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {MODEL_BOUNDS_TABLE}
+            WHERE status = 'ready'
+            ORDER BY uploaded_at DESC, id DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_ready_model_bounds_in_range(
+    start: str,
+    end: str,
+    *,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    start = str(start or "").strip()
+    end = str(end or "").strip()
+    if not start or not end:
+        raise ValueError("start and end are required")
+    limit = max(1, min(int(limit or 50), 200))
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {MODEL_BOUNDS_TABLE}
+            WHERE status = 'ready'
+                AND uploaded_at >= ?
+                AND uploaded_at <= ?
+            ORDER BY uploaded_at DESC, id DESC
+            LIMIT ?
+            """,
+            (start, end, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]

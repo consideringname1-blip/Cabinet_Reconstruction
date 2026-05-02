@@ -1255,6 +1255,112 @@ public class ShuJuQingQiu : MonoBehaviour
 
         return true;
     }
+
+    JObject BuildSpatialQueryModelInstance(JObject modelJ)
+    {
+        if (modelJ == null)
+        {
+            return null;
+        }
+
+        string taskId = modelJ["task_id"]?.ToString() ?? "";
+        string fbxUrl = modelJ["fbx_url"]?.ToString();
+        if (string.IsNullOrEmpty(fbxUrl))
+        {
+            fbxUrl = modelJ["download_urls"]?["fbx"]?.ToString();
+        }
+        if (string.IsNullOrEmpty(fbxUrl))
+        {
+            return null;
+        }
+
+        string modelKey = modelJ["model_key"]?.ToString();
+        if (string.IsNullOrEmpty(modelKey))
+        {
+            modelKey = string.IsNullOrEmpty(taskId) ? fbxUrl : taskId;
+        }
+
+        JObject modelInstance = new JObject
+        {
+            ["model_key"] = modelKey,
+            ["task_id"] = taskId,
+            ["fbx_url"] = fbxUrl,
+        };
+
+        JToken objectWorld = NonNullToken(modelJ["object_world"]);
+        JToken objectAruco = NonNullToken(modelJ["object_aruco"]);
+        JToken arucoReference = NonNullToken(modelJ["aruco_reference"]);
+        if (objectWorld != null)
+        {
+            modelInstance["object_world"] = objectWorld.DeepClone();
+        }
+        if (objectAruco != null)
+        {
+            modelInstance["object_aruco"] = objectAruco.DeepClone();
+        }
+        if (arucoReference != null)
+        {
+            modelInstance["aruco_reference"] = arucoReference.DeepClone();
+        }
+
+        return modelInstance;
+    }
+
+    public bool DownloadRuntimeModelFromSpatialQueryModel(JObject modelJ)
+    {
+        if (modelJ == null)
+        {
+            ShowFrontMessage("spatial_query_ERR_missing_model");
+            return false;
+        }
+
+        JObject wrapper = new JObject
+        {
+            ["status"] = "completed",
+            ["task_id"] = modelJ["task_id"]?.ToString() ?? "",
+        };
+
+        JToken modelInstanceToken = NonNullToken(modelJ["model_instance"]);
+        JObject modelInstance = modelInstanceToken as JObject ?? BuildSpatialQueryModelInstance(modelJ);
+        if (modelInstance == null)
+        {
+            ShowFrontMessage("download_ERR_missing_model_instance");
+            return false;
+        }
+        wrapper["model_instance"] = modelInstance.DeepClone();
+
+        JToken objectWorld = NonNullToken(modelJ["object_world"]);
+        JToken objectAruco = NonNullToken(modelJ["object_aruco"]);
+        JToken arucoReference = NonNullToken(modelJ["aruco_reference"]);
+        JToken imageUrl = NonNullToken(modelJ["download_urls"]?["image"]);
+        if (objectWorld != null)
+        {
+            wrapper["object_world"] = objectWorld.DeepClone();
+        }
+        if (objectAruco != null)
+        {
+            wrapper["object_aruco"] = objectAruco.DeepClone();
+        }
+        if (arucoReference != null)
+        {
+            wrapper["aruco_reference"] = arucoReference.DeepClone();
+        }
+        if (imageUrl != null)
+        {
+            wrapper["image_url"] = imageUrl.ToString();
+        }
+
+        pendingModelShouldPlaceDebugMarkers = false;
+        if (!ApplyCompletedTaskResponse(wrapper, "SPATIAL", false, false))
+        {
+            return false;
+        }
+
+        task_id = wrapper["task_id"]?.ToString();
+        DownloadPendingRuntimeModel(false, 0);
+        return true;
+    }
+
     private void OnRequestJieGuo(HTTPRequest request, HTTPResponse response)
     {
         CheckPollRequest pollRequest = request.Tag as CheckPollRequest;

@@ -225,6 +225,13 @@ public class RuntimeModelManager : MonoBehaviour
         }
     }
 
+    public bool TryGetCurrentArucoReference(out Vector3 position, out Quaternion rotation)
+    {
+        position = _currentArucoReferencePosition;
+        rotation = _currentArucoReferenceRotation;
+        return _hasCurrentArucoReference;
+    }
+
     public bool TryResolveWorldPose(RuntimeModelPoseData pose, out Vector3 position, out Quaternion rotation)
     {
         position = Vector3.zero;

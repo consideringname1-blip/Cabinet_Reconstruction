@@ -32,8 +32,11 @@ from task_worker import (
 from task_db import (
     get_enabled_aruco_markers,
     get_latest_aruco_reference,
+    get_latest_ready_model_bounds,
+    get_ready_model_bounds_in_range,
     sync_marker_registry_from_reference_folder,
 )
+from model_bounds import decode_model_bounds_row, latest_bounds_for_ray, range_bounds_for_ray
 from task_json import save_task_json
 from unity_coordinate_utils import convert_hololens_pv_pose_matrix_to_unity_pose_components
 
@@ -95,6 +98,99 @@ def _build_model_instance(task_data: dict, task_json: dict, fbx_url: str) -> dic
         "object_aruco": task_json.get("object_aruco") or None,
         "aruco_reference": task_json.get("aruco_reference") or None,
     }
+
+
+def _url_for_file_if_present(folder: str, filename: str | None, file_path) -> str | None:
+    if not filename or not file_path or not file_path.exists():
+        return None
+    host = request.host_url.rstrip("/")
+    return f"{host}/files/{folder}/{filename}"
+
+
+def _build_bounds_download_urls(task_json: dict, fbx_name: str | None) -> dict:
+    instantmesh_info = task_json.get("InstantMesh") or {}
+    runtime_mesh_info = task_json.get("RuntimeMesh") or {}
+    urls = {}
+
+    mesh_name = instantmesh_info.get("mesh")
+    mtl_name = instantmesh_info.get("mtl")
+    image_name = instantmesh_info.get("image")
+    runtime_mesh_name = runtime_mesh_info.get("mesh")
+    runtime_mtl_name = runtime_mesh_info.get("mtl")
+    runtime_image_name = runtime_mesh_info.get("image")
+
+    for key, folder, filename, path in (
+        ("mesh", "meshes", mesh_name, INSTANTMESH_OUTPUT_MESHES / mesh_name if mesh_name else None),
+        ("mtl", "meshes", mtl_name, INSTANTMESH_OUTPUT_MESHES / mtl_name if mtl_name else None),
+        ("image", "meshes", image_name, INSTANTMESH_OUTPUT_MESHES / image_name if image_name else None),
+        (
+            "runtime_mesh",
+            "runtime_meshes",
+            runtime_mesh_name,
+            RUNTIME_MESH_OUTPUT_ROOT / runtime_mesh_name if runtime_mesh_name else None,
+        ),
+        (
+            "runtime_mtl",
+            "runtime_meshes",
+            runtime_mtl_name,
+            RUNTIME_MESH_OUTPUT_ROOT / runtime_mtl_name if runtime_mtl_name else None,
+        ),
+        (
+            "runtime_image",
+            "runtime_meshes",
+            runtime_image_name,
+            RUNTIME_MESH_OUTPUT_ROOT / runtime_image_name if runtime_image_name else None,
+        ),
+        ("fbx", "fbx", fbx_name, BLENDER_FBX_DIR / fbx_name if fbx_name else None),
+    ):
+        url = _url_for_file_if_present(folder, filename, path)
+        if url:
+            urls[key] = url
+
+    return urls
+
+
+def _build_model_bounds_response(row: dict, hit_result: dict | None = None) -> dict:
+    decoded = decode_model_bounds_row(row)
+    task_id = str(decoded.get("task_id") or "")
+    task_data = get_task(task_id) if task_id else None
+    task_json = (task_data or {}).get("task_json") or {}
+    fbx_name = decoded.get("fbx_name") or (task_json.get("Blender") or {}).get("fbx")
+    object_aruco = decoded.get("object_aruco") or task_json.get("object_aruco") or None
+    download_urls = _build_bounds_download_urls(task_json, fbx_name)
+    fbx_url = download_urls.get("fbx")
+
+    model = {
+        "id": decoded.get("id"),
+        "task_id": task_id,
+        "model_name": decoded.get("model_name"),
+        "fbx_name": fbx_name,
+        "uploaded_at": decoded.get("uploaded_at"),
+        "coordinate_space": decoded.get("coordinate_space") or "aruco",
+        "aruco_reference_task_id": decoded.get("aruco_reference_task_id"),
+        "object_aruco": object_aruco,
+        "aabb_min_aruco": decoded.get("aabb_min_aruco"),
+        "aabb_max_aruco": decoded.get("aabb_max_aruco"),
+        "corners_aruco": decoded.get("corners_aruco"),
+        "source_model_path": decoded.get("source_model_path"),
+        "download_urls": download_urls,
+    }
+    if fbx_url:
+        model["fbx_url"] = fbx_url
+        model["model_instance"] = {
+            "model_key": _build_model_key(task_id, fbx_url),
+            "task_id": task_id,
+            "fbx_url": fbx_url,
+            "object_world": task_json.get("object_world") or None,
+            "object_aruco": object_aruco,
+            "aruco_reference": None,
+        }
+
+    if hit_result:
+        model["hit_distance_m"] = hit_result.get("hit_distance_m")
+        model["hit_point_aruco"] = hit_result.get("hit_point_aruco")
+
+    return model
 
 
 def _sanitize_ahat_depth_png(depth_png_bytes: bytes) -> tuple[bytes, dict]:
@@ -260,6 +356,10 @@ def index():
                 "/check/<task_id>",
                 "/check?task_id=<task_id>",
                 "/latest-completed?history_offset=<0-4>",
+                "/model-bounds/latest?limit=5",
+                "/model-bounds/range?start=<uploaded_at>&end=<uploaded_at>",
+                "/spatial-query/ray",
+                "/spatial-query/ray-range",
                 "/aruco/markers",
                 "/aruco/markers/sync",
                 "/files/<folder>/<filename>",
@@ -568,6 +668,106 @@ def latest_completed_task():
     except Exception as exc:
         print(f"Error in latest_completed_task: {exc}")
         return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/model-bounds/latest", methods=["GET"], strict_slashes=False)
+def model_bounds_latest():
+    try:
+        limit = max(1, request.args.get("limit", default=5, type=int) or 5)
+        rows = get_latest_ready_model_bounds(limit)
+        return jsonify(
+            {
+                "success": True,
+                "count": len(rows),
+                "bounds": [_build_model_bounds_response(row) for row in rows],
+            }
+        )
+    except Exception as exc:
+        print(f"Error in model_bounds_latest: {exc}")
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/model-bounds/range", methods=["GET"], strict_slashes=False)
+def model_bounds_range():
+    try:
+        start = str(request.args.get("start") or "").strip()
+        end = str(request.args.get("end") or "").strip()
+        limit = max(1, request.args.get("limit", default=50, type=int) or 50)
+        rows = get_ready_model_bounds_in_range(start, end, limit=limit)
+        return jsonify(
+            {
+                "success": True,
+                "count": len(rows),
+                "start": start,
+                "end": end,
+                "bounds": [_build_model_bounds_response(row) for row in rows],
+            }
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        print(f"Error in model_bounds_range: {exc}")
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/spatial-query/ray", methods=["POST"], strict_slashes=False)
+def spatial_query_ray():
+    try:
+        payload = request.get_json(silent=True) or {}
+        _rows, result = latest_bounds_for_ray(payload)
+        if not result.get("hit"):
+            return jsonify(
+                {
+                    "success": True,
+                    "hit": False,
+                    "candidates_checked": result.get("candidates_checked", 0),
+                    "max_distance_m": result.get("max_distance_m"),
+                }
+            )
+
+        return jsonify(
+            {
+                "success": True,
+                "hit": True,
+                "candidates_checked": result.get("candidates_checked", 0),
+                "model": _build_model_bounds_response(result["row"], result),
+            }
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        print(f"Error in spatial_query_ray: {exc}")
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/spatial-query/ray-range", methods=["POST"], strict_slashes=False)
+def spatial_query_ray_range():
+    try:
+        payload = request.get_json(silent=True) or {}
+        _rows, result = range_bounds_for_ray(payload)
+        if not result.get("hit"):
+            return jsonify(
+                {
+                    "success": True,
+                    "hit": False,
+                    "candidates_checked": result.get("candidates_checked", 0),
+                    "max_distance_m": result.get("max_distance_m"),
+                }
+            )
+
+        return jsonify(
+            {
+                "success": True,
+                "hit": True,
+                "candidates_checked": result.get("candidates_checked", 0),
+                "model": _build_model_bounds_response(result["row"], result),
+            }
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        print(f"Error in spatial_query_ray_range: {exc}")
+        return jsonify({"success": False, "error": str(exc)}), 500
 
 
 @app.route("/files/<path:folder>/<filename>", strict_slashes=False)

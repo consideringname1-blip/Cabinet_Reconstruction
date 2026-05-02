@@ -28,23 +28,7 @@
         LOD 200
 
         CGPROGRAM
-#if _TRANSPARENCY_FADE
-	#if _TYPE_STANDARD
-		#pragma surface surf Standard fullforwardshadows alpha:fade 
-	#elif _TYPE_SPECULAR
-		#pragma surface surf StandardSpecular fullforwardshadows alpha:fade 
-	#else
-		#pragma surface surf Standard fullforwardshadows alpha:fade 
-	#endif
-#else
-	#if _TYPE_STANDARD
-		#pragma surface surf Standard fullforwardshadows alpha:blend 
-	#elif _TYPE_SPECULAR
-		#pragma surface surf StandardSpecular fullforwardshadows alpha:blend 
-	#else
-		#pragma surface surf Standard fullforwardshadows alpha:blend 
-	#endif
-#endif
+		#pragma surface surf Standard fullforwardshadows alpha:blend
         #pragma target 3.0
 
         struct Input

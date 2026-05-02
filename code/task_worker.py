@@ -25,6 +25,8 @@ from config import (
     INSTANTMESH_STAGE_RUN,
     MODELSCALE_STAGE_PY,
     MODELSCALE_STAGE_RUN,
+    MODEL_BOUNDS_STAGE_PY,
+    MODEL_BOUNDS_STAGE_RUN,
     POSE_STAGE_PY,
     POSE_STAGE_RUN,
     RUNTIME_MESH_STAGE_PY,
@@ -66,6 +68,7 @@ STAGE_ORDER = [
     "aruco_sync",
     "runtime_mesh",
     "blender",
+    "model_bounds",
 ]
 
 PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction"
@@ -212,6 +215,15 @@ def _run_blender(json_path: Path) -> None:
     )
 
 
+def _run_model_bounds(json_path: Path) -> None:
+    _run_python_script(
+        python_path=MODEL_BOUNDS_STAGE_PY,
+        script_path=MODEL_BOUNDS_STAGE_RUN,
+        json_path=json_path,
+        cwd=MODEL_BOUNDS_STAGE_RUN.parent,
+    )
+
+
 STAGE_RUNNERS = {
     "hololens2depth": _run_hololens2depth,
     "aruco_detect": _run_aruco_detect,
@@ -224,6 +236,7 @@ STAGE_RUNNERS = {
     "aruco_sync": _run_aruco_sync,
     "runtime_mesh": _run_runtime_mesh,
     "blender": _run_blender,
+    "model_bounds": _run_model_bounds,
 }
 
 
@@ -398,11 +411,13 @@ def _sync_completed_tasks_for_startup(startup_session_id: str | None = None) -> 
         if not json_path:
             continue
         try:
-            _run_aruco_sync(resolve_task_json_path(json_path))
+            resolved_json_path = resolve_task_json_path(json_path)
+            _run_aruco_sync(resolved_json_path)
+            _run_model_bounds(resolved_json_path)
             synced_count += 1
         except Exception as exc:
             print(
-                f"[worker] failed to sync completed task {task_row.get('task_id')} to ArUco reference: {exc}"
+                f"[worker] failed to sync completed task {task_row.get('task_id')} to ArUco reference/model bounds: {exc}"
             )
     return synced_count
 
