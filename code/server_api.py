@@ -18,6 +18,7 @@ from config import (
     FOLDER_MAP,
     INSTANTMESH_OUTPUT_MESHES,
     INSTANTMESH_OUTPUT_VIDEOS,
+    RUNTIME_MESH_OUTPUT_ROOT,
     UPLOAD_FOLDER,
 )
 from task_worker import (
@@ -147,12 +148,16 @@ def _build_completed_task_response(task_data: dict) -> dict:
     task_json = task_data.get("task_json") or {}
 
     instantmesh_info = task_json.get("InstantMesh") or {}
+    runtime_mesh_info = task_json.get("RuntimeMesh") or {}
     blender_info = task_json.get("Blender") or {}
 
     mesh_name = instantmesh_info.get("mesh")
     mtl_name = instantmesh_info.get("mtl")
     image_name = instantmesh_info.get("image")
     video_name = instantmesh_info.get("video")
+    runtime_mesh_name = runtime_mesh_info.get("mesh")
+    runtime_mtl_name = runtime_mesh_info.get("mtl")
+    runtime_image_name = runtime_mesh_info.get("image")
     fbx_name = blender_info.get("fbx")
 
     _append_pose_fields(response, task_json)
@@ -161,6 +166,9 @@ def _build_completed_task_response(task_data: dict) -> dict:
     mtl_path = INSTANTMESH_OUTPUT_MESHES / mtl_name if mtl_name else None
     image_path = INSTANTMESH_OUTPUT_MESHES / image_name if image_name else None
     video_path = INSTANTMESH_OUTPUT_VIDEOS / video_name if video_name else None
+    runtime_mesh_path = RUNTIME_MESH_OUTPUT_ROOT / runtime_mesh_name if runtime_mesh_name else None
+    runtime_mtl_path = RUNTIME_MESH_OUTPUT_ROOT / runtime_mtl_name if runtime_mtl_name else None
+    runtime_image_path = RUNTIME_MESH_OUTPUT_ROOT / runtime_image_name if runtime_image_name else None
     fbx_path = BLENDER_FBX_DIR / fbx_name if fbx_name else None
 
     if not mesh_path or not mesh_path.exists():
@@ -185,6 +193,22 @@ def _build_completed_task_response(task_data: dict) -> dict:
     )
     if video_path and video_path.exists():
         response["video_url"] = f"{host}/files/videos/{video_name}"
+    if (
+        runtime_mesh_path
+        and runtime_mesh_path.exists()
+        and runtime_mtl_path
+        and runtime_mtl_path.exists()
+        and runtime_image_path
+        and runtime_image_path.exists()
+    ):
+        response.update(
+            {
+                "runtime_mesh_url": f"{host}/files/runtime_meshes/{runtime_mesh_name}",
+                "runtime_mtl_url": f"{host}/files/runtime_meshes/{runtime_mtl_name}",
+                "runtime_image_url": f"{host}/files/runtime_meshes/{runtime_image_name}",
+                "runtime_mesh": runtime_mesh_info,
+            }
+        )
     if fbx_path and fbx_path.exists():
         fbx_url = f"{host}/files/fbx/{fbx_name}"
         response["fbx_url"] = fbx_url

@@ -27,6 +27,8 @@ from config import (
     MODELSCALE_STAGE_RUN,
     POSE_STAGE_PY,
     POSE_STAGE_RUN,
+    RUNTIME_MESH_STAGE_PY,
+    RUNTIME_MESH_STAGE_RUN,
     SAM3_BOX_MASK_RUN,
     SAM3_DIR,
     SAM3_PY,
@@ -58,6 +60,7 @@ STAGE_ORDER = [
     "icpalignment",
     "pose",
     "aruco_sync",
+    "runtime_mesh",
     "blender",
 ]
 
@@ -187,6 +190,15 @@ def _run_aruco_sync(json_path: Path) -> None:
     )
 
 
+def _run_runtime_mesh(json_path: Path) -> None:
+    _run_python_script(
+        python_path=RUNTIME_MESH_STAGE_PY,
+        script_path=RUNTIME_MESH_STAGE_RUN,
+        json_path=json_path,
+        cwd=RUNTIME_MESH_STAGE_RUN.parent,
+    )
+
+
 def _run_blender(json_path: Path) -> None:
     _run_python_script(
         python_path=BLENDER_STAGE_PY,
@@ -206,6 +218,7 @@ STAGE_RUNNERS = {
     "icpalignment": _run_icpalignment,
     "pose": _run_pose,
     "aruco_sync": _run_aruco_sync,
+    "runtime_mesh": _run_runtime_mesh,
     "blender": _run_blender,
 }
 
@@ -352,6 +365,7 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     task_record["error"] = task_record.get("error_message")
     task_record["outputs"] = {
         "instantmesh": task_json.get("InstantMesh") or {},
+        "runtime_mesh": task_json.get("RuntimeMesh") or {},
         "blender": task_json.get("Blender") or {},
     }
     return task_record
@@ -417,6 +431,7 @@ def get_latest_completed_task_data(
     task_record["error"] = task_record.get("error_message")
     task_record["outputs"] = {
         "instantmesh": task_json.get("InstantMesh") or {},
+        "runtime_mesh": task_json.get("RuntimeMesh") or {},
         "blender": task_json.get("Blender") or {},
     }
     return task_record
