@@ -8,6 +8,7 @@ using UnityEngine.UI;
 public class HoloLensPVAquirer : MonoBehaviour
 {
     [SerializeField] bool _enable_sensor_update = false;
+    [SerializeField, Min(1f)] private float maxSensorUpdateHz = 15f;
 
     //public GameObject pv_image;
 
@@ -31,6 +32,7 @@ public class HoloLensPVAquirer : MonoBehaviour
     private byte[] pv_raw_buffer;
     private byte[] pv_flip_buffer;
     private bool _pvInitialized;
+    private float nextSensorUpdateTime;
 
     //public HoloLensPVPublisher _publisher;
     public ShuJuQingQiu _publisher;
@@ -61,8 +63,9 @@ public class HoloLensPVAquirer : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        if (_enable_sensor_update)
+        if (_enable_sensor_update && Time.unscaledTime >= nextSensorUpdateTime)
         {
+            nextSensorUpdateTime = Time.unscaledTime + (1f / Mathf.Max(1f, maxSensorUpdateHz));
 #if WINDOWS_UWP
             UpdateFrame();
 #endif

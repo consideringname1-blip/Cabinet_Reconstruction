@@ -23,24 +23,7 @@ public class SelectionBoxDebugActions : MonoBehaviour
             return;
         }
 
-        if (selectionBoxRoot.activeSelf)
-        {
-            selectionBoxRoot.SetActive(false);
-            return;
-        }
-
-        Camera mainCamera = Camera.main;
-        if (mainCamera == null)
-        {
-            Debug.LogWarning("[SelectionBoxDebugActions] Main Camera not found.");
-            return;
-        }
-
-        Transform cameraTransform = mainCamera.transform;
-        Vector3 targetPosition = cameraTransform.position + cameraTransform.forward * distanceFromCamera;
-        Quaternion targetRotation = Quaternion.LookRotation(cameraTransform.forward, Vector3.up);
-
-        selectionBoxRoot.transform.SetPositionAndRotation(targetPosition, targetRotation);
+        PlaceSelectionBoxInFrontOfCamera();
         selectionBoxRoot.SetActive(true);
     }
 
@@ -53,12 +36,41 @@ public class SelectionBoxDebugActions : MonoBehaviour
             return;
         }
 
-        if (selectionBoxRoot != null && !selectionBoxRoot.activeSelf)
+        if (selectionBoxRoot != null)
         {
+            PlaceSelectionBoxInFrontOfCamera();
             selectionBoxRoot.SetActive(true);
         }
 
         controller.PrepareForReuse();
+    }
+
+    private bool PlaceSelectionBoxInFrontOfCamera()
+    {
+        if (selectionBoxRoot == null)
+        {
+            return false;
+        }
+
+        Camera mainCamera = Camera.main;
+        if (mainCamera == null)
+        {
+            Debug.LogWarning("[SelectionBoxDebugActions] Main Camera not found.");
+            return false;
+        }
+
+        Transform cameraTransform = mainCamera.transform;
+        Vector3 flatForward = Vector3.ProjectOnPlane(cameraTransform.forward, Vector3.up);
+        if (flatForward.sqrMagnitude < 0.000001f)
+        {
+            flatForward = Vector3.forward;
+        }
+        flatForward.Normalize();
+
+        Vector3 targetPosition = cameraTransform.position + flatForward * Mathf.Max(0.1f, distanceFromCamera);
+        Quaternion targetRotation = Quaternion.LookRotation(flatForward, Vector3.up);
+        selectionBoxRoot.transform.SetPositionAndRotation(targetPosition, targetRotation);
+        return true;
     }
 
     private SelectionBoxController ResolveSelectionBoxController()

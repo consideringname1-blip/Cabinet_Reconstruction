@@ -1,6 +1,7 @@
 """Flask API entrypoint for task creation and status polling."""
 
 import json
+import logging
 from datetime import datetime, timezone
 
 import cv2
@@ -42,6 +43,7 @@ from unity_coordinate_utils import convert_hololens_pv_pose_matrix_to_unity_pose
 
 
 app = Flask(__name__)
+logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 
 start_worker()
@@ -794,4 +796,4 @@ def internal_error(error):
 if __name__ == "__main__":
     print(app.url_map)
     print("Starting Flask application...")
-    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
+    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False, threaded=True)

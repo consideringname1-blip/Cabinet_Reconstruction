@@ -2,14 +2,17 @@
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
-/// <summary>
-/// 游戏管理
-/// </summary>
+[DefaultExecutionOrder(-1000)]
 public class Game_M : MonoBehaviour
 {
     public static Game_M initialize;
 
     public Text text;
+    void Awake()
+    {
+        initialize = this;
+    }
+
     // Start is called before the first frame update
     void Start()
     {
@@ -17,17 +20,32 @@ public class Game_M : MonoBehaviour
     }
     public void XianShi(string data)
     {
+        if (text == null || text.transform == null || text.transform.parent == null)
+        {
+            return;
+        }
+
         text.transform.parent.gameObject.SetActive(true);
         text.text = data;
     }
 
     public void GuanBi()
     {
+        if (text == null || text.transform == null || text.transform.parent == null)
+        {
+            return;
+        }
+
         text.transform.parent.gameObject.SetActive(false);
-        Invoke("YanXhiGuanBi", 0.5f);
+        Invoke(nameof(YanXhiGuanBi), 0.5f);
     }
     public void YanXhiGuanBi()
     {
+        if (text == null || text.transform == null || text.transform.parent == null)
+        {
+            return;
+        }
+
         text.transform.parent.gameObject.SetActive(false);
     }
     // Update is called once per frame

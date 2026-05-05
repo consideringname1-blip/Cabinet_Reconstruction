@@ -74,7 +74,8 @@ STAGE_ORDER = [
 PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction"
 PURPOSE_ARUCO_REFERENCE = "aruco_reference"
 
-_task_queue = deque()
+_aruco_task_queue = deque()
+_model_task_queue = deque()
 _task_lock = threading.Lock()
 _current_task_id: Optional[str] = None
 _worker_thread: Optional[threading.Thread] = None
@@ -85,20 +86,32 @@ def _resolve_python(python_path: str) -> str:
 
 
 def _queue_snapshot_no_lock() -> list[str]:
-    return list(reversed(_task_queue))
+    return list(_aruco_task_queue) + list(_model_task_queue)
+
+
+def _enqueue_task_no_lock(task_id: str, purpose: str) -> None:
+    if purpose == PURPOSE_ARUCO_REFERENCE:
+        _aruco_task_queue.append(task_id)
+    else:
+        _model_task_queue.append(task_id)
 
 
 def _restore_unfinished_tasks() -> None:
     unfinished_tasks = get_unfinished_tasks()
     with _task_lock:
-        queued = set(_task_queue)
+        queued = set(_queue_snapshot_no_lock())
         for task in unfinished_tasks:
             task_id = task["task_id"]
             if task_id == _current_task_id:
                 continue
             if task_id in queued:
                 continue
-            _task_queue.append(task_id)
+            try:
+                task_json = load_task_json(resolve_task_json_path(task["json_path"]))
+                purpose = _resolve_task_purpose(task_json)
+            except Exception:
+                purpose = PURPOSE_OBJECT_RECONSTRUCTION
+            _enqueue_task_no_lock(task_id, purpose)
             queued.add(task_id)
 
 
@@ -309,8 +322,11 @@ def _process_tasks_loop() -> None:
         task_id = None
 
         with _task_lock:
-            if _task_queue:
-                task_id = _task_queue.pop()
+            if _aruco_task_queue:
+                task_id = _aruco_task_queue.popleft()
+                _current_task_id = task_id
+            elif _model_task_queue:
+                task_id = _model_task_queue.popleft()
                 _current_task_id = task_id
 
         if task_id is None:
@@ -372,7 +388,7 @@ def create_task(json_path: Path | str) -> str:
     )
 
     with _task_lock:
-        _task_queue.append(task_id)
+        _enqueue_task_no_lock(task_id, _resolve_task_purpose(data))
 
     return task_id
 

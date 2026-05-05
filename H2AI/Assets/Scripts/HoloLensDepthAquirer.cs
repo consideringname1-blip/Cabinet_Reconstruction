@@ -21,6 +21,7 @@ public class HoloLensDepthAquirer : MonoBehaviour
     public const int AHATMaxUploadPngBytes = 450000;
 
     [SerializeField] bool _enable_sensor_update = false;
+    [SerializeField, Min(1f)] private float maxSensorUpdateHz = 15f;
 
     // set Depth Sensor Mode (default All)
     [SerializeField] DepthSensorType _depthSensorType = DepthSensorType.AHAT;
@@ -56,6 +57,7 @@ public class HoloLensDepthAquirer : MonoBehaviour
     private Dictionary<hl2da.SENSOR_ID, float[,]> rm_mapxy = new Dictionary<hl2da.SENSOR_ID, float[,]>();
     private Dictionary<hl2da.SENSOR_ID, float[]> rm_intrinsics = new Dictionary<hl2da.SENSOR_ID, float[]>();
     private bool _depthInitialized;
+    private float nextSensorUpdateTime;
     public int lastFrozenDepthRawNonzeroPixels { get; private set; }
     public int lastFrozenDepthValidPixels { get; private set; }
     public int lastFrozenDepthClippedPixels { get; private set; }
@@ -133,8 +135,9 @@ public class HoloLensDepthAquirer : MonoBehaviour
     // Update is called once per frame
     void Update()
     {
-        if (_enable_sensor_update)
+        if (_enable_sensor_update && Time.unscaledTime >= nextSensorUpdateTime)
         {
+            nextSensorUpdateTime = Time.unscaledTime + (1f / Mathf.Max(1f, maxSensorUpdateHz));
 #if WINDOWS_UWP
             Update_Frame();
 #endif

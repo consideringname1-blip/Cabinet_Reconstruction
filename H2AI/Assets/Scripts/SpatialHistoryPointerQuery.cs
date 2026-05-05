@@ -1,4 +1,5 @@
 using BestHTTP;
+using Microsoft.MixedReality.Toolkit.Physics;
 using Microsoft.MixedReality.Toolkit.Input;
 using Microsoft.MixedReality.Toolkit.Utilities;
 using Newtonsoft.Json;
@@ -23,7 +24,10 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
     [SerializeField, Min(0f)] private float waitSeconds = 3f;
     [SerializeField, Min(0.1f)] private float maxDistanceMeters = 10f;
     [SerializeField] private LayerMask spatialRaycastMask = ~0;
-    [SerializeField] private bool showRayLine = true;
+    [SerializeField] private bool useMrtkHandRay = true;
+    [SerializeField] private bool forceHideCustomRayLine = true;
+    [SerializeField] private bool showRayLine = false;
+    [SerializeField, Min(0f)] private float rayEndpointPaddingMeters = 0.05f;
 
     [Header("Server")]
     [SerializeField] private string serverBaseUrl = "http://10.40.1.122:7355";
@@ -68,6 +72,10 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
     {
         ResolveReferences();
         EnsureLineMaterial();
+        if (forceHideCustomRayLine)
+        {
+            showRayLine = false;
+        }
         if (showRayLine)
         {
             EnsureRayLine();
@@ -140,6 +148,67 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
         return targetHand == QueryHand.Right ? Handedness.Right : Handedness.Left;
     }
 
+    private bool TryGetMrtkHandRay(out Vector3 originWorld, out Vector3 directionWorld, out Vector3 endWorld)
+    {
+        originWorld = Vector3.zero;
+        directionWorld = Vector3.forward;
+        endWorld = Vector3.zero;
+
+        Handedness handedness = TargetHandedness();
+        foreach (LinePointer pointer in PointerUtils.GetPointers<LinePointer>(handedness, InputSourceType.Hand))
+        {
+            if (pointer == null || !pointer.IsActive)
+            {
+                continue;
+            }
+
+            RayStep[] rays = pointer.Rays;
+            if (rays == null || rays.Length == 0)
+            {
+                continue;
+            }
+
+            RayStep firstRay = rays[0];
+            RayStep lastRay = rays[rays.Length - 1];
+            Vector3 pointerDirection = lastRay.Direction.sqrMagnitude > 0.000001f
+                ? lastRay.Direction.normalized
+                : firstRay.Direction.normalized;
+            if (pointerDirection.sqrMagnitude < 0.000001f)
+            {
+                continue;
+            }
+
+            originWorld = firstRay.Origin;
+            endWorld = ResolveEndpointFromPointer(pointer, lastRay, pointerDirection);
+            Vector3 originToEnd = endWorld - originWorld;
+            directionWorld = originToEnd.sqrMagnitude > 0.000001f
+                ? originToEnd.normalized
+                : pointerDirection;
+            return true;
+        }
+
+        return false;
+    }
+
+    private Vector3 ResolveEndpointFromPointer(LinePointer pointer, RayStep ray, Vector3 directionWorld)
+    {
+        if (pointer != null && pointer.Result != null && pointer.Result.CurrentPointerTarget != null)
+        {
+            FocusDetails details = pointer.Result.Details;
+            if (details.RayDistance > 0f && details.RayDistance <= Mathf.Max(0.1f, maxDistanceMeters))
+            {
+                return details.Point + directionWorld * Mathf.Max(0f, rayEndpointPaddingMeters);
+            }
+        }
+
+        if (ray.Length > 0.0001f)
+        {
+            return ray.Terminus;
+        }
+
+        return ResolveEndpoint(ray.Origin, directionWorld);
+    }
+
     private bool TryGetFingerRay(out Vector3 originWorld, out Vector3 directionWorld)
     {
         originWorld = Vector3.zero;
@@ -165,6 +234,23 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
         originWorld = tipPose.Position;
         directionWorld = direction.normalized;
         return true;
+    }
+
+    private bool TryGetQueryRay(out Vector3 originWorld, out Vector3 directionWorld, out Vector3 endWorld)
+    {
+        if (useMrtkHandRay && TryGetMrtkHandRay(out originWorld, out directionWorld, out endWorld))
+        {
+            return true;
+        }
+
+        if (TryGetFingerRay(out originWorld, out directionWorld))
+        {
+            endWorld = ResolveEndpoint(originWorld, directionWorld);
+            return true;
+        }
+
+        endWorld = Vector3.zero;
+        return false;
     }
 
     private bool TryGetCurrentArucoReference(out Vector3 arucoPosition, out Quaternion arucoRotation)
@@ -256,7 +342,7 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
         EnsureLineMaterial();
         EnsureRayLine();
 
-        if (!TryGetFingerRay(out Vector3 originWorld, out Vector3 directionWorld))
+        if (!TryGetQueryRay(out Vector3 originWorld, out Vector3 directionWorld, out Vector3 endWorld))
         {
             rayLineRenderer.startColor = rayInvalidColor;
             rayLineRenderer.endColor = rayInvalidColor;
@@ -264,7 +350,6 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
             return;
         }
 
-        Vector3 endWorld = ResolveEndpoint(originWorld, directionWorld);
         rayLineRenderer.gameObject.SetActive(true);
         rayLineRenderer.SetPosition(0, originWorld);
         rayLineRenderer.SetPosition(1, endWorld);
@@ -283,14 +368,18 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
 
     private IEnumerator SpatialHistoryQueryCoroutine()
     {
-        if (waitSeconds > 0f)
+        float remainingSeconds = Mathf.Max(0f, waitSeconds);
+        while (remainingSeconds > 0f)
         {
-            yield return new WaitForSeconds(waitSeconds);
+            ShowFrontMessage("spatial_query_wait_" + Mathf.CeilToInt(remainingSeconds).ToString(CultureInfo.InvariantCulture));
+            float step = Mathf.Min(1f, remainingSeconds);
+            yield return new WaitForSeconds(step);
+            remainingSeconds -= step;
         }
 
         queryCoroutine = null;
 
-        if (!TryGetFingerRay(out Vector3 originWorld, out Vector3 directionWorld))
+        if (!TryGetQueryRay(out Vector3 originWorld, out Vector3 directionWorld, out Vector3 endWorld))
         {
             Debug.LogWarning("[SpatialHistoryPointerQuery] Target hand is not tracked.");
             ShowFrontMessage("spatial_query_ERR_hand_not_tracked");
@@ -304,7 +393,6 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
             yield break;
         }
 
-        Vector3 endWorld = ResolveEndpoint(originWorld, directionWorld);
         Vector3 originAruco = WorldPointToAruco(originWorld, arucoPosition, arucoRotation);
         Vector3 directionAruco = WorldDirectionToAruco(directionWorld, arucoRotation);
         Vector3 endAruco = WorldPointToAruco(endWorld, arucoPosition, arucoRotation);

@@ -43,6 +43,10 @@ public class ShuJuQingQiu : MonoBehaviour
     [SerializeField] private SelectionPanelManager selectionPanelManager;
     [Header("Polling")]
     [SerializeField, Min(1f)] private float checkPollingIntervalSeconds = 10f;
+    [SerializeField, Min(1f)] private float markerCheckPollingIntervalSeconds = 5f;
+    [SerializeField, Min(1f)] private float modelQueuedPollingIntervalSeconds = 25f;
+    [SerializeField, Min(1f)] private float modelProcessingPollingIntervalSeconds = 12f;
+    [SerializeField] private bool logCheckRequests = false;
     private bool isMarkerCaptureActive = false;
 
     private class MarkerCaptureFrame
@@ -64,6 +68,15 @@ public class ShuJuQingQiu : MonoBehaviour
         public bool showDebugMarkers;
         public bool isHistoryBatch;
         public int historyOffset;
+        public bool hasDebugCameraPose;
+        public Vector3 debugCameraPosition;
+        public Quaternion debugCameraRotation;
+        public bool hasDebugObjectPose;
+        public Vector3 debugObjectPosition;
+        public Quaternion debugObjectRotation;
+        public bool hasDebugArucoPose;
+        public Vector3 debugArucoPosition;
+        public Quaternion debugArucoRotation;
     }
 
     private class LatestCompletedRequest
@@ -87,6 +100,9 @@ public class ShuJuQingQiu : MonoBehaviour
     private readonly Queue<PendingModelDownload> pendingModelLoadQueue = new Queue<PendingModelDownload>();
     private PendingModelDownload activeModelLoad;
     private Coroutine modelLoadQueueRetryCoroutine;
+    private readonly Dictionary<string, Coroutine> checkPollingCoroutinesByTaskId = new Dictionary<string, Coroutine>();
+    private readonly Dictionary<string, string> checkPollingStatusByTaskId = new Dictionary<string, string>();
+    private readonly Dictionary<string, int> checkPollingPositionByTaskId = new Dictionary<string, int>();
 
     void Start()
     {
@@ -253,44 +269,6 @@ public class ShuJuQingQiu : MonoBehaviour
         return IsTerminalStatus(status);
     }
 
-    void StopCheckPolling()
-    {
-        StopModelCheckPolling();
-        StopMarkerCheckPolling();
-    }
-
-    void StopModelCheckPolling()
-    {
-        isModelCheckPollingActive = false;
-        if (modelCheckPollingCoroutine != null)
-        {
-            StopCoroutine(modelCheckPollingCoroutine);
-            modelCheckPollingCoroutine = null;
-        }
-    }
-
-    void StopMarkerCheckPolling()
-    {
-        isMarkerCheckPollingActive = false;
-        if (markerCheckPollingCoroutine != null)
-        {
-            StopCoroutine(markerCheckPollingCoroutine);
-            markerCheckPollingCoroutine = null;
-        }
-    }
-
-    void StopCheckPollingForPurpose(string purpose)
-    {
-        if (purpose == TASK_PURPOSE_ARUCO_REFERENCE)
-        {
-            StopMarkerCheckPolling();
-        }
-        else
-        {
-            StopModelCheckPolling();
-        }
-    }
-
     /// <summary>
     /// 上传图片
     /// </summary>
@@ -355,6 +333,7 @@ public class ShuJuQingQiu : MonoBehaviour
                 Game_M.initialize.XianShi("shangchuan_ERR_pv_freeze");
                 continue;
             }
+            yield return null;
             if (PV_controler.k_pv_frozen == null || PV_controler.pose_pv_frozen == null)
             {
                 Game_M.initialize.XianShi("shangchuan_mark_ERR_pose_null");
@@ -362,6 +341,7 @@ public class ShuJuQingQiu : MonoBehaviour
             }
 
             byte[] pvPng = ImageConversion.EncodeToPNG(PV_controler.tex_pv_frozen);
+            yield return null;
             if (pvPng == null || pvPng.Length == 0)
             {
                 Game_M.initialize.XianShi("shangchuan_mark_ERR_png_empty");
@@ -571,7 +551,9 @@ public class ShuJuQingQiu : MonoBehaviour
         // PV图片存储与转换
         // ==========================================================
         Game_M.initialize.XianShi("shangchuan_PV");
+        yield return null;
         byte[] tex_pv_P_C_F = ImageConversion.EncodeToPNG(PV_controler.tex_pv_frozen);
+        yield return null;
         ushort width_pv_C_F = PV_controler.width_pv_frozen;
         ushort height_pv_C_F = PV_controler.height_pv_frozen;
         float[,] k_pv_C_F = PV_controler.k_pv_frozen;
@@ -587,7 +569,9 @@ public class ShuJuQingQiu : MonoBehaviour
             Game_M.initialize.XianShi("shangchuan_image_dp_P_C_ISNULL");
             yield break;
         }
+        yield return null;
         byte[] image_dp_P_C_F = ImageConversion.EncodeToPNG(DP_controler.tex_grayscale_publish);
+        yield return null;
         if (image_dp_P_C_F == null || image_dp_P_C_F.Length == 0)
         {
             Game_M.initialize.XianShi("shangchuan_ERR_depth_png_empty");
@@ -706,6 +690,7 @@ public class ShuJuQingQiu : MonoBehaviour
         };
         request.AddField("SelectionBoxJ", selectionBoxJ.ToString(Formatting.None));
 
+        yield return null;
         request.Send();
         Game_M.initialize.XianShi("generate");
     }
@@ -715,10 +700,6 @@ public class ShuJuQingQiu : MonoBehaviour
     public string task_id;
     private string modelTaskId = "";
     private string markerTaskId = "";
-    private bool isModelCheckPollingActive = false;
-    private bool isMarkerCheckPollingActive = false;
-    private Coroutine modelCheckPollingCoroutine;
-    private Coroutine markerCheckPollingCoroutine;
 
     private void OnRequestFinished(HTTPRequest request, HTTPResponse response)
     {
@@ -781,55 +762,114 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         if (!string.IsNullOrEmpty(modelTaskId))
         {
-            SendCheckRequest(modelTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
+            StartCheckPollingForTask(modelTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
             return;
         }
 
         if (!string.IsNullOrEmpty(markerTaskId))
         {
-            SendCheckRequest(markerTaskId, TASK_PURPOSE_ARUCO_REFERENCE);
+            StartCheckPollingForTask(markerTaskId, TASK_PURPOSE_ARUCO_REFERENCE);
         }
     }
 
     private void StartModelCheckPolling()
     {
-        StopModelCheckPolling();
-        isModelCheckPollingActive = true;
-        modelCheckPollingCoroutine = StartCoroutine(CheckPollingCoroutine(TASK_PURPOSE_OBJECT_RECONSTRUCTION));
-        ShowFrontMessage("model_polling_start");
+        StartCheckPollingForTask(modelTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
     }
 
     private void StartMarkerCheckPolling()
     {
-        StopMarkerCheckPolling();
-        isMarkerCheckPollingActive = true;
-        markerCheckPollingCoroutine = StartCoroutine(CheckPollingCoroutine(TASK_PURPOSE_ARUCO_REFERENCE));
-        ShowFrontMessage("marker_polling_start");
+        StartCheckPollingForTask(markerTaskId, TASK_PURPOSE_ARUCO_REFERENCE);
     }
 
-    private IEnumerator CheckPollingCoroutine(string purpose)
+    private void StartCheckPollingForTask(string pollTaskId, string purpose)
     {
-        while (IsCheckPollingActive(purpose))
+        if (string.IsNullOrEmpty(pollTaskId))
         {
-            yield return new WaitForSeconds(Mathf.Max(1f, checkPollingIntervalSeconds));
-            string pollTaskId = GetPollingTaskId(purpose);
+            return;
+        }
+
+        StopCheckPollingForTask(pollTaskId);
+        checkPollingStatusByTaskId[pollTaskId] = "pending";
+        checkPollingPositionByTaskId[pollTaskId] = -1;
+        checkPollingCoroutinesByTaskId[pollTaskId] = StartCoroutine(CheckPollingCoroutine(pollTaskId, purpose));
+        ShowFrontMessage((purpose == TASK_PURPOSE_ARUCO_REFERENCE ? "marker" : "model") + "_polling_start");
+        SendCheckRequest(pollTaskId, purpose);
+    }
+
+    private void StopCheckPollingForTask(string pollTaskId)
+    {
+        if (string.IsNullOrEmpty(pollTaskId))
+        {
+            return;
+        }
+
+        if (checkPollingCoroutinesByTaskId.TryGetValue(pollTaskId, out Coroutine coroutine) && coroutine != null)
+        {
+            StopCoroutine(coroutine);
+        }
+        checkPollingCoroutinesByTaskId.Remove(pollTaskId);
+        checkPollingStatusByTaskId.Remove(pollTaskId);
+        checkPollingPositionByTaskId.Remove(pollTaskId);
+    }
+
+    private float ResolveCheckPollingInterval(string pollTaskId, string purpose)
+    {
+        if (purpose == TASK_PURPOSE_ARUCO_REFERENCE)
+        {
+            return Mathf.Max(1f, markerCheckPollingIntervalSeconds);
+        }
+
+        if (!string.IsNullOrEmpty(pollTaskId)
+            && checkPollingStatusByTaskId.TryGetValue(pollTaskId, out string status))
+        {
+            if (status == "pending")
+            {
+                return Mathf.Max(1f, modelQueuedPollingIntervalSeconds);
+            }
+
+            if (!IsTerminalStatus(status))
+            {
+                return Mathf.Max(1f, modelProcessingPollingIntervalSeconds);
+            }
+        }
+
+        return Mathf.Max(1f, checkPollingIntervalSeconds);
+    }
+
+    private bool UpdateCheckPollingState(string pollTaskId, string status, JObject jo)
+    {
+        if (string.IsNullOrEmpty(pollTaskId))
+        {
+            return false;
+        }
+
+        string normalizedStatus = string.IsNullOrEmpty(status) ? "unknown" : status;
+        bool changed = !checkPollingStatusByTaskId.TryGetValue(pollTaskId, out string previousStatus)
+            || previousStatus != normalizedStatus;
+        checkPollingStatusByTaskId[pollTaskId] = normalizedStatus;
+
+        int position = -1;
+        JToken positionToken = jo != null ? jo["position"] : null;
+        if (positionToken != null && positionToken.Type != JTokenType.Null)
+        {
+            position = positionToken.Value<int>();
+        }
+        checkPollingPositionByTaskId[pollTaskId] = position;
+
+        return changed;
+    }
+
+    private IEnumerator CheckPollingCoroutine(string pollTaskId, string purpose)
+    {
+        while (checkPollingCoroutinesByTaskId.ContainsKey(pollTaskId))
+        {
+            yield return new WaitForSeconds(ResolveCheckPollingInterval(pollTaskId, purpose));
             if (!string.IsNullOrEmpty(pollTaskId))
             {
                 SendCheckRequest(pollTaskId, purpose);
             }
         }
-    }
-
-    private bool IsCheckPollingActive(string purpose)
-    {
-        return purpose == TASK_PURPOSE_ARUCO_REFERENCE
-            ? isMarkerCheckPollingActive
-            : isModelCheckPollingActive;
-    }
-
-    private string GetPollingTaskId(string purpose)
-    {
-        return purpose == TASK_PURPOSE_ARUCO_REFERENCE ? markerTaskId : modelTaskId;
     }
 
     private void SendCheckRequest(string checkTaskId, string purpose)
@@ -841,18 +881,18 @@ public class ShuJuQingQiu : MonoBehaviour
 
         string url = "http://10.40.1.122:7355/check/?task_id=" + checkTaskId;
         // string url = "http://10.40.1.122:7355/check";
-        print(url);
+        if (logCheckRequests)
+        {
+            Debug.Log("[CHECK] " + purpose + " " + checkTaskId);
+        }
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRequestJieGuo);
         request.Tag = new CheckPollRequest
         {
             taskId = checkTaskId,
             purpose = purpose,
         };
-        // 添加请求头数据
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
-        // 发送请求
         request.Send();
-        Game_M.initialize.XianShi("check_" + purpose);
     }
 
     public void XiaZaiZuiXinChengGongMoXing()
@@ -1369,7 +1409,7 @@ public class ShuJuQingQiu : MonoBehaviour
             : TASK_PURPOSE_OBJECT_RECONSTRUCTION;
         string pollTaskId = pollRequest != null ? pollRequest.taskId : task_id;
 
-        if (!IsCheckPollingActive(pollPurpose) || pollTaskId != GetPollingTaskId(pollPurpose))
+        if (string.IsNullOrEmpty(pollTaskId) || !checkPollingCoroutinesByTaskId.ContainsKey(pollTaskId))
         {
             return;
         }
@@ -1380,16 +1420,24 @@ public class ShuJuQingQiu : MonoBehaviour
             string message = response != null ? response.Message : "No response from server";
             Debug.LogError("Error: " + statusCode + " - " + message);
             ShowFrontMessage("check_ERR_request_failed");
-            StopCheckPollingForPurpose(pollPurpose);
+            StopCheckPollingForTask(pollTaskId);
             return;
         }
 
         JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
         string status = jo["status"]?.ToString();
+        bool statusChanged = UpdateCheckPollingState(pollTaskId, status, jo);
+        if (statusChanged && !IsTerminalStatus(status))
+        {
+            string positionText = checkPollingPositionByTaskId.TryGetValue(pollTaskId, out int position) && position > 0
+                ? " position=" + position.ToString(CultureInfo.InvariantCulture)
+                : "";
+            Debug.Log("[CHECK] " + pollPurpose + " " + pollTaskId + " status=" + status + positionText);
+        }
         bool isTerminal = IsTerminalResponse(jo, status);
         if (isTerminal)
         {
-            StopCheckPollingForPurpose(pollPurpose);
+            StopCheckPollingForTask(pollTaskId);
         }
 
         // 任务失败
@@ -1398,7 +1446,7 @@ public class ShuJuQingQiu : MonoBehaviour
             string err = jo["error"]?.ToString();
             Debug.LogError("[CHECK] task failed: " + err);
             ShowFrontMessage(NormalizeServerErrorForFrontMessage(err, "check_ERR_task_failed", pollPurpose));
-            StopCheckPollingForPurpose(pollPurpose);
+            StopCheckPollingForTask(pollTaskId);
             return;
         }
 
@@ -1408,7 +1456,7 @@ public class ShuJuQingQiu : MonoBehaviour
             ApplyDebugInfo(jo);
             ApplyResponsePoses(jo, true, true);
             ShowFrontMessage("aruco_completed");
-            StopCheckPollingForPurpose(pollPurpose);
+            StopCheckPollingForTask(pollTaskId);
             return;
         }
 
@@ -1418,18 +1466,17 @@ public class ShuJuQingQiu : MonoBehaviour
             {
                 Debug.LogWarning("[CHECK] terminal response without supported handler. status = " + status);
                 ShowFrontMessage("check_ERR_unknown_terminal_status");
-                StopCheckPollingForPurpose(pollPurpose);
+                StopCheckPollingForTask(pollTaskId);
                 return;
             }
 
-            Debug.Log("[CHECK] still processing... status = " + status);
             return;
         }
 
         if (pollPurpose == TASK_PURPOSE_ARUCO_REFERENCE)
         {
             ShowFrontMessage("check_ERR_marker_completed_unexpected");
-            StopMarkerCheckPolling();
+            StopCheckPollingForTask(pollTaskId);
             return;
         }
 
@@ -1446,12 +1493,12 @@ public class ShuJuQingQiu : MonoBehaviour
 
             if (isTerminal)
             {
-                StopCheckPollingForPurpose(pollPurpose);
+                StopCheckPollingForTask(pollTaskId);
             }
             return;
         }
 
-        StopModelCheckPolling();
+        StopCheckPollingForTask(pollTaskId);
         DownloadPendingRuntimeModel();
     }
 
@@ -1568,7 +1615,22 @@ public class ShuJuQingQiu : MonoBehaviour
             showDebugMarkers = pendingModelShouldPlaceDebugMarkers,
             isHistoryBatch = isHistoryBatch,
             historyOffset = historyOffset,
+            hasDebugCameraPose = hasServerCameraPose,
+            debugCameraPosition = serverCameraPosition,
+            debugCameraRotation = serverCameraRotation,
+            hasDebugObjectPose = hasServerPose,
+            debugObjectPosition = serverObjectPosition,
+            debugObjectRotation = serverObjectRotation,
+            hasDebugArucoPose = hasArucoReferencePose,
+            debugArucoPosition = arucoReferencePosition,
+            debugArucoRotation = arucoReferenceRotation,
         };
+        if (pendingModelInstance.Pose != null && pendingModelInstance.Pose.HasResponseArucoReference)
+        {
+            pendingDownload.hasDebugArucoPose = true;
+            pendingDownload.debugArucoPosition = pendingModelInstance.Pose.ResponseArucoReferencePosition;
+            pendingDownload.debugArucoRotation = pendingModelInstance.Pose.ResponseArucoReferenceRotation;
+        }
 
         var request = new HTTPRequest(new Uri(pendingModelInstance.FbxUrl), HTTPMethods.Get, OnRequestXiaZai);
         request.Tag = pendingDownload;
@@ -1616,9 +1678,9 @@ public class ShuJuQingQiu : MonoBehaviour
             if (pendingDownload.showDebugMarkers && CameraPoseDebugMarker.Instance != null)
             {
                 RuntimeModelManager manager = RuntimeModelManager.Instance;
-                Vector3 markerModelPosition = serverObjectPosition;
-                Quaternion markerModelRotation = serverObjectRotation;
-                bool hasMarkerModelPose = hasServerPose;
+                Vector3 markerModelPosition = pendingDownload.debugObjectPosition;
+                Quaternion markerModelRotation = pendingDownload.debugObjectRotation;
+                bool hasMarkerModelPose = pendingDownload.hasDebugObjectPose;
                 if (manager != null && manager.TryResolveWorldPose(
                     pendingDownload.instance.Pose,
                     out Vector3 resolvedModelPosition,
@@ -1630,11 +1692,11 @@ public class ShuJuQingQiu : MonoBehaviour
                     hasMarkerModelPose = true;
                 }
 
-                if (hasServerCameraPose && hasMarkerModelPose)
+                if (pendingDownload.hasDebugCameraPose && hasMarkerModelPose)
                 {
                     CameraPoseDebugMarker.Instance.PlaceMarkers(
-                        serverCameraPosition,
-                        serverCameraRotation,
+                        pendingDownload.debugCameraPosition,
+                        pendingDownload.debugCameraRotation,
                         markerModelPosition,
                         markerModelRotation
                     );
@@ -1644,11 +1706,11 @@ public class ShuJuQingQiu : MonoBehaviour
                     CameraPoseDebugMarker.Instance.PlaceModelMarker(markerModelPosition, markerModelRotation);
                 }
 
-                if (hasArucoReferencePose)
+                if (pendingDownload.hasDebugArucoPose)
                 {
                     CameraPoseDebugMarker.Instance.PlaceArucoMarker(
-                        arucoReferencePosition,
-                        arucoReferenceRotation
+                        pendingDownload.debugArucoPosition,
+                        pendingDownload.debugArucoRotation
                     );
                 }
             }
