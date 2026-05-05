@@ -1218,11 +1218,24 @@ public class ShuJuQingQiu : MonoBehaviour
         return token == null || token.Type == JTokenType.Null ? null : token;
     }
 
-    void ApplyArucoReference(JObject jo, bool updateCurrentSession, bool showDebugMarkers)
+    JToken ResolveArucoReferenceToken(JObject jo)
     {
-        if (!TryParsePoseToken(jo["aruco_reference"], out Vector3 arucoPosition, out Quaternion arucoRotation))
+        JToken modelInstanceToken = NonNullToken(jo["model_instance"]);
+        return NonNullToken(jo["aruco_reference"])
+            ?? NonNullToken(modelInstanceToken?["aruco_reference"])
+            ?? NonNullToken(jo["debug"]?["pose_transform_stages"]?["aruco_stage"]?["marker_pose_world"]);
+    }
+
+    bool ApplyArucoReference(JObject jo, bool updateCurrentSession, bool showDebugMarkers, bool warnIfMissing = false)
+    {
+        JToken arucoReferenceToken = ResolveArucoReferenceToken(jo);
+        if (!TryParsePoseToken(arucoReferenceToken, out Vector3 arucoPosition, out Quaternion arucoRotation))
         {
-            return;
+            if (warnIfMissing)
+            {
+                Debug.LogWarning("[ARUCO] Response missing usable aruco_reference: " + jo.ToString(Formatting.None));
+            }
+            return false;
         }
 
         if (updateCurrentSession)
@@ -1246,6 +1259,7 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             CameraPoseDebugMarker.Instance.PlaceArucoMarker(arucoPosition, arucoRotation);
         }
+        return true;
     }
 
     bool TryResolveObjectWorldPose(JObject jo, out Vector3 position, out Quaternion rotation)
@@ -1256,7 +1270,7 @@ public class ShuJuQingQiu : MonoBehaviour
         JToken modelInstanceToken = NonNullToken(jo["model_instance"]);
         JToken objectArucoToken = NonNullToken(jo["object_aruco"]) ?? NonNullToken(modelInstanceToken?["object_aruco"]);
         JToken objectWorldToken = NonNullToken(jo["object_world"]) ?? NonNullToken(modelInstanceToken?["object_world"]);
-        JToken arucoReferenceToken = NonNullToken(jo["aruco_reference"]) ?? NonNullToken(modelInstanceToken?["aruco_reference"]);
+        JToken arucoReferenceToken = ResolveArucoReferenceToken(jo);
         Vector3 responseArucoPosition;
         Quaternion responseArucoRotation;
         bool hasResponseArucoReference = TryParsePoseToken(
@@ -1558,8 +1572,8 @@ public class ShuJuQingQiu : MonoBehaviour
         if (status == "aruco_completed")
         {
             ApplyDebugInfo(jo);
-            ApplyResponsePoses(jo, true, true);
-            ShowFrontMessage("aruco_completed");
+            bool appliedArucoReference = ApplyArucoReference(jo, true, true, true);
+            ShowFrontMessage(appliedArucoReference ? "aruco_completed" : "aruco_ERR_missing_reference");
             StopCheckPollingForTask(pollTaskId);
             return;
         }

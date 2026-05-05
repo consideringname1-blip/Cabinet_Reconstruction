@@ -89,11 +89,16 @@ def _queue_snapshot_no_lock() -> list[str]:
     return list(_aruco_task_queue) + list(_model_task_queue)
 
 
-def _enqueue_task_no_lock(task_id: str, purpose: str) -> None:
+def _enqueue_task_no_lock(task_id: str, purpose: str, *, front: bool = False) -> None:
     if purpose == PURPOSE_ARUCO_REFERENCE:
-        _aruco_task_queue.append(task_id)
+        queue = _aruco_task_queue
     else:
-        _model_task_queue.append(task_id)
+        queue = _model_task_queue
+
+    if front:
+        queue.appendleft(task_id)
+    else:
+        queue.append(task_id)
 
 
 def _restore_unfinished_tasks() -> None:
@@ -362,7 +367,7 @@ def _process_tasks_loop() -> None:
                 if _current_task_id == task_id:
                     _current_task_id = None
                 if requeue_task:
-                    _enqueue_task_no_lock(task_id, requeue_purpose)
+                    _enqueue_task_no_lock(task_id, requeue_purpose, front=True)
 
         time.sleep(1)
 

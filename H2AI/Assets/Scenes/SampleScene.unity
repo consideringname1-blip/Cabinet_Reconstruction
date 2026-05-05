@@ -4232,7 +4232,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 0c48bd93b12306d4fb349f1b82be21b4, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  selectionBoxRoot: {fileID: 242384126}
+  selectionBoxRoot: {fileID: 649133928}
   selectionBoxController: {fileID: 983785832}
   distanceFromCamera: 0.8
   hideOnStart: 1

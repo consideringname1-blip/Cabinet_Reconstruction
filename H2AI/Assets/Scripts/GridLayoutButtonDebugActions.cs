@@ -35,6 +35,12 @@ public class SelectionBoxDebugActions : MonoBehaviour
 
     public void ResetSelectionBoxInPlace()
     {
+        if (selectionBoxRoot != null)
+        {
+            PlaceSelectionBoxInFrontOfCamera();
+            selectionBoxRoot.SetActive(true);
+        }
+
         SelectionBoxController controller = ResolveSelectionBoxController();
         if (controller == null)
         {

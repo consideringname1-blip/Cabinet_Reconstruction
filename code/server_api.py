@@ -361,14 +361,28 @@ def _build_completed_task_response(task_data: dict) -> dict:
 
 
 def _build_aruco_completed_task_response(task_data: dict) -> dict:
+    task_json = task_data.get("task_json") or {}
     response = {
         "status": task_data["status"],
         "task_id": task_data.get("task_id"),
-        "purpose": (task_data.get("task_json") or {}).get("purpose"),
+        "purpose": task_json.get("purpose"),
         "terminal": True,
         "stage_runs": task_data.get("stage_runs") or [],
     }
-    _append_pose_fields(response, task_data.get("task_json") or {})
+    _append_pose_fields(response, task_json)
+
+    if not response.get("aruco_reference"):
+        startup_session_id = str(
+            task_data.get("startup_session_id")
+            or (task_json.get("device") or {}).get("startup_session_id")
+            or ""
+        ).strip()
+        latest_reference_row = get_latest_aruco_reference(startup_session_id) if startup_session_id else None
+        latest_reference_task_id = str((latest_reference_row or {}).get("task_id") or "")
+        if latest_reference_row and latest_reference_task_id == str(task_data.get("task_id") or ""):
+            response["aruco_reference"] = _load_marker_pose_json(latest_reference_row.get("marker_pose_json"))
+
+    response["aruco_detected"] = bool(response.get("aruco_reference"))
     return response
 
 
