@@ -43,6 +43,17 @@ DEPTHPOINTCLOUD_MAX_EXPORT_POINTS = 6000
 ENABLE_ALIGNMENT_RENDER_OUTPUTS = True
 # Enable InstantMesh circular-view MP4 generation.
 ENABLE_INSTANTMESH_VIDEO_OUTPUT = True
+# Remove tiny disconnected mesh islands immediately after InstantMesh export.
+INSTANTMESH_CLEAN_ENABLE = True
+INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO = 0.01
+INSTANTMESH_CLEAN_COMPONENT_MIN_FACES = 32
+# Parameters for ICP_MODE=off bbox-front-surface placement.
+# The current values were fitted against the latest five camera_refine results:
+# avg position delta ~= 2.8 cm, max ~= 5.9 cm.
+ICP_BBOX_SURFACE_RAY_SOURCE = "all_points"
+ICP_BBOX_SURFACE_DISTANCE_MODE = "mean_depth"
+ICP_BBOX_SURFACE_LATERAL_MODE = "centroid_xy"
+ICP_BBOX_SURFACE_THICKNESS_FACTOR = 0.20
 # Reject candidate poses that leave the reconstructed model upside-down in
 # camera-local Unity space.
 ICP_IGNORE_INVERTED_SOLUTIONS = True

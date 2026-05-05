@@ -11,6 +11,10 @@ from alignment_preview import render_model_compare_preview_image, render_overlay
 from config import (
     ICP_ACCELERATION_DEVICE,
     ICP_ALIGNMENT_MODEL_MAX_POINTS,
+    ICP_BBOX_SURFACE_DISTANCE_MODE,
+    ICP_BBOX_SURFACE_LATERAL_MODE,
+    ICP_BBOX_SURFACE_RAY_SOURCE,
+    ICP_BBOX_SURFACE_THICKNESS_FACTOR,
     ICP_CAMERA_REFINE_MAX_ROTATION_DELTA_DEG,
     ICP_CAMERA_REFINE_SCALE_DELTA_RATIO,
     ICP_CAMERA_REFINE_SEED_KEEP,
@@ -589,7 +593,7 @@ def build_final_camera_local_rh_debug(
     scale: float,
     metrics: dict,
 ) -> dict:
-    return {
+    debug = {
         "scale": float(scale),
         "up_y": model_up_y_in_unity(rotation),
         "pose": serialize_pose(
@@ -605,6 +609,9 @@ def build_final_camera_local_rh_debug(
         "center_error": float(metrics["center_error"]),
         "initial_rotation_penalty": float(metrics["initial_rotation_penalty"]),
     }
+    if isinstance(metrics.get("placement"), dict):
+        debug["placement"] = metrics["placement"]
+    return debug
 
 
 def solve_camera_local_alignment(
@@ -838,6 +845,140 @@ def build_distance_only_alignment(
     return best, final_debug
 
 
+def build_bbox_surface_alignment(
+    model_vertices_unity: np.ndarray,
+    target_points: np.ndarray,
+    target_front_fit: np.ndarray,
+    overall_scale: float,
+    target_context: dict,
+) -> tuple[dict, dict]:
+    rotation = np.eye(3, dtype=np.float32)
+    scaled_full = np.asarray(model_vertices_unity, dtype=np.float32) * float(overall_scale)
+    bbox_min = scaled_full.min(axis=0)
+    bbox_max = scaled_full.max(axis=0)
+    bbox_size = bbox_max - bbox_min
+    bbox_center = 0.5 * (bbox_min + bbox_max)
+
+    target_points = np.asarray(target_points, dtype=np.float32)
+    if len(target_points) == 0:
+        raise ValueError("target_points must be non-empty for bbox surface alignment")
+    target_front_fit = np.asarray(target_front_fit, dtype=np.float32)
+    if len(target_front_fit) == 0:
+        raise ValueError("target_front_fit must be non-empty for bbox surface alignment")
+
+    ray_source = str(ICP_BBOX_SURFACE_RAY_SOURCE or "all_points").strip().lower()
+    if ray_source in {"all", "all_points", "pointcloud"}:
+        ray_points = target_points
+    elif ray_source in {"front", "front_points", "target_front"}:
+        ray_points = target_front_fit
+    else:
+        raise ValueError(
+            "config.ICP_BBOX_SURFACE_RAY_SOURCE must be one of: all_points / front_points"
+        )
+
+    target_centroid = ray_points.mean(axis=0)
+    ray_norm = float(np.linalg.norm(target_centroid))
+    if not np.isfinite(ray_norm) or ray_norm <= 1e-6:
+        ray_direction = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+    else:
+        ray_direction = (target_centroid / ray_norm).astype(np.float32)
+
+    distance_mode = str(ICP_BBOX_SURFACE_DISTANCE_MODE or "mean_depth").strip().lower()
+    if distance_mode in {"centroid_norm", "ray_centroid"}:
+        front_surface_distance = ray_norm
+    elif distance_mode in {"mean_depth", "pointcloud_mean_depth"}:
+        front_depth = float(np.mean(-target_points[:, 2]))
+        front_surface_distance = front_depth / max(-float(ray_direction[2]), 1e-6)
+    elif distance_mode in {"median_depth", "pointcloud_median_depth"}:
+        front_depth = float(np.median(-target_points[:, 2]))
+        front_surface_distance = front_depth / max(-float(ray_direction[2]), 1e-6)
+    elif distance_mode in {"front_median_depth", "front_depth"}:
+        front_depth = float(np.median(-target_front_fit[:, 2]))
+        front_surface_distance = front_depth / max(-float(ray_direction[2]), 1e-6)
+    elif distance_mode in {"front_median_norm", "front_norm"}:
+        front_surface_distance = float(np.median(np.linalg.norm(target_front_fit, axis=1)))
+    else:
+        raise ValueError(
+            "config.ICP_BBOX_SURFACE_DISTANCE_MODE must be one of: "
+            "mean_depth / median_depth / front_median_depth / centroid_norm / front_median_norm"
+        )
+
+    thickness_factor = float(ICP_BBOX_SURFACE_THICKNESS_FACTOR)
+    bbox_thickness = float(np.dot(np.abs(ray_direction), bbox_size))
+    thickness_offset = thickness_factor * max(bbox_thickness, 0.0)
+    desired_bbox_center = ray_direction * (front_surface_distance + thickness_offset)
+    lateral_mode = str(ICP_BBOX_SURFACE_LATERAL_MODE or "centroid_xy").strip().lower()
+    if lateral_mode in {"centroid_xy", "pointcloud_xy"}:
+        desired_bbox_center[0] = target_centroid[0]
+        desired_bbox_center[1] = target_centroid[1]
+    elif lateral_mode in {"ray", "ray_xy"}:
+        pass
+    else:
+        raise ValueError(
+            "config.ICP_BBOX_SURFACE_LATERAL_MODE must be one of: centroid_xy / ray"
+        )
+    translation = (desired_bbox_center - bbox_center).astype(np.float32)
+
+    transformed_full = scaled_full + translation
+    transformed_front = extract_front_visible_points(
+        transformed_full,
+        bins=160,
+        max_points=ICP_TARGET_FRONT_MAX_POINTS,
+        seed=11,
+    )
+    metrics = evaluate_alignment(
+        transformed_full_points=transformed_full,
+        transformed_front_points=transformed_front,
+        target_front_points=target_front_fit,
+        scale=float(overall_scale),
+        nominal_scale=overall_scale,
+        target_context=target_context,
+        rotation=rotation,
+    )
+    metrics["placement"] = {
+        "mode": "bbox_front_surface",
+        "ray_source": ray_source,
+        "distance_mode": distance_mode,
+        "lateral_mode": lateral_mode,
+        "thickness_factor": float(thickness_factor),
+        "target_centroid": [float(v) for v in target_centroid],
+        "ray_direction": [float(v) for v in ray_direction],
+        "front_surface_distance": float(front_surface_distance),
+        "bbox_min_scaled": [float(v) for v in bbox_min],
+        "bbox_max_scaled": [float(v) for v in bbox_max],
+        "bbox_center_scaled": [float(v) for v in bbox_center],
+        "bbox_size_scaled": [float(v) for v in bbox_size],
+        "bbox_thickness_along_ray": float(bbox_thickness),
+        "bbox_thickness_offset_along_ray": float(thickness_offset),
+        "desired_bbox_center": [float(v) for v in desired_bbox_center],
+    }
+    best = {
+        "scale": float(overall_scale),
+        "rotation": rotation,
+        "translation": translation,
+        "rmse": float(metrics["rmse_3d"]),
+        "surface_rmse_3d": float(metrics["surface_rmse_3d"]),
+        "coverage_rmse_3d": float(metrics["coverage_rmse_3d"]),
+        "rmse_2d": float(metrics["rmse_2d"]),
+        "score": float(metrics["score"]),
+        "size_error": float(metrics["size_error"]),
+        "inlier_ratio": 0.0,
+        "extents": metrics["extents"],
+        "width_error": float(metrics["width_error"]),
+        "height_error": float(metrics["height_error"]),
+        "center_error": float(metrics["center_error"]),
+        "initial_rotation_penalty": float(metrics["initial_rotation_penalty"]),
+        "placement": metrics["placement"],
+    }
+    final_debug = build_final_camera_local_rh_debug(
+        best["rotation"],
+        best["translation"],
+        float(best["scale"]),
+        best,
+    )
+    return best, final_debug
+
+
 def main(argv: list[str]) -> int:
     json_path, task = load_stage_task(
         argv,
@@ -922,8 +1063,9 @@ def main(argv: list[str]) -> int:
             target_context=target_context,
         )
     elif ICP_MODE == "off":
-        best, final_camera_local_unity_debug = build_distance_only_alignment(
+        best, final_camera_local_unity_debug = build_bbox_surface_alignment(
             model_vertices_unity=model_vertices_unity,
+            target_points=pointcloud_points_unity,
             target_front_fit=target_front_fit,
             overall_scale=overall_scale,
             target_context=target_context,

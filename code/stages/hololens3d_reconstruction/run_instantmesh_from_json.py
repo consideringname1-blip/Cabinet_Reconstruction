@@ -8,6 +8,9 @@ from PIL import Image
 from config import (
     ENABLE_INSTANTMESH_VIDEO_OUTPUT,
     IMESH_PY,
+    INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO,
+    INSTANTMESH_CLEAN_COMPONENT_MIN_FACES,
+    INSTANTMESH_CLEAN_ENABLE,
     INSTANTMESH_CONFIG,
     INSTANTMESH_DIR,
     INSTANTMESH_INPUT_ROOT,
@@ -17,6 +20,7 @@ from config import (
     OUTPUT_ROOT,
     SAM3_OUTPUT_ROOT,
 )
+from mesh_obj_utils import clean_obj_connected_components
 from stage_common import ensure_file, load_stage_task, resolve_python
 from task_json import save_task_json
 
@@ -83,19 +87,36 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
     image_name = f"{output_stem}.png"
     video_name = f"{output_stem}.mp4" if ENABLE_INSTANTMESH_VIDEO_OUTPUT else None
 
-    ensure_file(INSTANTMESH_OUTPUT_MESHES / mesh_name, "InstantMesh obj")
+    mesh_path = ensure_file(INSTANTMESH_OUTPUT_MESHES / mesh_name, "InstantMesh obj")
     ensure_file(INSTANTMESH_OUTPUT_MESHES / mtl_name, "InstantMesh mtl")
     ensure_file(INSTANTMESH_OUTPUT_MESHES / image_name, "InstantMesh texture image")
     if video_name is not None:
         ensure_file(INSTANTMESH_OUTPUT_VIDEOS / video_name, "InstantMesh video")
 
-    task["InstantMesh"] = {
+    raw_mesh_name = mesh_name
+    cleanup_info = None
+    if bool(INSTANTMESH_CLEAN_ENABLE):
+        clean_mesh_name = f"{Path(mesh_name).stem}_clean.obj"
+        cleanup_info = clean_obj_connected_components(
+            mesh_path,
+            INSTANTMESH_OUTPUT_MESHES / clean_mesh_name,
+            min_face_ratio=float(INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO),
+            min_faces=int(INSTANTMESH_CLEAN_COMPONENT_MIN_FACES),
+        )
+        if int(cleanup_info.get("removed_faces") or 0) > 0:
+            mesh_name = clean_mesh_name
+
+    instantmesh_payload = {
         "mesh": mesh_name,
         "mtl": mtl_name,
         "image": image_name,
         "video": video_name,
         "video_render_enabled": bool(ENABLE_INSTANTMESH_VIDEO_OUTPUT),
     }
+    if cleanup_info is not None:
+        instantmesh_payload["raw_mesh"] = raw_mesh_name
+        instantmesh_payload["cleanup"] = cleanup_info
+    task["InstantMesh"] = instantmesh_payload
     save_task_json(json_path, task)
 
 
