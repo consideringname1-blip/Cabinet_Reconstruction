@@ -265,7 +265,7 @@ def _resolve_stage_order(task_json: dict) -> list[str]:
     return STAGE_ORDER
 
 
-def _process_one_task(task_id: str) -> None:
+def _process_one_task(task_id: str) -> tuple[bool, str]:
     task_record = get_task_by_task_id(task_id)
     if task_record is None:
         raise ValueError(f"Task not found in database: {task_id}")
@@ -289,30 +289,33 @@ def _process_one_task(task_id: str) -> None:
 
     start_index = stage_order.index(current_status)
 
-    for index in range(start_index, len(stage_order)):
-        stage_name = stage_order[index]
-        update_task_status(task_id, stage_name)
-        mark_task_stage_started(task_id, stage_name)
-        try:
-            STAGE_RUNNERS[stage_name](json_path)
-            mark_task_stage_completed(task_id, stage_name)
-        except Exception as exc:
-            if isinstance(exc, subprocess.CalledProcessError):
-                error_message = exc.stderr or exc.stdout or str(exc)
-            else:
-                error_message = str(exc)
-            mark_task_stage_failed(task_id, stage_name, error_message=error_message)
-            raise
+    stage_name = stage_order[start_index]
+    update_task_status(task_id, stage_name)
+    mark_task_stage_started(task_id, stage_name)
+    try:
+        STAGE_RUNNERS[stage_name](json_path)
+        mark_task_stage_completed(task_id, stage_name)
+    except Exception as exc:
+        if isinstance(exc, subprocess.CalledProcessError):
+            error_message = exc.stderr or exc.stdout or str(exc)
+        else:
+            error_message = str(exc)
+        mark_task_stage_failed(task_id, stage_name, error_message=error_message)
+        raise
 
-        if stage_name == "aruco_detect":
-            if purpose == PURPOSE_ARUCO_REFERENCE:
-                update_task_status(task_id, "aruco_completed")
-                return
+    if stage_name == "aruco_detect" and purpose == PURPOSE_ARUCO_REFERENCE:
+        update_task_status(task_id, "aruco_completed")
+        startup_session_id = str((task_json.get("device") or {}).get("startup_session_id") or "").strip() or None
+        synced_count = _sync_completed_tasks_for_startup(startup_session_id)
+        if synced_count:
+            print(f"[worker] synced completed model tasks after ArUco reference: {synced_count}")
+        return True, purpose
 
-        next_status = "completed"
-        if index + 1 < len(stage_order):
-            next_status = stage_order[index + 1]
-        update_task_status(task_id, next_status)
+    next_status = "completed"
+    if start_index + 1 < len(stage_order):
+        next_status = stage_order[start_index + 1]
+    update_task_status(task_id, next_status)
+    return next_status == "completed", purpose
 
 
 def _process_tasks_loop() -> None:
@@ -334,10 +337,16 @@ def _process_tasks_loop() -> None:
             time.sleep(1)
             continue
 
+        requeue_task = False
+        requeue_purpose = PURPOSE_OBJECT_RECONSTRUCTION
         try:
             print(f"[worker] start task: {task_id}")
-            _process_one_task(task_id)
-            print(f"[worker] completed task: {task_id}")
+            is_terminal, requeue_purpose = _process_one_task(task_id)
+            if is_terminal:
+                print(f"[worker] completed task: {task_id}")
+            else:
+                requeue_task = True
+                print(f"[worker] stage completed, requeue task: {task_id}")
         except Exception as exc:
             if isinstance(exc, subprocess.CalledProcessError):
                 error_message = exc.stderr or exc.stdout or str(exc)
@@ -350,7 +359,10 @@ def _process_tasks_loop() -> None:
                 print(f"[worker] failed to write error to database: {db_exc}")
         finally:
             with _task_lock:
-                _current_task_id = None
+                if _current_task_id == task_id:
+                    _current_task_id = None
+                if requeue_task:
+                    _enqueue_task_no_lock(task_id, requeue_purpose)
 
         time.sleep(1)
 

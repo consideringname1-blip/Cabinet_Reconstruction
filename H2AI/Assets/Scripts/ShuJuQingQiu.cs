@@ -46,6 +46,7 @@ public class ShuJuQingQiu : MonoBehaviour
     [SerializeField, Min(1f)] private float markerCheckPollingIntervalSeconds = 5f;
     [SerializeField, Min(1f)] private float modelQueuedPollingIntervalSeconds = 25f;
     [SerializeField, Min(1f)] private float modelProcessingPollingIntervalSeconds = 12f;
+    [SerializeField, Min(1f)] private float modelCompletedPollingIntervalSeconds = 30f;
     [SerializeField] private bool logCheckRequests = false;
     private bool isMarkerCaptureActive = false;
 
@@ -103,6 +104,8 @@ public class ShuJuQingQiu : MonoBehaviour
     private readonly Dictionary<string, Coroutine> checkPollingCoroutinesByTaskId = new Dictionary<string, Coroutine>();
     private readonly Dictionary<string, string> checkPollingStatusByTaskId = new Dictionary<string, string>();
     private readonly Dictionary<string, int> checkPollingPositionByTaskId = new Dictionary<string, int>();
+    private readonly HashSet<string> modelDownloadRequestedTaskIds = new HashSet<string>();
+    private readonly HashSet<string> modelSyncedPoseAppliedTaskIds = new HashSet<string>();
 
     void Start()
     {
@@ -772,6 +775,38 @@ public class ShuJuQingQiu : MonoBehaviour
         }
     }
 
+    public void ClearLocalRetainedModels()
+    {
+        if ((LoadModel.initialize != null && LoadModel.initialize.IsLoading) || activeModelLoad != null)
+        {
+            ShowFrontMessage("runtime_model_clear_busy");
+            return;
+        }
+
+        pendingModelLoadQueue.Clear();
+        modelDownloadRequestedTaskIds.Clear();
+        modelSyncedPoseAppliedTaskIds.Clear();
+        if (modelLoadQueueRetryCoroutine != null)
+        {
+            StopCoroutine(modelLoadQueueRetryCoroutine);
+            modelLoadQueueRetryCoroutine = null;
+        }
+
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
+        if (manager == null)
+        {
+            ShowFrontMessage("runtime_model_mgr_missing");
+            return;
+        }
+
+        int removedCount = manager.ClearLocalRuntimeModels();
+        Debug.Log("[RuntimeModelManager] Cleared local runtime models: count="
+            + removedCount.ToString(CultureInfo.InvariantCulture)
+            + ", path="
+            + manager.RuntimeModelCachePath);
+        ShowFrontMessage("runtime_model_clear_" + removedCount.ToString(CultureInfo.InvariantCulture));
+    }
+
     private void StartModelCheckPolling()
     {
         StartCheckPollingForTask(modelTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
@@ -828,6 +863,11 @@ public class ShuJuQingQiu : MonoBehaviour
                 return Mathf.Max(1f, modelQueuedPollingIntervalSeconds);
             }
 
+            if (status == "completed")
+            {
+                return Mathf.Max(1f, modelCompletedPollingIntervalSeconds);
+            }
+
             if (!IsTerminalStatus(status))
             {
                 return Mathf.Max(1f, modelProcessingPollingIntervalSeconds);
@@ -858,6 +898,74 @@ public class ShuJuQingQiu : MonoBehaviour
         checkPollingPositionByTaskId[pollTaskId] = position;
 
         return changed;
+    }
+
+    private bool IsResponseArucoSynced(JObject jo)
+    {
+        JToken token = jo != null ? jo["aruco_coordinate_synced"] : null;
+        return token != null && token.Type == JTokenType.Boolean && token.Value<bool>();
+    }
+
+    private string GetModelBoundsStatus(JObject jo)
+    {
+        string status = jo?["model_bounds"]?["status"]?.ToString();
+        return string.IsNullOrEmpty(status) ? "missing" : status;
+    }
+
+    private bool IsModelBoundsReadyOrFinal(string status)
+    {
+        return status == "ready" || status == "failed";
+    }
+
+    private bool ShouldContinueCompletedModelPolling(string pollTaskId, JObject jo)
+    {
+        if (string.IsNullOrEmpty(pollTaskId))
+        {
+            return false;
+        }
+
+        bool arucoSynced = IsResponseArucoSynced(jo);
+        string boundsStatus = GetModelBoundsStatus(jo);
+        if (!arucoSynced || !IsModelBoundsReadyOrFinal(boundsStatus))
+        {
+            return true;
+        }
+
+        return modelDownloadRequestedTaskIds.Contains(pollTaskId)
+            && !modelSyncedPoseAppliedTaskIds.Contains(pollTaskId);
+    }
+
+    private bool TryApplySyncedModelPose(string pollTaskId, JObject jo)
+    {
+        if (string.IsNullOrEmpty(pollTaskId)
+            || modelSyncedPoseAppliedTaskIds.Contains(pollTaskId)
+            || !IsResponseArucoSynced(jo))
+        {
+            return false;
+        }
+
+        if (!TryBuildRuntimeModelInstance(jo, out RuntimeModelInstance instance, out string errorMessage))
+        {
+            Debug.LogWarning("[CHECK] synced model response invalid: " + errorMessage);
+            return false;
+        }
+
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
+        if (manager == null)
+        {
+            ShowFrontMessage("runtime_model_mgr_missing");
+            return false;
+        }
+
+        if (!manager.UpdateModelPose(pollTaskId, instance.Pose))
+        {
+            return false;
+        }
+
+        modelSyncedPoseAppliedTaskIds.Add(pollTaskId);
+        Debug.Log("[RuntimeModelManager] Applied synced ArUco pose for task: " + pollTaskId);
+        ShowFrontMessage("model_pose_synced");
+        return true;
     }
 
     private IEnumerator CheckPollingCoroutine(string pollTaskId, string purpose)
@@ -1435,10 +1543,6 @@ public class ShuJuQingQiu : MonoBehaviour
             Debug.Log("[CHECK] " + pollPurpose + " " + pollTaskId + " status=" + status + positionText);
         }
         bool isTerminal = IsTerminalResponse(jo, status);
-        if (isTerminal)
-        {
-            StopCheckPollingForTask(pollTaskId);
-        }
 
         // 任务失败
         if (status == "failed")
@@ -1481,25 +1585,39 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         // completed 了，但结果字段还要继续检查
-        pendingModelShouldPlaceDebugMarkers = true;
-        if (!ApplyCompletedTaskResponse(jo, "CHECK", false, true))
+        if (!modelDownloadRequestedTaskIds.Contains(pollTaskId))
         {
-            string completedError = jo["error"]?.ToString();
-            if (!string.IsNullOrEmpty(completedError))
+            pendingModelShouldPlaceDebugMarkers = true;
+            if (!ApplyCompletedTaskResponse(jo, "CHECK", false, true))
             {
-                Debug.LogError("[CHECK] completed response missing required outputs: " + completedError);
-                ShowFrontMessage(completedError);
+                string completedError = jo["error"]?.ToString();
+                if (!string.IsNullOrEmpty(completedError))
+                {
+                    Debug.LogError("[CHECK] completed response missing required outputs: " + completedError);
+                    ShowFrontMessage(completedError);
+                }
+
+                if (isTerminal)
+                {
+                    StopCheckPollingForTask(pollTaskId);
+                }
+                return;
             }
 
-            if (isTerminal)
-            {
-                StopCheckPollingForTask(pollTaskId);
-            }
+            modelDownloadRequestedTaskIds.Add(pollTaskId);
+            DownloadPendingRuntimeModel();
+        }
+        else
+        {
+            TryApplySyncedModelPose(pollTaskId, jo);
+        }
+
+        if (ShouldContinueCompletedModelPolling(pollTaskId, jo))
+        {
             return;
         }
 
         StopCheckPollingForTask(pollTaskId);
-        DownloadPendingRuntimeModel();
     }
 
     private void OnRequestLatestCompleted(HTTPRequest request, HTTPResponse response)
@@ -1632,6 +1750,11 @@ public class ShuJuQingQiu : MonoBehaviour
             pendingDownload.debugArucoRotation = pendingModelInstance.Pose.ResponseArucoReferenceRotation;
         }
 
+        if (!string.IsNullOrEmpty(pendingModelInstance.TaskId))
+        {
+            modelDownloadRequestedTaskIds.Add(pendingModelInstance.TaskId);
+        }
+
         var request = new HTTPRequest(new Uri(pendingModelInstance.FbxUrl), HTTPMethods.Get, OnRequestXiaZai);
         request.Tag = pendingDownload;
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
@@ -1641,7 +1764,7 @@ public class ShuJuQingQiu : MonoBehaviour
 
     private void OnRequestXiaZai(HTTPRequest request, HTTPResponse response)
     {
-        if (response.IsSuccess)
+        if (response != null && response.IsSuccess)
         {
             PendingModelDownload pendingDownload = request.Tag as PendingModelDownload;
             if (pendingDownload == null || pendingDownload.instance == null || string.IsNullOrEmpty(pendingDownload.localPath))
@@ -1668,6 +1791,10 @@ public class ShuJuQingQiu : MonoBehaviour
                 if (pendingDownload.isHistoryBatch)
                 {
                     RequestNextHistoryBatchModel();
+                }
+                if (!string.IsNullOrEmpty(pendingDownload.instance.TaskId))
+                {
+                    modelDownloadRequestedTaskIds.Remove(pendingDownload.instance.TaskId);
                 }
                 return;
             }
@@ -1719,9 +1846,15 @@ public class ShuJuQingQiu : MonoBehaviour
         }
         else
         {
-            Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
+            string statusCode = response != null ? response.StatusCode.ToString() : "no_response";
+            string message = response != null ? response.Message : "No response from server";
+            Debug.LogError("Error: " + statusCode + " - " + message);
             ShowFrontMessage("download_ERR_request_failed");
             PendingModelDownload pendingDownload = request.Tag as PendingModelDownload;
+            if (pendingDownload != null && pendingDownload.instance != null && !string.IsNullOrEmpty(pendingDownload.instance.TaskId))
+            {
+                modelDownloadRequestedTaskIds.Remove(pendingDownload.instance.TaskId);
+            }
             if (pendingDownload != null && pendingDownload.isHistoryBatch)
             {
                 RequestNextHistoryBatchModel();
@@ -1792,10 +1925,13 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             HandleQueuedRuntimeModelLoadFailed(completedLoad);
         }
-        else if (completedLoad != null && completedLoad.isHistoryBatch)
+        else if (completedLoad != null)
         {
-            historyBatchLoadedCount++;
-            RequestNextHistoryBatchModel();
+            if (completedLoad.isHistoryBatch)
+            {
+                historyBatchLoadedCount++;
+                RequestNextHistoryBatchModel();
+            }
         }
 
         ProcessNextQueuedRuntimeModelLoad();
@@ -1812,6 +1948,12 @@ public class ShuJuQingQiu : MonoBehaviour
         if (manager != null)
         {
             manager.DeleteCachedFile(failedLoad.localPath);
+        }
+
+        if (failedLoad.instance != null && !string.IsNullOrEmpty(failedLoad.instance.TaskId))
+        {
+            modelDownloadRequestedTaskIds.Remove(failedLoad.instance.TaskId);
+            modelSyncedPoseAppliedTaskIds.Remove(failedLoad.instance.TaskId);
         }
 
         if (failedLoad.isHistoryBatch)

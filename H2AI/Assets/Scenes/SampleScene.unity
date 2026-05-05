@@ -2005,7 +2005,7 @@ MonoBehaviour:
   iconSprite: {fileID: 21300000, guid: 20f25674b9512834f88938d45ed495d7, type: 3}
   iconQuadRenderer: {fileID: 705538872}
   iconQuadTextureNameID: _MainTex
-  iconQuadTexture: {fileID: 2800000, guid: b5066c514f7f02f4292cf842f3c8b75f, type: 3}
+  iconQuadTexture: {fileID: 2800000, guid: bb1b4a9241fba2042a81428e917afd5d, type: 3}
   defaultButtonQuadMaterial: {fileID: 2100000, guid: fa419ab56051229449e3b813df8f295f,
     type: 2}
   iconSet: {fileID: 11400000, guid: 8b386ef895f7c924f8c4b03d1d3ed683, type: 2}
@@ -4159,6 +4159,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _enable_sensor_update: 0
+  maxSensorUpdateHz: 15
   _depthSensorType: 0
   _publisher: {fileID: 1912203437}
   tex_grayscale_publish: {fileID: 0}
@@ -4175,6 +4176,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   _enable_sensor_update: 0
+  maxSensorUpdateHz: 15
   pv_image: {fileID: 817748058}
   pv_width: 640
   pv_height: 360
@@ -4478,7 +4480,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &242384127
 RectTransform:
   m_ObjectHideFlags: 0
@@ -5560,7 +5562,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: none
+  m_text: Clear All Models and Return Request
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 7b24099cb16412849b3836a7112b0dac, type: 2}
   m_sharedMaterial: {fileID: -3525995633598858701, guid: 7b24099cb16412849b3836a7112b0dac,
@@ -7217,7 +7219,7 @@ MonoBehaviour:
   m_OnCullStateChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_text: none
+  m_text: Show ModelBox
   m_isRightToLeft: 0
   m_fontAsset: {fileID: 11400000, guid: 7b24099cb16412849b3836a7112b0dac, type: 2}
   m_sharedMaterial: {fileID: -3525995633598858701, guid: 7b24099cb16412849b3836a7112b0dac,
@@ -19575,6 +19577,11 @@ MonoBehaviour:
     Radius: 0
     Transform: {fileID: 72280767}
     Colliders: []
+  - Name: GridLayoutButton5
+    Offset: {x: 0, y: 0}
+    Radius: 0
+    Transform: {fileID: 1804346071}
+    Colliders: []
   ignoreInactiveTransforms: 1
   sortType: 0
   surfaceType: 1
@@ -20663,7 +20670,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!4 &1804346071
 Transform:
   m_ObjectHideFlags: 0
@@ -20673,7 +20680,7 @@ Transform:
   m_GameObject: {fileID: 1804346070}
   serializedVersion: 2
   m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
-  m_LocalPosition: {x: 0.19999999, y: 0.000000007450581, z: 0}
+  m_LocalPosition: {x: 0.19999999, y: -0.07, z: 0}
   m_LocalScale: {x: 5, y: 2.5, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children:
@@ -20707,7 +20714,7 @@ MonoBehaviour:
   iconSprite: {fileID: 21300000, guid: 20f25674b9512834f88938d45ed495d7, type: 3}
   iconQuadRenderer: {fileID: 1010691153}
   iconQuadTextureNameID: _MainTex
-  iconQuadTexture: {fileID: 2800000, guid: b5066c514f7f02f4292cf842f3c8b75f, type: 3}
+  iconQuadTexture: {fileID: 2800000, guid: 8d0274d8bc6a17844a08b493920d9491, type: 3}
   defaultButtonQuadMaterial: {fileID: 2100000, guid: fa419ab56051229449e3b813df8f295f,
     type: 2}
   iconSet: {fileID: 11400000, guid: 8b386ef895f7c924f8c4b03d1d3ed683, type: 2}
@@ -20861,7 +20868,19 @@ MonoBehaviour:
     - {fileID: 11400000, guid: 087b16002c2b0b445baa3ed3beae44a9, type: 2}
   OnClick:
     m_PersistentCalls:
-      m_Calls: []
+      m_Calls:
+      - m_Target: {fileID: 1912203437}
+        m_TargetAssemblyTypeName: ShuJuQingQiu, Assembly-CSharp
+        m_MethodName: ClearLocalRetainedModels
+        m_Mode: 1
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 0
+        m_CallState: 2
   Events:
   - Event:
       m_PersistentCalls:
@@ -22738,6 +22757,11 @@ MonoBehaviour:
   DP_controler: {fileID: 223974227}
   selectionPanelManager: {fileID: 223974230}
   checkPollingIntervalSeconds: 10
+  markerCheckPollingIntervalSeconds: 5
+  modelQueuedPollingIntervalSeconds: 25
+  modelProcessingPollingIntervalSeconds: 12
+  modelCompletedPollingIntervalSeconds: 30
+  logCheckRequests: 0
   task_id: 
   image_url: 
   texture2DTuPian: {fileID: 2800000, guid: 7beab324a3ae347418d5bd86646a4c13, type: 3}
@@ -22789,7 +22813,10 @@ MonoBehaviour:
   spatialRaycastMask:
     serializedVersion: 2
     m_Bits: 2147483648
+  useMrtkHandRay: 1
+  forceHideCustomRayLine: 1
   showRayLine: 1
+  rayEndpointPaddingMeters: 0.05
   serverBaseUrl: http://10.40.1.122:7355
   historyLimit: 5
   shuJuQingQiu: {fileID: 1912203437}

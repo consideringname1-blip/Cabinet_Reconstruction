@@ -34,6 +34,7 @@ from task_db import (
     get_enabled_aruco_markers,
     get_latest_aruco_reference,
     get_latest_ready_model_bounds,
+    get_model_bounds_by_task_id,
     get_ready_model_bounds_in_range,
     sync_marker_registry_from_reference_folder,
 )
@@ -102,6 +103,43 @@ def _build_model_instance(task_data: dict, task_json: dict, fbx_url: str) -> dic
     }
 
 
+def _resolve_placement_status(task_data: dict, task_json: dict) -> str:
+    if bool(task_data.get("aruco_coordinate_synced")) and task_json.get("object_aruco"):
+        return "aruco_synced"
+    if task_json.get("object_world"):
+        return "world_temporary"
+    return "missing_pose"
+
+
+def _build_task_model_bounds_status(task_id: str, task_json: dict) -> dict:
+    row = get_model_bounds_by_task_id(task_id) if task_id else None
+    if row:
+        decoded = decode_model_bounds_row(row)
+        return {
+            "status": decoded.get("status") or "missing",
+            "coordinate_space": decoded.get("coordinate_space") or "aruco",
+            "aruco_reference_task_id": decoded.get("aruco_reference_task_id"),
+            "object_aruco": decoded.get("object_aruco"),
+            "aabb_min_aruco": decoded.get("aabb_min_aruco"),
+            "aabb_max_aruco": decoded.get("aabb_max_aruco"),
+            "corners_aruco": decoded.get("corners_aruco"),
+            "error_message": decoded.get("error_message"),
+        }
+
+    model_bounds = task_json.get("ModelBounds")
+    if isinstance(model_bounds, dict):
+        return model_bounds
+
+    if not task_json.get("object_aruco"):
+        return {
+            "status": "pending_reference",
+            "coordinate_space": "aruco",
+            "error_message": "object_aruco is missing; wait for a valid ArUco reference",
+        }
+
+    return {"status": "missing", "coordinate_space": "aruco"}
+
+
 def _url_for_file_if_present(folder: str, filename: str | None, file_path) -> str | None:
     if not filename or not file_path or not file_path.exists():
         return None
@@ -165,6 +203,7 @@ def _build_model_bounds_response(row: dict, hit_result: dict | None = None) -> d
     model = {
         "id": decoded.get("id"),
         "task_id": task_id,
+        "status": decoded.get("status"),
         "model_name": decoded.get("model_name"),
         "fbx_name": fbx_name,
         "uploaded_at": decoded.get("uploaded_at"),
@@ -175,6 +214,7 @@ def _build_model_bounds_response(row: dict, hit_result: dict | None = None) -> d
         "aabb_max_aruco": decoded.get("aabb_max_aruco"),
         "corners_aruco": decoded.get("corners_aruco"),
         "source_model_path": decoded.get("source_model_path"),
+        "error_message": decoded.get("error_message"),
         "download_urls": download_urls,
     }
     if fbx_url:
@@ -243,8 +283,12 @@ def _build_completed_task_response(task_data: dict) -> dict:
         "purpose": (task_data.get("task_json") or {}).get("purpose"),
         "terminal": True,
         "stage_runs": task_data.get("stage_runs") or [],
+        "aruco_coordinate_synced": bool(task_data.get("aruco_coordinate_synced")),
     }
     task_json = task_data.get("task_json") or {}
+    task_id = str(task_data.get("task_id") or "")
+    response["placement_status"] = _resolve_placement_status(task_data, task_json)
+    response["model_bounds"] = _build_task_model_bounds_status(task_id, task_json)
 
     instantmesh_info = task_json.get("InstantMesh") or {}
     runtime_mesh_info = task_json.get("RuntimeMesh") or {}

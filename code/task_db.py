@@ -1074,6 +1074,16 @@ def upsert_model_bounds(
     return dict(row)
 
 
+def get_model_bounds_by_task_id(task_id: str) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM {MODEL_BOUNDS_TABLE} WHERE task_id = ?",
+            (str(task_id),),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
 def get_latest_ready_model_bounds(limit: int = 5) -> List[Dict[str, Any]]:
     initialize_task_table()
     limit = max(1, min(int(limit or 5), 50))

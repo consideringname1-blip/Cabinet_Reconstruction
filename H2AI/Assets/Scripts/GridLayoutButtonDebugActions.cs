@@ -23,6 +23,12 @@ public class SelectionBoxDebugActions : MonoBehaviour
             return;
         }
 
+        if (selectionBoxRoot.activeSelf)
+        {
+            selectionBoxRoot.SetActive(false);
+            return;
+        }
+
         PlaceSelectionBoxInFrontOfCamera();
         selectionBoxRoot.SetActive(true);
     }
@@ -34,12 +40,6 @@ public class SelectionBoxDebugActions : MonoBehaviour
         {
             Debug.LogWarning("[SelectionBoxDebugActions] SelectionBoxController was not found.");
             return;
-        }
-
-        if (selectionBoxRoot != null)
-        {
-            PlaceSelectionBoxInFrontOfCamera();
-            selectionBoxRoot.SetActive(true);
         }
 
         controller.PrepareForReuse();

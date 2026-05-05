@@ -72,6 +72,11 @@ public class RuntimeModelManager : MonoBehaviour
         }
     }
 
+    public string RuntimeModelCachePath
+    {
+        get { return CacheRootPath; }
+    }
+
     public int MaxVisibleModels
     {
         get { return Mathf.Max(1, maxVisibleModels); }
@@ -190,6 +195,31 @@ public class RuntimeModelManager : MonoBehaviour
         EnforceCachedFileLimit();
     }
 
+    public bool UpdateModelPose(string taskId, RuntimeModelPoseData pose)
+    {
+        if (string.IsNullOrEmpty(taskId) || pose == null)
+        {
+            return false;
+        }
+
+        foreach (RuntimeModelRecord record in _records)
+        {
+            if (record == null)
+            {
+                continue;
+            }
+
+            if (record.TaskId == taskId || record.ModelKey == taskId)
+            {
+                record.Pose = pose;
+                ApplyResolvedPose(record);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public void DeleteCachedFile(string localPath)
     {
         if (string.IsNullOrEmpty(localPath))
@@ -208,6 +238,19 @@ public class RuntimeModelManager : MonoBehaviour
         {
             Debug.LogWarning("[RuntimeModelManager] Failed to delete cached model file: " + exc.Message);
         }
+    }
+
+    public int ClearLocalRuntimeModels()
+    {
+        EnsureInitialized();
+        int removedCount = _records.Count;
+        foreach (RuntimeModelRecord record in new List<RuntimeModelRecord>(_records))
+        {
+            DestroyRecordObject(record);
+        }
+        _records.Clear();
+        ClearCacheDirectory();
+        return removedCount;
     }
 
     internal void SetArucoReference(Vector3 position, Quaternion rotation)
