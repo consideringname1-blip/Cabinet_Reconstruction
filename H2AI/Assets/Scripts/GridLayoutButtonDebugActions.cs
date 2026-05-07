@@ -3,7 +3,6 @@ using UnityEngine;
 public class SelectionBoxDebugActions : MonoBehaviour
 {
     [SerializeField] private GameObject selectionBoxRoot;
-    [SerializeField] private SelectionBoxController selectionBoxController;
     [SerializeField] private float distanceFromCamera = 0.8f;
     [SerializeField] private bool hideOnStart = true;
 
@@ -71,24 +70,6 @@ public class SelectionBoxDebugActions : MonoBehaviour
         settingsPanel.SetActive(true);
     }
 
-    public void ResetSelectionBoxInPlace()
-    {
-        if (selectionBoxRoot != null)
-        {
-            PlaceSelectionBoxInFrontOfCamera();
-            selectionBoxRoot.SetActive(true);
-        }
-
-        SelectionBoxController controller = ResolveSelectionBoxController();
-        if (controller == null)
-        {
-            Debug.LogWarning("[SelectionBoxDebugActions] SelectionBoxController was not found.");
-            return;
-        }
-
-        controller.PrepareForReuse();
-    }
-
     private bool PlaceSelectionBoxInFrontOfCamera()
     {
         if (selectionBoxRoot == null)
@@ -115,20 +96,5 @@ public class SelectionBoxDebugActions : MonoBehaviour
         Quaternion targetRotation = Quaternion.LookRotation(flatForward, Vector3.up);
         selectionBoxRoot.transform.SetPositionAndRotation(targetPosition, targetRotation);
         return true;
-    }
-
-    private SelectionBoxController ResolveSelectionBoxController()
-    {
-        if (selectionBoxController != null)
-        {
-            return selectionBoxController;
-        }
-
-        if (selectionBoxRoot != null)
-        {
-            selectionBoxController = selectionBoxRoot.GetComponentInChildren<SelectionBoxController>(true);
-        }
-
-        return selectionBoxController;
     }
 }

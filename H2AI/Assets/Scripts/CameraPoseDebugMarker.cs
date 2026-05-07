@@ -97,13 +97,6 @@ public class CameraPoseDebugMarker : MonoBehaviour
         );
     }
 
-    public void HideMarkers()
-    {
-        SetMarkerActive(_cameraMarker, false);
-        SetMarkerActive(_modelMarker, false);
-        SetMarkerActive(_arucoMarker, false);
-    }
-
     private void EnsureMarkers()
     {
         if (_cameraMarker == null)

@@ -125,20 +125,6 @@ public class ShuJuQingQiu : MonoBehaviour
         return timestamp + "_" + randomSuffix;
     }
 
-    // =========================
-    // 新增：拍照时写入（captureTicks / photoTime）
-    // =========================
-    long _lastCaptureTicks = 0;
-    string _lastPhotoTimeUtcIso = "";
-    public void NotifyCapture(long captureTicksUtcTicks, DateTime utcTime)
-    {
-        _lastCaptureTicks = captureTicksUtcTicks;
-        _lastPhotoTimeUtcIso = utcTime.ToUniversalTime().ToString("o");
-    }
-
-    // =========================
-    // 新增：设备信息（HoloLens / IP）
-    // =========================
     const string DEVICE_TYPE = "HoloLens2";
     string _cachedDeviceIp = null;
 
@@ -167,7 +153,7 @@ public class ShuJuQingQiu : MonoBehaviour
     }
 
 
-    public static JArray Float2DToJArray(float[,] array)
+    private static JArray Float2DToJArray(float[,] array)
     {
         int rows = array.GetLength(0);
         int cols = array.GetLength(1);
@@ -646,59 +632,25 @@ public class ShuJuQingQiu : MonoBehaviour
         );
 
 
-        // ==========================================================
-        // 打包
-        // ==========================================================
-        string url = "http://10.40.1.122:7355/generate";
-        var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnRequestFinished);
-        request.Tag = TASK_PURPOSE_OBJECT_RECONSTRUCTION;
-
-        Game_M.initialize.XianShi("shangchuan_Dabao");
-        request.AddField("purpose", TASK_PURPOSE_OBJECT_RECONSTRUCTION);
-        JObject PVCameraJ = new JObject
-        {
-            ["width"] = width_pv_C_F,
-            ["height"] = height_pv_C_F,
-            ["k"] = Float2DToJArray(k_pv_C_F),
-            ["pose"] = Float2DToJArray(pose_pv_C_F),
-        };
-        request.AddField("PVCameraJ", PVCameraJ.ToString(Formatting.None));
-        request.AddBinaryData("pv_image", tex_pv_P_C_F, "pv.png", "image/png");
-        Debug.Log("[UPLOAD] PV PNG bytes=" + (tex_pv_P_C_F != null ? tex_pv_P_C_F.Length : 0));
-        JObject DepthCameraJ = new JObject
-        {
-            ["pose"] = Float2DToJArray(pose_dp_C_F),
-            ["sensor"] = SENSOR_TYPE,
-        };
-        request.AddField("DepthCameraJ", DepthCameraJ.ToString(Formatting.None));
-        request.AddBinaryData("depth_image", image_dp_P_C_F, "depth.png", "image/png");
-        Debug.Log("[UPLOAD] Depth PNG bytes=" + (image_dp_P_C_F != null ? image_dp_P_C_F.Length : 0));
-        JObject deviceJ = new JObject
-        {
-            ["type"] = DEVICE_TYPE,
-            ["ip"] = string.IsNullOrEmpty(ip) ? "" : ip,
-            ["time"] = photoTimeUtc,
-            ["pose"] = new JArray(camPos.x, camPos.y, camPos.z),
-            ["rotation"] = new JArray(camRot.x, camRot.y, camRot.z, camRot.w),
-            ["startup_session_id"] = startup_session_id,
-        };
-        request.AddField("deviceJ", deviceJ.ToString(Formatting.None));
-        // ==========================================================
-        // 新增：框选框结果（按 Python 风格：左上原点，x右，y下，0~1）
-        // ==========================================================
-        JObject selectionBoxJ = new JObject
-        {
-            ["top_left"] = new JArray(boxTL.x, boxTL.y),
-            ["bottom_right"] = new JArray(boxBR.x, boxBR.y)
-        };
-        request.AddField("SelectionBoxJ", selectionBoxJ.ToString(Formatting.None));
-
         yield return null;
-        request.Send();
-        Game_M.initialize.XianShi("generate");
+        SendGenerateRequest(
+            TASK_PURPOSE_OBJECT_RECONSTRUCTION,
+            tex_pv_P_C_F,
+            width_pv_C_F,
+            height_pv_C_F,
+            k_pv_C_F,
+            pose_pv_C_F,
+            camPos,
+            camRot,
+            ip,
+            photoTimeUtc,
+            image_dp_P_C_F,
+            pose_dp_C_F,
+            SENSOR_TYPE,
+            boxTL,
+            boxBR
+        );
     }
-
-    // ========================= 下面旧代码原样保留 =========================
 
     public string task_id;
     private string modelTaskId = "";
@@ -755,23 +707,6 @@ public class ShuJuQingQiu : MonoBehaviour
             string statusCode = response != null ? response.StatusCode.ToString() : "no_response";
             Debug.LogError("Error: " + statusCode + " - " + serverError);
             ShowFrontMessage(NormalizeServerErrorForFrontMessage(serverError, "shangchuan_ERR_request_failed", requestPurpose));
-        }
-    }
-
-    /// <summary>
-    /// 检查结果
-    /// </summary>
-    public void GetJieGuo()
-    {
-        if (!string.IsNullOrEmpty(modelTaskId))
-        {
-            StartCheckPollingForTask(modelTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
-            return;
-        }
-
-        if (!string.IsNullOrEmpty(markerTaskId))
-        {
-            StartCheckPollingForTask(markerTaskId, TASK_PURPOSE_ARUCO_REFERENCE);
         }
     }
 
@@ -1051,11 +986,6 @@ public class ShuJuQingQiu : MonoBehaviour
         RequestLatestCompletedModel(0, false);
     }
 
-    public void XiaZaiShangYiGeChengGongMoXing()
-    {
-        XiaZaiLiShiWuGeKeYongMoXing();
-    }
-
     public void XiaZaiLiShiWuGeKeYongMoXing()
     {
         if (isHistoryBatchDownloadActive)
@@ -1089,43 +1019,6 @@ public class ShuJuQingQiu : MonoBehaviour
         RequestLatestCompletedModel(historyOffset, true);
     }
 
-    public void XiaZaiXiaYiGeLiShiChengGongMoXing()
-    {
-        int historyOffset = latestCompletedHistoryOffset;
-        XiaZaiLiShiChengGongMoXing(historyOffset);
-        latestCompletedHistoryOffset = (historyOffset + 1) % COMPLETED_MODEL_HISTORY_LIMIT;
-    }
-
-    public void XiaZaiLiShiChengGongMoXing0()
-    {
-        XiaZaiLiShiChengGongMoXing(0);
-    }
-
-    public void XiaZaiLiShiChengGongMoXing1()
-    {
-        XiaZaiLiShiChengGongMoXing(1);
-    }
-
-    public void XiaZaiLiShiChengGongMoXing2()
-    {
-        XiaZaiLiShiChengGongMoXing(2);
-    }
-
-    public void XiaZaiLiShiChengGongMoXing3()
-    {
-        XiaZaiLiShiChengGongMoXing(3);
-    }
-
-    public void XiaZaiLiShiChengGongMoXing4()
-    {
-        XiaZaiLiShiChengGongMoXing(4);
-    }
-
-    public void XiaZaiLiShiChengGongMoXing(int historyOffset)
-    {
-        RequestLatestCompletedModel(historyOffset, false);
-    }
-
     private void RequestLatestCompletedModel(int historyOffset, bool isHistoryBatch)
     {
         latestCompletedHistoryOffset = Mathf.Clamp(historyOffset, 0, COMPLETED_MODEL_HISTORY_LIMIT - 1);
@@ -1147,10 +1040,6 @@ public class ShuJuQingQiu : MonoBehaviour
         Game_M.initialize.XianShi("latest_completed_" + (latestCompletedHistoryOffset + 1).ToString(CultureInfo.InvariantCulture));
     }
 
-    [Header("图片下载地址")]
-    public string image_url;
-    [Header("图片")]
-    public Texture2D texture2DTuPian;
     [Header("Debug JSON")]
     [TextArea(3, 12)]
     public string debug_json;
@@ -1438,8 +1327,6 @@ public class ShuJuQingQiu : MonoBehaviour
         bool showDebugMarkers
     )
     {
-        string imgUrl = jo["image_url"]?.ToString();
-
         if (!TryBuildRuntimeModelInstance(jo, out RuntimeModelInstance modelInstance, out string errorMessage))
         {
             Debug.LogWarning("[" + sourceTag + "] completed response invalid model_instance: " + errorMessage);
@@ -1448,7 +1335,6 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         pendingModelInstance = modelInstance;
-        image_url = imgUrl;
         ApplyDebugInfo(jo);
         ApplyResponsePoses(jo, updateCurrentSessionArucoReference, showDebugMarkers);
 
@@ -1537,7 +1423,6 @@ public class ShuJuQingQiu : MonoBehaviour
         JToken objectWorld = NonNullToken(modelJ["object_world"]);
         JToken objectAruco = NonNullToken(modelJ["object_aruco"]);
         JToken arucoReference = NonNullToken(modelJ["aruco_reference"]);
-        JToken imageUrl = NonNullToken(modelJ["download_urls"]?["image"]);
         if (objectWorld != null)
         {
             wrapper["object_world"] = objectWorld.DeepClone();
@@ -1549,10 +1434,6 @@ public class ShuJuQingQiu : MonoBehaviour
         if (arucoReference != null)
         {
             wrapper["aruco_reference"] = arucoReference.DeepClone();
-        }
-        if (imageUrl != null)
-        {
-            wrapper["image_url"] = imageUrl.ToString();
         }
 
         pendingModelShouldPlaceDebugMarkers = false;
@@ -2023,48 +1904,4 @@ public class ShuJuQingQiu : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// 下载图片
-    /// </summary>
-    public void XiaZaiImage()
-    {
-        string url = image_url;
-        var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRequestImage);
-        request.AddHeader("Content-Type", "application/json;charset=UTF-8");
-        request.Send();
-    }
-
-    private void OnRequestImage(HTTPRequest request, HTTPResponse response)
-    {
-        if (response.IsSuccess)
-        {
-            texture2DTuPian = response.DataAsTexture2D;
-        }
-        else
-        {
-            Debug.LogError("Error: " + response.StatusCode + " - " + response.Message);
-            ShowFrontMessage("image_ERR_request_failed");
-        }
-    }
-
-    // Update is called once per frame
-    void Update()
-    {
-        if (Input.GetKeyDown(KeyCode.Q))
-        {
-            ShangChuanTuPian();
-        }
-        if (Input.GetKeyDown(KeyCode.W))
-        {
-            GetJieGuo();
-        }
-        if (Input.GetKeyDown(KeyCode.E))
-        {
-            DownloadPendingRuntimeModel();
-        }
-        if (Input.GetKeyDown(KeyCode.R))
-        {
-            XiaZaiZuiXinChengGongMoXing();
-        }
-    }
 }

@@ -1,7 +1,6 @@
-﻿using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
+
 [DefaultExecutionOrder(-1000)]
 public class Game_M : MonoBehaviour
 {
@@ -13,44 +12,45 @@ public class Game_M : MonoBehaviour
         initialize = this;
     }
 
-    // Start is called before the first frame update
-    void Start()
-    {
-        initialize = this;
-    }
     public void XianShi(string data)
     {
-        if (text == null || text.transform == null || text.transform.parent == null)
+        if (!TryGetMessageRoot(out GameObject messageRoot))
         {
             return;
         }
 
-        text.transform.parent.gameObject.SetActive(true);
+        messageRoot.SetActive(true);
         text.text = data;
     }
 
     public void GuanBi()
     {
-        if (text == null || text.transform == null || text.transform.parent == null)
+        if (!TryGetMessageRoot(out GameObject messageRoot))
         {
             return;
         }
 
-        text.transform.parent.gameObject.SetActive(false);
+        messageRoot.SetActive(false);
         Invoke(nameof(YanXhiGuanBi), 0.5f);
     }
-    public void YanXhiGuanBi()
+
+    private void YanXhiGuanBi()
     {
-        if (text == null || text.transform == null || text.transform.parent == null)
+        if (TryGetMessageRoot(out GameObject messageRoot))
         {
-            return;
+            messageRoot.SetActive(false);
+        }
+    }
+
+    private bool TryGetMessageRoot(out GameObject messageRoot)
+    {
+        messageRoot = null;
+        if (text == null || text.transform.parent == null)
+        {
+            return false;
         }
 
-        text.transform.parent.gameObject.SetActive(false);
-    }
-    // Update is called once per frame
-    void Update()
-    {
-        
+        messageRoot = text.transform.parent.gameObject;
+        return true;
     }
 }

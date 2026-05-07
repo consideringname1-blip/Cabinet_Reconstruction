@@ -224,7 +224,7 @@ public class LoadModel : MonoBehaviour
         }
     }
 
-    public static void AddGameObjectCollider(GameObject gameObject)
+    private static void AddGameObjectCollider(GameObject gameObject)
     {
         Vector3 pos = gameObject.transform.localPosition;
         Quaternion qt = gameObject.transform.localRotation;
@@ -253,7 +253,7 @@ public class LoadModel : MonoBehaviour
         }
     }
 
-    public static Bounds GetLocalBounds(GameObject target)
+    private static Bounds GetLocalBounds(GameObject target)
     {
         Renderer[] renderers = target.GetComponentsInChildren<Renderer>();
         Bounds bounds = new Bounds();

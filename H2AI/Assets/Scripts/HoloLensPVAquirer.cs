@@ -1,16 +1,11 @@
 using System;
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
-
 using UnityEngine.UI;
 
 public class HoloLensPVAquirer : MonoBehaviour
 {
     [SerializeField] bool _enable_sensor_update = false;
     [SerializeField, Min(1f)] private float maxSensorUpdateHz = 15f;
-
-    //public GameObject pv_image;
 
     public RawImage pv_image;
 
@@ -34,10 +29,6 @@ public class HoloLensPVAquirer : MonoBehaviour
     private bool _pvInitialized;
     private float nextSensorUpdateTime;
 
-    //public HoloLensPVPublisher _publisher;
-    public ShuJuQingQiu _publisher;
-
-    // Start is called before the first frame update
     void Start()
     {
 #if WINDOWS_UWP
@@ -57,10 +48,9 @@ public class HoloLensPVAquirer : MonoBehaviour
         pv_image.texture = tex_pv;
         _pvInitialized = true;
 #endif
-        _enable_sensor_update = true;////
+        _enable_sensor_update = true;
     }
 
-    // Update is called once per frame
     void Update()
     {
         if (_enable_sensor_update && Time.unscaledTime >= nextSensorUpdateTime)
@@ -70,12 +60,6 @@ public class HoloLensPVAquirer : MonoBehaviour
             UpdateFrame();
 #endif
         }
-    }
-
-    public void Switch_PVUpdate()
-    {
-        if (_enable_sensor_update) { _enable_sensor_update = false; }
-        else { _enable_sensor_update = true; }
     }
 
     void FlipVertical(byte[] src, byte[] dst, int width, int height)
@@ -131,18 +115,13 @@ public class HoloLensPVAquirer : MonoBehaviour
         // 上下翻转
         FlipVertical(pv_raw_buffer, pv_flip_buffer, pvcf.width, pvcf.height);
 
-        // 写入 texture
         tex_pv.LoadRawTextureData(pv_flip_buffer);
 
         tex_pv.Apply(false);
 
         var metadata = hl2da.user.Unpack<hl2da.pv_metadata>(fb.Buffer(2));
         hl2da.user.Copy<float>(fb.Buffer(3), pose_latest, pose_latest.Length);
-        //Matrix4x4 pose = hl2da.user.Unpack<Matrix4x4>(fb.Buffer(3));
 
-        // encode image to png
-        //byte[] frameData = ImageConversion.EncodeToPNG(tex_pv);
-        //Publish(frameData, pv_width, pv_height, k_matrix, pose);
         k_latest[0, 0] = metadata.fx;
         k_latest[0, 1] = 0f;
         k_latest[0, 2] = metadata.cx;
@@ -172,16 +151,6 @@ public class HoloLensPVAquirer : MonoBehaviour
 
         return dst;
     }
-    public void SetPVUpdateEnabled(bool enabled)
-    {
-        _enable_sensor_update = enabled;
-    }
-
-
-    //void Publish(byte[] image, ushort width, ushort height, float[,] k, float[,] pose)
-    //{
-    //    //_publisher.PublishMessage(image, width, height, k, pose);
-    //}
 
     public bool FreezeCurrentFrame()
     {

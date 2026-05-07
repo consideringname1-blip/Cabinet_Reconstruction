@@ -87,7 +87,7 @@ public class RuntimeModelManager : MonoBehaviour
         get { return Mathf.Max(1, maxCachedModelFiles); }
     }
 
-    public static void EnsureInstance()
+    private static void EnsureInstance()
     {
         if (_instance != null)
         {

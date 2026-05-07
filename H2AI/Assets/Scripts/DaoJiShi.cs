@@ -1,60 +1,50 @@
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Events;
 using UnityEngine.UI;
+
 /// <summary>
-/// µ¹¼ÆÊ±
+/// å€’è®¡æ—¶
 /// </summary>
 public class DaoJiShi : MonoBehaviour
 {
-    [Header("µ¹¼ÆÊ±")]
+    [Header("å€’è®¡æ—¶")]
     public int maxTime;
     /// <summary>
-    /// µ±Ç°Ê±¼ä
+    /// å½“å‰æ—¶é—´
     /// </summary>
     int timeD;
-    [Header("ÏÔÊ¾µ¹¼ÆÊ±")]
+    [Header("æ˜¾ç¤ºå€’è®¡æ—¶")]
     public Text text;
-    [Header("½áÊøÊÂ¼ş")]
+    [Header("ç»“æŸäº‹ä»¶")]
     public UnityEvent entEvent;
-    public void OnEnable()
+    private void OnEnable()
     {
         CancelInvoke();
-        timeD = maxTime+1;
-        InvokeRepeating("JiShi", 0, 1);
+        timeD = maxTime + 1;
+        InvokeRepeating(nameof(JiShi), 0, 1);
     }
+
     /// <summary>
-    /// ¼ÆËãÊ±¼ä
+    /// è®¡ç®—æ—¶é—´
     /// </summary>
-    public void JiShi()
+    private void JiShi()
     {
         timeD--;
-        if (timeD<=0)
+        if (timeD <= 0)
         {
             timeD = 0;
             CancelInvoke();
-            entEvent.Invoke();
+            entEvent?.Invoke();
             gameObject.SetActive(false);
         }
-        if (text!=null)
+
+        if (text != null)
         {
             text.text = timeD.ToString();
         }
-   
-    }
-    // Start is called before the first frame update
-    void Start()
-    {
-        
     }
 
-    // Update is called once per frame
-    void Update()
-    {
-        
-    }
-    public void OnDisable()
+    private void OnDisable()
     {
         CancelInvoke();
     }

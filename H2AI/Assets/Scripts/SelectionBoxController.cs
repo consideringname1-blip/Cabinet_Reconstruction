@@ -1,7 +1,4 @@
-using System.Collections;
-using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.UI;
 
 using Microsoft.MixedReality.Toolkit.UI;
 
@@ -214,7 +211,7 @@ public class SelectionBoxController : MonoBehaviour
     }
 
     [ContextMenu("Reset To Initial")]
-    public void ResetToInitial()
+    private void ResetToInitial()
     {
         SetFromNormalized(initLeft, initTop, initRight, initBottom);
     }
@@ -224,7 +221,7 @@ public class SelectionBoxController : MonoBehaviour
     /// left/top/right/bottom 都是 0~1。
     /// top 往下增大，left 往右增大。
     /// </summary>
-    public void SetFromNormalized(float left, float top, float right, float bottom)
+    private void SetFromNormalized(float left, float top, float right, float bottom)
     {
         if (!IsReady())
             return;
@@ -241,7 +238,7 @@ public class SelectionBoxController : MonoBehaviour
         UpdateSelectionVisual();
     }
 
-    public void SetFromNormalized(Vector2 topLeft, Vector2 bottomRight)
+    private void SetFromNormalized(Vector2 topLeft, Vector2 bottomRight)
     {
         SetFromNormalized(topLeft.x, topLeft.y, bottomRight.x, bottomRight.y);
     }
@@ -419,54 +416,11 @@ public class SelectionBoxController : MonoBehaviour
         bottomRight = LocalToNormalized(new Vector3(right, bottom, 0f));
     }
 
-    /// <summary>
-    /// 返回 (left, top, right, bottom)，范围 0~1，原点在图片左上角
-    /// </summary>
-    public Vector4 GetNormalizedLTRB()
-    {
-        GetNormalizedTLBR(out Vector2 tl, out Vector2 br);
-        return new Vector4(tl.x, tl.y, br.x, br.y);
-    }
-
-    /// <summary>
-    /// 返回 Rect(x=left, y=top, width, height)，范围 0~1，原点在图片左上角
-    /// </summary>
-    public Rect GetNormalizedRect()
-    {
-        GetNormalizedTLBR(out Vector2 tl, out Vector2 br);
-        return new Rect(
-            tl.x,
-            tl.y,
-            br.x - tl.x,
-            br.y - tl.y
-        );
-    }
-
     public void PrepareForReuse()
     {
         CacheHandlePlaneZ();
         ResetToInitial();
         ConstrainHandles();
         UpdateSelectionVisual();
-    }
-
-    public Vector3 GetHandleTLWorldPosition()
-    {
-        return handleTL != null ? handleTL.position : Vector3.zero;
-    }
-
-    public Vector3 GetHandleBRWorldPosition()
-    {
-        return handleBR != null ? handleBR.position : Vector3.zero;
-    }
-
-    public Vector3 GetHandleTLImageLocalPosition()
-    {
-        return handleTL != null ? GetLocalPointInImageArea(handleTL) : Vector3.zero;
-    }
-
-    public Vector3 GetHandleBRImageLocalPosition()
-    {
-        return handleBR != null ? GetLocalPointInImageArea(handleBR) : Vector3.zero;
     }
 }
