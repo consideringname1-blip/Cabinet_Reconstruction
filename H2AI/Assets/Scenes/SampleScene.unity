@@ -4236,6 +4236,9 @@ MonoBehaviour:
   selectionBoxController: {fileID: 983785832}
   distanceFromCamera: 0.8
   hideOnStart: 1
+  settingsPanel: {fileID: 242384126}
+  settingsDistanceFromCamera: 1
+  hideSettingsOnStart: 1
 --- !u!114 &223974233
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -15796,7 +15799,7 @@ MonoBehaviour:
       m_Calls:
       - m_Target: {fileID: 223974232}
         m_TargetAssemblyTypeName: SelectionBoxDebugActions, Assembly-CSharp
-        m_MethodName: ResetSelectionBoxInPlace
+        m_MethodName: MoveSelectionBoxInFrontOfCamera
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}
@@ -26681,7 +26684,7 @@ MonoBehaviour:
       m_Calls:
       - m_Target: {fileID: 223974232}
         m_TargetAssemblyTypeName: SelectionBoxDebugActions, Assembly-CSharp
-        m_MethodName: MoveSelectionBoxInFrontOfCamera
+        m_MethodName: ToggleSettingsPanel
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}

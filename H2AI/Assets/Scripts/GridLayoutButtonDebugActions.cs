@@ -7,11 +7,20 @@ public class SelectionBoxDebugActions : MonoBehaviour
     [SerializeField] private float distanceFromCamera = 0.8f;
     [SerializeField] private bool hideOnStart = true;
 
+    [SerializeField] private GameObject settingsPanel;
+    [SerializeField] private float settingsDistanceFromCamera = 1.0f;
+    [SerializeField] private bool hideSettingsOnStart = true;
+
     private void Awake()
     {
         if (hideOnStart && selectionBoxRoot != null)
         {
             selectionBoxRoot.SetActive(false);
+        }
+
+        if (hideSettingsOnStart && settingsPanel != null)
+        {
+            settingsPanel.SetActive(false);
         }
     }
 
@@ -31,6 +40,35 @@ public class SelectionBoxDebugActions : MonoBehaviour
 
         PlaceSelectionBoxInFrontOfCamera();
         selectionBoxRoot.SetActive(true);
+    }
+
+    public void ToggleSettingsPanel()
+    {
+        if (settingsPanel == null)
+        {
+            Debug.LogWarning("[SelectionBoxDebugActions] settingsPanel is not assigned.");
+            return;
+        }
+
+        if (settingsPanel.activeSelf)
+        {
+            settingsPanel.SetActive(false);
+            return;
+        }
+
+        Camera mainCamera = Camera.main;
+        if (mainCamera == null)
+        {
+            Debug.LogWarning("[SelectionBoxDebugActions] Main Camera not found.");
+            return;
+        }
+
+        Transform cameraTransform = mainCamera.transform;
+        Vector3 panelPosition = cameraTransform.position + cameraTransform.forward * Mathf.Max(0.1f, settingsDistanceFromCamera);
+        Quaternion panelRotation = Quaternion.LookRotation(cameraTransform.forward, Vector3.up);
+
+        settingsPanel.transform.SetPositionAndRotation(panelPosition, panelRotation);
+        settingsPanel.SetActive(true);
     }
 
     public void ResetSelectionBoxInPlace()

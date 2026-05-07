@@ -968,6 +968,49 @@ public class ShuJuQingQiu : MonoBehaviour
         return true;
     }
 
+    private bool HasActiveModelPolling()
+    {
+        return !string.IsNullOrEmpty(modelTaskId)
+            && checkPollingCoroutinesByTaskId.ContainsKey(modelTaskId);
+    }
+
+    private bool ShouldRequestLatestCompletedAfterAruco(JObject jo)
+    {
+        JToken availableToken = jo != null ? jo["latest_completed_model_available"] : null;
+        if (availableToken != null && availableToken.Type == JTokenType.Boolean)
+        {
+            return availableToken.Value<bool>();
+        }
+
+        JToken syncedCountToken = jo != null ? jo["retro_synced_completed_task_count"] : null;
+        if (syncedCountToken != null && syncedCountToken.Type != JTokenType.Null)
+        {
+            int syncedCount;
+            return int.TryParse(syncedCountToken.ToString(), out syncedCount) && syncedCount > 0;
+        }
+
+        JToken arucoDetectedToken = jo != null ? jo["aruco_detected"] : null;
+        return arucoDetectedToken != null
+            && arucoDetectedToken.Type == JTokenType.Boolean
+            && arucoDetectedToken.Value<bool>();
+    }
+
+    private void RequestModelResultAfterArucoIfNeeded(JObject jo)
+    {
+        if (!ShouldRequestLatestCompletedAfterAruco(jo))
+        {
+            return;
+        }
+
+        if (HasActiveModelPolling())
+        {
+            SendCheckRequest(modelTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
+            return;
+        }
+
+        RequestLatestCompletedModel(0, false);
+    }
+
     private IEnumerator CheckPollingCoroutine(string pollTaskId, string purpose)
     {
         while (checkPollingCoroutinesByTaskId.ContainsKey(pollTaskId))
@@ -1574,6 +1617,10 @@ public class ShuJuQingQiu : MonoBehaviour
             ApplyDebugInfo(jo);
             bool appliedArucoReference = ApplyArucoReference(jo, true, true, true);
             ShowFrontMessage(appliedArucoReference ? "aruco_completed" : "aruco_ERR_missing_reference");
+            if (appliedArucoReference)
+            {
+                RequestModelResultAfterArucoIfNeeded(jo);
+            }
             StopCheckPollingForTask(pollTaskId);
             return;
         }

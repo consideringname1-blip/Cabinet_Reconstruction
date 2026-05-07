@@ -59,6 +59,13 @@ def _is_truthy_query_value(value) -> bool:
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _safe_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def _extract_unity_pv_pose_components(pose_value) -> tuple[list[float] | None, list[float] | None]:
     if pose_value is None:
         return None, None
@@ -362,6 +369,11 @@ def _build_completed_task_response(task_data: dict) -> dict:
 
 def _build_aruco_completed_task_response(task_data: dict) -> dict:
     task_json = task_data.get("task_json") or {}
+    startup_session_id = str(
+        task_data.get("startup_session_id")
+        or (task_json.get("device") or {}).get("startup_session_id")
+        or ""
+    ).strip()
     response = {
         "status": task_data["status"],
         "task_id": task_data.get("task_id"),
@@ -371,18 +383,45 @@ def _build_aruco_completed_task_response(task_data: dict) -> dict:
     }
     _append_pose_fields(response, task_json)
 
+    aruco_stage = (
+        ((task_json.get("debug") or {}).get("pose_transform_stages") or {}).get("aruco_stage")
+        or {}
+    )
+    response["retro_synced_completed_task_count"] = _safe_int(
+        aruco_stage.get("retro_synced_completed_task_count") or 0
+    )
+
     if not response.get("aruco_reference"):
-        startup_session_id = str(
-            task_data.get("startup_session_id")
-            or (task_json.get("device") or {}).get("startup_session_id")
-            or ""
-        ).strip()
         latest_reference_row = get_latest_aruco_reference(startup_session_id) if startup_session_id else None
         latest_reference_task_id = str((latest_reference_row or {}).get("task_id") or "")
         if latest_reference_row and latest_reference_task_id == str(task_data.get("task_id") or ""):
             response["aruco_reference"] = _load_marker_pose_json(latest_reference_row.get("marker_pose_json"))
 
     response["aruco_detected"] = bool(response.get("aruco_reference"))
+    latest_completed_model = get_latest_completed_task_data(
+        startup_session_id=startup_session_id,
+        require_aruco_coordinate_synced=True,
+        history_offset=0,
+        attempt_sync=False,
+    )
+    fallback_from_other_session = False
+    if not latest_completed_model and startup_session_id:
+        latest_completed_model = get_latest_completed_task_data(
+            startup_session_id=None,
+            require_aruco_coordinate_synced=True,
+            history_offset=0,
+            attempt_sync=False,
+        )
+        fallback_from_other_session = latest_completed_model is not None
+
+    response["latest_completed_model_available"] = latest_completed_model is not None
+    if latest_completed_model:
+        response["latest_completed_model_task_id"] = latest_completed_model.get("task_id")
+        if fallback_from_other_session:
+            response["latest_completed_model_fallback_from_other_startup_session"] = True
+            response["latest_completed_model_source_startup_session_id"] = latest_completed_model.get(
+                "startup_session_id"
+            )
     return response
 
 
