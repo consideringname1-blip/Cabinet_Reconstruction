@@ -4,3 +4,6 @@
 [submodule "code/reconstruction/InstantMesh"]
 	path = code/reconstruction/InstantMesh
 	url = https://github.com/TencentARC/InstantMesh.git
+[submodule "code/reconstruction/sam3d_objects"]
+	path = code/reconstruction/sam3d_objects
+	url = https://github.com/oukousan/sam-3d-objects.git
