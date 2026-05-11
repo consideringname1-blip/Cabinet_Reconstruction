@@ -58,7 +58,7 @@ MonoBehaviour:
       type: 3}
     prioritizedLayerMasks:
     - serializedVersion: 2
-      m_Bits: 4294967291
+      m_Bits: 2147483643
   - controllerType: 5167
     handedness: 7
     pointerPrefab: {fileID: 1507865967819406, guid: c2fde7a8938065b459cff79b8ed89393,

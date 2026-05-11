@@ -918,9 +918,13 @@ public class ShuJuQingQiu : MonoBehaviour
         if (HasActiveModelPolling())
         {
             SendCheckRequest(modelTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
-            return;
         }
 
+        RefreshLatestCompletedModelAfterAruco();
+    }
+
+    public void RefreshLatestCompletedModelAfterAruco()
+    {
         RequestLatestCompletedModel(0, false, true, Mathf.Max(0, arucoLatestCompletedRetryCount));
     }
 

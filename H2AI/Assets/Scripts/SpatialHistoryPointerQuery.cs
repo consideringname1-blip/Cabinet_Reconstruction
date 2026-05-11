@@ -475,7 +475,10 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
         if (!TryGetCurrentArucoReference(out Vector3 arucoPosition, out Quaternion arucoRotation))
         {
             Debug.LogWarning("[SpatialHistoryPointerQuery] ArUco reference is not available.");
-            ShowFrontMessage("spatial_query_ERR_no_aruco_reference");
+            if (!RequestLatestCompletedModelForArucoRefresh("spatial_query_refresh_aruco"))
+            {
+                ShowFrontMessage("spatial_query_ERR_no_aruco_reference");
+            }
             yield break;
         }
 
@@ -560,7 +563,10 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
         if (!TryGetCurrentArucoReference(out Vector3 arucoPosition, out Quaternion arucoRotation))
         {
             Debug.LogWarning("[SpatialHistoryPointerQuery] ArUco reference is not available; bounds debug skipped.");
-            ShowFrontMessage("bounds_debug_ERR_no_aruco_reference");
+            if (!RequestLatestCompletedModelForArucoRefresh("bounds_debug_refresh_aruco"))
+            {
+                ShowFrontMessage("bounds_debug_ERR_no_aruco_reference");
+            }
             return;
         }
 
@@ -708,6 +714,19 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
                 Vector3.up
             );
         }
+    }
+
+    private bool RequestLatestCompletedModelForArucoRefresh(string frontMessage)
+    {
+        ResolveReferences();
+        if (shuJuQingQiu == null)
+        {
+            return false;
+        }
+
+        shuJuQingQiu.RefreshLatestCompletedModelAfterAruco();
+        ShowFrontMessage(frontMessage);
+        return true;
     }
 
     private bool TryReadCorners(JToken token, out Vector3[] corners)
