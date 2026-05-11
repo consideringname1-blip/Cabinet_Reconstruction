@@ -19,10 +19,12 @@ public class ShuJuQingQiu : MonoBehaviour
     // aruco_reference: marker localization/reference upload with PV image + camera pose only.
     const string TASK_PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction";
     const string TASK_PURPOSE_ARUCO_REFERENCE = "aruco_reference";
+    const string TASK_PURPOSE_EXISTING_MODEL_REFRESH = "existing_model_refresh";
     const float MARKER_CAPTURE_TOTAL_SECONDS = 3.0f;
     const float MARKER_CAPTURE_INTERVAL_SECONDS = 0.5f;
     const int MARKER_CAPTURE_MIN_SUCCESS = 1;
     const int ARUCO_DEBUG_MARKER_RETRY_FRAMES = 30;
+    const int STARTUP_CAMERA_MARKER_RETRY_FRAMES = 90;
     const int COMPLETED_MODEL_HISTORY_LIMIT = 5;
 
     public static ShuJuQingQiu initialize;
@@ -89,6 +91,8 @@ public class ShuJuQingQiu : MonoBehaviour
         public bool isHistoryBatch;
         public bool isArucoRefresh;
         public int retryRemaining;
+        public bool useStartupSession;
+        public bool refreshLocalExistingOnly;
     }
 
     private class CheckPollRequest
@@ -118,6 +122,7 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         initialize = this;
         startup_session_id = BuildStartupSessionId();
+        StartCoroutine(PlaceStartupCameraMarkerWhenReady());
 
         // =========================
         // 新增：开始采样设备位姿（ring buffer）
@@ -130,6 +135,24 @@ public class ShuJuQingQiu : MonoBehaviour
         string timestamp = DateTime.UtcNow.ToString("yyyyMMdd_HHmmss_fff", CultureInfo.InvariantCulture);
         string randomSuffix = Guid.NewGuid().ToString("N").Substring(0, 8);
         return timestamp + "_" + randomSuffix;
+    }
+
+    private IEnumerator PlaceStartupCameraMarkerWhenReady()
+    {
+        for (int frame = 0; frame < STARTUP_CAMERA_MARKER_RETRY_FRAMES; frame++)
+        {
+            Camera cam = Camera.main;
+            CameraPoseDebugMarker marker = CameraPoseDebugMarker.Instance;
+            if (cam != null && marker != null)
+            {
+                marker.PlaceCameraMarker(cam.transform.position, cam.transform.rotation);
+                yield break;
+            }
+
+            yield return null;
+        }
+
+        Debug.LogWarning("[ARUCO] Startup camera marker could not be placed; camera or debug marker is missing.");
     }
 
     const string DEVICE_TYPE = "HoloLens2";
@@ -837,7 +860,16 @@ public class ShuJuQingQiu : MonoBehaviour
         checkPollingStatusByTaskId[pollTaskId] = "pending";
         checkPollingPositionByTaskId[pollTaskId] = -1;
         checkPollingCoroutinesByTaskId[pollTaskId] = StartCoroutine(CheckPollingCoroutine(pollTaskId, purpose));
-        ShowFrontMessage((purpose == TASK_PURPOSE_ARUCO_REFERENCE ? "marker" : "model") + "_polling_start");
+        string frontPrefix = "model";
+        if (purpose == TASK_PURPOSE_ARUCO_REFERENCE)
+        {
+            frontPrefix = "marker";
+        }
+        else if (purpose == TASK_PURPOSE_EXISTING_MODEL_REFRESH)
+        {
+            frontPrefix = "model_refresh";
+        }
+        ShowFrontMessage(frontPrefix + "_polling_start");
         SendCheckRequest(pollTaskId, purpose);
     }
 
@@ -978,9 +1010,58 @@ public class ShuJuQingQiu : MonoBehaviour
         return true;
     }
 
+    private bool TryRefreshExistingRuntimeModelPoseFromResponse(JObject jo, string sourceTag)
+    {
+        if (!IsResponseArucoSynced(jo))
+        {
+            Debug.Log("[MODEL_REFRESH] Skip unsynced completed model response from " + sourceTag + ".");
+            return false;
+        }
+
+        if (!TryBuildRuntimeModelInstance(jo, out RuntimeModelInstance instance, out string errorMessage))
+        {
+            Debug.LogWarning("[MODEL_REFRESH] invalid completed response from " + sourceTag + ": " + errorMessage);
+            return false;
+        }
+
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
+        if (manager == null)
+        {
+            ShowFrontMessage("runtime_model_mgr_missing");
+            return false;
+        }
+
+        string taskId = instance.TaskId;
+        string modelKey = instance.ModelKey;
+        bool hasLocalModel =
+            manager.HasModel(taskId)
+            || manager.HasModel(modelKey);
+        if (!hasLocalModel)
+        {
+            Debug.Log("[MODEL_REFRESH] Skip non-local completed model: task_id="
+                + (string.IsNullOrEmpty(taskId) ? "<empty>" : taskId));
+            return false;
+        }
+
+        string updateKey = !string.IsNullOrEmpty(taskId) ? taskId : modelKey;
+        if (!manager.UpdateModelPose(updateKey, instance.Pose))
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(taskId))
+        {
+            modelSyncedPoseAppliedTaskIds.Add(taskId);
+        }
+
+        Debug.Log("[MODEL_REFRESH] Refreshed local model pose from " + sourceTag + ": " + updateKey);
+        return true;
+    }
+
     private void RequestModelResultAfterArucoIfNeeded(JObject jo)
     {
         bool refreshedActiveModel = false;
+        HashSet<string> refreshedTaskIds = new HashSet<string>();
         foreach (string activeModelTaskId in new List<string>(modelPollingTaskIds))
         {
             if (!string.IsNullOrEmpty(activeModelTaskId)
@@ -988,18 +1069,57 @@ public class ShuJuQingQiu : MonoBehaviour
             {
                 SendCheckRequest(activeModelTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
                 refreshedActiveModel = true;
+                refreshedTaskIds.Add(activeModelTaskId);
             }
         }
 
-        if (!refreshedActiveModel)
+        int refreshedLoadedModelCount = RefreshLoadedRuntimeModelsAfterAruco(refreshedTaskIds);
+        if (!refreshedActiveModel && refreshedLoadedModelCount <= 0)
         {
-            Debug.Log("[ARUCO] Reference updated; no active model polling task needs refresh.");
+            Debug.Log("[ARUCO] Reference updated; no active or loaded local model needs refresh.");
         }
+    }
+
+    private int RefreshLoadedRuntimeModelsAfterAruco(HashSet<string> skipTaskIds)
+    {
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
+        if (manager == null)
+        {
+            return 0;
+        }
+
+        int requestCount = 0;
+        foreach (string loadedTaskId in manager.GetLoadedTaskIds())
+        {
+            if (string.IsNullOrEmpty(loadedTaskId)
+                || (skipTaskIds != null && skipTaskIds.Contains(loadedTaskId))
+                || checkPollingCoroutinesByTaskId.ContainsKey(loadedTaskId))
+            {
+                continue;
+            }
+
+            StartCheckPollingForTask(loadedTaskId, TASK_PURPOSE_EXISTING_MODEL_REFRESH);
+            requestCount++;
+        }
+
+        if (requestCount > 0)
+        {
+            Debug.Log("[ARUCO] Refreshing loaded local models after ArUco update: count="
+                + requestCount.ToString(CultureInfo.InvariantCulture));
+        }
+        return requestCount;
     }
 
     public void RefreshLatestCompletedModelAfterAruco()
     {
-        RequestLatestCompletedModel(0, false, true, Mathf.Max(0, arucoLatestCompletedRetryCount));
+        RequestLatestCompletedModel(
+            0,
+            false,
+            true,
+            Mathf.Max(0, arucoLatestCompletedRetryCount),
+            false,
+            true
+        );
     }
 
     public void RefreshArucoReferenceFromServer()
@@ -1057,7 +1177,7 @@ public class ShuJuQingQiu : MonoBehaviour
 
     public void XiaZaiZuiXinChengGongMoXing()
     {
-        RequestLatestCompletedModel(0, false);
+        XiaZaiLiShiWuGeKeYongMoXing();
     }
 
     public void XiaZaiLiShiWuGeKeYongMoXing()
@@ -1090,12 +1210,17 @@ public class ShuJuQingQiu : MonoBehaviour
 
         int historyOffset = historyBatchNextOffset;
         historyBatchNextOffset++;
-        RequestLatestCompletedModel(historyOffset, true);
+        RequestLatestCompletedModel(historyOffset, true, false);
     }
 
     private void RequestLatestCompletedModel(int historyOffset, bool isHistoryBatch)
     {
-        RequestLatestCompletedModel(historyOffset, isHistoryBatch, false, 0);
+        RequestLatestCompletedModel(historyOffset, isHistoryBatch, true);
+    }
+
+    private void RequestLatestCompletedModel(int historyOffset, bool isHistoryBatch, bool useStartupSession)
+    {
+        RequestLatestCompletedModel(historyOffset, isHistoryBatch, false, 0, useStartupSession);
     }
 
     private void RequestLatestCompletedModel(
@@ -1105,14 +1230,46 @@ public class ShuJuQingQiu : MonoBehaviour
         int retryRemaining
     )
     {
+        RequestLatestCompletedModel(historyOffset, isHistoryBatch, isArucoRefresh, retryRemaining, true);
+    }
+
+    private void RequestLatestCompletedModel(
+        int historyOffset,
+        bool isHistoryBatch,
+        bool isArucoRefresh,
+        int retryRemaining,
+        bool useStartupSession
+    )
+    {
+        RequestLatestCompletedModel(
+            historyOffset,
+            isHistoryBatch,
+            isArucoRefresh,
+            retryRemaining,
+            useStartupSession,
+            false
+        );
+    }
+
+    private void RequestLatestCompletedModel(
+        int historyOffset,
+        bool isHistoryBatch,
+        bool isArucoRefresh,
+        int retryRemaining,
+        bool useStartupSession,
+        bool refreshLocalExistingOnly
+    )
+    {
         latestCompletedHistoryOffset = Mathf.Clamp(historyOffset, 0, COMPLETED_MODEL_HISTORY_LIMIT - 1);
         pendingModelShouldPlaceDebugMarkers = true;
         string url =
-            "http://10.40.1.122:7355/latest-completed?startup_session_id="
-            + Uri.EscapeDataString(startup_session_id ?? "")
-            + "&require_aruco_coordinate_synced=1"
+            "http://10.40.1.122:7355/latest-completed?require_aruco_coordinate_synced=1"
             + "&history_offset="
             + latestCompletedHistoryOffset.ToString(CultureInfo.InvariantCulture);
+        if (useStartupSession)
+        {
+            url += "&startup_session_id=" + Uri.EscapeDataString(startup_session_id ?? "");
+        }
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRequestLatestCompleted);
         request.Tag = new LatestCompletedRequest
         {
@@ -1120,6 +1277,8 @@ public class ShuJuQingQiu : MonoBehaviour
             isHistoryBatch = isHistoryBatch,
             isArucoRefresh = isArucoRefresh,
             retryRemaining = Mathf.Max(0, retryRemaining),
+            useStartupSession = useStartupSession,
+            refreshLocalExistingOnly = refreshLocalExistingOnly,
         };
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
         request.Send();
@@ -1581,7 +1740,15 @@ public class ShuJuQingQiu : MonoBehaviour
                 ? " position=" + position.ToString(CultureInfo.InvariantCulture)
                 : "";
             Debug.Log("[CHECK] " + pollPurpose + " " + pollTaskId + " status=" + status + positionText);
-            string frontPrefix = pollPurpose == TASK_PURPOSE_ARUCO_REFERENCE ? "marker" : "model";
+            string frontPrefix = "model";
+            if (pollPurpose == TASK_PURPOSE_ARUCO_REFERENCE)
+            {
+                frontPrefix = "marker";
+            }
+            else if (pollPurpose == TASK_PURPOSE_EXISTING_MODEL_REFRESH)
+            {
+                frontPrefix = "model_refresh";
+            }
             string frontStatus = string.IsNullOrEmpty(status) ? "unknown" : status;
             if (position > 0)
             {
@@ -1620,6 +1787,13 @@ public class ShuJuQingQiu : MonoBehaviour
 
         if (status != "completed")
         {
+            if (pollPurpose == TASK_PURPOSE_EXISTING_MODEL_REFRESH)
+            {
+                Debug.Log("[MODEL_REFRESH] local model refresh skipped; status = " + status);
+                StopCheckPollingForTask(pollTaskId);
+                return;
+            }
+
             if (isTerminal)
             {
                 Debug.LogWarning("[CHECK] terminal response without supported handler. status = " + status);
@@ -1638,6 +1812,14 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
+        if (pollPurpose == TASK_PURPOSE_EXISTING_MODEL_REFRESH)
+        {
+            bool refreshedExistingModel = TryRefreshExistingRuntimeModelPoseFromResponse(jo, "CHECK");
+            ShowFrontMessage(refreshedExistingModel ? "model_refresh_done" : "model_refresh_skip_missing_local");
+            StopCheckPollingForTask(pollTaskId);
+            return;
+        }
+
         // Keep polling after the initial download until ArUco sync/model bounds finish.
         if (!modelDownloadRequestedTaskIds.Contains(pollTaskId))
         {
@@ -1651,14 +1833,9 @@ public class ShuJuQingQiu : MonoBehaviour
                     ShowFrontMessage(completedError);
                 }
 
-                if (isTerminal)
-                {
-                    StopCheckPollingForTask(pollTaskId);
-                }
                 return;
             }
 
-            modelDownloadRequestedTaskIds.Add(pollTaskId);
             DownloadPendingRuntimeModel();
         }
         else
@@ -1681,6 +1858,8 @@ public class ShuJuQingQiu : MonoBehaviour
         int historyOffset = latestRequest != null ? latestRequest.historyOffset : latestCompletedHistoryOffset;
         bool isArucoRefresh = latestRequest != null && latestRequest.isArucoRefresh;
         int retryRemaining = latestRequest != null ? latestRequest.retryRemaining : 0;
+        bool useStartupSession = latestRequest == null || latestRequest.useStartupSession;
+        bool refreshLocalExistingOnly = latestRequest != null && latestRequest.refreshLocalExistingOnly;
 
         if (response == null || !response.IsSuccess)
         {
@@ -1706,7 +1885,12 @@ public class ShuJuQingQiu : MonoBehaviour
             if (isArucoRefresh && !isHistoryBatch && statusCode == 404 && retryRemaining > 0)
             {
                 ShowFrontMessage("latest_completed_retry_" + retryRemaining.ToString(CultureInfo.InvariantCulture));
-                StartCoroutine(RetryLatestCompletedModel(historyOffset, retryRemaining - 1));
+                StartCoroutine(RetryLatestCompletedModel(
+                    historyOffset,
+                    retryRemaining - 1,
+                    useStartupSession,
+                    refreshLocalExistingOnly
+                ));
                 return;
             }
 
@@ -1745,8 +1929,19 @@ public class ShuJuQingQiu : MonoBehaviour
 
         if (isArucoRefresh && !isHistoryBatch)
         {
+            if (refreshLocalExistingOnly)
+            {
+                bool refreshedExistingModel = TryRefreshExistingRuntimeModelPoseFromResponse(jo, "LATEST");
+                ShowFrontMessage(refreshedExistingModel ? "model_refresh_done" : "model_refresh_skip_missing_local");
+                return;
+            }
+
             bool appliedArucoReference = ApplyArucoReference(jo, true, true, true);
             ShowFrontMessage(appliedArucoReference ? "aruco_reference_refreshed" : "aruco_ERR_missing_reference");
+            if (appliedArucoReference)
+            {
+                RequestModelResultAfterArucoIfNeeded(jo);
+            }
             return;
         }
 
@@ -1788,12 +1983,28 @@ public class ShuJuQingQiu : MonoBehaviour
         JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
         bool appliedArucoReference = ApplyArucoReference(jo, true, true, true);
         ShowFrontMessage(appliedArucoReference ? "aruco_reference_refreshed" : "aruco_ERR_missing_reference");
+        if (appliedArucoReference)
+        {
+            RequestModelResultAfterArucoIfNeeded(jo);
+        }
     }
 
-    private IEnumerator RetryLatestCompletedModel(int historyOffset, int retryRemaining)
+    private IEnumerator RetryLatestCompletedModel(
+        int historyOffset,
+        int retryRemaining,
+        bool useStartupSession,
+        bool refreshLocalExistingOnly
+    )
     {
         yield return new WaitForSeconds(Mathf.Max(0.5f, arucoLatestCompletedRetryDelaySeconds));
-        RequestLatestCompletedModel(historyOffset, false, true, retryRemaining);
+        RequestLatestCompletedModel(
+            historyOffset,
+            false,
+            true,
+            retryRemaining,
+            useStartupSession,
+            refreshLocalExistingOnly
+        );
     }
 
     /// <summary>

@@ -220,6 +220,45 @@ public class RuntimeModelManager : MonoBehaviour
         return false;
     }
 
+    public bool HasModel(string taskIdOrModelKey)
+    {
+        if (string.IsNullOrEmpty(taskIdOrModelKey))
+        {
+            return false;
+        }
+
+        foreach (RuntimeModelRecord record in _records)
+        {
+            if (record == null)
+            {
+                continue;
+            }
+
+            if (record.TaskId == taskIdOrModelKey || record.ModelKey == taskIdOrModelKey)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public List<string> GetLoadedTaskIds()
+    {
+        List<string> taskIds = new List<string>();
+        foreach (RuntimeModelRecord record in _records)
+        {
+            if (record == null || string.IsNullOrEmpty(record.TaskId))
+            {
+                continue;
+            }
+
+            taskIds.Add(record.TaskId);
+        }
+
+        return taskIds;
+    }
+
     public void DeleteCachedFile(string localPath)
     {
         if (string.IsNullOrEmpty(localPath))

@@ -84,6 +84,24 @@ public class CameraPoseDebugMarker : MonoBehaviour
         );
     }
 
+    public void PlaceCameraMarker(Vector3 cameraPosition, Quaternion cameraRotation)
+    {
+        EnsureMarkers();
+        if (_cameraMarker == null)
+        {
+            Debug.LogWarning("[CameraPoseDebugMarker] Failed to create camera marker.");
+            return;
+        }
+
+        _cameraMarker.transform.SetPositionAndRotation(cameraPosition, cameraRotation);
+        _cameraMarker.name = cameraMarkerName;
+        SetMarkerVisible(_cameraMarker, true);
+
+        Debug.Log(
+            $"[CameraPoseDebugMarker] Camera marker pos={cameraPosition}, rot={cameraRotation.eulerAngles}"
+        );
+    }
+
     public void PlaceArucoMarker(Vector3 arucoPosition, Quaternion arucoRotation)
     {
         EnsureMarkers();
