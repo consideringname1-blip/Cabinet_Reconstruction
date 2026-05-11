@@ -9,7 +9,19 @@ def _resolve_icp_mode() -> str:
         if value in {"camera_refine", "off"}:
             return value
         raise ValueError("ICP_MODE must be one of: camera_refine / off")
-    return "camera_refine"
+    return "off"
+
+
+def _resolve_bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be one of: 1/0, true/false, yes/no, on/off")
 
 
 # Runtime switches
@@ -33,14 +45,17 @@ ARUCO_SYNC_MARKER_REGISTRY_ON_START = False
 # camera_refine = camera-view local rotation+translation+scale adjustment.
 # off = measured-distance placement without ICP. The runtime only keeps one
 # active ICP path plus the skip-ICP path.
-# Default now uses camera_refine.
+# Default uses the direct bbox-front-surface placement path. Set
+# ICP_MODE=camera_refine when you explicitly want the slower ICP refinement.
 ICP_MODE = _resolve_icp_mode()
 ICP_ENABLE = ICP_MODE != "off"
 # Maximum number of points written to the exported depth point cloud PLY.
 # Set to 0 or None to keep all valid depth points.
 DEPTHPOINTCLOUD_MAX_EXPORT_POINTS = 6000
 # Enable preview/front-view PNG renders produced by the alignment pipeline.
-ENABLE_ALIGNMENT_RENDER_OUTPUTS = True
+# Disabled by default so ICP_MODE=off stays fast; set
+# ENABLE_ALIGNMENT_RENDER_OUTPUTS=1 for debug preview images.
+ENABLE_ALIGNMENT_RENDER_OUTPUTS = _resolve_bool_env("ENABLE_ALIGNMENT_RENDER_OUTPUTS", False)
 # Enable InstantMesh circular-view MP4 generation.
 ENABLE_INSTANTMESH_VIDEO_OUTPUT = True
 # Remove tiny disconnected mesh islands immediately after InstantMesh export.

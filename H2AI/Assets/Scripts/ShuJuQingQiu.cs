@@ -110,6 +110,7 @@ public class ShuJuQingQiu : MonoBehaviour
     private readonly Dictionary<string, Coroutine> checkPollingCoroutinesByTaskId = new Dictionary<string, Coroutine>();
     private readonly Dictionary<string, string> checkPollingStatusByTaskId = new Dictionary<string, string>();
     private readonly Dictionary<string, int> checkPollingPositionByTaskId = new Dictionary<string, int>();
+    private readonly HashSet<string> modelPollingTaskIds = new HashSet<string>();
     private readonly HashSet<string> modelDownloadRequestedTaskIds = new HashSet<string>();
     private readonly HashSet<string> modelSyncedPoseAppliedTaskIds = new HashSet<string>();
 
@@ -787,6 +788,7 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         pendingModelLoadQueue.Clear();
+        modelPollingTaskIds.Clear();
         modelDownloadRequestedTaskIds.Clear();
         modelSyncedPoseAppliedTaskIds.Clear();
         if (modelLoadQueueRetryCoroutine != null)
@@ -812,6 +814,10 @@ public class ShuJuQingQiu : MonoBehaviour
 
     private void StartModelCheckPolling()
     {
+        if (!string.IsNullOrEmpty(modelTaskId))
+        {
+            modelPollingTaskIds.Add(modelTaskId);
+        }
         StartCheckPollingForTask(modelTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
     }
 
@@ -849,6 +855,7 @@ public class ShuJuQingQiu : MonoBehaviour
         checkPollingCoroutinesByTaskId.Remove(pollTaskId);
         checkPollingStatusByTaskId.Remove(pollTaskId);
         checkPollingPositionByTaskId.Remove(pollTaskId);
+        modelPollingTaskIds.Remove(pollTaskId);
     }
 
     private float ResolveCheckPollingInterval(string pollTaskId, string purpose)
@@ -971,17 +978,15 @@ public class ShuJuQingQiu : MonoBehaviour
         return true;
     }
 
-    private bool HasActiveModelPolling()
-    {
-        return !string.IsNullOrEmpty(modelTaskId)
-            && checkPollingCoroutinesByTaskId.ContainsKey(modelTaskId);
-    }
-
     private void RequestModelResultAfterArucoIfNeeded(JObject jo)
     {
-        if (HasActiveModelPolling())
+        foreach (string activeModelTaskId in new List<string>(modelPollingTaskIds))
         {
-            SendCheckRequest(modelTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
+            if (!string.IsNullOrEmpty(activeModelTaskId)
+                && checkPollingCoroutinesByTaskId.ContainsKey(activeModelTaskId))
+            {
+                SendCheckRequest(activeModelTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
+            }
         }
 
         RefreshLatestCompletedModelAfterAruco();
@@ -990,6 +995,19 @@ public class ShuJuQingQiu : MonoBehaviour
     public void RefreshLatestCompletedModelAfterAruco()
     {
         RequestLatestCompletedModel(0, false, true, Mathf.Max(0, arucoLatestCompletedRetryCount));
+    }
+
+    private void RequestAdditionalLatestCompletedModelsAfterAruco()
+    {
+        if (isHistoryBatchDownloadActive)
+        {
+            return;
+        }
+
+        isHistoryBatchDownloadActive = true;
+        historyBatchNextOffset = 1;
+        historyBatchLoadedCount = 0;
+        RequestNextHistoryBatchModel();
     }
 
     private IEnumerator CheckPollingCoroutine(string pollTaskId, string purpose)
@@ -1716,7 +1734,25 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         task_id = jo["task_id"]?.ToString();
+        if (!string.IsNullOrEmpty(task_id) && modelDownloadRequestedTaskIds.Contains(task_id))
+        {
+            Debug.Log("[LATEST] Skip already requested completed model download: " + task_id);
+            if (isArucoRefresh && !isHistoryBatch)
+            {
+                RequestAdditionalLatestCompletedModelsAfterAruco();
+            }
+            if (isHistoryBatch)
+            {
+                RequestNextHistoryBatchModel();
+            }
+            return;
+        }
+
         DownloadPendingRuntimeModel(isHistoryBatch, historyOffset);
+        if (isArucoRefresh && !isHistoryBatch)
+        {
+            RequestAdditionalLatestCompletedModelsAfterAruco();
+        }
     }
 
     private IEnumerator RetryLatestCompletedModel(int historyOffset, int retryRemaining)
@@ -1792,7 +1828,7 @@ public class ShuJuQingQiu : MonoBehaviour
         request.Tag = pendingDownload;
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
         request.Send();
-        Game_M.initialize.XianShi("download");
+        ShowFrontMessage("download");
     }
 
     private void OnRequestXiaZai(HTTPRequest request, HTTPResponse response)
