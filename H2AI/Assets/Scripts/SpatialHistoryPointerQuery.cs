@@ -27,7 +27,8 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
     [SerializeField] private bool useMrtkHandRay = true;
     [SerializeField] private bool forceHideCustomRayLine = true;
     [SerializeField] private bool showRayLine = false;
-    [SerializeField, Min(0f)] private float rayEndpointPaddingMeters = 0.05f;
+    [SerializeField, Min(0f)] private float rayEndpointPaddingMeters = 0f;
+    [SerializeField, Min(0.1f)] private float noSurfaceHitLogIntervalSeconds = 2f;
 
     [Header("Server")]
     [SerializeField] private string serverBaseUrl = "http://10.40.1.122:7355";
@@ -60,6 +61,7 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
     private GameObject boundsDebugRoot;
     private Coroutine queryCoroutine;
     private Material runtimeLineMaterial;
+    private float lastNoSurfaceHitLogTime = -999f;
 
     private static readonly int[,] EdgePairs =
     {
@@ -179,34 +181,119 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
             }
 
             originWorld = firstRay.Origin;
-            endWorld = ResolveEndpointFromPointer(pointer, lastRay, pointerDirection);
-            Vector3 originToEnd = endWorld - originWorld;
-            directionWorld = originToEnd.sqrMagnitude > 0.000001f
-                ? originToEnd.normalized
-                : pointerDirection;
+            directionWorld = pointerDirection;
+            endWorld = ResolveEndpointFromPointer(pointer, originWorld, directionWorld);
             return true;
         }
 
         return false;
     }
 
-    private Vector3 ResolveEndpointFromPointer(LinePointer pointer, RayStep ray, Vector3 directionWorld)
+    private Vector3 ResolveEndpointFromPointer(LinePointer pointer, Vector3 originWorld, Vector3 directionWorld)
     {
-        if (pointer != null && pointer.Result != null && pointer.Result.CurrentPointerTarget != null)
+        float maxDistance = Mathf.Max(0.1f, maxDistanceMeters);
+        bool hasNearestHit = false;
+        float nearestDistance = maxDistance + 1f;
+        Vector3 nearestPoint = originWorld + (directionWorld * maxDistance);
+
+        if (TryGetPointerFocusHit(pointer, originWorld, maxDistance, out Vector3 focusPoint, out float focusDistance))
         {
-            FocusDetails details = pointer.Result.Details;
-            if (details.RayDistance > 0f && details.RayDistance <= Mathf.Max(0.1f, maxDistanceMeters))
-            {
-                return details.Point + directionWorld * Mathf.Max(0f, rayEndpointPaddingMeters);
-            }
+            hasNearestHit = true;
+            nearestDistance = focusDistance;
+            nearestPoint = focusPoint;
         }
 
-        if (ray.Length > 0.0001f)
+        if (TryGetPhysicsHit(originWorld, directionWorld, maxDistance, out Vector3 physicsPoint, out float physicsDistance)
+            && physicsDistance < nearestDistance)
         {
-            return ray.Terminus;
+            hasNearestHit = true;
+            nearestDistance = physicsDistance;
+            nearestPoint = physicsPoint;
         }
 
-        return ResolveEndpoint(ray.Origin, directionWorld);
+        if (hasNearestHit)
+        {
+            return nearestPoint + directionWorld * Mathf.Max(0f, rayEndpointPaddingMeters);
+        }
+
+        LogNoSurfaceHit(originWorld, directionWorld);
+        return originWorld + (directionWorld * maxDistance);
+    }
+
+    private bool TryGetPointerFocusHit(
+        LinePointer pointer,
+        Vector3 originWorld,
+        float maxDistance,
+        out Vector3 hitPoint,
+        out float hitDistance
+    )
+    {
+        hitPoint = Vector3.zero;
+        hitDistance = 0f;
+        if (pointer == null || pointer.Result == null || pointer.Result.CurrentPointerTarget == null)
+        {
+            return false;
+        }
+
+        int mask = RaycastMaskWithoutDebugBounds();
+        if (!IsLayerInMask(pointer.Result.CurrentPointerTarget.layer, mask))
+        {
+            return false;
+        }
+
+        FocusDetails details = pointer.Result.Details;
+        hitPoint = details.Point;
+        hitDistance = details.RayDistance > 0f
+            ? details.RayDistance
+            : Vector3.Distance(originWorld, hitPoint);
+        return hitDistance > 0f && hitDistance <= maxDistance;
+    }
+
+    private bool TryGetPhysicsHit(
+        Vector3 originWorld,
+        Vector3 directionWorld,
+        float maxDistance,
+        out Vector3 hitPoint,
+        out float hitDistance
+    )
+    {
+        hitPoint = Vector3.zero;
+        hitDistance = 0f;
+        int mask = RaycastMaskWithoutDebugBounds();
+        if (Physics.Raycast(
+            originWorld,
+            directionWorld,
+            out RaycastHit hit,
+            maxDistance,
+            mask,
+            QueryTriggerInteraction.Ignore))
+        {
+            hitPoint = hit.point;
+            hitDistance = hit.distance;
+            return true;
+        }
+
+        return false;
+    }
+
+    private void LogNoSurfaceHit(Vector3 originWorld, Vector3 directionWorld)
+    {
+        if (Time.time - lastNoSurfaceHitLogTime < Mathf.Max(0.1f, noSurfaceHitLogIntervalSeconds))
+        {
+            return;
+        }
+
+        lastNoSurfaceHitLogTime = Time.time;
+        Debug.Log(
+            "[SpatialHistoryPointerQuery] No Spatial Awareness physics hit; using max-distance endpoint. "
+            + "Check that MRTK Spatial Awareness is enabled and that spatialRaycastMask includes its physics layer. "
+            + "raycastMask="
+            + RaycastMaskWithoutDebugBounds().ToString(CultureInfo.InvariantCulture)
+            + ", origin="
+            + originWorld
+            + ", direction="
+            + directionWorld
+        );
     }
 
     private bool TryGetFingerRay(out Vector3 originWorld, out Vector3 directionWorld)
@@ -300,21 +387,20 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
         return mask;
     }
 
+    private bool IsLayerInMask(int layer, int mask)
+    {
+        return layer >= 0 && layer <= 31 && (mask & (1 << layer)) != 0;
+    }
+
     private Vector3 ResolveEndpoint(Vector3 originWorld, Vector3 directionWorld)
     {
         float distance = Mathf.Max(0.1f, maxDistanceMeters);
-        int mask = RaycastMaskWithoutDebugBounds();
-        if (Physics.Raycast(
-            originWorld,
-            directionWorld,
-            out RaycastHit hit,
-            distance,
-            mask,
-            QueryTriggerInteraction.Ignore))
+        if (TryGetPhysicsHit(originWorld, directionWorld, distance, out Vector3 hitPoint, out _))
         {
-            return hit.point;
+            return hitPoint;
         }
 
+        LogNoSurfaceHit(originWorld, directionWorld);
         return originWorld + (directionWorld * distance);
     }
 

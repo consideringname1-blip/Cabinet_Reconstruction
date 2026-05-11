@@ -309,11 +309,11 @@ def _process_one_task(task_id: str) -> tuple[bool, str]:
         raise
 
     if stage_name == "aruco_detect" and purpose == PURPOSE_ARUCO_REFERENCE:
-        update_task_status(task_id, "aruco_completed")
         startup_session_id = str((task_json.get("device") or {}).get("startup_session_id") or "").strip() or None
         synced_count = _sync_completed_tasks_for_startup(startup_session_id)
         if synced_count:
             print(f"[worker] synced completed model tasks after ArUco reference: {synced_count}")
+        update_task_status(task_id, "aruco_completed")
         return True, purpose
 
     next_status = "completed"
@@ -435,7 +435,7 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
 def _sync_completed_tasks_for_startup(startup_session_id: str | None = None) -> int:
     synced_count = 0
     task_rows = (
-        get_completed_tasks_for_startup(startup_session_id, require_unsynced=True)
+        get_completed_tasks_for_startup(startup_session_id, require_unsynced=False)
         if startup_session_id
         else get_unsynced_completed_tasks()
     )
