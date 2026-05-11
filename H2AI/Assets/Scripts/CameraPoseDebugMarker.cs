@@ -6,7 +6,22 @@ using UnityEngine;
 [DisallowMultipleComponent]
 public class CameraPoseDebugMarker : MonoBehaviour
 {
-    public static CameraPoseDebugMarker Instance { get; private set; }
+    private static CameraPoseDebugMarker _instance;
+    public static CameraPoseDebugMarker Instance
+    {
+        get
+        {
+            if (_instance == null)
+            {
+                _instance = FindObjectOfType<CameraPoseDebugMarker>(true);
+            }
+            return _instance;
+        }
+        private set
+        {
+            _instance = value;
+        }
+    }
 
     [SerializeField] private Transform markerParent;
     [SerializeField] private string cameraMarkerName = "RecordedCameraPoseMarker";
@@ -33,6 +48,14 @@ public class CameraPoseDebugMarker : MonoBehaviour
         }
     }
 
+    private void OnDestroy()
+    {
+        if (_instance == this)
+        {
+            _instance = null;
+        }
+    }
+
     public void PlaceMarkers(
         Vector3 cameraPosition,
         Quaternion cameraRotation,
@@ -49,11 +72,11 @@ public class CameraPoseDebugMarker : MonoBehaviour
 
         _cameraMarker.transform.SetPositionAndRotation(cameraPosition, cameraRotation);
         _cameraMarker.name = cameraMarkerName;
-        _cameraMarker.SetActive(true);
+        SetMarkerVisible(_cameraMarker, true);
 
         _modelMarker.transform.SetPositionAndRotation(modelPosition, modelRotation);
         _modelMarker.name = modelMarkerName;
-        _modelMarker.SetActive(true);
+        SetMarkerVisible(_modelMarker, true);
 
         Debug.Log(
             $"[CameraPoseDebugMarker] Camera marker pos={cameraPosition}, rot={cameraRotation.eulerAngles}; " +
@@ -72,7 +95,7 @@ public class CameraPoseDebugMarker : MonoBehaviour
 
         _arucoMarker.transform.SetPositionAndRotation(arucoPosition, arucoRotation);
         _arucoMarker.name = arucoMarkerName;
-        _arucoMarker.SetActive(true);
+        SetMarkerVisible(_arucoMarker, true);
 
         Debug.Log(
             $"[CameraPoseDebugMarker] ArUco marker pos={arucoPosition}, rot={arucoRotation.eulerAngles}"
@@ -90,7 +113,7 @@ public class CameraPoseDebugMarker : MonoBehaviour
 
         _modelMarker.transform.SetPositionAndRotation(modelPosition, modelRotation);
         _modelMarker.name = modelMarkerName;
-        _modelMarker.SetActive(true);
+        SetMarkerVisible(_modelMarker, true);
 
         Debug.Log(
             $"[CameraPoseDebugMarker] Model marker pos={modelPosition}, rot={modelRotation.eulerAngles}"
@@ -135,11 +158,21 @@ public class CameraPoseDebugMarker : MonoBehaviour
         return clone;
     }
 
-    private void SetMarkerActive(GameObject marker, bool active)
+    private void SetMarkerVisible(GameObject marker, bool visible)
     {
-        if (marker != null)
+        if (marker == null)
         {
-            marker.SetActive(active);
+            return;
+        }
+
+        marker.SetActive(visible);
+        foreach (Transform child in marker.GetComponentsInChildren<Transform>(true))
+        {
+            child.gameObject.SetActive(visible);
+        }
+        foreach (Renderer renderer in marker.GetComponentsInChildren<Renderer>(true))
+        {
+            renderer.enabled = visible;
         }
     }
 }

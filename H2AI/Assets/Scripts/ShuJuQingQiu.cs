@@ -22,6 +22,7 @@ public class ShuJuQingQiu : MonoBehaviour
     const float MARKER_CAPTURE_TOTAL_SECONDS = 3.0f;
     const float MARKER_CAPTURE_INTERVAL_SECONDS = 0.5f;
     const int MARKER_CAPTURE_MIN_SUCCESS = 1;
+    const int ARUCO_DEBUG_MARKER_RETRY_FRAMES = 30;
     const int COMPLETED_MODEL_HISTORY_LIMIT = 5;
 
     public static ShuJuQingQiu initialize;
@@ -105,6 +106,7 @@ public class ShuJuQingQiu : MonoBehaviour
     private readonly Queue<PendingModelDownload> pendingModelLoadQueue = new Queue<PendingModelDownload>();
     private PendingModelDownload activeModelLoad;
     private Coroutine modelLoadQueueRetryCoroutine;
+    private Coroutine arucoDebugMarkerRetryCoroutine;
     private readonly Dictionary<string, Coroutine> checkPollingCoroutinesByTaskId = new Dictionary<string, Coroutine>();
     private readonly Dictionary<string, string> checkPollingStatusByTaskId = new Dictionary<string, string>();
     private readonly Dictionary<string, int> checkPollingPositionByTaskId = new Dictionary<string, int>();
@@ -205,6 +207,68 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             Game_M.initialize.XianShi(message);
         }
+    }
+
+    void PlaceArucoDebugMarkerWhenReady(Vector3 arucoPosition, Quaternion arucoRotation, string source)
+    {
+        if (TryPlaceArucoDebugMarker(arucoPosition, arucoRotation, source, true))
+        {
+            return;
+        }
+
+        if (arucoDebugMarkerRetryCoroutine != null)
+        {
+            StopCoroutine(arucoDebugMarkerRetryCoroutine);
+        }
+
+        arucoDebugMarkerRetryCoroutine = StartCoroutine(RetryPlaceArucoDebugMarker(arucoPosition, arucoRotation, source));
+    }
+
+    IEnumerator RetryPlaceArucoDebugMarker(Vector3 arucoPosition, Quaternion arucoRotation, string source)
+    {
+        for (int frame = 0; frame < ARUCO_DEBUG_MARKER_RETRY_FRAMES; frame++)
+        {
+            yield return null;
+            if (TryPlaceArucoDebugMarker(arucoPosition, arucoRotation, source, false))
+            {
+                arucoDebugMarkerRetryCoroutine = null;
+                yield break;
+            }
+        }
+
+        arucoDebugMarkerRetryCoroutine = null;
+        Debug.LogWarning(
+            $"[ARUCO] showDebugMarkers=true but CameraPoseDebugMarker.Instance was not found after " +
+            $"{ARUCO_DEBUG_MARKER_RETRY_FRAMES} frames ({source})."
+        );
+        ShowFrontMessage("aruco_ERR_debug_marker_missing");
+    }
+
+    bool TryPlaceArucoDebugMarker(
+        Vector3 arucoPosition,
+        Quaternion arucoRotation,
+        string source,
+        bool logMissing
+    )
+    {
+        CameraPoseDebugMarker marker = CameraPoseDebugMarker.Instance;
+        if (marker == null)
+        {
+            if (logMissing)
+            {
+                Debug.LogWarning(
+                    $"[ARUCO] showDebugMarkers=true but CameraPoseDebugMarker.Instance is missing ({source}); retrying."
+                );
+            }
+            return false;
+        }
+
+        marker.PlaceArucoMarker(arucoPosition, arucoRotation);
+        Debug.Log(
+            $"[ARUCO] showDebugMarkers placed ArUco marker ({source}) " +
+            $"pos={arucoPosition}, rot={arucoRotation.eulerAngles}"
+        );
+        return true;
     }
 
     string NormalizeServerErrorForFrontMessage(string serverError, string fallbackMessage, string purpose)
@@ -1159,10 +1223,18 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             if (warnIfMissing)
             {
-                Debug.LogWarning("[ARUCO] Response missing usable aruco_reference: " + jo.ToString(Formatting.None));
+                Debug.LogWarning(
+                    $"[ARUCO] showDebugMarkers={showDebugMarkers}, updateCurrentSession={updateCurrentSession}; " +
+                    "response missing usable aruco_reference: " + jo.ToString(Formatting.None)
+                );
             }
             return false;
         }
+
+        Debug.Log(
+            $"[ARUCO] Parsed aruco_reference updateCurrentSession={updateCurrentSession}, " +
+            $"showDebugMarkers={showDebugMarkers}, pos={arucoPosition}, rot={arucoRotation.eulerAngles}"
+        );
 
         if (updateCurrentSession)
         {
@@ -1181,9 +1253,9 @@ public class ShuJuQingQiu : MonoBehaviour
             }
         }
 
-        if (showDebugMarkers && CameraPoseDebugMarker.Instance != null)
+        if (showDebugMarkers)
         {
-            CameraPoseDebugMarker.Instance.PlaceArucoMarker(arucoPosition, arucoRotation);
+            PlaceArucoDebugMarkerWhenReady(arucoPosition, arucoRotation, "aruco_reference");
         }
         return true;
     }
@@ -1760,50 +1832,68 @@ public class ShuJuQingQiu : MonoBehaviour
                 return;
             }
             print(receiver.Length);
-            Game_M.initialize.XianShi("download " + receiver.Length);
+            ShowFrontMessage("download " + receiver.Length);
             File.WriteAllBytes(pendingDownload.localPath, receiver);
             print("保存");
-            if (pendingDownload.showDebugMarkers && CameraPoseDebugMarker.Instance != null)
+            if (pendingDownload.showDebugMarkers)
             {
-                RuntimeModelManager manager = RuntimeModelManager.Instance;
-                Vector3 markerModelPosition = pendingDownload.debugObjectPosition;
-                Quaternion markerModelRotation = pendingDownload.debugObjectRotation;
-                bool hasMarkerModelPose = pendingDownload.hasDebugObjectPose;
-                if (manager != null && manager.TryResolveWorldPose(
-                    pendingDownload.instance.Pose,
-                    out Vector3 resolvedModelPosition,
-                    out Quaternion resolvedModelRotation
-                ))
+                CameraPoseDebugMarker debugMarker = CameraPoseDebugMarker.Instance;
+                if (debugMarker == null)
                 {
-                    markerModelPosition = resolvedModelPosition;
-                    markerModelRotation = resolvedModelRotation;
-                    hasMarkerModelPose = true;
-                }
-
-                if (pendingDownload.hasDebugCameraPose && hasMarkerModelPose)
-                {
-                    CameraPoseDebugMarker.Instance.PlaceMarkers(
-                        pendingDownload.debugCameraPosition,
-                        pendingDownload.debugCameraRotation,
-                        markerModelPosition,
-                        markerModelRotation
+                    Debug.LogWarning(
+                        "[DOWNLOAD] showDebugMarkers=true but CameraPoseDebugMarker.Instance is missing; " +
+                        "camera/model markers skipped."
                     );
                 }
-                else if (hasMarkerModelPose)
+                else
                 {
-                    CameraPoseDebugMarker.Instance.PlaceModelMarker(markerModelPosition, markerModelRotation);
+                    RuntimeModelManager manager = RuntimeModelManager.Instance;
+                    Vector3 markerModelPosition = pendingDownload.debugObjectPosition;
+                    Quaternion markerModelRotation = pendingDownload.debugObjectRotation;
+                    bool hasMarkerModelPose = pendingDownload.hasDebugObjectPose;
+                    if (manager != null && manager.TryResolveWorldPose(
+                        pendingDownload.instance.Pose,
+                        out Vector3 resolvedModelPosition,
+                        out Quaternion resolvedModelRotation
+                    ))
+                    {
+                        markerModelPosition = resolvedModelPosition;
+                        markerModelRotation = resolvedModelRotation;
+                        hasMarkerModelPose = true;
+                    }
+
+                    if (pendingDownload.hasDebugCameraPose && hasMarkerModelPose)
+                    {
+                        debugMarker.PlaceMarkers(
+                            pendingDownload.debugCameraPosition,
+                            pendingDownload.debugCameraRotation,
+                            markerModelPosition,
+                            markerModelRotation
+                        );
+                    }
+                    else if (hasMarkerModelPose)
+                    {
+                        debugMarker.PlaceModelMarker(markerModelPosition, markerModelRotation);
+                    }
                 }
 
                 if (pendingDownload.hasDebugArucoPose)
                 {
-                    CameraPoseDebugMarker.Instance.PlaceArucoMarker(
+                    PlaceArucoDebugMarkerWhenReady(
                         pendingDownload.debugArucoPosition,
-                        pendingDownload.debugArucoRotation
+                        pendingDownload.debugArucoRotation,
+                        "download"
+                    );
+                }
+                else
+                {
+                    Debug.LogWarning(
+                        "[DOWNLOAD] showDebugMarkers=true but no ArUco pose is cached for this download."
                     );
                 }
             }
             EnqueueRuntimeModelLoad(pendingDownload);
-            Game_M.initialize.XianShi("download completes");
+            ShowFrontMessage("download completes");
         }
         else
         {

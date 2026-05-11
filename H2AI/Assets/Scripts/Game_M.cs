@@ -5,6 +5,7 @@ using UnityEngine.UI;
 public class Game_M : MonoBehaviour
 {
     public static Game_M initialize;
+    private const float DefaultMessageSeconds = 2.5f;
 
     public Text text;
     void Awake()
@@ -14,6 +15,7 @@ public class Game_M : MonoBehaviour
 
     public void XianShi(string data)
     {
+        CancelInvoke(nameof(YanXhiGuanBi));
         if (!TryGetMessageRoot(out GameObject messageRoot))
         {
             return;
@@ -23,15 +25,27 @@ public class Game_M : MonoBehaviour
         text.text = data;
     }
 
+    public void XianShiForSeconds(string data)
+    {
+        XianShiForSeconds(data, DefaultMessageSeconds);
+    }
+
+    public void XianShiForSeconds(string data, float seconds)
+    {
+        XianShi(data);
+        CancelInvoke(nameof(YanXhiGuanBi));
+        Invoke(nameof(YanXhiGuanBi), Mathf.Max(0.1f, seconds));
+    }
+
     public void GuanBi()
     {
+        CancelInvoke(nameof(YanXhiGuanBi));
         if (!TryGetMessageRoot(out GameObject messageRoot))
         {
             return;
         }
 
         messageRoot.SetActive(false);
-        Invoke(nameof(YanXhiGuanBi), 0.5f);
     }
 
     private void YanXhiGuanBi()

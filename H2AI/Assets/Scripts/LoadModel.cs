@@ -163,10 +163,7 @@ public class LoadModel : MonoBehaviour
 
         manager.RegisterLoadedModel(_pendingInstance, _pendingLocalPath, game);
 
-        if (Game_M.initialize != null)
-        {
-            Game_M.initialize.GuanBi();
-        }
+        ShowFrontMessageForSeconds("download_completed", 3f);
         ClearPendingModel();
         NotifyRuntimeModelLoadCompleted(loadedInstance, true);
     }
@@ -212,6 +209,14 @@ public class LoadModel : MonoBehaviour
         if (Game_M.initialize != null)
         {
             Game_M.initialize.XianShi(message);
+        }
+    }
+
+    private void ShowFrontMessageForSeconds(string message, float seconds)
+    {
+        if (Game_M.initialize != null)
+        {
+            Game_M.initialize.XianShiForSeconds(message, seconds);
         }
     }
 
