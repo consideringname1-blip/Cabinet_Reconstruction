@@ -1,6 +1,6 @@
 outs:
-- md5: bd36dfe0874cbd0ec51382d8b28495c3.dir
-  size: 37243724
-  nfiles: 25
+- md5: 2a5c5359744d529d32e147359e3c8193.dir
+  size: 16915756
+  nfiles: 17
   hash: md5
   path: RecordPhotoAndVideo
