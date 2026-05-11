@@ -404,24 +404,10 @@ def _build_aruco_completed_task_response(task_data: dict) -> dict:
         history_offset=0,
         attempt_sync=False,
     )
-    fallback_from_other_session = False
-    if not latest_completed_model and startup_session_id:
-        latest_completed_model = get_latest_completed_task_data(
-            startup_session_id=None,
-            require_aruco_coordinate_synced=True,
-            history_offset=0,
-            attempt_sync=False,
-        )
-        fallback_from_other_session = latest_completed_model is not None
 
     response["latest_completed_model_available"] = latest_completed_model is not None
     if latest_completed_model:
         response["latest_completed_model_task_id"] = latest_completed_model.get("task_id")
-        if fallback_from_other_session:
-            response["latest_completed_model_fallback_from_other_startup_session"] = True
-            response["latest_completed_model_source_startup_session_id"] = latest_completed_model.get(
-                "startup_session_id"
-            )
     return response
 
 
@@ -459,6 +445,7 @@ def index():
                 "/model-bounds/range?start=<uploaded_at>&end=<uploaded_at>",
                 "/spatial-query/ray",
                 "/spatial-query/ray-range",
+                "/aruco/latest-reference?startup_session_id=<startup_session_id>",
                 "/aruco/markers",
                 "/aruco/markers/sync",
                 "/files/<folder>/<filename>",
@@ -687,6 +674,40 @@ def check_task_query():
     return check_task(task_id)
 
 
+@app.route("/aruco/latest-reference", methods=["GET"], strict_slashes=False)
+def latest_aruco_reference():
+    try:
+        startup_session_id = str(request.args.get("startup_session_id") or "").strip()
+        if not startup_session_id:
+            return jsonify({"error": "Missing startup_session_id parameter"}), 400
+
+        latest_reference_row = get_latest_aruco_reference(startup_session_id)
+        aruco_reference = _load_marker_pose_json(
+            latest_reference_row.get("marker_pose_json") if latest_reference_row else None
+        )
+        if not aruco_reference:
+            return jsonify(
+                {
+                    "error": "No ArUco reference found for this startup session",
+                    "startup_session_id": startup_session_id,
+                }
+            ), 404
+
+        return jsonify(
+            {
+                "status": "aruco_reference",
+                "startup_session_id": startup_session_id,
+                "task_id": latest_reference_row.get("task_id"),
+                "created_at": latest_reference_row.get("created_at"),
+                "aruco_reference": aruco_reference,
+                "terminal": True,
+            }
+        )
+    except Exception as exc:
+        print(f"Error in latest_aruco_reference: {exc}")
+        return jsonify({"error": str(exc)}), 500
+
+
 @app.route("/aruco/markers", methods=["GET"], strict_slashes=False)
 def list_aruco_markers():
     try:
@@ -721,15 +742,6 @@ def latest_completed_task():
             history_offset=history_offset,
             attempt_sync=attempt_sync,
         )
-        fallback_from_other_session = False
-        if not task_data and startup_session_id and require_aruco_coordinate_synced:
-            task_data = get_latest_completed_task_data(
-                startup_session_id=None,
-                require_aruco_coordinate_synced=True,
-                history_offset=history_offset,
-                attempt_sync=attempt_sync,
-            )
-            fallback_from_other_session = task_data is not None
         if not task_data:
             if startup_session_id:
                 error_message = "No completed task found for this startup session"
@@ -760,9 +772,6 @@ def latest_completed_task():
                 response["aruco_reference"] = current_aruco_reference
                 if isinstance(response.get("model_instance"), dict):
                     response["model_instance"]["aruco_reference"] = current_aruco_reference
-            if fallback_from_other_session:
-                response["fallback_from_other_startup_session"] = True
-                response["source_startup_session_id"] = task_data.get("startup_session_id")
         return jsonify(response)
     except Exception as exc:
         print(f"Error in latest_completed_task: {exc}")

@@ -980,16 +980,21 @@ public class ShuJuQingQiu : MonoBehaviour
 
     private void RequestModelResultAfterArucoIfNeeded(JObject jo)
     {
+        bool refreshedActiveModel = false;
         foreach (string activeModelTaskId in new List<string>(modelPollingTaskIds))
         {
             if (!string.IsNullOrEmpty(activeModelTaskId)
                 && checkPollingCoroutinesByTaskId.ContainsKey(activeModelTaskId))
             {
                 SendCheckRequest(activeModelTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
+                refreshedActiveModel = true;
             }
         }
 
-        RefreshLatestCompletedModelAfterAruco();
+        if (!refreshedActiveModel)
+        {
+            Debug.Log("[ARUCO] Reference updated; no active model polling task needs refresh.");
+        }
     }
 
     public void RefreshLatestCompletedModelAfterAruco()
@@ -997,17 +1002,22 @@ public class ShuJuQingQiu : MonoBehaviour
         RequestLatestCompletedModel(0, false, true, Mathf.Max(0, arucoLatestCompletedRetryCount));
     }
 
-    private void RequestAdditionalLatestCompletedModelsAfterAruco()
+    public void RefreshArucoReferenceFromServer()
     {
-        if (isHistoryBatchDownloadActive)
+        string session = startup_session_id ?? "";
+        if (string.IsNullOrEmpty(session))
         {
+            ShowFrontMessage("aruco_ERR_no_startup_session");
             return;
         }
 
-        isHistoryBatchDownloadActive = true;
-        historyBatchNextOffset = 1;
-        historyBatchLoadedCount = 0;
-        RequestNextHistoryBatchModel();
+        string url =
+            "http://10.40.1.122:7355/aruco/latest-reference?startup_session_id="
+            + Uri.EscapeDataString(session);
+        var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRequestLatestArucoReference);
+        request.AddHeader("Content-Type", "application/json;charset=UTF-8");
+        request.Send();
+        ShowFrontMessage("aruco_reference_refresh");
     }
 
     private IEnumerator CheckPollingCoroutine(string pollTaskId, string purpose)
@@ -1571,6 +1581,16 @@ public class ShuJuQingQiu : MonoBehaviour
                 ? " position=" + position.ToString(CultureInfo.InvariantCulture)
                 : "";
             Debug.Log("[CHECK] " + pollPurpose + " " + pollTaskId + " status=" + status + positionText);
+            string frontPrefix = pollPurpose == TASK_PURPOSE_ARUCO_REFERENCE ? "marker" : "model";
+            string frontStatus = string.IsNullOrEmpty(status) ? "unknown" : status;
+            if (position > 0)
+            {
+                ShowFrontMessage(frontPrefix + "_" + frontStatus + "_position_" + position.ToString(CultureInfo.InvariantCulture));
+            }
+            else
+            {
+                ShowFrontMessage(frontPrefix + "_" + frontStatus);
+            }
         }
         bool isTerminal = IsTerminalResponse(jo, status);
 
@@ -1723,6 +1743,13 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
+        if (isArucoRefresh && !isHistoryBatch)
+        {
+            bool appliedArucoReference = ApplyArucoReference(jo, true, true, true);
+            ShowFrontMessage(appliedArucoReference ? "aruco_reference_refreshed" : "aruco_ERR_missing_reference");
+            return;
+        }
+
         pendingModelShouldPlaceDebugMarkers = true;
         if (!ApplyCompletedTaskResponse(jo, "LATEST", true, true))
         {
@@ -1737,10 +1764,6 @@ public class ShuJuQingQiu : MonoBehaviour
         if (!string.IsNullOrEmpty(task_id) && modelDownloadRequestedTaskIds.Contains(task_id))
         {
             Debug.Log("[LATEST] Skip already requested completed model download: " + task_id);
-            if (isArucoRefresh && !isHistoryBatch)
-            {
-                RequestAdditionalLatestCompletedModelsAfterAruco();
-            }
             if (isHistoryBatch)
             {
                 RequestNextHistoryBatchModel();
@@ -1749,10 +1772,22 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         DownloadPendingRuntimeModel(isHistoryBatch, historyOffset);
-        if (isArucoRefresh && !isHistoryBatch)
+    }
+
+    private void OnRequestLatestArucoReference(HTTPRequest request, HTTPResponse response)
+    {
+        if (response == null || !response.IsSuccess)
         {
-            RequestAdditionalLatestCompletedModelsAfterAruco();
+            string statusCode = response != null ? response.StatusCode.ToString(CultureInfo.InvariantCulture) : "no_response";
+            string message = response != null ? response.Message : "No response from server";
+            Debug.LogWarning("[ARUCO] latest-reference failed: " + statusCode + " - " + message);
+            ShowFrontMessage("aruco_reference_ERR_request_failed");
+            return;
         }
+
+        JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
+        bool appliedArucoReference = ApplyArucoReference(jo, true, true, true);
+        ShowFrontMessage(appliedArucoReference ? "aruco_reference_refreshed" : "aruco_ERR_missing_reference");
     }
 
     private IEnumerator RetryLatestCompletedModel(int historyOffset, int retryRemaining)

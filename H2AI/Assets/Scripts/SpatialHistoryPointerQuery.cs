@@ -724,7 +724,7 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
             return false;
         }
 
-        shuJuQingQiu.RefreshLatestCompletedModelAfterAruco();
+        shuJuQingQiu.RefreshArucoReferenceFromServer();
         ShowFrontMessage(frontMessage);
         return true;
     }
