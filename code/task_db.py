@@ -804,6 +804,36 @@ def get_latest_completed_task(
     return _row_to_dict(row)
 
 
+def get_latest_completed_tasks(
+    startup_session_id: str | None = None,
+    require_aruco_coordinate_synced: bool = False,
+    limit: int = 5,
+) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    startup_session_id = str(startup_session_id or "").strip()
+    limit = max(1, min(int(limit or 5), 50))
+    where_clauses = ["status = 'completed'"]
+    params: List[Any] = []
+    if startup_session_id:
+        where_clauses.append("startup_session_id = ?")
+        params.append(startup_session_id)
+    if require_aruco_coordinate_synced:
+        where_clauses.append("aruco_coordinate_synced = 1")
+
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {TABLE_NAME}
+            WHERE {' AND '.join(where_clauses)}
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            tuple(params + [limit]),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 def get_completed_tasks_for_startup(
     startup_session_id: str,
     *,

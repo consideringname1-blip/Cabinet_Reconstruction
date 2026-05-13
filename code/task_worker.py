@@ -499,13 +499,3 @@ def get_latest_completed_task_data(
         "blender": task_json.get("Blender") or {},
     }
     return task_record
-
-
-def get_current_task_id() -> Optional[str]:
-    with _task_lock:
-        return _current_task_id
-
-
-def get_queue_snapshot() -> list[str]:
-    with _task_lock:
-        return _queue_snapshot_no_lock()

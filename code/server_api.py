@@ -24,14 +24,13 @@ from config import (
 )
 from task_worker import (
     create_task,
-    get_current_task_id,
     get_latest_completed_task_data,
-    get_queue_snapshot,
     get_task,
     start_worker,
 )
 from task_db import (
     get_enabled_aruco_markers,
+    get_latest_completed_tasks,
     get_latest_aruco_reference,
     get_latest_ready_model_bounds,
     get_model_bounds_by_task_id,
@@ -50,7 +49,6 @@ logging.getLogger("werkzeug").setLevel(logging.WARNING)
 start_worker()
 
 
-TERMINAL_STATUSES = frozenset({"completed", "aruco_completed", "failed"})
 PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction"
 PURPOSE_ARUCO_REFERENCE = "aruco_reference"
 
@@ -438,9 +436,8 @@ def index():
             "status": "running",
             "endpoints": [
                 "/generate",
-                "/check/<task_id>",
-                "/check?task_id=<task_id>",
-                "/latest-completed?history_offset=<0-4>",
+                "/check-queue",
+                "/latest-completed-task-ids?limit=5",
                 "/model-bounds/latest?limit=5",
                 "/model-bounds/range?start=<uploaded_at>&end=<uploaded_at>",
                 "/spatial-query/ray",
@@ -628,50 +625,82 @@ def generate_model():
         return jsonify({"error": str(exc)}), 400
 
 
-@app.route("/check/<task_id>", methods=["GET"], strict_slashes=False)
-def check_task(task_id):
+@app.route("/check-queue", methods=["POST"], strict_slashes=False)
+def check_task_queue():
     try:
-        task_data = get_task(task_id)
-        if not task_data:
-            return jsonify({"error": "Invalid task ID"}), 404
+        payload = request.get_json(silent=True) or {}
+        task_ids = payload.get("task_ids")
+        if not isinstance(task_ids, list):
+            return jsonify({"error": "task_ids must be a JSON array"}), 400
 
-        status = task_data["status"]
-        response = {
-            "status": status,
-            "task_id": task_data.get("task_id"),
-            "stage_runs": task_data.get("stage_runs") or [],
-        }
+        pending = []
+        seen = set()
+        for raw_task_id in task_ids:
+            task_id = str(raw_task_id or "").strip()
+            if not task_id or task_id in seen:
+                continue
+            seen.add(task_id)
 
-        if status == "completed":
-            response = _build_completed_task_response(task_data)
-        elif status == "aruco_completed":
-            response = _build_aruco_completed_task_response(task_data)
+            task_data = get_task(task_id)
+            if not task_data:
+                return jsonify(
+                    {
+                        "ready": True,
+                        "task_id": task_id,
+                        "status": "failed",
+                        "purpose": None,
+                        "terminal": True,
+                        "task": {
+                            "status": "failed",
+                            "task_id": task_id,
+                            "terminal": True,
+                            "error": "Invalid task ID",
+                        },
+                    }
+                )
 
-        elif status == "failed":
-            response["error"] = task_data.get("error_message") or "Unknown error"
-        else:
-            current = get_current_task_id()
-            queue_snapshot = get_queue_snapshot()
-            if task_id == current:
-                response["position"] = 0
-                response["message"] = "Currently processing"
-            elif task_id in queue_snapshot:
-                response["position"] = queue_snapshot.index(task_id) + 1
-                response["message"] = f"In queue, position {response['position']}"
+            status = task_data["status"]
+            task_json = task_data.get("task_json") or {}
+            purpose = task_json.get("purpose")
+            if status == "completed":
+                response = _build_completed_task_response(task_data)
+            elif status == "aruco_completed":
+                response = _build_aruco_completed_task_response(task_data)
+            elif status == "failed":
+                response = {
+                    "status": "failed",
+                    "task_id": task_data.get("task_id"),
+                    "purpose": purpose,
+                    "terminal": True,
+                    "error": task_data.get("error_message") or "Unknown error",
+                    "stage_runs": task_data.get("stage_runs") or [],
+                }
+            else:
+                pending.append(
+                    {
+                        "task_id": task_id,
+                        "status": status,
+                        "purpose": purpose,
+                    }
+                )
+                continue
 
-        response["terminal"] = status in TERMINAL_STATUSES
-        return jsonify(response)
+            response["terminal"] = True
+            return jsonify(
+                {
+                    "ready": True,
+                    "task_id": task_id,
+                    "status": status,
+                    "purpose": purpose,
+                    "terminal": True,
+                    "task": response,
+                }
+            )
+
+        return jsonify({"ready": False, "pending": pending})
     except Exception as exc:
-        print(f"Error in check_task: {exc}")
+        print(f"Error in check_task_queue: {exc}")
         return jsonify({"error": str(exc)}), 500
-
-
-@app.route("/check", methods=["GET"], strict_slashes=False)
-def check_task_query():
-    task_id = request.args.get("task_id")
-    if not task_id:
-        return jsonify({"error": "Missing task_id parameter"}), 400
-    return check_task(task_id)
 
 
 @app.route("/aruco/latest-reference", methods=["GET"], strict_slashes=False)
@@ -727,55 +756,38 @@ def sync_aruco_markers():
         return jsonify({"error": str(exc)}), 500
 
 
-@app.route("/latest-completed", methods=["GET"], strict_slashes=False)
-def latest_completed_task():
+@app.route("/latest-completed-task-ids", methods=["GET"], strict_slashes=False)
+def latest_completed_task_ids():
     try:
         startup_session_id = str(request.args.get("startup_session_id") or "").strip() or None
-        history_offset = max(0, request.args.get("history_offset", default=0, type=int) or 0)
-        attempt_sync = history_offset == 0
+        limit = max(1, request.args.get("limit", default=5, type=int) or 5)
         require_aruco_coordinate_synced = _is_truthy_query_value(
             request.args.get("require_aruco_coordinate_synced")
         )
-        task_data = get_latest_completed_task_data(
+        rows = get_latest_completed_tasks(
             startup_session_id=startup_session_id,
             require_aruco_coordinate_synced=require_aruco_coordinate_synced,
-            history_offset=history_offset,
-            attempt_sync=attempt_sync,
+            limit=limit,
         )
-        if not task_data:
-            if startup_session_id:
-                error_message = "No completed task found for this startup session"
-                if require_aruco_coordinate_synced:
-                    error_message = (
-                        "No completed task with synced ArUco coordinates found for this startup session"
-                    )
-                return jsonify(
+        return jsonify(
+            {
+                "success": True,
+                "count": len(rows),
+                "task_ids": [
                     {
-                        "error": error_message,
-                        "startup_session_id": startup_session_id,
-                        "history_offset": history_offset,
+                        "task_id": row.get("task_id"),
+                        "purpose": PURPOSE_OBJECT_RECONSTRUCTION,
+                        "status": row.get("status"),
+                        "aruco_coordinate_synced": bool(row.get("aruco_coordinate_synced")),
                     }
-                ), 404
-            error_message = "No completed task found"
-            if require_aruco_coordinate_synced:
-                error_message = "No completed task with synced ArUco coordinates found"
-            return jsonify({"error": error_message}), 404
-
-        response = _build_completed_task_response(task_data)
-        response["history_offset"] = history_offset
-        if startup_session_id and require_aruco_coordinate_synced:
-            latest_reference_row = get_latest_aruco_reference(startup_session_id)
-            current_aruco_reference = _load_marker_pose_json(
-                latest_reference_row.get("marker_pose_json") if latest_reference_row else None
-            )
-            if current_aruco_reference:
-                response["aruco_reference"] = current_aruco_reference
-                if isinstance(response.get("model_instance"), dict):
-                    response["model_instance"]["aruco_reference"] = current_aruco_reference
-        return jsonify(response)
+                    for row in rows
+                    if row.get("task_id")
+                ],
+            }
+        )
     except Exception as exc:
-        print(f"Error in latest_completed_task: {exc}")
-        return jsonify({"error": str(exc)}), 500
+        print(f"Error in latest_completed_task_ids: {exc}")
+        return jsonify({"success": False, "error": str(exc)}), 500
 
 
 @app.route("/model-bounds/latest", methods=["GET"], strict_slashes=False)
