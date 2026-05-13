@@ -5,6 +5,11 @@ import sys
 import _bootstrap
 import numpy as np
 
+from config import (
+    SKIP_ICP_POSE_USE_CAMERA_PITCH,
+    SKIP_ICP_POSE_USE_CAMERA_ROLL,
+    SKIP_ICP_POSE_USE_CAMERA_YAW,
+)
 from object_alignment_common import (
     FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY,
     model_pose_canonical_rh_to_unity_camera,
@@ -42,6 +47,86 @@ def resolve_runtime_local_to_unity_rotation() -> np.ndarray:
     base = np.asarray(FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY, dtype=np.float64)
     rotate_180_about_local_z = np.diag([-1.0, -1.0, 1.0]).astype(np.float64)
     return base @ CUSTOM_RUNTIME_LOCAL_AXIS_REMAP_TO_UNITY @ rotate_180_about_local_z
+
+
+def _normalize_vector(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
+    vector = np.asarray(vector, dtype=np.float64).reshape(3)
+    norm = float(np.linalg.norm(vector))
+    if not np.isfinite(norm) or norm <= 1e-8:
+        return np.asarray(fallback, dtype=np.float64).reshape(3)
+    return vector / norm
+
+
+def _axis_angle_rotation(axis: np.ndarray, angle_rad: float) -> np.ndarray:
+    axis = _normalize_vector(axis, np.array([0.0, 1.0, 0.0], dtype=np.float64))
+    x, y, z = axis
+    c = float(np.cos(angle_rad))
+    s = float(np.sin(angle_rad))
+    t = 1.0 - c
+    return np.array(
+        [
+            [t * x * x + c, t * x * y - s * z, t * x * z + s * y],
+            [t * x * y + s * z, t * y * y + c, t * y * z - s * x],
+            [t * x * z - s * y, t * y * z + s * x, t * z * z + c],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _look_rotation(forward: np.ndarray, up: np.ndarray) -> np.ndarray:
+    z_axis = _normalize_vector(forward, np.array([0.0, 0.0, 1.0], dtype=np.float64))
+    up_axis = _normalize_vector(up, np.array([0.0, 1.0, 0.0], dtype=np.float64))
+    x_axis = np.cross(up_axis, z_axis)
+    if float(np.linalg.norm(x_axis)) <= 1e-8:
+        x_axis = np.array([1.0, 0.0, 0.0], dtype=np.float64)
+    x_axis = _normalize_vector(x_axis, np.array([1.0, 0.0, 0.0], dtype=np.float64))
+    y_axis = _normalize_vector(np.cross(z_axis, x_axis), up_axis)
+    return np.column_stack((x_axis, y_axis, z_axis)).astype(np.float64)
+
+
+def resolve_camera_rotation_for_object(task: dict, camera_rotation: np.ndarray) -> tuple[np.ndarray, dict]:
+    alignment = task.get("object_alignment") or {}
+    if str(alignment.get("icp_mode") or "").strip().lower() != "off":
+        return camera_rotation, {"mode": "full_camera_rotation", "reason": "icp_mode_not_off"}
+
+    use_yaw = bool(SKIP_ICP_POSE_USE_CAMERA_YAW)
+    use_pitch = bool(SKIP_ICP_POSE_USE_CAMERA_PITCH)
+    use_roll = bool(SKIP_ICP_POSE_USE_CAMERA_ROLL)
+    if use_yaw and use_pitch and use_roll:
+        return camera_rotation, {
+            "mode": "full_camera_rotation",
+            "use_yaw": use_yaw,
+            "use_pitch": use_pitch,
+            "use_roll": use_roll,
+        }
+
+    world_up = np.array([0.0, 1.0, 0.0], dtype=np.float64)
+    camera_forward = camera_rotation @ np.array([0.0, 0.0, 1.0], dtype=np.float64)
+    flat_forward = np.array([camera_forward[0], 0.0, camera_forward[2]], dtype=np.float64)
+    yaw_rotation = _look_rotation(flat_forward, world_up)
+
+    residual = yaw_rotation.T @ camera_rotation
+    pitch_rad = float(np.arctan2(-residual[1, 2], residual[2, 2]))
+    roll_rad = float(np.arctan2(-residual[0, 1], residual[0, 0]))
+
+    filtered = np.eye(3, dtype=np.float64)
+    if use_yaw:
+        filtered = filtered @ yaw_rotation
+    if use_pitch:
+        filtered = filtered @ _axis_angle_rotation(np.array([1.0, 0.0, 0.0]), pitch_rad)
+    if use_roll:
+        filtered = filtered @ _axis_angle_rotation(np.array([0.0, 0.0, 1.0]), roll_rad)
+
+    return filtered.astype(np.float64), {
+        "mode": "filtered_camera_rotation",
+        "use_yaw": use_yaw,
+        "use_pitch": use_pitch,
+        "use_roll": use_roll,
+        "pitch_deg": float(np.degrees(pitch_rad)),
+        "roll_deg": float(np.degrees(roll_rad)),
+        "camera_forward": [float(v) for v in camera_forward],
+        "flat_forward": [float(v) for v in flat_forward],
+    }
 
 
 def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
@@ -91,7 +176,8 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     if model_scale <= 0:
         raise ValueError("object_alignment.model_real_scale must be positive")
 
-    t_cam, R_cam = resolve_pv_camera_world_pose(task)
+    t_cam, R_cam_raw = resolve_pv_camera_world_pose(task)
+    R_cam, _camera_rotation_filter = resolve_camera_rotation_for_object(task, R_cam_raw)
     runtime_local_to_unity = resolve_runtime_local_to_unity_rotation()
 
     world_position = (R_cam @ local_position) + t_cam
@@ -120,7 +206,8 @@ def build_pose_debug(task: dict) -> dict:
         local_rotation_rh,
         local_position_rh,
     )
-    pv_position, pv_rotation = resolve_pv_camera_world_pose(task)
+    pv_position, pv_rotation_raw = resolve_pv_camera_world_pose(task)
+    pv_rotation, camera_rotation_filter = resolve_camera_rotation_for_object(task, pv_rotation_raw)
     runtime_local_to_unity = resolve_runtime_local_to_unity_rotation()
 
     world_position = (pv_rotation @ local_position) + pv_position
@@ -139,6 +226,10 @@ def build_pose_debug(task: dict) -> dict:
             "pose": serialize_pose(local_rotation, local_position),
         },
         "pv_camera_world": {
+            "pose": serialize_pose(pv_rotation_raw, pv_position),
+        },
+        "camera_rotation_filter": camera_rotation_filter,
+        "pv_camera_world_filtered": {
             "pose": serialize_pose(pv_rotation, pv_position),
         },
         "final_object_world": {

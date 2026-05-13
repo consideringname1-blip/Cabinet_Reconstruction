@@ -69,6 +69,13 @@ ICP_BBOX_SURFACE_RAY_SOURCE = "all_points"
 ICP_BBOX_SURFACE_DISTANCE_MODE = "mean_depth"
 ICP_BBOX_SURFACE_LATERAL_MODE = "centroid_xy"
 ICP_BBOX_SURFACE_THICKNESS_FACTOR = 0.20
+# Camera rotation components used when ICP_MODE=off computes the final runtime
+# pose. Yaw-only keeps the model upright while preserving the camera's
+# horizontal facing direction; enabling pitch/roll restores more of the
+# original camera tilt.
+SKIP_ICP_POSE_USE_CAMERA_YAW = _resolve_bool_env("SKIP_ICP_POSE_USE_CAMERA_YAW", True)
+SKIP_ICP_POSE_USE_CAMERA_PITCH = _resolve_bool_env("SKIP_ICP_POSE_USE_CAMERA_PITCH", False)
+SKIP_ICP_POSE_USE_CAMERA_ROLL = _resolve_bool_env("SKIP_ICP_POSE_USE_CAMERA_ROLL", False)
 # Reject candidate poses that leave the reconstructed model upside-down in
 # camera-local Unity space.
 ICP_IGNORE_INVERTED_SOLUTIONS = True
