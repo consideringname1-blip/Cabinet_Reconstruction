@@ -180,7 +180,7 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     R_cam, _camera_rotation_filter = resolve_camera_rotation_for_object(task, R_cam_raw)
     runtime_local_to_unity = resolve_runtime_local_to_unity_rotation()
 
-    world_position = (R_cam @ local_position) + t_cam
+    world_position = (R_cam_raw @ local_position) + t_cam
     # Compose the ICP rotation with the runtime FBX local-axis chain so the
     # loaded model is placed in the same orientation that ICP solved.
     world_rotation = R_cam @ local_rotation @ runtime_local_to_unity
@@ -210,7 +210,7 @@ def build_pose_debug(task: dict) -> dict:
     pv_rotation, camera_rotation_filter = resolve_camera_rotation_for_object(task, pv_rotation_raw)
     runtime_local_to_unity = resolve_runtime_local_to_unity_rotation()
 
-    world_position = (pv_rotation @ local_position) + pv_position
+    world_position = (pv_rotation_raw @ local_position) + pv_position
     world_rotation = pv_rotation @ local_rotation @ runtime_local_to_unity
 
     return {
