@@ -914,4 +914,4 @@ def internal_error(error):
 if __name__ == "__main__":
     print(app.url_map)
     print("Starting Flask application...")
-    app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False, threaded=True)
+    app.run(host="0.0.0.0", port=7355, debug=False, use_reloader=False, threaded=True)
