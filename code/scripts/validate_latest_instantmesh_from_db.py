@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -124,9 +123,19 @@ def _ensure_sam3_color(json_path: Path, *, sam3_python: str | None, skip_sam3: b
 
 
 def _run_instantmesh(json_path: Path, python_path: str | None = None, imesh_python: str | None = None) -> None:
-    env = os.environ.copy()
-    env.setdefault("IMESH_PY", _resolve_python(imesh_python, sys.executable))
-    _run_stage(_resolve_python(python_path, sys.executable), INSTANTMESH_STAGE_RUN, json_path, env=env)
+    if python_path:
+        _run_stage(python_path, INSTANTMESH_STAGE_RUN, json_path)
+        return
+
+    stage_dir = INSTANTMESH_STAGE_RUN.parent
+    if str(stage_dir) not in sys.path:
+        sys.path.insert(0, str(stage_dir))
+
+    import run_instantmesh_from_json as instantmesh_stage
+
+    instantmesh_stage.IMESH_PY = _resolve_python(imesh_python, sys.executable)
+    task_json = load_task_json(json_path)
+    instantmesh_stage.run_instantmesh(json_path, task_json)
 
 
 def _verify_outputs(json_path: Path) -> dict[str, Path | None]:
@@ -194,7 +203,7 @@ def main() -> int:
     print(f"[TASK] status      : {row['status']}")
     print(f"[TASK] json        : {json_path}")
     print(f"[TASK] stage python: {args.python_path or sys.executable}")
-    print(f"[TASK] imesh python: {args.imesh_python or os.environ.get('IMESH_PY') or sys.executable}")
+    print(f"[TASK] imesh python: {args.imesh_python or sys.executable}")
 
     sam3_color = _sam3_color_path(task_json)
     print(f"[TASK] sam3 color  : {sam3_color or '<missing in JSON>'}")
