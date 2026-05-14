@@ -1,0 +1,33 @@
+services:
+  hwang_project_clean:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    image: hwang_project_cuda118
+    container_name: hwang_project
+
+    network_mode: host
+    ipc: host
+    shm_size: "16gb"
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    working_dir: /workspace
+    command: /bin/bash
+    stdin_open: true
+    tty: true
+
+    environment:
+      PYTHONPATH: "/workspace:/workspace/code"
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+
+    volumes:
+      - /home/hwang/hwang_project:/workspace

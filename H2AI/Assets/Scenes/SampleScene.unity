@@ -4161,7 +4161,6 @@ MonoBehaviour:
   _enable_sensor_update: 0
   maxSensorUpdateHz: 15
   _depthSensorType: 0
-  _publisher: {fileID: 1912203437}
   tex_grayscale_publish: {fileID: 0}
 --- !u!114 &223974228
 MonoBehaviour:
@@ -4184,7 +4183,6 @@ MonoBehaviour:
   tex_pv_frozen: {fileID: 0}
   width_pv_frozen: 0
   height_pv_frozen: 0
-  _publisher: {fileID: 1912203437}
 --- !u!4 &223974229
 Transform:
   m_ObjectHideFlags: 0
@@ -4233,7 +4231,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   selectionBoxRoot: {fileID: 649133928}
-  selectionBoxController: {fileID: 983785832}
   distanceFromCamera: 0.8
   hideOnStart: 1
   settingsPanel: {fileID: 242384126}
@@ -11148,7 +11145,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c66ea7adc483246498416433105ee8ba, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  selectionBoxController: {fileID: 983785832}
 --- !u!1 &968093650
 GameObject:
   m_ObjectHideFlags: 0
@@ -22759,15 +22755,7 @@ MonoBehaviour:
   PV_controler: {fileID: 223974228}
   DP_controler: {fileID: 223974227}
   selectionPanelManager: {fileID: 223974230}
-  checkPollingIntervalSeconds: 10
-  markerCheckPollingIntervalSeconds: 5
-  modelQueuedPollingIntervalSeconds: 25
-  modelProcessingPollingIntervalSeconds: 12
-  modelCompletedPollingIntervalSeconds: 30
-  logCheckRequests: 0
   task_id: 
-  image_url: 
-  texture2DTuPian: {fileID: 2800000, guid: 7beab324a3ae347418d5bd86646a4c13, type: 3}
   debug_json: 
   pose_transform_stages_json: 
   pose_stage_debug_json: 
@@ -22820,6 +22808,7 @@ MonoBehaviour:
   forceHideCustomRayLine: 1
   showRayLine: 1
   rayEndpointPaddingMeters: 0
+  noSurfaceHitLogIntervalSeconds: 2
   serverBaseUrl: http://10.40.1.122:7355
   historyLimit: 5
   shuJuQingQiu: {fileID: 1912203437}
