@@ -12,7 +12,6 @@ from config import (
     HOLOLENS2_OUTPUT_DEPTH_IMAGES,
     SAM3_BOX_MASK_RUN,
     SAM3_OUTPUT_ROOT,
-    SAM3_PY,
     UPLOAD_FOLDER,
 )
 from task_db import get_latest_10_records, get_task_by_task_id, initialize_task_table
@@ -82,7 +81,7 @@ def _require_input_files(task_json: dict[str, Any]) -> None:
 
 def _run_sam3(json_path: Path, python_path: str | None = None) -> None:
     result = subprocess.run(
-        [_resolve_python(python_path or SAM3_PY), str(SAM3_BOX_MASK_RUN), str(json_path)],
+        [_resolve_python(python_path), str(SAM3_BOX_MASK_RUN), str(json_path)],
         cwd=str(SAM3_BOX_MASK_RUN.parent),
         check=True,
         text=True,
@@ -125,7 +124,11 @@ def main() -> int:
         default=0,
         help="Use an older matching task from the latest 10 rows. 0 means latest.",
     )
-    parser.add_argument("--python", dest="python_path", help="Override the Python executable used for SAM3.")
+    parser.add_argument(
+        "--python",
+        dest="python_path",
+        help="Override the Python executable used for SAM3. Defaults to the current Python.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Only print the selected task and input files.")
     args = parser.parse_args()
 

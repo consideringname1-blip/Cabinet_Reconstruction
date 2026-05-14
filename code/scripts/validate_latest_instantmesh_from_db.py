@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,14 +11,11 @@ from _bootstrap import CODE_ROOT
 
 from config import (
     ENABLE_INSTANTMESH_VIDEO_OUTPUT,
-    IMESH_PY,
     INSTANTMESH_OUTPUT_MESHES,
     INSTANTMESH_OUTPUT_VIDEOS,
     INSTANTMESH_STAGE_RUN,
-    INSTANTMESH_STAGE_PY,
     SAM3_BOX_MASK_RUN,
     SAM3_OUTPUT_ROOT,
-    SAM3_PY,
 )
 from task_db import get_latest_10_records, get_task_by_task_id, initialize_task_table
 from task_json import load_task_json, resolve_task_json_path
@@ -74,10 +72,17 @@ def _find_latest_task(history_offset: int = 0, task_id: str | None = None) -> tu
     return matches[history_offset]
 
 
-def _run_stage(python_path: str, script_path: Path, json_path: Path) -> None:
+def _run_stage(
+    python_path: str,
+    script_path: Path,
+    json_path: Path,
+    *,
+    env: dict[str, str] | None = None,
+) -> None:
     result = subprocess.run(
         [python_path, str(script_path), str(json_path)],
         cwd=str(script_path.parent),
+        env=env,
         check=True,
         text=True,
         capture_output=True,
@@ -109,7 +114,7 @@ def _ensure_sam3_color(json_path: Path, *, sam3_python: str | None, skip_sam3: b
         )
 
     print("[INFO] SAM3 color input is missing; running SAM3 first.")
-    _run_stage(_resolve_python(sam3_python, SAM3_PY), SAM3_BOX_MASK_RUN, json_path)
+    _run_stage(_resolve_python(sam3_python, sys.executable), SAM3_BOX_MASK_RUN, json_path)
 
     task_json = load_task_json(json_path)
     color_path = _sam3_color_path(task_json)
@@ -118,8 +123,10 @@ def _ensure_sam3_color(json_path: Path, *, sam3_python: str | None, skip_sam3: b
     return color_path
 
 
-def _run_instantmesh(json_path: Path, python_path: str | None = None) -> None:
-    _run_stage(_resolve_python(python_path, INSTANTMESH_STAGE_PY), INSTANTMESH_STAGE_RUN, json_path)
+def _run_instantmesh(json_path: Path, python_path: str | None = None, imesh_python: str | None = None) -> None:
+    env = os.environ.copy()
+    env.setdefault("IMESH_PY", _resolve_python(imesh_python, sys.executable))
+    _run_stage(_resolve_python(python_path, sys.executable), INSTANTMESH_STAGE_RUN, json_path, env=env)
 
 
 def _verify_outputs(json_path: Path) -> dict[str, Path | None]:
@@ -161,8 +168,19 @@ def main() -> int:
         default=0,
         help="Use an older matching task from the latest 10 rows. 0 means latest.",
     )
-    parser.add_argument("--python", dest="python_path", help="Override the Python executable used for the stage wrapper.")
-    parser.add_argument("--sam3-python", help="Override the Python executable used when SAM3 must be run first.")
+    parser.add_argument(
+        "--python",
+        dest="python_path",
+        help="Override the Python executable used for the stage wrapper. Defaults to the current Python.",
+    )
+    parser.add_argument(
+        "--sam3-python",
+        help="Override the Python executable used when SAM3 must be run first. Defaults to the current Python.",
+    )
+    parser.add_argument(
+        "--imesh-python",
+        help="Override the Python executable used by InstantMesh itself. Defaults to the current Python.",
+    )
     parser.add_argument(
         "--skip-sam3",
         action="store_true",
@@ -175,7 +193,8 @@ def main() -> int:
     print(f"[TASK] id          : {row['task_id']}")
     print(f"[TASK] status      : {row['status']}")
     print(f"[TASK] json        : {json_path}")
-    print(f"[TASK] imesh python: {IMESH_PY}")
+    print(f"[TASK] stage python: {args.python_path or sys.executable}")
+    print(f"[TASK] imesh python: {args.imesh_python or os.environ.get('IMESH_PY') or sys.executable}")
 
     sam3_color = _sam3_color_path(task_json)
     print(f"[TASK] sam3 color  : {sam3_color or '<missing in JSON>'}")
@@ -183,7 +202,7 @@ def main() -> int:
         return 0
 
     _ensure_sam3_color(json_path, sam3_python=args.sam3_python, skip_sam3=args.skip_sam3)
-    _run_instantmesh(json_path, args.python_path)
+    _run_instantmesh(json_path, args.python_path, args.imesh_python)
     outputs = _verify_outputs(json_path)
     for key, path in outputs.items():
         if path is not None:

@@ -134,9 +134,9 @@ MODELS_ROOT = PROJECT_ROOT / "models"
 
 
 # Python runtimes
-IMESH_PY = "/opt/miniconda/envs/imesh/bin/python"
-SERVER_PY = "/opt/miniconda/envs/server/bin/python"
-SAM3_PY = "/opt/miniconda/envs/sam3/bin/python"
+IMESH_PY = os.environ.get("IMESH_PY", "/opt/miniconda/envs/imesh/bin/python")
+SERVER_PY = os.environ.get("SERVER_PY", "/opt/miniconda/envs/server/bin/python")
+SAM3_PY = os.environ.get("SAM3_PY", "/opt/miniconda/envs/sam3/bin/python")
 HOLOLENS2_PY = SERVER_PY
 
 
