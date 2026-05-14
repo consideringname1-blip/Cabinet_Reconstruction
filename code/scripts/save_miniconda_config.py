@@ -13,6 +13,7 @@ def _run_command(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
         text=True,
+        capture_output=True,
         check=True,
     )
 

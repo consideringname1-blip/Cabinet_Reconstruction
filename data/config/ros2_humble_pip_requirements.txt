@@ -1,0 +1,209 @@
+action_msgs==1.2.2
+action_tutorials_interfaces==0.20.8
+action_tutorials_py==0.20.8
+actionlib_msgs==4.9.1
+aiohappyeyeballs @ file:///home/conda/feedstock_root/build_artifacts/aiohappyeyeballs_1741775197943/work
+aiohttp @ file:///home/conda/feedstock_root/build_artifacts/aiohttp_1774999547161/work
+aiosignal @ file:///home/conda/feedstock_root/build_artifacts/aiosignal_1751626463503/work
+ament_cmake_test==1.3.13
+ament_copyright @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ament-copyright_1773552984/work/ros-humble-ament-copyright/src/work
+ament_cppcheck @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ament-cppcheck_1773552572/work/ros-humble-ament-cppcheck/src/work
+ament_cpplint @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ament-cpplint_1773553123/work/ros-humble-ament-cpplint/src/work
+ament_flake8 @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ament-flake8_1773552712/work/ros-humble-ament-flake8/src/work
+ament_index_python @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ament-index-python_1773553129/work/ros-humble-ament-index-python/src/work
+ament_lint @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ament-lint_1773552558/work/ros-humble-ament-lint/src/work
+ament_lint_cmake @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ament-lint-cmake_1773553095/work/ros-humble-ament-lint-cmake/src/work
+ament_package @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ament-package_1773552444/work/ros-humble-ament-package/src/work
+ament_pep257 @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ament-pep257_1773552843/work/ros-humble-ament-pep257/src/work
+ament_uncrustify @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ament-uncrustify_1773553669/work/ros-humble-ament-uncrustify/src/work
+ament_xmllint @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ament-xmllint_1773553117/work/ros-humble-ament-xmllint/src/work
+angles==1.15.0
+argcomplete @ file:///home/conda/feedstock_root/build_artifacts/argcomplete_1760974912231/work
+attrs @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_attrs_1773935801/work
+builtin_interfaces==1.2.2
+catkin_pkg @ file:///home/conda/feedstock_root/build_artifacts/catkin_pkg_1757558439629/work
+cffi @ file:///home/conda/feedstock_root/build_artifacts/cffi_1761202850602/work
+colorama @ file:///home/conda/feedstock_root/build_artifacts/colorama_1733218098505/work
+composition_interfaces==1.2.2
+contourpy @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_contourpy_1769155979/work
+cppcheck-htmlreport @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_cppcheck_1774598936/work/htmlreport
+cryptography @ file:///home/conda/feedstock_root/build_artifacts/cryptography-split_1777965979343/work
+cv_bridge==3.2.1
+cycler @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_cycler_1764466758/work
+demo_nodes_py==0.20.8
+diagnostic_msgs==4.9.1
+distro @ file:///home/conda/feedstock_root/build_artifacts/distro_1734729835256/work
+docutils @ file:///home/conda/feedstock_root/build_artifacts/docutils_1766092521263/work
+domain_coordinator @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-domain-coordinator_1773553095/work/ros-humble-domain-coordinator/src/work
+empy==3.3.4
+example_interfaces==0.9.3
+examples_rclpy_executors==0.15.5
+examples_rclpy_minimal_action_client==0.15.5
+examples_rclpy_minimal_action_server==0.15.5
+examples_rclpy_minimal_client==0.15.5
+examples_rclpy_minimal_publisher==0.15.5
+examples_rclpy_minimal_service==0.15.5
+examples_rclpy_minimal_subscriber==0.15.5
+exceptiongroup @ file:///home/conda/feedstock_root/build_artifacts/exceptiongroup_1763918002538/work
+flake8 @ file:///home/conda/feedstock_root/build_artifacts/flake8_1750968000183/work
+fonttools @ file:///home/conda/feedstock_root/build_artifacts/fonttools_1776708057478/work
+frozenlist @ file:///home/conda/feedstock_root/build_artifacts/frozenlist_1752167142843/work
+geometry_msgs==4.9.1
+idna @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_idna_1776947141/work
+image_geometry==3.2.1
+importlib_metadata @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_importlib-metadata_1773931568/work
+importlib_resources @ file:///home/conda/feedstock_root/build_artifacts/importlib_resources_1776068706467/work
+iniconfig @ file:///home/conda/feedstock_root/build_artifacts/iniconfig_1760831328738/work
+interactive_markers==2.3.2
+kiwisolver @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_kiwisolver_1773067050/work
+lark-parser @ file:///home/conda/feedstock_root/build_artifacts/lark-parser_1725742324642/work
+laser_geometry==2.4.1
+launch @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-launch_1773553218/work/ros-humble-launch/src/work
+launch_ros @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-launch-ros_1773563402/work/ros-humble-launch-ros/src/work
+launch_testing @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-launch-testing_1773554364/work/ros-humble-launch-testing/src/work
+launch_testing_ros==0.19.13
+launch_xml @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-launch-xml_1773553684/work/ros-humble-launch-xml/src/work
+launch_yaml @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-launch-yaml_1773553677/work/ros-humble-launch-yaml/src/work
+lifecycle_msgs==1.2.2
+logging_demo==0.20.8
+loguru @ file:///home/conda/feedstock_root/build_artifacts/loguru_1746634721458/work
+lxml @ file:///home/conda/feedstock_root/build_artifacts/lxml_1776512378046/work
+map_msgs==2.1.0
+matplotlib==3.10.9
+mccabe @ file:///home/conda/feedstock_root/build_artifacts/mccabe_1733216466933/work
+message_filters==4.3.14
+msgpack @ file:///home/conda/feedstock_root/build_artifacts/msgpack-python_1762503974934/work
+multidict @ file:///home/conda/feedstock_root/build_artifacts/multidict_1771610691664/work
+munkres==1.1.4
+nav_msgs==4.9.1
+netifaces @ file:///home/conda/feedstock_root/build_artifacts/netifaces_1756921085930/work
+numpy @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_numpy_1778655435/work/dist/numpy-2.4.4-cp312-cp312-linux_x86_64.whl#sha256=551bd1057d0360bd5291742c952d1eee17425f0ead1299dd4276c97dfa165d64
+opencv-python==4.13.0
+opencv-python-headless==4.13.0
+osrf_pycommon @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-osrf-pycommon_1773552577/work/ros-humble-osrf-pycommon/src/work
+packaging @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_packaging_1777103621/work
+pcl_msgs==1.0.0
+pendulum_msgs==0.20.8
+pep517 @ file:///home/conda/feedstock_root/build_artifacts/pep517_1667916641627/work
+pillow @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pillow_1775060059/work
+pluggy @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pluggy_1764896838/work
+ply @ file:///home/conda/feedstock_root/build_artifacts/ply_1733239724146/work
+propcache @ file:///home/conda/feedstock_root/build_artifacts/propcache_1744524945607/work
+psutil @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_psutil_1769678155/work
+pybind11 @ file:///D:/bld/bld/rattler-build_pybind11_1775004608/work
+pybind11-global @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pybind11-global_1775004520/work
+pybullet @ file:///home/conda/feedstock_root/build_artifacts/bullet_1761040231284/work
+pycairo==1.29.0
+pycodestyle @ file:///home/conda/feedstock_root/build_artifacts/pycodestyle_1750615949581/work
+pycparser @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pycparser_1733195786/work
+pydocstyle @ file:///home/conda/feedstock_root/build_artifacts/pydocstyle_1733261631732/work
+pydot @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pydot_1766345630/work
+pyflakes @ file:///home/conda/feedstock_root/build_artifacts/pyflakes_1750491880197/work
+Pygments @ file:///home/conda/feedstock_root/build_artifacts/pygments_1774796700044/work
+pyparsing @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pyparsing_1769003998/work
+PyQt-builder @ file:///home/conda/feedstock_root/build_artifacts/pyqt-builder_1766858214456/work
+PyQt5==5.15.11
+PyQt5_sip==12.17.0
+pytest @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_pytest_1775644472/work
+python-dateutil @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_python-dateutil_1751104122/work
+python_qt_binding==1.1.3
+PyYAML @ file:///home/conda/feedstock_root/build_artifacts/pyyaml_1770223234623/work
+qt_dotgraph==2.2.4
+qt_gui==2.2.4
+qt_gui_cpp==2.2.4
+qt_gui_py_common==2.2.4
+quality_of_service_demo_py==0.20.8
+rcl_interfaces==1.2.2
+rclpy==3.3.20
+rcutils==5.1.8
+resource_retriever==3.1.3
+rmw_dds_common==1.6.0
+ros2action @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2action_1773687574/work/ros-humble-ros2action/src/work
+ros2bag @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2bag_1773692345/work/ros-humble-ros2bag/src/work
+ros2cli @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2cli_1773563435/work/ros-humble-ros2cli/src/work
+ros2component @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2component_1773690209/work/ros-humble-ros2component/src/work
+ros2doctor @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2doctor_1773687567/work/ros-humble-ros2doctor/src/work
+ros2interface @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2interface_1773687547/work/ros-humble-ros2interface/src/work
+ros2launch @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2launch_1773689845/work/ros-humble-ros2launch/src/work
+ros2lifecycle @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2lifecycle_1773689829/work/ros-humble-ros2lifecycle/src/work
+ros2multicast @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2multicast_1773563961/work/ros-humble-ros2multicast/src/work
+ros2node @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2node_1773687584/work/ros-humble-ros2node/src/work
+ros2param @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2param_1773689870/work/ros-humble-ros2param/src/work
+ros2pkg @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2pkg_1773687591/work/ros-humble-ros2pkg/src/work
+ros2plugin @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2plugin_1773689814/work/ros-humble-ros2plugin/src/work
+ros2run @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2run_1773689814/work/ros-humble-ros2run/src/work
+ros2service @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2service_1773687573/work/ros-humble-ros2service/src/work
+ros2topic @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-ros2topic_1773687547/work/ros-humble-ros2topic/src/work
+rosbag2_interfaces==0.15.16
+rosbag2_py==0.15.16
+rosdistro @ file:///home/conda/feedstock_root/build_artifacts/rosdistro_1747826526297/work
+rosgraph_msgs==1.2.2
+rosidl_adapter==3.1.8
+rosidl_cli @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-rosidl-cli_1773553226/work/ros-humble-rosidl-cli/src/work
+rosidl_cmake==3.1.8
+rosidl_generator_c==3.1.8
+rosidl_generator_cpp==3.1.8
+rosidl_generator_py==0.14.6
+rosidl_generator_rs==0.4.11
+rosidl_parser==3.1.8
+rosidl_runtime_py @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-rosidl-runtime-py_1773562513/work/ros-humble-rosidl-runtime-py/src/work
+rosidl_typesupport_c==2.0.2
+rosidl_typesupport_cpp==2.0.2
+rosidl_typesupport_fastrtps_c==2.2.4
+rosidl_typesupport_fastrtps_cpp==2.2.4
+rosidl_typesupport_introspection_c==3.1.8
+rosidl_typesupport_introspection_cpp==3.1.8
+rospkg @ file:///home/conda/feedstock_root/build_artifacts/rospkg_1766125141177/work
+rpyutils @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-rpyutils_1773553232/work/ros-humble-rpyutils/src/work
+rqt_action==2.0.1
+rqt_bag @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-rqt-bag_1773692357/work/ros-humble-rqt-bag/src/work
+rqt_bag_plugins @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-rqt-bag-plugins_1773693451/work/ros-humble-rqt-bag-plugins/src/work
+rqt_console==2.0.3
+rqt_graph @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-rqt-graph_1773687636/work/ros-humble-rqt-graph/src/work
+rqt_gui @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-rqt-gui_1773563424/work/ros-humble-rqt-gui/src/work
+rqt_gui_py==1.1.9
+rqt_msg==1.2.0
+rqt_plot==1.1.5
+rqt_publisher==1.5.0
+rqt_py_common==1.1.9
+rqt_py_console==1.0.2
+rqt_reconfigure==1.1.3
+rqt_service_caller==1.0.5
+rqt_shell==1.0.2
+rqt_srv==1.0.3
+rqt_topic==1.5.1
+sensor_msgs==4.9.1
+sensor_msgs_py==4.9.1
+setuptools==82.0.1
+shape_msgs==4.9.1
+sip @ file:///home/conda/feedstock_root/build_artifacts/sip_1759437825022/work
+six @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_six_1753199211/work
+snowballstemmer @ file:///home/conda/feedstock_root/build_artifacts/snowballstemmer_1747749415787/work
+sros2 @ file:///home/runner/conda-bld/bld/rattler-build_ros-humble-sros2_1773690201/work/ros-humble-sros2/src/work
+statistics_msgs==1.2.2
+std_msgs==4.9.1
+std_srvs==4.9.1
+stereo_msgs==4.9.1
+teleop_twist_keyboard==2.4.1
+tf2_geometry_msgs==0.25.19
+tf2_kdl==0.25.19
+tf2_msgs==0.25.19
+tf2_py==0.25.19
+tf2_ros_py==0.25.19
+tf2_sensor_msgs==0.25.19
+tf2_tools==0.25.19
+toml @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_toml_1764486833/work
+tomli @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_tomli_1774492402/work
+topic_monitor==0.20.8
+trajectory_msgs==4.9.1
+turtlesim==1.4.3
+typing_extensions @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_typing_extensions_1756220668/work
+unicodedata2 @ file:///home/conda/feedstock_root/build_artifacts/unicodedata2_1770908957718/work
+unique_identifier_msgs==2.2.1
+visualization_msgs==4.9.1
+vtk==9.5.2
+wheel==0.47.0
+wslink @ file:///home/conda/feedstock_root/build_artifacts/wslink_1773305726090/work
+yarl @ file:///home/conda/feedstock_root/build_artifacts/yarl_1772409262719/work
+zipp @ file:///home/conda/feedstock_root/build_artifacts/bld/rattler-build_zipp_1776131454/work
+
