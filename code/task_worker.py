@@ -19,8 +19,8 @@ from config import (
     HOLOLENS2_CONVERT_DIR,
     HOLOLENS2_CONVERT_RUN,
     HOLOLENS2_PY,
-    ICPALIGNMENT_STAGE_PY,
-    ICPALIGNMENT_STAGE_RUN,
+    OBJECT_ALIGNMENT_STAGE_PY,
+    OBJECT_ALIGNMENT_STAGE_RUN,
     INSTANTMESH_STAGE_PY,
     INSTANTMESH_STAGE_RUN,
     MODELSCALE_STAGE_PY,
@@ -63,7 +63,7 @@ STAGE_ORDER = [
     "instantmesh",
     "depthpointcloud",
     "modelscale",
-    "icpalignment",
+    "object_alignment",
     "pose",
     "aruco_sync",
     "runtime_mesh",
@@ -188,12 +188,12 @@ def _run_modelscale(json_path: Path) -> None:
     )
 
 
-def _run_icpalignment(json_path: Path) -> None:
+def _run_object_alignment(json_path: Path) -> None:
     _run_python_script(
-        python_path=ICPALIGNMENT_STAGE_PY,
-        script_path=ICPALIGNMENT_STAGE_RUN,
+        python_path=OBJECT_ALIGNMENT_STAGE_PY,
+        script_path=OBJECT_ALIGNMENT_STAGE_RUN,
         json_path=json_path,
-        cwd=ICPALIGNMENT_STAGE_RUN.parent,
+        cwd=OBJECT_ALIGNMENT_STAGE_RUN.parent,
     )
 
 
@@ -249,7 +249,7 @@ STAGE_RUNNERS = {
     "instantmesh": _run_instantmesh,
     "depthpointcloud": _run_depthpointcloud,
     "modelscale": _run_modelscale,
-    "icpalignment": _run_icpalignment,
+    "object_alignment": _run_object_alignment,
     "pose": _run_pose,
     "aruco_sync": _run_aruco_sync,
     "runtime_mesh": _run_runtime_mesh,

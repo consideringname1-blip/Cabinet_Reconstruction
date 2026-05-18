@@ -2,14 +2,22 @@ import os
 from pathlib import Path
 
 
-def _resolve_icp_mode() -> str:
-    raw = os.environ.get("ICP_MODE")
+def _resolve_object_alignment_mode() -> str:
+    raw = os.environ.get("OBJECT_ALIGNMENT_MODE")
     if raw is not None:
         value = str(raw).strip().lower()
+        if value in {"foundationpose", "camera_refine", "off"}:
+            return value
+        raise ValueError("OBJECT_ALIGNMENT_MODE must be one of: foundationpose / camera_refine / off")
+
+    legacy = os.environ.get("ICP_MODE")
+    if legacy is not None:
+        value = str(legacy).strip().lower()
         if value in {"camera_refine", "off"}:
             return value
         raise ValueError("ICP_MODE must be one of: camera_refine / off")
-    return "off"
+
+    return "foundationpose"
 
 
 def _resolve_bool_env(name: str, default: bool) -> bool:
@@ -42,13 +50,14 @@ ARUCO_ROI_PADDING_RATIO = 0.18
 ARUCO_ROI_PADDING_MIN_PX = 24
 ARUCO_ANCHOR_MARKER_ID = 1
 ARUCO_SYNC_MARKER_REGISTRY_ON_START = False
-# camera_refine = camera-view local rotation+translation+scale adjustment.
-# off = measured-distance placement without ICP. The runtime only keeps one
-# active ICP path plus the skip-ICP path.
-# Default uses the direct bbox-front-surface placement path. Set
-# ICP_MODE=camera_refine when you explicitly want the slower ICP refinement.
-ICP_MODE = _resolve_icp_mode()
-ICP_ENABLE = ICP_MODE != "off"
+# foundationpose = model-based FoundationPose registration from RGB-D + mask.
+# camera_refine = existing camera-view ICP rotation+translation+scale refinement.
+# off = measured-distance placement without ICP.
+# OBJECT_ALIGNMENT_MODE is the neutral mode selector; ICP_MODE remains accepted
+# as a legacy override for camera_refine/off.
+OBJECT_ALIGNMENT_MODE = _resolve_object_alignment_mode()
+ICP_MODE = OBJECT_ALIGNMENT_MODE  # legacy field consumed by older debug/output code
+ICP_ENABLE = OBJECT_ALIGNMENT_MODE == "camera_refine"
 # Maximum number of points written to the exported depth point cloud PLY.
 # Set to 0 or None to keep all valid depth points.
 DEPTHPOINTCLOUD_MAX_EXPORT_POINTS = 6000
@@ -170,7 +179,9 @@ ARUCO_DETECT_STAGE_RUN = ARUCO_STAGE_ROOT / "run_aruco_detect_from_json.py"
 INSTANTMESH_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_instantmesh_from_json.py"
 DEPTHPOINTCLOUD_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_depthpointcloud_from_json.py"
 MODELSCALE_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_model_scale_from_json.py"
-ICPALIGNMENT_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_object_icp_alignment_from_json.py"
+OBJECT_ALIGNMENT_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_object_alignment_from_json.py"
+ICPALIGNMENT_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_object_icp_alignment_from_json.py"  # legacy wrapper
+FOUNDATIONPOSE_ALIGNMENT_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_foundationpose_alignment_worker.py"
 POSE_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_pose_from_json.py"
 ARUCO_SYNC_STAGE_RUN = ARUCO_STAGE_ROOT / "run_aruco_sync_from_json.py"
 RUNTIME_MESH_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_runtime_mesh_from_json.py"
@@ -185,7 +196,10 @@ ARUCO_SYNC_STAGE_PY = ARUCO_STAGE_PY
 INSTANTMESH_STAGE_PY = SERVER_PY
 DEPTHPOINTCLOUD_STAGE_PY = SERVER_PY
 MODELSCALE_STAGE_PY = SERVER_PY
-ICPALIGNMENT_STAGE_PY = SERVER_PY
+OBJECT_ALIGNMENT_STAGE_PY = SERVER_PY
+ICPALIGNMENT_STAGE_PY = SERVER_PY  # legacy wrapper
+FOUNDATIONPOSE_ALIGNMENT_PY = "/opt/miniconda/envs/foundationpose/bin/python"
+FOUNDATIONPOSE_EST_REFINE_ITER = int(os.environ.get("FOUNDATIONPOSE_EST_REFINE_ITER", "5"))
 POSE_STAGE_PY = SERVER_PY
 RUNTIME_MESH_STAGE_PY = SERVER_PY
 BLENDER_STAGE_PY = SERVER_PY

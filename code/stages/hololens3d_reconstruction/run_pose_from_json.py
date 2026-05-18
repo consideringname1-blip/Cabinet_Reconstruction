@@ -86,8 +86,9 @@ def _look_rotation(forward: np.ndarray, up: np.ndarray) -> np.ndarray:
 
 def resolve_camera_rotation_for_object(task: dict, camera_rotation: np.ndarray) -> tuple[np.ndarray, dict]:
     alignment = task.get("object_alignment") or {}
-    if str(alignment.get("icp_mode") or "").strip().lower() != "off":
-        return camera_rotation, {"mode": "full_camera_rotation", "reason": "icp_mode_not_off"}
+    alignment_mode = str(alignment.get("alignment_mode") or alignment.get("icp_mode") or "").strip().lower()
+    if alignment_mode != "off":
+        return camera_rotation, {"mode": "full_camera_rotation", "reason": "alignment_mode_not_off"}
 
     use_yaw = bool(SKIP_ICP_POSE_USE_CAMERA_YAW)
     use_pitch = bool(SKIP_ICP_POSE_USE_CAMERA_PITCH)

@@ -36,7 +36,7 @@ ALLOWED_STATUSES = (
     "instantmesh",
     "depthpointcloud",
     "modelscale",
-    "icpalignment",
+    "object_alignment",
     "pose",
     "aruco_sync",
     "runtime_mesh",

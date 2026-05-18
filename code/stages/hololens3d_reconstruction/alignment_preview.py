@@ -40,19 +40,26 @@ def build_preview_info_lines(
 ) -> list[str]:
     depthpointcloud = task.get("depthpointcloud") or {}
     object_alignment = task.get("object_alignment") or {}
+    mode = str(object_alignment.get('alignment_mode') or object_alignment.get('icp_mode') or 'off')
+    rmse = float(object_alignment.get('alignment_rmse') or object_alignment.get('icp_rmse') or 0.0)
+    fit_model_count = int(
+        object_alignment.get('alignment_fit_model_point_count')
+        or object_alignment.get('icp_fit_model_point_count')
+        or 0
+    )
     lines = [
         header_line,
         model_legend_line,
-        f"Mode         : {str(object_alignment.get('icp_mode') or 'off')}",
+        f"Mode         : {mode}",
         f"Scale        : {float(object_alignment.get('model_real_scale') or 0.0):.4f}",
         f"Camera pos   : {_format_vec3(object_alignment.get('camera_local_position'))}",
         f"Camera quat  : {_format_vec4(object_alignment.get('camera_local_rotation_quaternion_xyzw'))}",
         f"Depth mean   : {float(depthpointcloud.get('mean_depth_measured') or 0.0):.4f} m",
-        f"ICP rmse     : {float(object_alignment.get('icp_rmse') or 0.0):.4f} m",
+        f"Alignment err: {rmse:.4f} m",
         f"Confidence   : {float(object_alignment.get('confidence') or 0.0):.3f}",
         (
             "Fit points   : "
-            f"model={int(object_alignment.get('icp_fit_model_point_count') or 0)} "
+            f"model={fit_model_count} "
             f"target={int(depthpointcloud.get('used_count') or 0)}"
         ),
     ]
