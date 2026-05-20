@@ -1,0 +1,173 @@
+请在现有 HoloLens 3D 重建系统中加入“模型生成 backend 切换”能力，但不要把 SAM3D 环境或模型代码塞进当前 Docker。
+
+目标：
+1. 在 config.py 中加入模型生成 backend 配置：
+   - MODEL_GENERATION_BACKEND，可选 instantmesh / sam3d_http，默认 instantmesh
+   - SAM3D_HTTP_BASE_URL
+   - SAM3D_HTTP_TIMEOUT_SEC
+   - SAM3D_HTTP_POLL_INTERVAL_SEC
+   - SAM3D_HTTP_TOKEN，可为空
+
+2. 保留现有 InstantMesh 流程不变。
+   当 MODEL_GENERATION_BACKEND=instantmesh 时，行为必须和现在一致。
+
+3. 当 MODEL_GENERATION_BACKEND=sam3d_http 时：
+   - 使用现有 sam3mask 阶段输出的前景图 / color 图作为上传图片
+   - 向远端 SAM3D Docker 发送 HTTP 请求创建任务
+   - 保存 remote_task_id 到任务 JSON
+   - 后续轮询远端状态
+   - 远端完成后下载 mesh / mtl / texture 等文件到本地输出目录
+   - 本地后续阶段仍然可以继续使用 modelscale、object_alignment、runtime_mesh、blender、model_bounds
+
+4. 为了最小化改动，远端 SAM3D 下载完成后，请同时写入：
+   - task["ModelGeneration"]：中性的模型生成信息
+   - task["InstantMesh"]：兼容旧代码，至少包含 mesh / mtl / image / video
+   其中 InstantMesh.backend="sam3d_http"，video 可以为 null。
+
+5. 远端 API 合约：
+   创建任务：
+   POST {SAM3D_HTTP_BASE_URL}/v1/reconstructions
+   multipart/form-data:
+     image=<png/jpg>
+     client_task_id=<本地 task_id>
+     task_name=<task_name>
+     output_formats=obj,mtl,png,ply
+
+   返回：
+   {
+     "task_id": "remote-task-id",
+     "status": "queued"
+   }
+
+   查询状态：
+   POST {SAM3D_HTTP_BASE_URL}/v1/reconstructions/status
+   JSON:
+   {
+     "task_ids": ["remote-task-id"]
+   }
+
+   返回：
+   {
+     "tasks": [
+       {
+         "task_id": "remote-task-id",
+         "status": "queued|running|succeeded|failed|not_found",
+         "progress": 0.0,
+         "artifacts": {
+           "mesh": "http://.../model.obj",
+           "mtl": "http://.../model.mtl",
+           "image": "http://.../texture.png",
+           "ply": "http://.../points.ply"
+         },
+         "error": null
+       }
+     ]
+   }
+
+6. 如果远端返回 queued/running，本地任务不要失败，保持在模型生成等待状态，之后继续轮询。
+   如果返回 failed/not_found，则本地任务失败，并把远端 error 写入 stage_runs / task error。
+
+7. 下载时需要校验文件存在、非空，至少要求 obj/mtl/png 可用。
+   如果远端暂时只能返回 ply，请明确报错：当前后续流水线需要 OBJ/MTL/PNG。
+
+8. 不要破坏现有 /generate、/check-queue 和 Unity 端返回格式。
+   Unity 端仍然只需要使用本系统 task_id 查询结果。
+
+请优先保持改动小、兼容旧字段、日志清楚。
+
+
+
+
+
+
+
+
+
+
+
+
+
+请为 SAM3D Docker 实现一个独立 HTTP 服务，只负责接收图片、异步运行 SAM3D、返回任务状态和下载链接。不要依赖 HoloLens 主系统的数据库或任务队列。
+
+目标：
+1. 提供异步任务 API。客户端上传一张图片后，服务立即返回 remote task_id，不要阻塞等待模型生成完成。
+
+2. API 需要包含：
+
+创建任务：
+POST /v1/reconstructions
+multipart/form-data:
+  image=<png/jpg>
+  client_task_id=<调用方本地 task_id，可选>
+  task_name=<调用方任务名，可选>
+  output_formats=obj,mtl,png,ply
+
+返回：
+{
+  "task_id": "remote-task-id",
+  "status": "queued"
+}
+
+批量查询状态：
+POST /v1/reconstructions/status
+JSON:
+{
+  "task_ids": ["remote-task-id-1", "remote-task-id-2"]
+}
+
+返回：
+{
+  "tasks": [
+    {
+      "task_id": "remote-task-id-1",
+      "status": "queued|running|succeeded|failed|not_found",
+      "progress": 0.0,
+      "artifacts": {
+        "mesh": "http://<host>/v1/reconstructions/<task_id>/artifacts/model.obj",
+        "mtl": "http://<host>/v1/reconstructions/<task_id>/artifacts/model.mtl",
+        "image": "http://<host>/v1/reconstructions/<task_id>/artifacts/texture.png",
+        "ply": "http://<host>/v1/reconstructions/<task_id>/artifacts/points.ply"
+      },
+      "error": null
+    }
+  ]
+}
+
+下载文件：
+GET /v1/reconstructions/<task_id>/artifacts/<filename>
+
+3. 状态语义：
+   - queued：已收到任务，尚未开始
+   - running：正在生成
+   - succeeded：生成完成，artifacts 中包含下载链接
+   - failed：生成失败，error 中包含错误信息
+   - not_found：没有这个 task_id
+
+4. 输出格式要求：
+   优先输出 OBJ + MTL + PNG texture，因为调用方现有流水线需要 mesh / mtl / image。
+   可以额外输出 PLY，但不要只输出 PLY，除非明确告诉调用方后续无法继续。
+
+5. 任务文件组织：
+   每个任务一个目录，例如：
+   /workspace/data/tasks/<task_id>/
+     input.png
+     status.json
+     output/model.obj
+     output/model.mtl
+     output/texture.png
+     output/points.ply
+     logs.txt
+
+6. 服务重启后，最好能从任务目录恢复已有任务状态。
+   至少 succeeded / failed 的任务不能丢。
+
+7. 错误处理：
+   - 图片为空或格式非法，返回 400
+   - SAM3D 推理异常时，任务状态写 failed
+   - 下载不存在的 artifact 返回 404
+   - 查询未知 task_id 返回 status=not_found，而不是 HTTP 500
+
+8. 如果需要认证，支持可选 Bearer Token。
+   没配置 token 时允许内网直接访问。
+
+请实现一个简单稳定的服务，可以用 FastAPI 或 Flask。重点是接口稳定、状态可轮询、下载链接可直接访问。
