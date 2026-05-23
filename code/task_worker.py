@@ -7,6 +7,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from subprocess_stream import stream_command
+
 from config import (
     ARUCO_DETECT_STAGE_PY,
     ARUCO_DETECT_STAGE_RUN,
@@ -124,17 +126,11 @@ def _restore_unfinished_tasks() -> None:
 
 
 def _run_python_script(python_path: str, script_path: Path, json_path: Path, cwd: Path) -> None:
-    result = subprocess.run(
+    stream_command(
         [_resolve_python(python_path), str(script_path), str(json_path)],
-        cwd=str(cwd),
+        cwd=cwd,
         check=True,
-        text=True,
-        capture_output=True,
     )
-    if result.stdout:
-        print(result.stdout)
-    if result.stderr:
-        print(result.stderr)
 
 
 def _run_hololens2depth(json_path: Path) -> None:

@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -28,6 +27,7 @@ from model_generation_common import (
 )
 from object_alignment_common import resolve_blender_path
 from stage_common import ensure_file, load_stage_task, resolve_python
+from subprocess_stream import stream_command
 from task_json import save_task_json
 
 
@@ -136,7 +136,7 @@ def run_sam3d_generation(
     env["PATH"] = str(sam3d_bin_path) + os.pathsep + env.get("PATH", "")
 
     try:
-        result = subprocess.run(
+        stream_command(
             [
                 sam3d_python,
                 str(Path(__file__).resolve()),
@@ -147,19 +147,12 @@ def run_sam3d_generation(
                 str(config_path),
                 str(int(SAM3D_OBJECTS_SEED)),
             ],
-            cwd=str(SAM3D_OBJECTS_ROOT),
+            cwd=SAM3D_OBJECTS_ROOT,
             env=env,
             check=True,
-            text=True,
-            capture_output=True,
         )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(exc.stderr or exc.stdout or str(exc)) from exc
-
-    if result.stdout:
-        print(result.stdout, end="")
-    if result.stderr:
-        print(result.stderr, end="", file=sys.stderr)
+    except Exception as exc:
+        raise RuntimeError(str(exc)) from exc
 
 
 def run_sam3d_postprocess(
@@ -187,9 +180,9 @@ def run_sam3d_postprocess(
     ]
     print("[DEBUG] running:", " ".join(command), flush=True)
     try:
-        subprocess.run(command, check=True, text=True)
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(f"SAM3D Objects postprocess failed with return code {exc.returncode}") from exc
+        stream_command(command, check=True)
+    except Exception as exc:
+        raise RuntimeError(f"SAM3D Objects postprocess failed: {exc}") from exc
 
     ensure_file(stats_path, "SAM3D Objects postprocess stats")
     return json.loads(stats_path.read_text(encoding="utf-8"))

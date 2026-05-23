@@ -145,8 +145,13 @@ def main() -> int:
 
     FoundationPose, PoseRefinePredictor, ScorePredictor, dr, set_logging_format, set_seed = _load_foundationpose_modules()
     _install_foundationpose_runtime_patches()
+    import torch
+
     set_logging_format()
     set_seed(0)
+    cuda_available = bool(torch.cuda.is_available())
+    torch_device = "cuda" if cuda_available else "cpu"
+    torch_device_name = torch.cuda.get_device_name(0) if cuda_available else ""
 
     mesh = trimesh.load(args.mesh_file)
     mesh.apply_scale(float(args.model_scale))
@@ -180,7 +185,13 @@ def main() -> int:
         ob_mask=mask,
         iteration=int(args.iteration),
     )
-    print(json.dumps({"pose": np.asarray(pose, dtype=float).reshape(4, 4).tolist()}))
+    print(json.dumps({
+        "pose": np.asarray(pose, dtype=float).reshape(4, 4).tolist(),
+        "backend": "foundationpose",
+        "torch_device": torch_device,
+        "torch_cuda_available": cuda_available,
+        "torch_device_name": torch_device_name,
+    }))
     return 0
 
 

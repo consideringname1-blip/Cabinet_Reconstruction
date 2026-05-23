@@ -3,7 +3,6 @@ from __future__ import annotations
 import sys
 import json
 import shutil
-import subprocess
 import uuid
 import warnings
 from pathlib import Path
@@ -63,6 +62,7 @@ from pose_math import (
     serialize_pose,
 )
 from stage_common import load_stage_task
+from subprocess_stream import stream_command
 from task_json import save_task_json
 
 
@@ -667,14 +667,12 @@ def solve_foundationpose_alignment(
         "--iteration",
         str(int(FOUNDATIONPOSE_EST_REFINE_ITER)),
     ]
-    completed = subprocess.run(
+    foundationpose_output = stream_command(
         command,
-        cwd=str(FOUNDATIONPOSE_ALIGNMENT_RUN.parent),
+        cwd=FOUNDATIONPOSE_ALIGNMENT_RUN.parent,
         check=True,
-        text=True,
-        capture_output=True,
     )
-    payload = _parse_foundationpose_stdout(completed.stdout)
+    payload = _parse_foundationpose_stdout(foundationpose_output)
     pose_cv = np.asarray(payload.get("pose"), dtype=np.float32)
     if pose_cv.shape != (4, 4):
         raise ValueError(f"FoundationPose returned invalid pose shape: {pose_cv.shape}")
@@ -712,6 +710,9 @@ def solve_foundationpose_alignment(
     dists = nearest_neighbor_distances(target_context["points"], transformed_front, dims=3)
     threshold = float(np.percentile(dists, 75)) if len(dists) else 0.0
     inlier_ratio = float((dists <= max(threshold, 1e-4)).mean()) if len(dists) else 0.0
+    alignment_backend = str(payload.get("backend") or "foundationpose")
+    alignment_device = str(payload.get("torch_device") or "unknown")
+    alignment_device_name = str(payload.get("torch_device_name") or "")
     best = {
         "scale": float(overall_scale),
         "rotation": rotation,
@@ -728,7 +729,10 @@ def solve_foundationpose_alignment(
         "height_error": float(metrics["height_error"]),
         "center_error": float(metrics["center_error"]),
         "initial_rotation_penalty": float(metrics["initial_rotation_penalty"]),
-        "foundationpose_stdout_tail": "\n".join((completed.stdout or "").splitlines()[-20:]),
+        "foundationpose_stdout_tail": "\n".join((foundationpose_output or "").splitlines()[-20:]),
+        "alignment_backend": alignment_backend,
+        "alignment_device": alignment_device,
+        "alignment_device_name": alignment_device_name,
     }
     final_debug = build_final_camera_local_rh_debug(
         best["rotation"],
@@ -740,6 +744,9 @@ def solve_foundationpose_alignment(
         "pose_cv": pose_cv.tolist(),
         "worker": str(FOUNDATIONPOSE_ALIGNMENT_RUN),
         "iteration": int(FOUNDATIONPOSE_EST_REFINE_ITER),
+        "backend": alignment_backend,
+        "torch_device": alignment_device,
+        "torch_device_name": alignment_device_name,
     }
     return best, final_debug
 
@@ -1236,6 +1243,10 @@ def main(argv: list[str]) -> int:
         "model_real_scale": float(best["scale"]),
         "alignment_mode": str(OBJECT_ALIGNMENT_MODE),
         "alignment_solver": str(OBJECT_ALIGNMENT_MODE),
+        "alignment_backend": str(best.get("alignment_backend") or OBJECT_ALIGNMENT_MODE),
+        "alignment_device": str(best.get("alignment_device") or ""),
+        "alignment_device_name": str(best.get("alignment_device_name") or ""),
+        "geometry_backend": str(icp_backend["actual"]),
         "icp_mode": str(OBJECT_ALIGNMENT_MODE),
         "icp_enabled": bool(ICP_ENABLE),
         "preview_image_name": preview_image_name,
@@ -1360,8 +1371,13 @@ def main(argv: list[str]) -> int:
 
     save_task_json(json_path, task)
 
+    alignment_backend_label = str(object_alignment.get("alignment_backend") or OBJECT_ALIGNMENT_MODE)
+    alignment_device_label = str(object_alignment.get("alignment_device") or "")
+    if alignment_device_label:
+        alignment_backend_label = f"{alignment_backend_label}:{alignment_device_label}"
     print(
-        f"[INFO] object_alignment : backend={icp_backend['actual']} "
+        f"[INFO] object_alignment : alignment_backend={alignment_backend_label} "
+        f"geometry_backend={icp_backend['actual']} "
         f"alignment_mode={str(OBJECT_ALIGNMENT_MODE)} "
         f"icp_enabled={bool(ICP_ENABLE)} "
         f"points={len(pointcloud_points_export)}/{len(target_front_fit)} "

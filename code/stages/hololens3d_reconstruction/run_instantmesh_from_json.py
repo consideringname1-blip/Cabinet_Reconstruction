@@ -1,4 +1,3 @@
-import subprocess
 import sys
 from pathlib import Path
 
@@ -29,6 +28,7 @@ from model_generation_common import (
     build_model_generation_payload,
 )
 from stage_common import ensure_file, load_stage_task, resolve_python
+from subprocess_stream import stream_command
 from task_json import save_task_json
 
 
@@ -63,7 +63,7 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
         env = os.environ.copy()
         env["PATH"] = imesh_bin + os.pathsep + env.get("PATH", "")
 
-        result = subprocess.run(
+        stream_command(
             [
                 imesh_python,
                 str(INSTANTMESH_RUN_PY),
@@ -75,18 +75,12 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
                 # "--no_rembg",
             ]
             + (["--save_video"] if ENABLE_INSTANTMESH_VIDEO_OUTPUT else []),
-            cwd=str(INSTANTMESH_DIR),
+            cwd=INSTANTMESH_DIR,
             env=env,
             check=True,
-            text=True,
         )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(exc.stderr or exc.stdout or str(exc)) from exc
-
-    if result.stdout:
-        print(result.stdout)
-    if result.stderr:
-        print(result.stderr)
+    except Exception as exc:
+        raise RuntimeError(str(exc)) from exc
 
     output_stem = prepared_input_path.stem
     mesh_name = f"{output_stem}.obj"
