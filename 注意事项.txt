@@ -172,10 +172,26 @@ debug
 7.补充：自动刷新跨 session，但是只能刷新本地已有的（正在显示的），没有的不要动。
 8.补充：上次额度用完了，不知道改到了那里，综合git仓库记录和上次的记录，继续改
 
-260518
+260518（待解决）
 1.不知道为什么，新加的输出显示使用设备为cpu，日志如下
 [STAGE] object_alignment : /workspace/data/upload/20260518_090325_198433Z_meta.json
 [INFO] object_alignment : backend=cpu alignment_mode=foundationpose icp_enabled=False points=43474/3600 model_fit_points=0 discarded=3548 scale=0.225904 confidence=0.921 rmse=0.007180 preview=not-generated
 [INFO] pose-local-rh   : pos=[0.003672159742563963, -0.02133191004395485, -0.5438885688781738] quat=[0.266676190029047, -0.035103126283652746, 0.010228804802634116, 0.9630923900379522]
 [OK] object_alignment
 2.需要后续引入shigurei
+
+260521
+1.现在对sam3dobjects的仓库内容进行了修改，我还在 SAM3D 子仓库里加了一个很小的兼容补丁：让 inference_pipeline.py 尊重外部 ATTN_BACKEND/SPARSE_ATTN_BACKEND，否则它在 A100 上会强制切到 flash_attn。flash_attn 在这个 CUDA 11.8 环境里源码编译太久，所以当前验证用的是 sdpa 后端。
+我不希望对这个的源代码进行修改。
+2.希望清理旧的sam3d-object conda，并且清除除了模型文件外不必要的缓存
+3.我希望在config内增加模型生成切换到sam3d的开关，并按照现在的习惯写新的代码
+3.1.sam3d的生成模型，似乎有透明度，这导致模型mesh不止一层（这个问题不用解决）。除此之外，生成的mesh面数过多，需要你参考国王的单层mesh的面数量，进行mesh面数量减少。同时要保证图片映射不出问题（如同现在instantmesh流程一样）。
+4.把本地仓库推到远端
+
+260523
+1.现在的sam3d的降低面数走的是obj的，和instantmesh同样的逻辑。从这套逻辑改到走fbx（把这两个作为从主线上分离的两个分支，分别接到instantmesh和sam3d的后面）。无需兼容旧代码。这个面数，指的是和instanmesh一样的网格本身。降低比例先定为1/16，同样先清理碎片。现在的处理结果，处理前的obj能看得过去，但是有黑色的部分（似乎是缺失），我希望可以去掉。烘焙后的，直接变成一大块一大块的了，我不希望这样。
+2.希望清理旧的sam3d-object conda，并且清除除了模型文件外不必要的缓存
+3.把本地仓库推到远端
+
+260523-2
+1.sam3d的图像mesh压缩不理想，有部分色块颜色本来是黑色，但是通过某种方式变成了别的颜色（有违和感的部分地方），还有部分地方似乎由于当初降面的时候，似乎由于缺损补全，导致那块的颜色出现比较驳杂（比如这个炸弹的眼睛附近的斑驳色块，这个在原先是没有的）

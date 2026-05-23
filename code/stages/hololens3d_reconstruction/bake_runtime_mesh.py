@@ -1,3 +1,4 @@
+import shutil
 import sys
 from pathlib import Path
 
@@ -16,13 +17,13 @@ import bpy
 
 from blender_common import clean_scene, ensure_file
 from config import (
-    INSTANTMESH_OUTPUT_MESHES,
     RUNTIME_MESH_BAKE_MARGIN_PX,
     RUNTIME_MESH_DECIMATE_RATIO,
     RUNTIME_MESH_OUTPUT_ROOT,
     RUNTIME_MESH_TEXTURE_SIZE,
     RUNTIME_MESH_UV_ISLAND_MARGIN,
 )
+from model_generation_common import MODEL_STAGE_SAM3D_OBJECTS, ModelFileSource, resolve_model_generation_source
 from stage_common import parse_blender_stage_args
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
@@ -164,20 +165,71 @@ def _fix_mtl_texture(mtl_path: Path, texture_name: str) -> None:
     mtl_path.write_text("\n".join(fixed) + "\n", encoding="utf-8")
 
 
+def _reuse_runtime_ready_sam3d_mesh(
+    json_path: Path,
+    task: dict,
+    source: ModelFileSource,
+) -> dict:
+    if not source.mtl or not source.image or source.mtl_path is None or source.image_path is None:
+        raise ValueError(f"{source.source_stage}.mesh / mtl / image is missing")
+
+    source_mesh = ensure_file(source.mesh_path, f"{source.source_stage} processed obj")
+    source_mtl = ensure_file(source.mtl_path, f"{source.source_stage} processed mtl")
+    source_texture = ensure_file(source.image_path, f"{source.source_stage} processed texture")
+
+    RUNTIME_MESH_OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    output_obj = RUNTIME_MESH_OUTPUT_ROOT / source.mesh
+    output_mtl = RUNTIME_MESH_OUTPUT_ROOT / source.mtl
+    output_texture = RUNTIME_MESH_OUTPUT_ROOT / source.image
+
+    shutil.copy2(source_mesh, output_obj)
+    shutil.copy2(source_mtl, output_mtl)
+    shutil.copy2(source_texture, output_texture)
+    _fix_mtl_texture(output_mtl, output_texture.name)
+
+    postprocess = source.payload.get("postprocess") if isinstance(source.payload.get("postprocess"), dict) else {}
+    runtime_mesh = {
+        "mesh": output_obj.name,
+        "mtl": output_mtl.name,
+        "image": output_texture.name,
+        "source_stage": source.source_stage,
+        "source_backend": source.backend,
+        "source_mesh_folder": source.folder,
+        "source_mesh": source.mesh,
+        "source_mtl": source.mtl,
+        "source_image": source.image,
+        "reused_processed_mesh": True,
+        "decimate_ratio": postprocess.get("decimate_ratio"),
+        "texture_size": postprocess.get("texture_size"),
+        "bake_margin_px": postprocess.get("bake_margin_px"),
+        "uv_island_margin": postprocess.get("uv_island_margin"),
+        "original_vertices": postprocess.get("original_vertices"),
+        "original_faces": postprocess.get("original_faces"),
+        "joined_vertices": postprocess.get("joined_vertices"),
+        "joined_faces": postprocess.get("joined_faces"),
+        "outer_vertices": postprocess.get("outer_vertices"),
+        "outer_faces": postprocess.get("outer_faces"),
+        "vertices": postprocess.get("vertices"),
+        "faces": postprocess.get("faces"),
+    }
+    task["RuntimeMesh"] = runtime_mesh
+    save_task_json(json_path, task)
+    return runtime_mesh
+
+
 def build_runtime_mesh_from_json(json_path: Path) -> dict:
     task = load_task_json(json_path)
-    instantmesh_info = task.get("InstantMesh") or {}
+    source = resolve_model_generation_source(task, require_mtl_image=True)
+    if not source.mtl or not source.image or source.mtl_path is None or source.image_path is None:
+        raise ValueError(f"{source.source_stage}.mesh / mtl / image is missing")
 
-    mesh_name = instantmesh_info.get("mesh")
-    mtl_name = instantmesh_info.get("mtl")
-    image_name = instantmesh_info.get("image")
-    if not mesh_name or not mtl_name or not image_name:
-        raise ValueError("InstantMesh.mesh / mtl / image is missing")
+    if source.source_stage == MODEL_STAGE_SAM3D_OBJECTS and bool(source.payload.get("runtime_ready")):
+        return _reuse_runtime_ready_sam3d_mesh(json_path, task, source)
 
-    source_mesh = ensure_file(INSTANTMESH_OUTPUT_MESHES / mesh_name, "InstantMesh obj")
-    source_mtl = ensure_file(INSTANTMESH_OUTPUT_MESHES / mtl_name, "InstantMesh mtl")
-    ensure_file(INSTANTMESH_OUTPUT_MESHES / image_name, "InstantMesh texture image")
-    _fix_mtl_texture(source_mtl, str(image_name))
+    source_mesh = ensure_file(source.mesh_path, f"{source.source_stage} obj")
+    source_mtl = ensure_file(source.mtl_path, f"{source.source_stage} mtl")
+    ensure_file(source.image_path, f"{source.source_stage} texture image")
+    _fix_mtl_texture(source_mtl, str(source.image))
 
     ratio = float(RUNTIME_MESH_DECIMATE_RATIO)
     texture_size = int(RUNTIME_MESH_TEXTURE_SIZE)
@@ -209,9 +261,12 @@ def build_runtime_mesh_from_json(json_path: Path) -> dict:
         "mesh": output_obj.name,
         "mtl": output_mtl.name,
         "image": output_texture.name,
-        "source_mesh": mesh_name,
-        "source_mtl": mtl_name,
-        "source_image": image_name,
+        "source_stage": source.source_stage,
+        "source_backend": source.backend,
+        "source_mesh_folder": source.folder,
+        "source_mesh": source.mesh,
+        "source_mtl": source.mtl,
+        "source_image": source.image,
         "decimate_ratio": ratio,
         "texture_size": texture_size,
         "bake_margin_px": int(RUNTIME_MESH_BAKE_MARGIN_PX),
@@ -224,7 +279,6 @@ def build_runtime_mesh_from_json(json_path: Path) -> dict:
     task["RuntimeMesh"] = runtime_mesh
     save_task_json(json_path, task)
     return runtime_mesh
-
 
 def main() -> int:
     try:

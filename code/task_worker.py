@@ -23,6 +23,7 @@ from config import (
     OBJECT_ALIGNMENT_STAGE_RUN,
     INSTANTMESH_STAGE_PY,
     INSTANTMESH_STAGE_RUN,
+    MODEL_GENERATION_BACKEND,
     MODELSCALE_STAGE_PY,
     MODELSCALE_STAGE_RUN,
     MODEL_BOUNDS_STAGE_PY,
@@ -33,6 +34,9 @@ from config import (
     RUNTIME_MESH_STAGE_RUN,
     SAM3_BOX_MASK_RUN,
     SAM3_DIR,
+    SAM3D_OBJECTS_ROOT,
+    SAM3D_OBJECTS_STAGE_PY,
+    SAM3D_OBJECTS_STAGE_RUN,
     SAM3_PY,
 )
 from task_db import (
@@ -66,7 +70,6 @@ STAGE_ORDER = [
     "object_alignment",
     "pose",
     "aruco_sync",
-    "runtime_mesh",
     "blender",
     "model_bounds",
 ]
@@ -161,13 +164,26 @@ def _run_sam3mask(json_path: Path) -> None:
     )
 
 
-def _run_instantmesh(json_path: Path) -> None:
+def _run_model_generation(json_path: Path) -> None:
+    if MODEL_GENERATION_BACKEND == "sam3d_objects":
+        _run_python_script(
+            python_path=SAM3D_OBJECTS_STAGE_PY,
+            script_path=SAM3D_OBJECTS_STAGE_RUN,
+            json_path=json_path,
+            cwd=SAM3D_OBJECTS_ROOT,
+        )
+        return
+
     _run_python_script(
         python_path=INSTANTMESH_STAGE_PY,
         script_path=INSTANTMESH_STAGE_RUN,
         json_path=json_path,
         cwd=INSTANTMESH_STAGE_RUN.parent,
     )
+
+
+def _run_instantmesh(json_path: Path) -> None:
+    _run_model_generation(json_path)
 
 
 def _run_depthpointcloud(json_path: Path) -> None:
@@ -425,6 +441,8 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     task_record["error"] = task_record.get("error_message")
     task_record["stage_runs"] = get_task_stage_runs(task_id)
     task_record["outputs"] = {
+        "model_generation": task_json.get("ModelGeneration") or {},
+        "sam3d_objects": task_json.get("SAM3DObjects") or {},
         "instantmesh": task_json.get("InstantMesh") or {},
         "runtime_mesh": task_json.get("RuntimeMesh") or {},
         "blender": task_json.get("Blender") or {},
@@ -494,6 +512,8 @@ def get_latest_completed_task_data(
     task_record["error"] = task_record.get("error_message")
     task_record["stage_runs"] = get_task_stage_runs(str(task_record.get("task_id") or ""))
     task_record["outputs"] = {
+        "model_generation": task_json.get("ModelGeneration") or {},
+        "sam3d_objects": task_json.get("SAM3DObjects") or {},
         "instantmesh": task_json.get("InstantMesh") or {},
         "runtime_mesh": task_json.get("RuntimeMesh") or {},
         "blender": task_json.get("Blender") or {},

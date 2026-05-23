@@ -10,3 +10,6 @@
 [submodule "code/reconstruction/FoundationPose"]
 	path = code/reconstruction/FoundationPose
 	url = https://github.com/NVlabs/FoundationPose.git
+[submodule "code/reconstruction/sam-3d-objects"]
+	path = code/reconstruction/sam-3d-objects
+	url = https://github.com/facebookresearch/sam-3d-objects.git

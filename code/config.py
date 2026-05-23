@@ -32,6 +32,25 @@ def _resolve_bool_env(name: str, default: bool) -> bool:
     raise ValueError(f"{name} must be one of: 1/0, true/false, yes/no, on/off")
 
 
+def _resolve_model_generation_backend() -> str:
+    raw = os.environ.get("MODEL_GENERATION_BACKEND")
+    if raw is None:
+        return "sam3d_objects"
+
+    value = str(raw).strip().lower().replace("-", "_")
+    aliases = {
+        "instantmesh": "instantmesh",
+        "instant_mesh": "instantmesh",
+        "sam3d": "sam3d_objects",
+        "sam3dobjects": "sam3d_objects",
+        "sam3d_objects": "sam3d_objects",
+        "sam_3d_objects": "sam3d_objects",
+    }
+    if value in aliases:
+        return aliases[value]
+    raise ValueError("MODEL_GENERATION_BACKEND must be one of: instantmesh / sam3d_objects")
+
+
 # Runtime switches
 HOLOLENS2_HOST = "10.40.1.132"
 IS_RUN_FLASK_SERVER = True
@@ -65,12 +84,17 @@ DEPTHPOINTCLOUD_MAX_EXPORT_POINTS = 6000
 # Disabled by default so ICP_MODE=off stays fast; set
 # ENABLE_ALIGNMENT_RENDER_OUTPUTS=1 for debug preview images.
 ENABLE_ALIGNMENT_RENDER_OUTPUTS = _resolve_bool_env("ENABLE_ALIGNMENT_RENDER_OUTPUTS", False)
+# Model generation backend for the shared model-generation stage slot.
+MODEL_GENERATION_BACKEND = _resolve_model_generation_backend()
 # Enable InstantMesh circular-view MP4 generation.
 ENABLE_INSTANTMESH_VIDEO_OUTPUT = True
 # Remove tiny disconnected mesh islands immediately after InstantMesh export.
 INSTANTMESH_CLEAN_ENABLE = True
 INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO = 0.01
 INSTANTMESH_CLEAN_COMPONENT_MIN_FACES = 32
+# SAM3D generation does not pass simplification/step/format limits; these are runtime/compat knobs, not quality caps.
+SAM3D_OBJECTS_SEED = int(os.environ.get("SAM3D_OBJECTS_SEED", "42"))
+SAM3D_OBJECTS_ATTN_BACKEND = os.environ.get("SAM3D_OBJECTS_ATTN_BACKEND", "sdpa")
 # Parameters for ICP_MODE=off bbox-front-surface placement.
 # The current values were fitted against the latest five camera_refine results:
 # avg position delta ~= 2.8 cm, max ~= 5.9 cm.
@@ -146,6 +170,7 @@ MODELS_ROOT = PROJECT_ROOT / "models"
 IMESH_PY = "/opt/miniconda/envs/imesh/bin/python"
 SERVER_PY = "/opt/miniconda/envs/server/bin/python"
 SAM3_PY = "/opt/miniconda/envs/sam3/bin/python"
+SAM3D_OBJECTS_PY = "/opt/miniconda/envs/sam3d-objects-cu118/bin/python"
 HOLOLENS2_PY = SERVER_PY
 
 
@@ -172,11 +197,15 @@ SAM3_ROOT = RECON_ROOT / "sam3"
 SAM3_DIR = SAM3_ROOT / "sam3"
 SAM3_BEP = SAM3_DIR / "assets" / "bpe_simple_vocab_16e6.txt.gz"
 
+SAM3D_OBJECTS_ROOT = RECON_ROOT / "sam-3d-objects"
+SAM3D_OBJECTS_CONFIG = SAM3D_OBJECTS_ROOT / "checkpoints" / "hf" / "pipeline.yaml"
+
 
 # Stage scripts
 SAM3_BOX_MASK_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_sam3_boxmask_from_json.py"
 ARUCO_DETECT_STAGE_RUN = ARUCO_STAGE_ROOT / "run_aruco_detect_from_json.py"
 INSTANTMESH_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_instantmesh_from_json.py"
+SAM3D_OBJECTS_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_sam3d_objects_from_json.py"
 DEPTHPOINTCLOUD_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_depthpointcloud_from_json.py"
 MODELSCALE_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_model_scale_from_json.py"
 OBJECT_ALIGNMENT_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_object_alignment_from_json.py"
@@ -186,6 +215,7 @@ POSE_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_pose_from_json.py"
 ARUCO_SYNC_STAGE_RUN = ARUCO_STAGE_ROOT / "run_aruco_sync_from_json.py"
 RUNTIME_MESH_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_runtime_mesh_from_json.py"
 RUNTIME_MESH_BAKE_SCRIPT = HOLOLENS3D_RECON_STAGE_ROOT / "bake_runtime_mesh.py"
+SAM3D_OBJECTS_POSTPROCESS_SCRIPT = HOLOLENS3D_RECON_STAGE_ROOT / "postprocess_sam3d_glb.py"
 BLENDER_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_blender_from_json.py"
 MODEL_BOUNDS_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_model_bounds_from_json.py"
 CONVERT_SCRIPT = HOLOLENS3D_RECON_STAGE_ROOT / "convert_obj_to_fbx.py"
@@ -194,6 +224,7 @@ ARUCO_STAGE_PY = SERVER_PY
 ARUCO_DETECT_STAGE_PY = ARUCO_STAGE_PY
 ARUCO_SYNC_STAGE_PY = ARUCO_STAGE_PY
 INSTANTMESH_STAGE_PY = SERVER_PY
+SAM3D_OBJECTS_STAGE_PY = SERVER_PY
 DEPTHPOINTCLOUD_STAGE_PY = SERVER_PY
 MODELSCALE_STAGE_PY = SERVER_PY
 OBJECT_ALIGNMENT_STAGE_PY = SERVER_PY
@@ -218,6 +249,8 @@ INSTANTMESH_OUTPUT_IMAGES = INSTANTMESH_OUTPUT / "images"
 INSTANTMESH_OUTPUT_VIDEOS = INSTANTMESH_OUTPUT / "videos"
 
 SAM3_OUTPUT_ROOT = OUTPUT_ROOT / "sam3"
+SAM3D_OBJECTS_OUTPUT = OUTPUT_ROOT / "sam3d-objects"
+SAM3D_OBJECTS_OUTPUT_MESHES = SAM3D_OBJECTS_OUTPUT / "meshes"
 OBJECT_ALIGNMENT_OUTPUT_ROOT = OUTPUT_ROOT / "object_alignment"
 
 BLENDER_OUTPUT_ROOT = OUTPUT_ROOT / "blender"
@@ -225,10 +258,57 @@ BLENDER_FBX_DIR = BLENDER_OUTPUT_ROOT / "fbx"
 BLENDER_BIN = "/usr/local/bin/blender"
 
 RUNTIME_MESH_OUTPUT_ROOT = OUTPUT_ROOT / "runtime_mesh"
-RUNTIME_MESH_DECIMATE_RATIO = 0.25
+RUNTIME_MESH_DECIMATE_RATIO = 1.0 / 16.0
 RUNTIME_MESH_TEXTURE_SIZE = 1024
 RUNTIME_MESH_BAKE_MARGIN_PX = 64
 RUNTIME_MESH_UV_ISLAND_MARGIN = 0.03
+
+MODEL_FBX_DECIMATE_RATIO = float(os.environ.get("MODEL_FBX_DECIMATE_RATIO", str(1.0 / 16.0)))
+MODEL_FBX_CLEAN_ENABLE = _resolve_bool_env("MODEL_FBX_CLEAN_ENABLE", True)
+MODEL_FBX_CLEAN_COMPONENT_MIN_FACE_RATIO = float(
+    os.environ.get("MODEL_FBX_CLEAN_COMPONENT_MIN_FACE_RATIO", str(INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO))
+)
+MODEL_FBX_CLEAN_COMPONENT_MIN_FACES = int(
+    os.environ.get("MODEL_FBX_CLEAN_COMPONENT_MIN_FACES", str(INSTANTMESH_CLEAN_COMPONENT_MIN_FACES))
+)
+
+SAM3D_OBJECTS_DEFAULT_DECIMATE_RATIO = 1.0 / 16.0
+SAM3D_OBJECTS_DEFAULT_TEXTURE_SIZE = 1024
+SAM3D_OBJECTS_DEFAULT_BAKE_MARGIN_PX = 64
+SAM3D_OBJECTS_POSTPROCESS_DECIMATE_RATIO = float(
+    os.environ.get(
+        "SAM3D_OBJECTS_POSTPROCESS_DECIMATE_RATIO",
+        str(SAM3D_OBJECTS_DEFAULT_DECIMATE_RATIO),
+    )
+)
+SAM3D_OBJECTS_POSTPROCESS_TEXTURE_SIZE = int(
+    os.environ.get(
+        "SAM3D_OBJECTS_POSTPROCESS_TEXTURE_SIZE",
+        str(SAM3D_OBJECTS_DEFAULT_TEXTURE_SIZE),
+    )
+)
+SAM3D_OBJECTS_POSTPROCESS_BAKE_MARGIN_PX = int(
+    os.environ.get(
+        "SAM3D_OBJECTS_POSTPROCESS_BAKE_MARGIN_PX",
+        str(SAM3D_OBJECTS_DEFAULT_BAKE_MARGIN_PX),
+    )
+)
+SAM3D_OBJECTS_POSTPROCESS_UV_ISLAND_MARGIN = float(
+    os.environ.get("SAM3D_OBJECTS_POSTPROCESS_UV_ISLAND_MARGIN", str(RUNTIME_MESH_UV_ISLAND_MARGIN))
+)
+SAM3D_OBJECTS_VOXEL_REMESH_ENABLE = _resolve_bool_env("SAM3D_OBJECTS_VOXEL_REMESH_ENABLE", False)
+SAM3D_OBJECTS_VOXEL_SIZE_RATIO = float(os.environ.get("SAM3D_OBJECTS_VOXEL_SIZE_RATIO", "0.008"))
+SAM3D_OBJECTS_REMOVE_BLACK_FACES = _resolve_bool_env("SAM3D_OBJECTS_REMOVE_BLACK_FACES", False)
+SAM3D_OBJECTS_REPAIR_BLACK_FACES = _resolve_bool_env("SAM3D_OBJECTS_REPAIR_BLACK_FACES", True)
+SAM3D_OBJECTS_BLACK_FACE_RGB_THRESHOLD = float(
+    os.environ.get("SAM3D_OBJECTS_BLACK_FACE_RGB_THRESHOLD", "0.035")
+)
+SAM3D_OBJECTS_BLACK_FACE_ALPHA_THRESHOLD = float(
+    os.environ.get("SAM3D_OBJECTS_BLACK_FACE_ALPHA_THRESHOLD", "0.05")
+)
+SAM3D_OBJECTS_BLACK_FACE_MAX_REMOVE_RATIO = float(
+    os.environ.get("SAM3D_OBJECTS_BLACK_FACE_MAX_REMOVE_RATIO", "0.45")
+)
 
 
 # HTTP file serving
@@ -236,6 +316,7 @@ FOLDER_MAP = {
     "meshes": INSTANTMESH_OUTPUT_MESHES,
     "images": INSTANTMESH_OUTPUT_IMAGES,
     "videos": INSTANTMESH_OUTPUT_VIDEOS,
+    "sam3d_object_meshes": SAM3D_OBJECTS_OUTPUT_MESHES,
     "runtime_meshes": RUNTIME_MESH_OUTPUT_ROOT,
     "fbx": BLENDER_FBX_DIR,
 }
@@ -255,6 +336,7 @@ for path in [
     INSTANTMESH_OUTPUT_IMAGES,
     INSTANTMESH_OUTPUT_VIDEOS,
     SAM3_OUTPUT_ROOT,
+    SAM3D_OBJECTS_OUTPUT_MESHES,
     OBJECT_ALIGNMENT_OUTPUT_ROOT,
     RUNTIME_MESH_OUTPUT_ROOT,
     BLENDER_FBX_DIR,

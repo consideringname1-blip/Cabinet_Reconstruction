@@ -14,11 +14,11 @@ from config import (
     BLENDER_BIN,
     ICP_DEPTH_BORDER_CROP_RATIO,
     ICP_IGNORE_OCCLUDED_MODEL_POINTS,
-    INSTANTMESH_OUTPUT_MESHES,
     OBJECT_ALIGNMENT_OUTPUT_ROOT,
     SAM3_OUTPUT_ROOT,
     UPLOAD_FOLDER,
 )
+from model_generation_common import resolve_model_generation_source
 from task_json import (
     load_task_json as load_json,
     resolve_task_json_path as resolve_json_path,
@@ -137,12 +137,11 @@ def task_prefix(task: dict, json_path: Path) -> str:
 def resolve_task_paths(task: dict) -> dict[str, Path]:
     pv_info = task.get("PVCamera") or {}
     sam3_info = task.get("sam3Name") or {}
-    mesh_info = task.get("InstantMesh") or {}
+    model_source = resolve_model_generation_source(task)
 
     mask_name = sam3_info.get("mask")
     depth_name = sam3_info.get("depth")
     color_name = sam3_info.get("color") or pv_info.get("name")
-    mesh_name = mesh_info.get("mesh")
 
     if not mask_name:
         raise ValueError("sam3Name.mask is missing")
@@ -150,8 +149,6 @@ def resolve_task_paths(task: dict) -> dict[str, Path]:
         raise ValueError("sam3Name.depth is missing")
     if not color_name:
         raise ValueError("sam3Name.color and PVCamera.name are both missing")
-    if not mesh_name:
-        raise ValueError("InstantMesh.mesh is missing")
 
     color_candidate = (SAM3_OUTPUT_ROOT / color_name).resolve()
     color_path = color_candidate if color_candidate.is_file() else ensure_file(
@@ -163,7 +160,7 @@ def resolve_task_paths(task: dict) -> dict[str, Path]:
         "mask_path": ensure_file((SAM3_OUTPUT_ROOT / mask_name).resolve(), "SAM3 mask"),
         "depth_path": ensure_file((SAM3_OUTPUT_ROOT / depth_name).resolve(), "SAM3 depth"),
         "color_path": color_path,
-        "mesh_path": ensure_file((INSTANTMESH_OUTPUT_MESHES / mesh_name).resolve(), "InstantMesh mesh"),
+        "mesh_path": ensure_file(model_source.mesh_path.resolve(), f"{model_source.source_stage} mesh"),
     }
 
 

@@ -17,9 +17,6 @@ from config import (
     AHAT_SENSOR_NAME,
     BLENDER_FBX_DIR,
     FOLDER_MAP,
-    INSTANTMESH_OUTPUT_MESHES,
-    INSTANTMESH_OUTPUT_VIDEOS,
-    RUNTIME_MESH_OUTPUT_ROOT,
     UPLOAD_FOLDER,
 )
 from task_worker import (
@@ -38,6 +35,7 @@ from task_db import (
     sync_marker_registry_from_reference_folder,
 )
 from model_bounds import decode_model_bounds_row, latest_bounds_for_ray, range_bounds_for_ray
+from model_generation_common import resolve_model_generation_source, resolve_runtime_mesh_source
 from task_json import save_task_json
 from unity_coordinate_utils import convert_hololens_pv_pose_matrix_to_unity_pose_components
 
@@ -153,41 +151,37 @@ def _url_for_file_if_present(folder: str, filename: str | None, file_path) -> st
 
 
 def _build_bounds_download_urls(task_json: dict, fbx_name: str | None) -> dict:
-    instantmesh_info = task_json.get("InstantMesh") or {}
-    runtime_mesh_info = task_json.get("RuntimeMesh") or {}
     urls = {}
 
-    mesh_name = instantmesh_info.get("mesh")
-    mtl_name = instantmesh_info.get("mtl")
-    image_name = instantmesh_info.get("image")
-    runtime_mesh_name = runtime_mesh_info.get("mesh")
-    runtime_mtl_name = runtime_mesh_info.get("mtl")
-    runtime_image_name = runtime_mesh_info.get("image")
+    try:
+        generated_source = resolve_model_generation_source(task_json, require_mtl_image=False)
+    except Exception:
+        generated_source = None
+    try:
+        runtime_source = resolve_runtime_mesh_source(task_json, require_mtl_image=False)
+    except Exception:
+        runtime_source = None
 
-    for key, folder, filename, path in (
-        ("mesh", "meshes", mesh_name, INSTANTMESH_OUTPUT_MESHES / mesh_name if mesh_name else None),
-        ("mtl", "meshes", mtl_name, INSTANTMESH_OUTPUT_MESHES / mtl_name if mtl_name else None),
-        ("image", "meshes", image_name, INSTANTMESH_OUTPUT_MESHES / image_name if image_name else None),
-        (
-            "runtime_mesh",
-            "runtime_meshes",
-            runtime_mesh_name,
-            RUNTIME_MESH_OUTPUT_ROOT / runtime_mesh_name if runtime_mesh_name else None,
-        ),
-        (
-            "runtime_mtl",
-            "runtime_meshes",
-            runtime_mtl_name,
-            RUNTIME_MESH_OUTPUT_ROOT / runtime_mtl_name if runtime_mtl_name else None,
-        ),
-        (
-            "runtime_image",
-            "runtime_meshes",
-            runtime_image_name,
-            RUNTIME_MESH_OUTPUT_ROOT / runtime_image_name if runtime_image_name else None,
-        ),
-        ("fbx", "fbx", fbx_name, BLENDER_FBX_DIR / fbx_name if fbx_name else None),
-    ):
+    entries = []
+    if generated_source is not None:
+        entries.extend(
+            [
+                ("mesh", generated_source.folder, generated_source.mesh, generated_source.mesh_path),
+                ("mtl", generated_source.folder, generated_source.mtl, generated_source.mtl_path),
+                ("image", generated_source.folder, generated_source.image, generated_source.image_path),
+            ]
+        )
+    if runtime_source is not None:
+        entries.extend(
+            [
+                ("runtime_mesh", runtime_source.folder, runtime_source.mesh, runtime_source.mesh_path),
+                ("runtime_mtl", runtime_source.folder, runtime_source.mtl, runtime_source.mtl_path),
+                ("runtime_image", runtime_source.folder, runtime_source.image, runtime_source.image_path),
+            ]
+        )
+    entries.append(("fbx", "fbx", fbx_name, BLENDER_FBX_DIR / fbx_name if fbx_name else None))
+
+    for key, folder, filename, path in entries:
         url = _url_for_file_if_present(folder, filename, path)
         if url:
             urls[key] = url
@@ -294,67 +288,60 @@ def _build_completed_task_response(task_data: dict) -> dict:
     task_id = str(task_data.get("task_id") or "")
     response["placement_status"] = _resolve_placement_status(task_data, task_json)
     response["model_bounds"] = _build_task_model_bounds_status(task_id, task_json)
+    response["model_generation"] = task_json.get("ModelGeneration") or None
 
-    instantmesh_info = task_json.get("InstantMesh") or {}
-    runtime_mesh_info = task_json.get("RuntimeMesh") or {}
+    try:
+        generated_source = resolve_model_generation_source(task_json, require_mtl_image=True)
+    except Exception as exc:
+        response["error"] = str(exc)
+        return response
+
+    try:
+        runtime_source = resolve_runtime_mesh_source(task_json, require_mtl_image=True)
+    except Exception:
+        runtime_source = None
     blender_info = task_json.get("Blender") or {}
-
-    mesh_name = instantmesh_info.get("mesh")
-    mtl_name = instantmesh_info.get("mtl")
-    image_name = instantmesh_info.get("image")
-    video_name = instantmesh_info.get("video")
-    runtime_mesh_name = runtime_mesh_info.get("mesh")
-    runtime_mtl_name = runtime_mesh_info.get("mtl")
-    runtime_image_name = runtime_mesh_info.get("image")
     fbx_name = blender_info.get("fbx")
+    fbx_path = BLENDER_FBX_DIR / fbx_name if fbx_name else None
 
     _append_pose_fields(response, task_json)
 
-    mesh_path = INSTANTMESH_OUTPUT_MESHES / mesh_name if mesh_name else None
-    mtl_path = INSTANTMESH_OUTPUT_MESHES / mtl_name if mtl_name else None
-    image_path = INSTANTMESH_OUTPUT_MESHES / image_name if image_name else None
-    video_path = INSTANTMESH_OUTPUT_VIDEOS / video_name if video_name else None
-    runtime_mesh_path = RUNTIME_MESH_OUTPUT_ROOT / runtime_mesh_name if runtime_mesh_name else None
-    runtime_mtl_path = RUNTIME_MESH_OUTPUT_ROOT / runtime_mtl_name if runtime_mtl_name else None
-    runtime_image_path = RUNTIME_MESH_OUTPUT_ROOT / runtime_image_name if runtime_image_name else None
-    fbx_path = BLENDER_FBX_DIR / fbx_name if fbx_name else None
-
-    if not mesh_path or not mesh_path.exists():
-        response["error"] = "InstantMesh obj not found on disk"
+    if not generated_source.mesh_path.exists():
+        response["error"] = f"{generated_source.source_stage} obj not found on disk"
         return response
 
-    if not mtl_path or not mtl_path.exists():
-        response["error"] = "InstantMesh mtl not found on disk"
+    if not generated_source.mtl_path or not generated_source.mtl_path.exists():
+        response["error"] = f"{generated_source.source_stage} mtl not found on disk"
         return response
 
-    if not image_path or not image_path.exists():
-        response["error"] = "InstantMesh image not found on disk"
+    if not generated_source.image_path or not generated_source.image_path.exists():
+        response["error"] = f"{generated_source.source_stage} image not found on disk"
         return response
 
     host = request.host_url.rstrip("/")
     response.update(
         {
-            "mesh_url": f"{host}/files/meshes/{mesh_name}",
-            "mtl_url": f"{host}/files/meshes/{mtl_name}",
-            "image_url": f"{host}/files/meshes/{image_name}",
+            "mesh_url": f"{host}/files/{generated_source.folder}/{generated_source.mesh}",
+            "mtl_url": f"{host}/files/{generated_source.folder}/{generated_source.mtl}",
+            "image_url": f"{host}/files/{generated_source.folder}/{generated_source.image}",
         }
     )
-    if video_path and video_path.exists():
-        response["video_url"] = f"{host}/files/videos/{video_name}"
+    if generated_source.video and generated_source.video_path and generated_source.video_path.exists():
+        response["video_url"] = f"{host}/files/{generated_source.video_folder}/{generated_source.video}"
     if (
-        runtime_mesh_path
-        and runtime_mesh_path.exists()
-        and runtime_mtl_path
-        and runtime_mtl_path.exists()
-        and runtime_image_path
-        and runtime_image_path.exists()
+        runtime_source is not None
+        and runtime_source.mtl_path is not None
+        and runtime_source.image_path is not None
+        and runtime_source.mesh_path.exists()
+        and runtime_source.mtl_path.exists()
+        and runtime_source.image_path.exists()
     ):
         response.update(
             {
-                "runtime_mesh_url": f"{host}/files/runtime_meshes/{runtime_mesh_name}",
-                "runtime_mtl_url": f"{host}/files/runtime_meshes/{runtime_mtl_name}",
-                "runtime_image_url": f"{host}/files/runtime_meshes/{runtime_image_name}",
-                "runtime_mesh": runtime_mesh_info,
+                "runtime_mesh_url": f"{host}/files/{runtime_source.folder}/{runtime_source.mesh}",
+                "runtime_mtl_url": f"{host}/files/{runtime_source.folder}/{runtime_source.mtl}",
+                "runtime_image_url": f"{host}/files/{runtime_source.folder}/{runtime_source.image}",
+                "runtime_mesh": runtime_source.payload,
             }
         )
     if fbx_path and fbx_path.exists():

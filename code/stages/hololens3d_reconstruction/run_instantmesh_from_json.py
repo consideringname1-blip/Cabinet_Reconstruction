@@ -21,6 +21,13 @@ from config import (
     SAM3_OUTPUT_ROOT,
 )
 from mesh_obj_utils import clean_obj_connected_components
+from model_generation_common import (
+    BACKEND_INSTANTMESH,
+    INSTANTMESH_MESH_FOLDER,
+    INSTANTMESH_VIDEO_FOLDER,
+    MODEL_STAGE_INSTANTMESH,
+    build_model_generation_payload,
+)
 from stage_common import ensure_file, load_stage_task, resolve_python
 from task_json import save_task_json
 
@@ -117,6 +124,22 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
         instantmesh_payload["raw_mesh"] = raw_mesh_name
         instantmesh_payload["cleanup"] = cleanup_info
     task["InstantMesh"] = instantmesh_payload
+    task["ModelGeneration"] = build_model_generation_payload(
+        backend=BACKEND_INSTANTMESH,
+        source_stage=MODEL_STAGE_INSTANTMESH,
+        mesh=mesh_name,
+        mtl=mtl_name,
+        image=image_name,
+        mesh_folder=INSTANTMESH_MESH_FOLDER,
+        video=video_name,
+        video_folder=INSTANTMESH_VIDEO_FOLDER if video_name else None,
+        runtime_ready=False,
+        extra={
+            key: value
+            for key, value in instantmesh_payload.items()
+            if key not in {"mesh", "mtl", "image", "video"}
+        },
+    )
     save_task_json(json_path, task)
 
 

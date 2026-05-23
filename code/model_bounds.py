@@ -7,7 +7,8 @@ from typing import Any
 
 import numpy as np
 
-from config import BLENDER_FBX_DIR, INSTANTMESH_OUTPUT_MESHES, RUNTIME_MESH_OUTPUT_ROOT
+from config import BLENDER_FBX_DIR
+from model_generation_common import resolve_model_source_from_stage, resolve_runtime_or_generated_source
 from object_alignment_common import MODEL_INPUT_TO_FBX_RUNTIME_LOCAL, read_obj_vertices
 from task_db import (
     get_latest_ready_model_bounds,
@@ -82,22 +83,11 @@ def _resolve_final_source_model(task: dict) -> tuple[Path, str]:
     source_stage = str(blender_info.get("source_stage") or "").strip()
     source_mesh = str(blender_info.get("source_mesh") or "").strip()
     if source_mesh:
-        if source_stage == "RuntimeMesh":
-            return RUNTIME_MESH_OUTPUT_ROOT / source_mesh, source_stage
-        if source_stage == "InstantMesh":
-            return INSTANTMESH_OUTPUT_MESHES / source_mesh, source_stage
+        source = resolve_model_source_from_stage(task, source_stage, source_mesh)
+        return source.mesh_path, source.source_stage
 
-    runtime_mesh_info = task.get("RuntimeMesh") or {}
-    runtime_mesh_name = runtime_mesh_info.get("mesh")
-    if runtime_mesh_name:
-        return RUNTIME_MESH_OUTPUT_ROOT / str(runtime_mesh_name), "RuntimeMesh"
-
-    instantmesh_info = task.get("InstantMesh") or {}
-    mesh_name = instantmesh_info.get("mesh")
-    if mesh_name:
-        return INSTANTMESH_OUTPUT_MESHES / str(mesh_name), "InstantMesh"
-
-    raise ValueError("RuntimeMesh or InstantMesh source mesh is missing")
+    source = resolve_runtime_or_generated_source(task, require_mtl_image=False)
+    return source.mesh_path, source.source_stage
 
 
 def _aabb_corners(min_corner: np.ndarray, max_corner: np.ndarray) -> list[list[float]]:
