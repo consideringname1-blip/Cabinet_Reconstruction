@@ -35,6 +35,7 @@ from config import (
     SAM3D_OBJECTS_BLACK_FACE_ALPHA_THRESHOLD,
     SAM3D_OBJECTS_BLACK_FACE_MAX_REMOVE_RATIO,
     SAM3D_OBJECTS_BLACK_FACE_RGB_THRESHOLD,
+    SAM3D_OBJECTS_DECIMATE_ENABLE,
     SAM3D_OBJECTS_POSTPROCESS_DECIMATE_RATIO,
     SAM3D_OBJECTS_POSTPROCESS_UV_ISLAND_MARGIN,
     SAM3D_OBJECTS_REPAIR_BLACK_FACES,
@@ -117,6 +118,7 @@ def postprocess_sam3d_glb(
         source_objects,
         ratio=ratio,
         modifier_prefix="sam3d_geometry_decimate",
+        enabled=bool(SAM3D_OBJECTS_DECIMATE_ENABLE),
     )
     if not source_objects:
         raise RuntimeError("SAM3D postprocess removed all mesh geometry")

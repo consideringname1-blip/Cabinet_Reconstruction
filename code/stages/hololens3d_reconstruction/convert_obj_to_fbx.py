@@ -33,6 +33,8 @@ from config import (
     MODEL_FBX_CLEAN_ENABLE,
     MODEL_FBX_DECIMATE_RATIO,
     SAM3D_OBJECTS_BLACK_FACE_ALPHA_THRESHOLD,
+    SAM3D_OBJECTS_DECIMATE_ENABLE,
+    SAM3D_OBJECTS_FBX_DECIMATE_RATIO,
     SAM3D_OBJECTS_BLACK_FACE_MAX_REMOVE_RATIO,
     SAM3D_OBJECTS_BLACK_FACE_RGB_THRESHOLD,
     SAM3D_OBJECTS_POSTPROCESS_BAKE_MARGIN_PX,
@@ -217,8 +219,9 @@ def _prepare_sam3d_fbx_meshes(source_objects: list) -> tuple[list, list, dict]:
 
     target_objects, decimate = apply_decimate_to_objects(
         target_objects,
-        ratio=float(MODEL_FBX_DECIMATE_RATIO),
-        modifier_prefix="runtime_fbx_decimate",
+        ratio=float(SAM3D_OBJECTS_FBX_DECIMATE_RATIO),
+        modifier_prefix="sam3d_runtime_fbx_decimate",
+        enabled=bool(SAM3D_OBJECTS_DECIMATE_ENABLE),
     )
     stats["decimate"] = decimate
     stats["vertices"] = int(decimate.get("vertices") or 0)

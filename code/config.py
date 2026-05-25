@@ -2,58 +2,12 @@ import os
 from pathlib import Path
 
 
-def _resolve_object_alignment_mode() -> str:
-    raw = os.environ.get("OBJECT_ALIGNMENT_MODE")
-    if raw is not None:
-        value = str(raw).strip().lower()
-        if value in {"foundationpose", "camera_refine", "off"}:
-            return value
-        raise ValueError("OBJECT_ALIGNMENT_MODE must be one of: foundationpose / camera_refine / off")
-
-    legacy = os.environ.get("ICP_MODE")
-    if legacy is not None:
-        value = str(legacy).strip().lower()
-        if value in {"camera_refine", "off"}:
-            return value
-        raise ValueError("ICP_MODE must be one of: camera_refine / off")
-
-    return "foundationpose"
-
-
-def _resolve_bool_env(name: str, default: bool) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    value = str(raw).strip().lower()
-    if value in {"1", "true", "yes", "on"}:
-        return True
-    if value in {"0", "false", "no", "off"}:
-        return False
-    raise ValueError(f"{name} must be one of: 1/0, true/false, yes/no, on/off")
-
-
-def _resolve_model_generation_backend() -> str:
-    raw = os.environ.get("MODEL_GENERATION_BACKEND")
-    if raw is None:
-        return "sam3d_objects"
-
-    value = str(raw).strip().lower().replace("-", "_")
-    aliases = {
-        "instantmesh": "instantmesh",
-        "instant_mesh": "instantmesh",
-        "sam3d": "sam3d_objects",
-        "sam3dobjects": "sam3d_objects",
-        "sam3d_objects": "sam3d_objects",
-        "sam_3d_objects": "sam3d_objects",
-    }
-    if value in aliases:
-        return aliases[value]
-    raise ValueError("MODEL_GENERATION_BACKEND must be one of: instantmesh / sam3d_objects")
-
-
 # Runtime switches
 HOLOLENS2_HOST = "10.40.1.132"
 IS_RUN_FLASK_SERVER = True
+# Model generation backend for the shared model-generation stage slot.
+# Use "sam3d_objects" or "instantmesh".
+MODEL_GENERATION_BACKEND = "sam3d_objects"
 
 # Depth / alignment tuning
 # Fraction cropped inward from the SAM3 mask periphery before depth->pointcloud
@@ -72,20 +26,15 @@ ARUCO_SYNC_MARKER_REGISTRY_ON_START = False
 # foundationpose = model-based FoundationPose registration from RGB-D + mask.
 # camera_refine = existing camera-view ICP rotation+translation+scale refinement.
 # off = measured-distance placement without ICP.
-# OBJECT_ALIGNMENT_MODE is the neutral mode selector; ICP_MODE remains accepted
-# as a legacy override for camera_refine/off.
-OBJECT_ALIGNMENT_MODE = _resolve_object_alignment_mode()
+OBJECT_ALIGNMENT_MODE = "foundationpose"
 ICP_MODE = OBJECT_ALIGNMENT_MODE  # legacy field consumed by older debug/output code
 ICP_ENABLE = OBJECT_ALIGNMENT_MODE == "camera_refine"
 # Maximum number of points written to the exported depth point cloud PLY.
 # Set to 0 or None to keep all valid depth points.
 DEPTHPOINTCLOUD_MAX_EXPORT_POINTS = 6000
 # Enable preview/front-view PNG renders produced by the alignment pipeline.
-# Disabled by default so ICP_MODE=off stays fast; set
-# ENABLE_ALIGNMENT_RENDER_OUTPUTS=1 for debug preview images.
-ENABLE_ALIGNMENT_RENDER_OUTPUTS = _resolve_bool_env("ENABLE_ALIGNMENT_RENDER_OUTPUTS", False)
-# Model generation backend for the shared model-generation stage slot.
-MODEL_GENERATION_BACKEND = _resolve_model_generation_backend()
+# Disabled by default so ICP_MODE=off stays fast.
+ENABLE_ALIGNMENT_RENDER_OUTPUTS = False
 # Enable InstantMesh circular-view MP4 generation.
 ENABLE_INSTANTMESH_VIDEO_OUTPUT = True
 # Remove tiny disconnected mesh islands immediately after InstantMesh export.
@@ -106,9 +55,9 @@ ICP_BBOX_SURFACE_THICKNESS_FACTOR = 0.20
 # pose. Yaw-only keeps the model upright while preserving the camera's
 # horizontal facing direction; enabling pitch/roll restores more of the
 # original camera tilt.
-SKIP_ICP_POSE_USE_CAMERA_YAW = _resolve_bool_env("SKIP_ICP_POSE_USE_CAMERA_YAW", True)
-SKIP_ICP_POSE_USE_CAMERA_PITCH = _resolve_bool_env("SKIP_ICP_POSE_USE_CAMERA_PITCH", False)
-SKIP_ICP_POSE_USE_CAMERA_ROLL = _resolve_bool_env("SKIP_ICP_POSE_USE_CAMERA_ROLL", False)
+SKIP_ICP_POSE_USE_CAMERA_YAW = True
+SKIP_ICP_POSE_USE_CAMERA_PITCH = False
+SKIP_ICP_POSE_USE_CAMERA_ROLL = False
 # Reject candidate poses that leave the reconstructed model upside-down in
 # camera-local Unity space.
 ICP_IGNORE_INVERTED_SOLUTIONS = True
@@ -264,7 +213,7 @@ RUNTIME_MESH_BAKE_MARGIN_PX = 64
 RUNTIME_MESH_UV_ISLAND_MARGIN = 0.03
 
 MODEL_FBX_DECIMATE_RATIO = float(os.environ.get("MODEL_FBX_DECIMATE_RATIO", str(1.0 / 16.0)))
-MODEL_FBX_CLEAN_ENABLE = _resolve_bool_env("MODEL_FBX_CLEAN_ENABLE", True)
+MODEL_FBX_CLEAN_ENABLE = True
 MODEL_FBX_CLEAN_COMPONENT_MIN_FACE_RATIO = float(
     os.environ.get("MODEL_FBX_CLEAN_COMPONENT_MIN_FACE_RATIO", str(INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO))
 )
@@ -272,15 +221,12 @@ MODEL_FBX_CLEAN_COMPONENT_MIN_FACES = int(
     os.environ.get("MODEL_FBX_CLEAN_COMPONENT_MIN_FACES", str(INSTANTMESH_CLEAN_COMPONENT_MIN_FACES))
 )
 
+SAM3D_OBJECTS_DECIMATE_ENABLE = False
 SAM3D_OBJECTS_DEFAULT_DECIMATE_RATIO = 1.0 / 16.0
 SAM3D_OBJECTS_DEFAULT_TEXTURE_SIZE = 1024
 SAM3D_OBJECTS_DEFAULT_BAKE_MARGIN_PX = 64
-SAM3D_OBJECTS_POSTPROCESS_DECIMATE_RATIO = float(
-    os.environ.get(
-        "SAM3D_OBJECTS_POSTPROCESS_DECIMATE_RATIO",
-        str(SAM3D_OBJECTS_DEFAULT_DECIMATE_RATIO),
-    )
-)
+SAM3D_OBJECTS_POSTPROCESS_DECIMATE_RATIO = SAM3D_OBJECTS_DEFAULT_DECIMATE_RATIO
+SAM3D_OBJECTS_FBX_DECIMATE_RATIO = SAM3D_OBJECTS_DEFAULT_DECIMATE_RATIO
 SAM3D_OBJECTS_POSTPROCESS_TEXTURE_SIZE = int(
     os.environ.get(
         "SAM3D_OBJECTS_POSTPROCESS_TEXTURE_SIZE",
@@ -296,10 +242,10 @@ SAM3D_OBJECTS_POSTPROCESS_BAKE_MARGIN_PX = int(
 SAM3D_OBJECTS_POSTPROCESS_UV_ISLAND_MARGIN = float(
     os.environ.get("SAM3D_OBJECTS_POSTPROCESS_UV_ISLAND_MARGIN", str(RUNTIME_MESH_UV_ISLAND_MARGIN))
 )
-SAM3D_OBJECTS_VOXEL_REMESH_ENABLE = _resolve_bool_env("SAM3D_OBJECTS_VOXEL_REMESH_ENABLE", False)
+SAM3D_OBJECTS_VOXEL_REMESH_ENABLE = False
 SAM3D_OBJECTS_VOXEL_SIZE_RATIO = float(os.environ.get("SAM3D_OBJECTS_VOXEL_SIZE_RATIO", "0.008"))
-SAM3D_OBJECTS_REMOVE_BLACK_FACES = _resolve_bool_env("SAM3D_OBJECTS_REMOVE_BLACK_FACES", False)
-SAM3D_OBJECTS_REPAIR_BLACK_FACES = _resolve_bool_env("SAM3D_OBJECTS_REPAIR_BLACK_FACES", True)
+SAM3D_OBJECTS_REMOVE_BLACK_FACES = False
+SAM3D_OBJECTS_REPAIR_BLACK_FACES = True
 SAM3D_OBJECTS_BLACK_FACE_RGB_THRESHOLD = float(
     os.environ.get("SAM3D_OBJECTS_BLACK_FACE_RGB_THRESHOLD", "0.035")
 )

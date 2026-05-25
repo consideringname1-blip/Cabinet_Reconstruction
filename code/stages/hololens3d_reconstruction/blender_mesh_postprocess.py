@@ -570,12 +570,23 @@ def apply_decimate_to_objects(
     *,
     ratio: float,
     modifier_prefix: str,
+    enabled: bool = True,
 ) -> tuple[list, dict[str, Any]]:
     meshes = live_mesh_objects(objects)
     before_vertices, before_faces = count_mesh_objects(meshes)
     ratio = float(ratio)
     if ratio <= 0.0:
         raise ValueError("Decimate ratio must be positive")
+
+    if not enabled:
+        return meshes, {
+            "enabled": False,
+            "ratio": float(ratio),
+            "before_vertices": int(before_vertices),
+            "before_faces": int(before_faces),
+            "vertices": int(before_vertices),
+            "faces": int(before_faces),
+        }
 
     for obj in meshes:
         if obj.name not in bpy.data.objects or len(obj.data.polygons) <= 0:
@@ -594,6 +605,7 @@ def apply_decimate_to_objects(
     meshes = delete_empty_mesh_objects(meshes)
     after_vertices, after_faces = count_mesh_objects(meshes)
     return meshes, {
+        "enabled": True,
         "ratio": float(ratio),
         "before_vertices": int(before_vertices),
         "before_faces": int(before_faces),
