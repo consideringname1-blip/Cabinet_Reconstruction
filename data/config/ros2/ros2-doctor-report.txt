@@ -1,0 +1,528 @@
+
+   NETWORK CONFIGURATION
+inet         : 127.0.0.1
+inet4        : ['127.0.0.1']
+inet6        : ['::1']
+netmask      : 255.0.0.0
+device       : lo
+flags        : 73<LOOPBACK,RUNNING,UP>
+mtu          : 65536
+inet         : 10.40.1.122
+inet4        : ['10.40.1.122']
+ether        : 3c:ec:ef:04:b9:a2
+inet6        : ['fe80::95b9:6e46:fa58:b473%eno1']
+netmask      : 255.255.254.0
+device       : eno1
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+broadcast    : 10.40.1.255
+inet         : 172.17.0.1
+inet4        : ['172.17.0.1']
+ether        : 02:42:b7:7a:2b:8a
+inet6        : ['fe80::42:b7ff:fe7a:2b8a%docker0']
+netmask      : 255.255.0.0
+device       : docker0
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+broadcast    : 172.17.255.255
+inet         : 172.30.0.1
+inet4        : ['172.30.0.1']
+ether        : 02:42:65:c7:af:41
+inet6        : ['fe80::42:65ff:fec7:af41%br-920156b78f79']
+netmask      : 255.255.0.0
+device       : br-920156b78f79
+flags        : 4099<MULTICAST,UP,BROADCAST>
+mtu          : 1500
+broadcast    : 172.30.255.255
+inet         : 172.28.0.1
+inet4        : ['172.28.0.1']
+ether        : 02:42:f4:c9:60:ce
+inet6        : ['fe80::42:f4ff:fec9:60ce%br-bcc408015b3d']
+netmask      : 255.255.0.0
+device       : br-bcc408015b3d
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+broadcast    : 172.28.255.255
+ether        : 96:41:48:de:53:57
+inet6        : ['fe80::9441:48ff:fede:5357%veth960d293']
+device       : veth960d293
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 9a:36:77:b7:0b:51
+inet6        : ['fe80::9836:77ff:feb7:b51%vethf27071c']
+device       : vethf27071c
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 7a:1d:7a:d8:54:50
+inet6        : ['fe80::781d:7aff:fed8:5450%veth74f2d8c']
+device       : veth74f2d8c
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 0a:74:b9:26:f1:92
+inet6        : ['fe80::874:b9ff:fe26:f192%veth70850da']
+device       : veth70850da
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 1a:4c:41:2f:9f:68
+inet6        : ['fe80::184c:41ff:fe2f:9f68%vethcf83c05']
+device       : vethcf83c05
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 6e:a1:a5:78:40:33
+inet6        : ['fe80::6ca1:a5ff:fe78:4033%veth150003c']
+device       : veth150003c
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : da:c4:fc:32:75:f2
+inet6        : ['fe80::d8c4:fcff:fe32:75f2%veth50d2754']
+device       : veth50d2754
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 06:9c:27:80:eb:f8
+inet6        : ['fe80::49c:27ff:fe80:ebf8%veth86f7c64']
+device       : veth86f7c64
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 76:92:cf:5d:63:e7
+inet6        : ['fe80::7492:cfff:fe5d:63e7%veth9f4ffb1']
+device       : veth9f4ffb1
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 6a:cf:9f:05:c1:28
+inet6        : ['fe80::68cf:9fff:fe05:c128%veth683fc53']
+device       : veth683fc53
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 5a:9c:c3:c0:7b:74
+inet6        : ['fe80::589c:c3ff:fec0:7b74%veth9f7532b']
+device       : veth9f7532b
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : ca:ea:9f:88:5b:df
+inet6        : ['fe80::c8ea:9fff:fe88:5bdf%vethc17cc65']
+device       : vethc17cc65
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 2a:fd:ae:2f:5f:ae
+inet6        : ['fe80::28fd:aeff:fe2f:5fae%vethe195528']
+device       : vethe195528
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 0e:d1:3b:94:14:c9
+inet6        : ['fe80::cd1:3bff:fe94:14c9%vethfaca326']
+device       : vethfaca326
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 06:e8:d2:f5:21:71
+inet6        : ['fe80::4e8:d2ff:fef5:2171%veth91e1f84']
+device       : veth91e1f84
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : b6:46:55:79:59:11
+inet6        : ['fe80::b446:55ff:fe79:5911%veth3db2d75']
+device       : veth3db2d75
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 6a:78:ef:8f:50:05
+inet6        : ['fe80::6878:efff:fe8f:5005%veth405e38d']
+device       : veth405e38d
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : ea:ab:c8:6b:01:69
+inet6        : ['fe80::e8ab:c8ff:fe6b:169%vethe80ebd6']
+device       : vethe80ebd6
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 3e:fb:97:f7:82:67
+inet6        : ['fe80::3cfb:97ff:fef7:8267%veth6e59c86']
+device       : veth6e59c86
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 56:a7:88:12:a6:85
+inet6        : ['fe80::54a7:88ff:fe12:a685%vethb7b1d72']
+device       : vethb7b1d72
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 4a:f5:39:fa:cc:3b
+inet6        : ['fe80::48f5:39ff:fefa:cc3b%veth4f7e9e0']
+device       : veth4f7e9e0
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : be:17:4e:59:89:fc
+inet6        : ['fe80::bc17:4eff:fe59:89fc%veth1e34ddc']
+device       : veth1e34ddc
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : d2:45:79:d9:82:8a
+inet6        : ['fe80::d045:79ff:fed9:828a%vethc4f06ca']
+device       : vethc4f06ca
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : ca:da:4e:2d:14:81
+inet6        : ['fe80::c8da:4eff:fe2d:1481%veth6b80227']
+device       : veth6b80227
+flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+mtu          : 1500
+ether        : 3c:ec:ef:04:b9:a3
+device       : eno2
+flags        : 4099<MULTICAST,UP,BROADCAST>
+mtu          : 1500
+ether        : b4:96:91:8d:94:cc
+device       : ens8f0
+flags        : 4099<MULTICAST,UP,BROADCAST>
+mtu          : 1500
+ether        : b4:96:91:8d:94:cd
+device       : ens8f1
+flags        : 4099<MULTICAST,UP,BROADCAST>
+mtu          : 1500
+
+   PACKAGE VERSIONS
+ros_workspace                             : latest=1.0.2, local=1.0.2
+ament_package                             : latest=0.14.2, local=0.14.2
+ament_cmake_core                          : latest=1.3.14, local=1.3.14
+ament_cmake_export_definitions            : latest=1.3.14, local=1.3.14
+ament_cmake_libraries                     : latest=1.3.14, local=1.3.14
+ament_cmake_export_dependencies           : latest=1.3.14, local=1.3.14
+ament_cmake_export_include_directories    : latest=1.3.14, local=1.3.14
+ament_cmake_export_libraries              : latest=1.3.14, local=1.3.14
+ament_cmake_export_interfaces             : latest=1.3.14, local=1.3.14
+ament_cmake_export_link_flags             : latest=1.3.14, local=1.3.14
+ament_cmake_export_targets                : latest=1.3.14, local=1.3.14
+ament_cmake_gen_version_h                 : latest=1.3.14, local=1.3.14
+ament_cmake_python                        : latest=1.3.14, local=1.3.14
+ament_cmake_include_directories           : latest=1.3.14, local=1.3.14
+ament_cmake_target_dependencies           : latest=1.3.14, local=1.3.14
+ament_cmake_test                          : latest=1.3.14, local=1.3.14
+ament_cmake_version                       : latest=1.3.14, local=1.3.14
+ament_cmake                               : latest=1.3.14, local=1.3.14
+ament_index_python                        : latest=1.4.1, local=1.4.1
+python_cmake_module                       : latest=0.10.0, local=0.10.0
+rcutils                                   : latest=5.1.8, local=5.1.8
+rosidl_typesupport_interface              : latest=3.1.8, local=3.1.8
+rosidl_runtime_c                          : latest=3.1.8, local=3.1.8
+rmw                                       : latest=6.1.2, local=6.1.2
+rosidl_cli                                : latest=3.1.8, local=3.1.8
+rosidl_adapter                            : latest=3.1.8, local=3.1.8
+rosidl_parser                             : latest=3.1.8, local=3.1.8
+rosidl_cmake                              : latest=3.1.8, local=3.1.8
+rosidl_generator_c                        : latest=3.1.8, local=3.1.8
+rcpputils                                 : latest=2.4.6, local=2.4.6
+rosidl_typesupport_c                      : latest=2.0.2, local=2.0.2
+rpyutils                                  : latest=0.2.2, local=0.2.2
+rosidl_generator_py                       : latest=0.14.6, local=0.14.6
+rosidl_runtime_cpp                        : latest=3.1.8, local=3.1.8
+rosidl_typesupport_cpp                    : latest=2.0.2, local=2.0.2
+ament_cmake_gtest                         : latest=1.3.14, local=1.3.14
+ament_cmake_gmock                         : latest=1.3.14, local=1.3.14
+ament_cmake_pytest                        : latest=1.3.14, local=1.3.14
+domain_coordinator                        : latest=0.10.0, local=0.10.0
+ament_cmake_ros                           : latest=0.10.0, local=0.10.0
+fastrtps_cmake_module                     : latest=2.2.4, local=2.2.4
+rosidl_generator_cpp                      : latest=3.1.8, local=3.1.8
+rosidl_typesupport_fastrtps_cpp           : latest=2.2.4, local=2.2.4
+rosidl_typesupport_fastrtps_c             : latest=2.2.4, local=2.2.4
+rosidl_typesupport_introspection_c        : latest=3.1.8, local=3.1.8
+rosidl_typesupport_introspection_cpp      : latest=3.1.8, local=3.1.8
+rosidl_default_runtime                    : latest=1.2.1, local=1.2.1
+builtin_interfaces                        : latest=1.2.3, local=1.2.2
+unique_identifier_msgs                    : latest=2.2.1, local=2.2.1
+action_msgs                               : latest=1.2.3, local=1.2.2
+std_msgs                                  : latest=4.9.1, local=4.9.1
+actionlib_msgs                            : latest=4.9.1, local=4.9.1
+ament_cmake_auto                          : latest=1.3.14, local=1.3.14
+ament_lint                                : latest=0.12.15, local=0.12.15
+ament_copyright                           : latest=0.12.15, local=0.12.15
+ament_cmake_copyright                     : latest=0.12.15, local=0.12.15
+ament_cppcheck                            : latest=0.12.15, local=0.12.15
+ament_cmake_cppcheck                      : latest=0.12.15, local=0.12.15
+ament_cpplint                             : latest=0.12.15, local=0.12.15
+ament_cmake_cpplint                       : latest=0.12.15, local=0.12.15
+ament_flake8                              : latest=0.12.15, local=0.12.15
+ament_cmake_flake8                        : latest=0.12.15, local=0.12.15
+ament_lint_cmake                          : latest=0.12.15, local=0.12.15
+ament_cmake_lint_cmake                    : latest=0.12.15, local=0.12.15
+ament_pep257                              : latest=0.12.15, local=0.12.15
+ament_cmake_pep257                        : latest=0.12.15, local=0.12.15
+uncrustify_vendor                         : latest=2.0.2, local=2.0.2
+ament_uncrustify                          : latest=0.12.15, local=0.12.15
+ament_cmake_uncrustify                    : latest=0.12.15, local=0.12.15
+ament_xmllint                             : latest=0.12.15, local=0.12.15
+ament_cmake_xmllint                       : latest=0.12.15, local=0.12.15
+ament_index_cpp                           : latest=1.4.1, local=1.4.1
+ament_lint_auto                           : latest=0.12.15, local=0.12.15
+ament_lint_common                         : latest=0.12.15, local=0.12.15
+console_bridge_vendor                     : latest=1.4.1, local=1.4.1
+class_loader                              : latest=2.2.0, local=2.2.0
+geometry_msgs                             : latest=4.9.1, local=4.9.1
+diagnostic_msgs                           : latest=4.9.1, local=4.9.1
+nav_msgs                                  : latest=4.9.1, local=4.9.1
+sensor_msgs                               : latest=4.9.1, local=4.9.1
+shape_msgs                                : latest=4.9.1, local=4.9.1
+std_srvs                                  : latest=4.9.1, local=4.9.1
+stereo_msgs                               : latest=4.9.1, local=4.9.1
+trajectory_msgs                           : latest=4.9.1, local=4.9.1
+visualization_msgs                        : latest=4.9.1, local=4.9.1
+common_interfaces                         : latest=4.9.1, local=4.9.1
+rcl_interfaces                            : latest=1.2.3, local=1.2.2
+composition_interfaces                    : latest=1.2.3, local=1.2.2
+eigen3_cmake_module                       : latest=0.1.1, local=0.1.1
+tf2                                       : latest=0.25.20, local=0.25.20
+rcl_logging_interface                     : latest=2.3.2, local=2.3.2
+spdlog_vendor                             : latest=1.3.1, local=1.3.1
+rcl_logging_spdlog                        : latest=2.3.2, local=2.3.2
+libyaml_vendor                            : latest=1.2.2, local=1.2.2
+rcl_yaml_param_parser                     : latest=5.3.13, local=5.3.12
+rmw_implementation_cmake                  : latest=6.1.2, local=6.1.2
+rmw_dds_common                            : latest=1.6.0, local=1.6.0
+tracetools                                : latest=4.1.2, local=4.1.2
+rmw_fastrtps_shared_cpp                   : latest=6.2.10, local=6.2.10
+rmw_fastrtps_cpp                          : latest=6.2.10, local=6.2.10
+rmw_implementation                        : latest=2.8.5, local=2.8.5
+rcl                                       : latest=5.3.13, local=5.3.12
+statistics_msgs                           : latest=1.2.3, local=1.2.2
+libstatistics_collector                   : latest=1.3.4, local=1.3.4
+rosgraph_msgs                             : latest=1.2.3, local=1.2.2
+rclcpp                                    : latest=16.0.19, local=16.0.19
+rcl_action                                : latest=5.3.13, local=5.3.12
+lifecycle_msgs                            : latest=1.2.3, local=1.2.2
+rcl_lifecycle                             : latest=5.3.13, local=5.3.12
+rclpy                                     : latest=3.3.21, local=3.3.21
+message_filters                           : latest=4.3.16, local=4.3.15
+rclcpp_action                             : latest=16.0.19, local=16.0.19
+rclcpp_components                         : latest=16.0.19, local=16.0.19
+tf2_msgs                                  : latest=0.25.20, local=0.25.20
+tf2_ros                                   : latest=0.25.20, local=0.25.20
+tf2_bullet                                : latest=0.25.20, local=0.25.20
+tf2_eigen                                 : latest=0.25.20, local=0.25.20
+orocos_kdl_vendor                         : latest=0.2.5, local=0.2.5
+tf2_eigen_kdl                             : latest=0.25.20, local=0.25.20
+tf2_py                                    : latest=0.25.20, local=0.25.20
+tf2_ros_py                                : latest=0.25.20, local=0.25.20
+tf2_geometry_msgs                         : latest=0.25.20, local=0.25.20
+pybind11_vendor                           : latest=2.4.2, local=2.4.2
+python_orocos_kdl_vendor                  : latest=0.2.5, local=0.2.5
+tf2_kdl                                   : latest=0.25.20, local=0.25.20
+sensor_msgs_py                            : latest=4.9.1, local=4.9.1
+tf2_sensor_msgs                           : latest=0.25.20, local=0.25.20
+tf2_tools                                 : latest=0.25.20, local=0.25.20
+geometry2                                 : latest=0.25.20, local=0.25.20
+tinyxml_vendor                            : latest=0.8.3, local=0.8.3
+tinyxml2_vendor                           : latest=0.7.7, local=0.7.7
+pluginlib                                 : latest=5.1.4, local=5.1.3
+urdf_parser_plugin                        : latest=2.6.1, local=2.6.1
+urdf                                      : latest=2.6.1, local=2.6.1
+kdl_parser                                : latest=2.6.4, local=2.6.4
+keyboard_handler                          : latest=0.0.5, local=0.0.5
+osrf_pycommon                             : latest=2.1.6, local=2.1.6
+launch                                    : latest=1.0.14, local=1.0.14
+launch_ros                                : latest=0.19.13, local=0.19.13
+launch_xml                                : latest=1.0.14, local=1.0.14
+launch_yaml                               : latest=1.0.14, local=1.0.14
+launch_testing                            : latest=1.0.14, local=1.0.14
+launch_testing_ament_cmake                : latest=1.0.14, local=1.0.14
+launch_testing_ros                        : latest=0.19.13, local=0.19.13
+rclcpp_lifecycle                          : latest=16.0.19, local=16.0.19
+robot_state_publisher                     : latest=3.0.3, local=3.0.3
+ros_environment                           : latest=3.2.2, local=3.2.2
+ros2cli                                   : latest=0.18.18, local=0.18.18
+rosidl_runtime_py                         : latest=0.9.3, local=0.9.3
+ros2action                                : latest=0.18.18, local=0.18.18
+ros2node                                  : latest=0.18.18, local=0.18.18
+ros2service                               : latest=0.18.18, local=0.18.18
+ros2param                                 : latest=0.18.18, local=0.18.18
+ros2pkg                                   : latest=0.18.18, local=0.18.18
+ros2component                             : latest=0.18.18, local=0.18.18
+ros2doctor                                : latest=0.18.18, local=0.18.18
+ros2interface                             : latest=0.18.18, local=0.18.18
+ros2launch                                : latest=0.19.13, local=0.19.13
+ros2lifecycle                             : latest=0.18.18, local=0.18.18
+ros2multicast                             : latest=0.18.18, local=0.18.18
+ros2plugin                                : latest=5.1.4, local=5.1.3
+ros2run                                   : latest=0.18.18, local=0.18.18
+ros2topic                                 : latest=0.18.18, local=0.18.18
+sros2                                     : latest=0.10.9, local=0.10.9
+ros2cli_common_extensions                 : latest=0.1.2, local=0.1.2
+rosidl_generator_rs                       : latest=0.4.12, local=0.4.11
+rosidl_default_generators                 : latest=1.2.1, local=1.2.1
+sros2_cmake                               : latest=0.10.9, local=0.10.9
+ros_core                                  : latest=0.10.0, local=0.10.0
+yaml_cpp_vendor                           : latest=8.0.2, local=8.0.2
+rosbag2_storage                           : latest=0.15.16, local=0.15.16
+shared_queues_vendor                      : latest=0.15.16, local=0.15.16
+rosbag2_cpp                               : latest=0.15.16, local=0.15.16
+rosbag2_compression                       : latest=0.15.16, local=0.15.16
+rosbag2_interfaces                        : latest=0.15.16, local=0.15.16
+rosbag2_transport                         : latest=0.15.16, local=0.15.16
+rosbag2_py                                : latest=0.15.16, local=0.15.16
+sqlite3_vendor                            : latest=0.15.16, local=0.15.16
+rosbag2_storage_default_plugins           : latest=0.15.16, local=0.15.16
+ros2bag                                   : latest=0.15.16, local=0.15.16
+zstd_vendor                               : latest=0.15.16, local=0.15.16
+rosbag2_compression_zstd                  : latest=0.15.16, local=0.15.16
+rosbag2                                   : latest=0.15.16, local=0.15.16
+ros_base                                  : latest=0.10.0, local=0.10.0
+
+   PLATFORM INFORMATION
+system           : Linux
+platform info    : Linux-5.4.0-87-generic-x86_64-with-glibc2.35
+release          : 5.4.0-87-generic
+processor        : x86_64
+
+   QOS COMPATIBILITY LIST
+topic [type]            : /openpose/pose_key_points [openpose_ros2_msgs/msg/PoseKeyPointsList]
+publisher node          : openpose_node
+subscriber node         : people_tracking_node
+compatibility status    : OK
+topic [type]            : /openpose/pose_key_points [openpose_ros2_msgs/msg/PoseKeyPointsList]
+publisher node          : openpose_node
+subscriber node         : people_tracking_node
+compatibility status    : OK
+topic [type]            : /rs/aligned_depth_to_color/cameraInfo [sensor_msgs/msg/CameraInfo]
+publisher node          : realsense_node
+subscriber node         : compressed_image_preview_node
+compatibility status    : OK
+topic [type]            : /rs/aligned_depth_to_color/cameraInfo [sensor_msgs/msg/CameraInfo]
+publisher node          : realsense_node
+subscriber node         : yolox_object_detection_node
+compatibility status    : OK
+topic [type]            : /rs/aligned_depth_to_color/cameraInfo [sensor_msgs/msg/CameraInfo]
+publisher node          : realsense_node
+subscriber node         : people_tracking_node
+compatibility status    : OK
+topic [type]            : /rs/aligned_depth_to_color/cameraInfo [sensor_msgs/msg/CameraInfo]
+publisher node          : realsense_node
+subscriber node         : contact_detection_node
+compatibility status    : OK
+topic [type]            : /rs/aligned_depth_to_color/compressedDepth [sensor_msgs/msg/CompressedImage]
+publisher node          : realsense_node
+subscriber node         : people_tracking_node
+compatibility status    : OK
+topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
+publisher node          : realsense_node
+subscriber node         : openpose_node
+compatibility status    : OK
+topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
+publisher node          : realsense_node
+subscriber node         : compressed_image_preview_node_patched
+compatibility status    : OK
+topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
+publisher node          : realsense_node
+subscriber node         : compressed_image_preview_node
+compatibility status    : OK
+topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
+publisher node          : realsense_node
+subscriber node         : yolox_object_detection_node
+compatibility status    : OK
+topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
+publisher node          : realsense_node
+subscriber node         : contact_detection_node
+compatibility status    : OK
+topic [type]            : /shigure/contacted [shigure_core_msgs/msg/ContactedList]
+publisher node          : contact_detection_node
+subscriber node         : _NODE_NAME_UNKNOWN_
+compatibility status    : OK
+topic [type]            : /shigure/people_detection [shigure_core_msgs/msg/PoseKeyPointsList]
+publisher node          : people_tracking_node
+subscriber node         : shigurepeople_detection_RosSubscriber
+compatibility status    : OK
+topic [type]            : /shigure/people_detection [shigure_core_msgs/msg/PoseKeyPointsList]
+publisher node          : people_tracking_node
+subscriber node         : yolox_object_detection_node
+compatibility status    : OK
+topic [type]            : /shigure/people_detection [shigure_core_msgs/msg/PoseKeyPointsList]
+publisher node          : people_tracking_node
+subscriber node         : contact_detection_node
+compatibility status    : OK
+topic [type]            : /shigure/people_detection [shigure_core_msgs/msg/PoseKeyPointsList]
+publisher node          : people_tracking_node
+subscriber node         : shigurepeople_detection_RosSubscriber
+compatibility status    : OK
+topic [type]            : /shigure/people_detection [shigure_core_msgs/msg/PoseKeyPointsList]
+publisher node          : people_tracking_node
+subscriber node         : yolox_object_detection_node
+compatibility status    : OK
+topic [type]            : /shigure/people_detection [shigure_core_msgs/msg/PoseKeyPointsList]
+publisher node          : people_tracking_node
+subscriber node         : contact_detection_node
+compatibility status    : OK
+topic [type]            : /tf [tf2_msgs/msg/TFMessage]
+publisher node          : compressed_image_preview_node
+subscriber node         : hololens_tf2_listener
+compatibility status    : OK
+topic [type]            : /tf [tf2_msgs/msg/TFMessage]
+publisher node          : compressed_image_preview_node
+subscriber node         : _NODE_NAME_UNKNOWN_
+compatibility status    : OK
+topic [type]            : /tf [tf2_msgs/msg/TFMessage]
+publisher node          : _NODE_NAME_UNKNOWN_
+subscriber node         : hololens_tf2_listener
+compatibility status    : OK
+topic [type]            : /tf [tf2_msgs/msg/TFMessage]
+publisher node          : _NODE_NAME_UNKNOWN_
+subscriber node         : _NODE_NAME_UNKNOWN_
+compatibility status    : OK
+
+   RMW MIDDLEWARE
+middleware name    : rmw_fastrtps_cpp
+
+   ROS 2 INFORMATION
+distribution name      : humble
+distribution type      : ros2
+distribution status    : active
+release platforms      : {'rhel': ['8'], 'ubuntu': ['jammy']}
+
+   TOPIC LIST
+topic               : /bounding_boxes
+publisher count     : 0
+subscriber count    : 2
+topic               : /debug/combined_view/compressed
+publisher count     : 0
+subscriber count    : 0
+topic               : /dictionary_update
+publisher count     : 0
+subscriber count    : 1
+topic               : /face_recognition/results
+publisher count     : 0
+subscriber count    : 1
+topic               : /openpose/pose_key_points
+publisher count     : 1
+subscriber count    : 2
+topic               : /openpose/preview
+publisher count     : 1
+subscriber count    : 0
+topic               : /openpose/preview/compressed
+publisher count     : 1
+subscriber count    : 0
+topic               : /rs/aligned_depth_to_color/cameraInfo
+publisher count     : 1
+subscriber count    : 4
+topic               : /rs/aligned_depth_to_color/compressedDepth
+publisher count     : 1
+subscriber count    : 1
+topic               : /rs/color/cameraInfo
+publisher count     : 1
+subscriber count    : 0
+topic               : /rs/color/compressed
+publisher count     : 1
+subscriber count    : 5
+topic               : /shigure/contacted
+publisher count     : 1
+subscriber count    : 1
+topic               : /shigure/object_detection
+publisher count     : 0
+subscriber count    : 0
+topic               : /shigure/object_tracking
+publisher count     : 0
+subscriber count    : 1
+topic               : /shigure/people_detection
+publisher count     : 2
+subscriber count    : 3
+topic               : /shigure/recognition_history
+publisher count     : 1
+subscriber count    : 0
+topic               : /tf
+publisher count     : 1
+subscriber count    : 2
+topic               : /tf_static
+publisher count     : 0
+subscriber count    : 1

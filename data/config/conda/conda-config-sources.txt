@@ -1,0 +1,15 @@
+==> /opt/miniconda/.condarc <==
+channels:
+  - defaults
+
+==> /opt/miniconda/condarc.d/anaconda-auth.yml <==
+channel_settings:
+  - channel: https://repo.anaconda.cloud/*
+    auth: anaconda-auth
+
+==> /root/.condarc <==
+auto_activate: False
+channels:
+  - defaults
+solver: libmamba
+

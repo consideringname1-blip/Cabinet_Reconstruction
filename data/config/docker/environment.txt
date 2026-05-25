@@ -1,0 +1,14 @@
+AMENT_PREFIX_PATH=/opt/ros/humble
+CONDA_DIR=/opt/miniconda
+CUDA_VERSION=11.8.0
+LD_LIBRARY_PATH=/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64
+NVIDIA_DRIVER_CAPABILITIES=compute,utility
+NVIDIA_PRODUCT_NAME=CUDA
+NVIDIA_REQUIRE_CUDA=cuda>=11.8 brand=tesla,driver>=470,driver<471 brand=unknown,driver>=470,driver<471 brand=nvidia,driver>=470,driver<471 brand=nvidiartx,driver>=470,driver<471 brand=geforce,driver>=470,driver<471 brand=geforcertx,driver>=470,driver<471 brand=quadro,driver>=470,driver<471 brand=quadrortx,driver>=470,driver<471 brand=titan,driver>=470,driver<471 brand=titanrtx,driver>=470,driver<471
+NVIDIA_VISIBLE_DEVICES=all
+PYTHONPATH=/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:/workspace:/workspace/code
+ROS_DISTRO=humble
+ROS_DOMAIN_ID=10
+ROS_LOCALHOST_ONLY=0
+ROS_PYTHON_VERSION=3
+ROS_VERSION=2

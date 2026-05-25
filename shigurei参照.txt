@@ -1,0 +1,55 @@
+ROS2 接收 workspace
+/workspace/code/ros2/shigure_recv_ws
+
+使用前：
+source /workspace/code/ros2/shigure_recv_ws/setup_env.sh
+
+重新构建消息包：
+cd /workspace/code/ros2/shigure_recv_ws
+source /opt/ros/humble/setup.bash
+colcon build --cmake-args -DPython3_EXECUTABLE=/usr/bin/python3 -DPYTHON_EXECUTABLE=/usr/bin/python3
+
+可以直接接收
+/rs/color/compressed
+RGB 彩色压缩图，类型是 sensor_msgs/msg/CompressedImage。
+
+/rs/aligned_depth_to_color/compressedDepth
+对齐到彩色相机的深度图，类型是 sensor_msgs/msg/CompressedImage。
+
+/rs/color/cameraInfo、/rs/aligned_depth_to_color/cameraInfo
+相机内参，类型是 sensor_msgs/msg/CameraInfo。
+
+/shigure/contacted
+接触事件，类型是 shigure_core_msgs/msg/ContactedList。里面有：
+
+people_id
+object_id
+action
+人的 2D bbox
+物体的 2D bbox
+物体 3D cube：x, y, z, width, height, depth
+/shigure/people_detection
+人体/姿态点，类型是 shigure_core_msgs/msg/PoseKeyPointsList。里面有：
+
+people_id
+人的 bbox
+身体关键点列表
+每个点有像素坐标 pixel_point
+也有投影/3D 点 projection_point
+score
+/shigure/object_detection
+检测到的物体，类型是 shigure_core_msgs/msg/DetectedObjectList。里面有：
+
+action
+物体 2D bbox
+mask，sensor_msgs/CompressedImage
+/shigure/object_tracking
+跟踪后的物体，类型是 shigure_core_msgs/msg/TrackedObjectList。里面有：
+
+object_id
+action
+物体 2D bbox
+物体 3D collider：x, y, z, width, height, depth
+现在能看到但暂时不能解析
+/shigure/recognition_history
+类型是 shigure_core_msgs/msg/RecognitionHistory，但是本地参考包里没有这个 .msg，所以现在不能 echo/subscribe 解码。需要从 Shigurei 那边拿新版 shigure_core_msgs。

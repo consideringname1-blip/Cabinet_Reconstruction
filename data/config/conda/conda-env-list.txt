@@ -1,0 +1,13 @@
+
+# conda environments:
+#
+# * -> active
+# + -> frozen
+base                     /opt/miniconda
+dvc                      /opt/miniconda/envs/dvc
+foundationpose           /opt/miniconda/envs/foundationpose
+imesh                    /opt/miniconda/envs/imesh
+sam3                     /opt/miniconda/envs/sam3
+sam3d-objects-cu118      /opt/miniconda/envs/sam3d-objects-cu118
+server                   /opt/miniconda/envs/server
+

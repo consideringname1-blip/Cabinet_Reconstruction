@@ -1,0 +1,35 @@
+
+     active environment : None
+            shell level : 0
+       user config file : /root/.condarc
+ populated config files : /opt/miniconda/.condarc
+                          /opt/miniconda/condarc.d/anaconda-auth.yml
+                          /root/.condarc
+          conda version : 26.3.2
+    conda-build version : not installed
+         python version : 3.13.13.final.0
+                 solver : libmamba (default)
+       virtual packages : __archspec=1=zen2
+                          __conda=26.3.2=0
+                          __cuda=11.8=0
+                          __glibc=2.35=0
+                          __linux=5.4.0=0
+                          __unix=0=0
+       base environment : /opt/miniconda  (writable)
+      conda av data dir : /opt/miniconda/etc/conda
+  conda av metadata url : None
+           channel URLs : https://repo.anaconda.com/pkgs/main/linux-64
+                          https://repo.anaconda.com/pkgs/main/noarch
+                          https://repo.anaconda.com/pkgs/r/linux-64
+                          https://repo.anaconda.com/pkgs/r/noarch
+          package cache : /opt/miniconda/pkgs
+                          /root/.conda/pkgs
+       envs directories : /opt/miniconda/envs
+                          /root/.conda/envs
+    temporary directory : /tmp
+               platform : linux-64
+             user-agent : conda/26.3.2 requests/2.33.1 CPython/3.13.13 Linux/5.4.0-87-generic ubuntu/22.04.3 glibc/2.35 solver/libmamba conda-libmamba-solver/26.4.0 libmambapy/2.3.2 aau/0.7.6 c/. s/. e/.
+                UID:GID : 0:0
+             netrc file : None
+           offline mode : False
+
