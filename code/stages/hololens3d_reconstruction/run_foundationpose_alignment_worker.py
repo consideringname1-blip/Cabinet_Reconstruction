@@ -91,6 +91,70 @@ def _install_foundationpose_runtime_patches() -> None:
             center[:, 1] + radius_px,
         )
 
+    original_nvdiffrast_render = Utils.nvdiffrast_render
+
+    def nvdiffrast_render_batched(
+        K=None,
+        H=None,
+        W=None,
+        ob_in_cams=None,
+        glctx=None,
+        context="cuda",
+        get_normal=False,
+        mesh_tensors=None,
+        mesh=None,
+        projection_mat=None,
+        bbox2d=None,
+        output_size=None,
+        use_light=False,
+        light_color=None,
+        light_dir=np.array([0, 0, 1]),
+        light_pos=np.array([0, 0, 0]),
+        w_ambient=0.8,
+        w_diffuse=0.5,
+        extra=None,
+    ):
+        if extra is None:
+            extra = {}
+        render_batch_size = max(1, int(os.environ.get("FOUNDATIONPOSE_RENDER_BATCH_SIZE", "16")))
+        if ob_in_cams is None or len(ob_in_cams) <= render_batch_size:
+            return original_nvdiffrast_render(
+                K=K, H=H, W=W, ob_in_cams=ob_in_cams, glctx=glctx, context=context,
+                get_normal=get_normal, mesh_tensors=mesh_tensors, mesh=mesh, projection_mat=projection_mat,
+                bbox2d=bbox2d, output_size=output_size, use_light=use_light, light_color=light_color,
+                light_dir=light_dir, light_pos=light_pos, w_ambient=w_ambient, w_diffuse=w_diffuse, extra=extra,
+            )
+
+        rgb_chunks = []
+        depth_chunks = []
+        normal_chunks = []
+        xyz_chunks = []
+        for start in range(0, len(ob_in_cams), render_batch_size):
+            end = min(start + render_batch_size, len(ob_in_cams))
+            chunk_extra = {}
+            chunk_bbox2d = bbox2d[start:end] if bbox2d is not None else None
+            rgb_r, depth_r, normal_r = original_nvdiffrast_render(
+                K=K, H=H, W=W, ob_in_cams=ob_in_cams[start:end], glctx=glctx, context=context,
+                get_normal=get_normal, mesh_tensors=mesh_tensors, mesh=mesh, projection_mat=projection_mat,
+                bbox2d=chunk_bbox2d, output_size=output_size, use_light=use_light, light_color=light_color,
+                light_dir=light_dir, light_pos=light_pos, w_ambient=w_ambient, w_diffuse=w_diffuse, extra=chunk_extra,
+            )
+            rgb_chunks.append(rgb_r)
+            depth_chunks.append(depth_r)
+            if normal_r is not None:
+                normal_chunks.append(normal_r)
+            if "xyz_map" in chunk_extra:
+                xyz_chunks.append(chunk_extra["xyz_map"])
+
+        if xyz_chunks:
+            extra["xyz_map"] = torch.cat(xyz_chunks, dim=0)
+        normal = torch.cat(normal_chunks, dim=0) if normal_chunks else None
+        return torch.cat(rgb_chunks, dim=0), torch.cat(depth_chunks, dim=0), normal
+
+    Utils.nvdiffrast_render = nvdiffrast_render_batched
+    predict_pose_refine.nvdiffrast_render = nvdiffrast_render_batched
+    predict_score.nvdiffrast_render = nvdiffrast_render_batched
+
     Utils.compute_crop_window_tf_batch = compute_crop_window_tf_batch
     predict_pose_refine.compute_crop_window_tf_batch = compute_crop_window_tf_batch
     predict_score.compute_crop_window_tf_batch = compute_crop_window_tf_batch
