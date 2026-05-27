@@ -64,6 +64,13 @@ MODEL_INPUT_TO_CANONICAL_RH_BASIS = np.array(
 CANONICAL_RH_TO_MODEL_INPUT_BASIS = MODEL_INPUT_TO_CANONICAL_RH_BASIS.T
 
 # Axis declarations used across the pipeline.
+RUNTIME_AXIS_CONTRACT = "unity_local_z_forward_y_up"
+MODEL_INPUT_AXIS_CONTRACT = "model_input_minus_x_forward_z_up"
+MODEL_INPUT_TO_UNITY_RUNTIME_LOCAL = (
+    np.asarray(CANONICAL_RH_TO_UNITY_BASIS, dtype=np.float32)
+    @ MODEL_INPUT_TO_CANONICAL_RH_BASIS
+)
+
 # ICP/debug rendering imports OBJ with `forward=-X`, `up=+Z`.
 ICP_OBJ_IMPORT_FORWARD_AXIS = "NEGATIVE_X"
 ICP_OBJ_IMPORT_UP_AXIS = "Z"
@@ -102,25 +109,15 @@ BLENDER_WORLD_TO_FBX_EXPORT_LOCAL = np.array(
     dtype=np.float32,
 )
 
-# Original model-input axes -> runtime FBX local axes. With the explicit OBJ
-# import and FBX export settings above, this composes to identity, but we keep
-# the full chain here because the pose stage needs to reason about every step.
-MODEL_INPUT_TO_FBX_RUNTIME_LOCAL = (
-    BLENDER_WORLD_TO_FBX_EXPORT_LOCAL @ FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD
-)
+# RuntimeMesh now bakes original model-input axes into the Unity runtime local
+# asset contract (+Z forward, +Y up). Runtime OBJ/FBX vertices are therefore
+# already in final local coordinates when bounds and pose consume them.
+MODEL_INPUT_TO_FBX_RUNTIME_LOCAL = np.eye(3, dtype=np.float32)
 FBX_RUNTIME_LOCAL_TO_MODEL_INPUT = MODEL_INPUT_TO_FBX_RUNTIME_LOCAL.T
-# This is a geometry/basis conversion reference, not a transform-space
-# rotation. It has determinant -1, so it must not be multiplied directly into a
-# runtime world quaternion.
-FBX_RUNTIME_LOCAL_TO_UNITY_BASIS = (
-    np.asarray(CANONICAL_RH_TO_UNITY_BASIS, dtype=np.float32)
-    @ MODEL_INPUT_TO_CANONICAL_RH_BASIS
-    @ FBX_RUNTIME_LOCAL_TO_MODEL_INPUT
-)
-# The current OBJ -> FBX wrapper path bakes axis conversion into the exported
-# mesh/file, and Unity/TriLib loads that FBX as a standard runtime object. So
-# the transform-space correction that pose composition should apply at runtime
-# is identity.
+# Runtime local and Unity local are the same after RuntimeMesh axis baking.
+FBX_RUNTIME_LOCAL_TO_UNITY_BASIS = np.eye(3, dtype=np.float32)
+# Unity/TriLib loads the normalized runtime asset as a standard local object,
+# so pose composition applies no transform-space model-axis correction.
 FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY = np.eye(3, dtype=np.float32)
 
 

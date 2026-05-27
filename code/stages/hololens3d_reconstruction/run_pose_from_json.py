@@ -12,6 +12,7 @@ from config import (
 )
 from object_alignment_common import (
     FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY,
+    RUNTIME_AXIS_CONTRACT,
     model_pose_canonical_rh_to_unity_camera,
 )
 from pose_math import (
@@ -24,29 +25,11 @@ from task_json import save_task_json
 from unity_coordinate_utils import convert_hololens_pv_pose_matrix_to_unity_pose_components
 
 
-CUSTOM_RUNTIME_LOCAL_AXIS_REMAP_TO_UNITY = np.array(
-    [
-        [0.0, -1.0, 0.0],
-        [0.0, 0.0, 1.0],
-        [-1.0, 0.0, 0.0],
-    ],
-    dtype=np.float64,
-)
-
 def resolve_runtime_local_to_unity_rotation() -> np.ndarray:
-    # Apply a transform-space axis remap on top of the runtime FBX correction so
-    # the final Unity object axes match the desired debugging/orientation
-    # convention:
-    # new +Y = current -X
-    # new +Z = current +Y
-    # and therefore new +X = current -Z to keep a proper right-handed rotation.
-    # A single-axis flip would become a reflection (det=-1), which cannot be
-    # represented by the runtime quaternion path. So we apply a 180-degree
-    # local-Z rotation after the remap: this reverses Y and X together while
-    # keeping a proper rotation matrix.
-    base = np.asarray(FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY, dtype=np.float64)
-    rotate_180_about_local_z = np.diag([-1.0, -1.0, 1.0]).astype(np.float64)
-    return base @ CUSTOM_RUNTIME_LOCAL_AXIS_REMAP_TO_UNITY @ rotate_180_about_local_z
+    # RuntimeMesh now bakes generated model axes into Unity's runtime local
+    # contract (+Z forward, +Y up). Pose composition therefore should not carry
+    # any model-axis compatibility correction.
+    return np.asarray(FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY, dtype=np.float64)
 
 
 def _normalize_vector(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
@@ -182,8 +165,8 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     runtime_local_to_unity = resolve_runtime_local_to_unity_rotation()
 
     world_position = (R_cam_raw @ local_position) + t_cam
-    # Compose the ICP rotation with the runtime FBX local-axis chain so the
-    # loaded model is placed in the same orientation that ICP solved.
+    # Compose only the solved pose; generated runtime assets already use
+    # Unity's +Z-forward, +Y-up local axis contract.
     world_rotation = R_cam @ local_rotation @ runtime_local_to_unity
     det_world = float(np.linalg.det(world_rotation))
     if not np.isfinite(det_world) or det_world <= 0.0:
@@ -232,6 +215,10 @@ def build_pose_debug(task: dict) -> dict:
         "camera_rotation_filter": camera_rotation_filter,
         "pv_camera_world_filtered": {
             "pose": serialize_pose(pv_rotation, pv_position),
+        },
+        "runtime_asset": {
+            "axis_contract": RUNTIME_AXIS_CONTRACT,
+            "runtime_local_to_unity_rotation": runtime_local_to_unity.astype(float).tolist(),
         },
         "final_object_world": {
             "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,

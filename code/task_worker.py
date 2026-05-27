@@ -70,6 +70,7 @@ STAGE_ORDER = [
     "depthpointcloud",
     "modelscale",
     "object_alignment",
+    "runtime_mesh",
     "pose",
     "aruco_sync",
     "blender",

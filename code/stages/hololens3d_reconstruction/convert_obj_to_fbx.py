@@ -44,9 +44,10 @@ from config import (
 )
 from model_generation_common import (
     MODEL_STAGE_INSTANTMESH,
+    MODEL_STAGE_RUNTIME_MESH,
     MODEL_STAGE_SAM3D_OBJECTS,
     ModelFileSource,
-    resolve_model_generation_source,
+    resolve_runtime_mesh_source,
 )
 from stage_common import parse_blender_stage_args
 from task_json import load_task_json, resolve_task_json_path, save_task_json
@@ -94,13 +95,15 @@ def apply_object_transform(objects: list, task: dict) -> None:
 
 
 def _resolve_fbx_source(task: dict) -> ModelFileSource:
-    source = resolve_model_generation_source(task, require_mtl_image=True)
+    source = resolve_runtime_mesh_source(task, require_mtl_image=True)
+    if source is None:
+        raise ValueError("RuntimeMesh is missing; run the runtime_mesh stage before Blender export")
     if not source.mtl or not source.image or source.mtl_path is None or source.image_path is None:
         raise ValueError(f"{source.source_stage}.mesh / mtl / image is missing")
     return source
 
 
-def _import_instantmesh_source(source: ModelFileSource) -> tuple[list, dict]:
+def _import_obj_mtl_png_source(source: ModelFileSource) -> tuple[list, dict]:
     mesh_path = ensure_file(source.mesh_path, f"{source.source_stage} obj")
     mtl_path = ensure_file(source.mtl_path, f"{source.source_stage} mtl")
     image_path = ensure_file(source.image_path, f"{source.source_stage} texture image")
@@ -115,11 +118,27 @@ def _import_instantmesh_source(source: ModelFileSource) -> tuple[list, dict]:
     imported_objects = get_imported_mesh_objects()
     if not imported_objects:
         raise RuntimeError("No mesh object was imported into Blender")
-    return imported_objects, {
+
+    source_info = {
         "source_format": "obj_mtl_png",
         "source_mesh": mesh_path.name,
         "source_texture": image_path.name,
     }
+    axis_contract = str(source.payload.get("axis_contract") or "").strip()
+    if axis_contract:
+        source_info["axis_contract"] = axis_contract
+    axis_transform = str(source.payload.get("axis_transform") or "").strip()
+    if axis_transform:
+        source_info["axis_transform"] = axis_transform
+    return imported_objects, source_info
+
+
+def _import_instantmesh_source(source: ModelFileSource) -> tuple[list, dict]:
+    return _import_obj_mtl_png_source(source)
+
+
+def _import_runtime_mesh_source(source: ModelFileSource) -> tuple[list, dict]:
+    return _import_obj_mtl_png_source(source)
 
 
 def _apply_imported_glb_scale(objects: list) -> None:
@@ -154,6 +173,8 @@ def _import_sam3d_source(source: ModelFileSource) -> tuple[list, dict]:
 
 
 def _import_source_objects(source: ModelFileSource) -> tuple[list, dict]:
+    if source.source_stage == MODEL_STAGE_RUNTIME_MESH:
+        return _import_runtime_mesh_source(source)
     if source.source_stage == MODEL_STAGE_INSTANTMESH:
         return _import_instantmesh_source(source)
     if source.source_stage == MODEL_STAGE_SAM3D_OBJECTS:
@@ -187,6 +208,15 @@ def _clean_fbx_source_geometry(objects: list, *, repair_black_faces: bool) -> tu
     if not objects:
         raise RuntimeError("FBX postprocess removed all mesh geometry")
     return objects, stats
+
+
+def _prepare_runtime_mesh_fbx_meshes(objects: list) -> tuple[list, dict]:
+    vertices, faces = count_mesh_objects(objects)
+    return objects, {
+        "source_already_runtime_axis_normalized": True,
+        "vertices": int(vertices),
+        "faces": int(faces),
+    }
 
 
 def _prepare_instantmesh_fbx_meshes(objects: list) -> tuple[list, dict]:
@@ -258,7 +288,9 @@ def export_fbx_from_json(json_path: Path) -> Path:
     BLENDER_FBX_DIR.mkdir(parents=True, exist_ok=True)
 
     imported_objects, source_info = _import_source_objects(source)
-    if source.source_stage == MODEL_STAGE_SAM3D_OBJECTS:
+    if source.source_stage == MODEL_STAGE_RUNTIME_MESH:
+        processed_objects, postprocess_info = _prepare_runtime_mesh_fbx_meshes(imported_objects)
+    elif source.source_stage == MODEL_STAGE_SAM3D_OBJECTS:
         bake_source_objects, processed_objects, postprocess_info = _prepare_sam3d_fbx_meshes(imported_objects)
         smart_unwrap_objects(processed_objects, island_margin=float(SAM3D_OBJECTS_POSTPROCESS_UV_ISLAND_MARGIN))
         postprocess_info["color_texture_bake"] = bake_vertex_color_sources_to_targets(
