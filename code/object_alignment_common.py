@@ -24,101 +24,48 @@ from task_json import (
     resolve_task_json_path as resolve_json_path,
     save_task_json as save_json,
 )
-from unity_coordinate_utils import (
+from coordinate_systems import (
+    BLENDER_WORLD_TO_CANONICAL_RH,
+    BLENDER_WORLD_TO_FBX_EXPORT_LOCAL,
+    CANONICAL_RH_TO_BLENDER_WORLD,
+    CANONICAL_RH_TO_MODEL_INPUT_BASIS,
     CANONICAL_RH_TO_UNITY_BASIS,
+    FBX_CONVERT_OBJ_IMPORT_FORWARD_AXIS,
+    FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD,
+    FBX_CONVERT_OBJ_IMPORT_UP_AXIS,
+    FBX_EXPORT_FORWARD_AXIS,
+    FBX_EXPORT_UP_AXIS,
+    FBX_RUNTIME_LOCAL_TO_MODEL_INPUT,
+    FBX_RUNTIME_LOCAL_TO_UNITY_BASIS,
+    FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY,
+    ICP_OBJ_IMPORT_FORWARD_AXIS,
+    ICP_OBJ_IMPORT_TO_BLENDER_WORLD,
+    ICP_OBJ_IMPORT_UP_AXIS,
+    MODEL_INPUT_AXIS_CONTRACT,
+    MODEL_INPUT_TO_CANONICAL_RH_BASIS,
+    MODEL_INPUT_TO_FBX_RUNTIME_LOCAL,
+    MODEL_INPUT_TO_UNITY_RUNTIME_LOCAL,
+    POINTCLOUD_EXPORT_TO_CANONICAL_RH_BASIS,
+    RUNTIME_AXIS_CONTRACT,
+    blender_world_to_canonical_rh_vector,
+    canonical_rh_to_blender_world_points,
+    canonical_rh_to_blender_world_vector,
+    model_pose_blender_world_to_canonical_rh,
+    model_pose_canonical_rh_to_blender_world,
+    model_pose_canonical_rh_to_unity_camera,
+    obj_vertices_to_blender_world,
+    obj_vertices_to_canonical_rh,
+    pointcloud_export_to_blender_world,
+    pointcloud_export_to_canonical_rh,
+    rotation_blender_world_to_canonical_rh,
+    rotation_canonical_rh_to_blender_default_obj_import,
+    rotation_canonical_rh_to_blender_obj_import,
+    rotation_canonical_rh_to_blender_world,
 )
 
 
 MIN_DEPTH_MM = AHAT_MIN_DEPTH_MM
 MAX_DEPTH_MM = AHAT_MAX_RELIABLE_DEPTH_MM
-
-# Canonical internal basis for measurement / alignment:
-# right-handed camera local, X=right, Y=up, -Z=forward.
-POINTCLOUD_EXPORT_TO_CANONICAL_RH_BASIS = np.array(
-    [
-        [0.0, 0.0, -1.0],
-        [0.0, 1.0, 0.0],
-        [1.0, 0.0, 0.0],
-    ],
-    dtype=np.float32,
-)
-
-CANONICAL_RH_TO_BLENDER_WORLD = np.array(
-    [
-        [1.0, 0.0, 0.0],
-        [0.0, 0.0, -1.0],
-        [0.0, 1.0, 0.0],
-    ],
-    dtype=np.float32,
-)
-BLENDER_WORLD_TO_CANONICAL_RH = CANONICAL_RH_TO_BLENDER_WORLD.T
-
-MODEL_INPUT_TO_CANONICAL_RH_BASIS = np.array(
-    [
-        [0.0, 1.0, 0.0],
-        [0.0, 0.0, 1.0],
-        [1.0, 0.0, 0.0],
-    ],
-    dtype=np.float32,
-)
-CANONICAL_RH_TO_MODEL_INPUT_BASIS = MODEL_INPUT_TO_CANONICAL_RH_BASIS.T
-
-# Axis declarations used across the pipeline.
-RUNTIME_AXIS_CONTRACT = "unity_local_z_forward_y_up"
-MODEL_INPUT_AXIS_CONTRACT = "model_input_minus_x_forward_z_up"
-MODEL_INPUT_TO_UNITY_RUNTIME_LOCAL = (
-    np.asarray(CANONICAL_RH_TO_UNITY_BASIS, dtype=np.float32)
-    @ MODEL_INPUT_TO_CANONICAL_RH_BASIS
-)
-
-# ICP/debug rendering imports OBJ with `forward=-X`, `up=+Z`.
-ICP_OBJ_IMPORT_FORWARD_AXIS = "NEGATIVE_X"
-ICP_OBJ_IMPORT_UP_AXIS = "Z"
-# Runtime FBX wrapping imports OBJ with Blender's default OBJ convention and
-# then exports to a Unity-facing FBX basis.
-FBX_CONVERT_OBJ_IMPORT_FORWARD_AXIS = "NEGATIVE_Z"
-FBX_CONVERT_OBJ_IMPORT_UP_AXIS = "Y"
-FBX_EXPORT_FORWARD_AXIS = "-Z"
-FBX_EXPORT_UP_AXIS = "Y"
-
-# OBJ -> Blender world basis used by the ICP/debug path
-# (`bpy.ops.wm.obj_import(..., forward_axis="NEGATIVE_X", up_axis="Z")`).
-ICP_OBJ_IMPORT_TO_BLENDER_WORLD = CANONICAL_RH_TO_BLENDER_WORLD @ MODEL_INPUT_TO_CANONICAL_RH_BASIS
-
-# OBJ -> Blender world basis used when wrapping the reconstructed OBJ into FBX.
-# This mirrors Blender's default OBJ import orientation
-# (`forward=-Z`, `up=+Y`) so the conversion stage no longer depends on implicit
-# Blender defaults.
-FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD = np.array(
-    [
-        [1.0, 0.0, 0.0],
-        [0.0, 0.0, -1.0],
-        [0.0, 1.0, 0.0],
-    ],
-    dtype=np.float32,
-)
-
-# Blender world -> exported FBX local basis used by the runtime file wrapper
-# (`axis_forward="-Z", axis_up="Y", bake_space_transform=True`).
-BLENDER_WORLD_TO_FBX_EXPORT_LOCAL = np.array(
-    [
-        [1.0, 0.0, 0.0],
-        [0.0, 0.0, 1.0],
-        [0.0, -1.0, 0.0],
-    ],
-    dtype=np.float32,
-)
-
-# RuntimeMesh now bakes original model-input axes into the Unity runtime local
-# asset contract (+Z forward, +Y up). Runtime OBJ/FBX vertices are therefore
-# already in final local coordinates when bounds and pose consume them.
-MODEL_INPUT_TO_FBX_RUNTIME_LOCAL = np.eye(3, dtype=np.float32)
-FBX_RUNTIME_LOCAL_TO_MODEL_INPUT = MODEL_INPUT_TO_FBX_RUNTIME_LOCAL.T
-# Runtime local and Unity local are the same after RuntimeMesh axis baking.
-FBX_RUNTIME_LOCAL_TO_UNITY_BASIS = np.eye(3, dtype=np.float32)
-# Unity/TriLib loads the normalized runtime asset as a standard local object,
-# so pose composition applies no transform-space model-axis correction.
-FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY = np.eye(3, dtype=np.float32)
 
 
 def ensure_file(path: Path, label: str) -> Path:
@@ -420,101 +367,6 @@ def extract_front_visible_points(
     )
     return selected_points
 
-
-def pointcloud_export_to_canonical_rh(points: np.ndarray) -> np.ndarray:
-    points = np.asarray(points, dtype=np.float32)
-    return (points @ POINTCLOUD_EXPORT_TO_CANONICAL_RH_BASIS.T).astype(np.float32)
-
-
-def pointcloud_export_to_blender_world(points: np.ndarray) -> np.ndarray:
-    points_canonical = pointcloud_export_to_canonical_rh(points)
-    return canonical_rh_to_blender_world_points(points_canonical)
-
-
-def obj_vertices_to_canonical_rh(points: np.ndarray) -> np.ndarray:
-    points = np.asarray(points, dtype=np.float32)
-    return (points @ MODEL_INPUT_TO_CANONICAL_RH_BASIS.T).astype(np.float32)
-
-
-def obj_vertices_to_blender_world(points: np.ndarray) -> np.ndarray:
-    points_canonical = obj_vertices_to_canonical_rh(points)
-    return canonical_rh_to_blender_world_points(points_canonical)
-
-
-def model_pose_canonical_rh_to_unity_camera(
-    rotation_canonical: np.ndarray,
-    translation_canonical: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    rotation_canonical = np.asarray(rotation_canonical, dtype=np.float32)
-    translation_canonical = np.asarray(translation_canonical, dtype=np.float32)
-    basis = np.asarray(CANONICAL_RH_TO_UNITY_BASIS, dtype=np.float32)
-    rotation_unity = basis @ rotation_canonical @ basis
-    translation_unity = basis @ translation_canonical.reshape(3, 1)
-    return rotation_unity.astype(np.float32), translation_unity.reshape(3).astype(np.float32)
-
-
-def canonical_rh_to_blender_world_points(points: np.ndarray) -> np.ndarray:
-    points = np.asarray(points, dtype=np.float32)
-    return np.stack((points[:, 0], -points[:, 2], points[:, 1]), axis=-1).astype(np.float32)
-
-
-def canonical_rh_to_blender_world_vector(vector: np.ndarray) -> np.ndarray:
-    vector = np.asarray(vector, dtype=np.float32)
-    return np.array([vector[0], -vector[2], vector[1]], dtype=np.float32)
-
-
-def blender_world_to_canonical_rh_vector(vector: np.ndarray) -> np.ndarray:
-    vector = np.asarray(vector, dtype=np.float32)
-    return np.array([vector[0], vector[2], -vector[1]], dtype=np.float32)
-
-
-def rotation_canonical_rh_to_blender_world(rotation: np.ndarray) -> np.ndarray:
-    rotation = np.asarray(rotation, dtype=np.float32)
-    return CANONICAL_RH_TO_BLENDER_WORLD @ rotation @ BLENDER_WORLD_TO_CANONICAL_RH
-
-
-def rotation_blender_world_to_canonical_rh(rotation: np.ndarray) -> np.ndarray:
-    rotation = np.asarray(rotation, dtype=np.float32)
-    return BLENDER_WORLD_TO_CANONICAL_RH @ rotation @ CANONICAL_RH_TO_BLENDER_WORLD
-
-
-def model_pose_canonical_rh_to_blender_world(
-    rotation_canonical: np.ndarray,
-    translation_canonical: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    rotation_blender = rotation_canonical_rh_to_blender_world(rotation_canonical)
-    translation_blender = canonical_rh_to_blender_world_vector(translation_canonical)
-    return rotation_blender.astype(np.float32), translation_blender.astype(np.float32)
-
-
-def model_pose_blender_world_to_canonical_rh(
-    rotation_blender: np.ndarray,
-    translation_blender: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    rotation_canonical = rotation_blender_world_to_canonical_rh(rotation_blender)
-    translation_canonical = blender_world_to_canonical_rh_vector(translation_blender)
-    return rotation_canonical.astype(np.float32), translation_canonical.astype(np.float32)
-
-
-def rotation_canonical_rh_to_blender_obj_import(
-    rotation: np.ndarray,
-    obj_import_to_blender_world: np.ndarray,
-) -> np.ndarray:
-    rotation = np.asarray(rotation, dtype=np.float32)
-    obj_import_to_blender_world = np.asarray(obj_import_to_blender_world, dtype=np.float32)
-    return (
-        CANONICAL_RH_TO_BLENDER_WORLD
-        @ rotation
-        @ MODEL_INPUT_TO_CANONICAL_RH_BASIS
-        @ obj_import_to_blender_world.T
-    ).astype(np.float32)
-
-
-def rotation_canonical_rh_to_blender_default_obj_import(rotation: np.ndarray) -> np.ndarray:
-    return rotation_canonical_rh_to_blender_obj_import(
-        rotation,
-        FBX_CONVERT_OBJ_IMPORT_TO_BLENDER_WORLD,
-    )
 
 
 def compute_front_view_extents(points: np.ndarray) -> dict:

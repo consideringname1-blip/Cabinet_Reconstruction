@@ -36,6 +36,7 @@ import numpy as np
 from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 
+from coordinate_systems import OPENCV_CAMERA_TO_CANONICAL_RH_BASIS
 from object_alignment_common import (
     build_depth_pointcloud,
     build_depth_border_keep_mask,
@@ -621,7 +622,7 @@ def build_final_camera_local_rh_debug(
 
 
 
-FOUNDATIONPOSE_CV_TO_CANONICAL_RH_BASIS = np.diag([1.0, -1.0, -1.0]).astype(np.float32)
+FOUNDATIONPOSE_CV_TO_CANONICAL_RH_BASIS = np.asarray(OPENCV_CAMERA_TO_CANONICAL_RH_BASIS, dtype=np.float32)
 
 
 def _parse_foundationpose_stdout(stdout: str) -> dict:

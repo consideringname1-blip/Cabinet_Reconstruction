@@ -10,9 +10,10 @@ from config import (
     SKIP_ICP_POSE_USE_CAMERA_ROLL,
     SKIP_ICP_POSE_USE_CAMERA_YAW,
 )
-from object_alignment_common import (
+from coordinate_systems import (
     FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY,
     RUNTIME_AXIS_CONTRACT,
+    convert_hololens_pv_pose_matrix_to_unity_pose_components,
     model_pose_canonical_rh_to_unity_camera,
 )
 from pose_math import (
@@ -22,7 +23,6 @@ from pose_math import (
 )
 from stage_common import load_stage_task
 from task_json import save_task_json
-from unity_coordinate_utils import convert_hololens_pv_pose_matrix_to_unity_pose_components
 
 
 def resolve_runtime_local_to_unity_rotation() -> np.ndarray:

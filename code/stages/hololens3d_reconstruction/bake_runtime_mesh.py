@@ -26,30 +26,14 @@ from config import (
 from model_generation_common import MODEL_STAGE_SAM3D_OBJECTS, ModelFileSource, resolve_model_generation_source
 from stage_common import parse_blender_stage_args
 from task_json import load_task_json, resolve_task_json_path, save_task_json
-
-
-RUNTIME_AXIS_CONTRACT = "unity_local_z_forward_y_up"
-SOURCE_AXIS_CONTRACT = "model_input_minus_x_forward_z_up"
-MODEL_INPUT_TO_UNITY_RUNTIME_LOCAL = [
-    [0.0, 1.0, 0.0],
-    [0.0, 0.0, 1.0],
-    [-1.0, 0.0, 0.0],
-]
+from coordinate_systems import (
+    runtime_axis_transform_info,
+    transform_model_input_to_unity_runtime,
+)
 
 
 def _axis_transform_info(stats: dict | None = None) -> dict:
-    info = {
-        "axis_contract": RUNTIME_AXIS_CONTRACT,
-        "source_axis_contract": SOURCE_AXIS_CONTRACT,
-        "axis_transform": "model_input_to_unity_runtime_local",
-        "axis_transform_matrix": MODEL_INPUT_TO_UNITY_RUNTIME_LOCAL,
-        "axis_transform_expression": "runtime_xyz = [source_y, source_z, -source_x]",
-        "axis_transform_determinant": -1.0,
-        "face_winding_flipped_for_axis_transform": True,
-    }
-    if stats:
-        info["axis_transform_stats"] = stats
-    return info
+    return runtime_axis_transform_info(stats)
 
 
 def _split_obj_comment(line: str) -> tuple[str, str]:
@@ -64,8 +48,7 @@ def _format_obj_float(value: float) -> str:
 
 
 def _transform_model_input_to_unity_runtime(values: list[float]) -> list[float]:
-    x, y, z = values
-    return [y, z, -x]
+    return transform_model_input_to_unity_runtime(values)
 
 
 def _normalize_runtime_obj_axes(obj_path: Path) -> dict:
