@@ -13,3 +13,6 @@
 [submodule "code/reconstruction/sam-3d-objects"]
 	path = code/reconstruction/sam-3d-objects
 	url = https://github.com/facebookresearch/sam-3d-objects.git
+[submodule "code/reconstruction/hl2ss"]
+	path = code/reconstruction/hl2ss
+	url = https://github.com/jdibenes/hl2ss.git
