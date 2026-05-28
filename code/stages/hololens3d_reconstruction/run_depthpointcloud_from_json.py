@@ -9,13 +9,12 @@ from config import (
 import numpy as np
 
 from object_alignment_common import (
-    MAX_DEPTH_MM,
-    MIN_DEPTH_MM,
     build_depth_border_keep_mask,
     build_depth_pointcloud,
     build_depth_pointcloud_from_valid_mask,
     compute_front_view_extents,
     compute_real_measurements,
+    depth_limits_for_task,
     read_depth_image,
     read_mask,
     resolve_task_paths,
@@ -39,13 +38,30 @@ def main(argv: list[str]) -> int:
 
     mask_bool = read_mask(paths["mask_path"])
     depth_mm = read_depth_image(paths["depth_path"])
+    depth_limits = depth_limits_for_task(task)
 
-    measurements = compute_real_measurements(mask_bool, depth_mm, k)
-    _export_points, canonical_points = build_depth_pointcloud(depth_mm, mask_bool, k)
+    measurements = compute_real_measurements(
+        mask_bool,
+        depth_mm,
+        k,
+        min_depth_mm=depth_limits.min_depth_mm,
+        max_depth_mm=depth_limits.max_reliable_depth_mm,
+    )
+    _export_points, canonical_points = build_depth_pointcloud(
+        depth_mm,
+        mask_bool,
+        k,
+        min_depth_mm=depth_limits.min_depth_mm,
+        max_depth_mm=depth_limits.max_reliable_depth_mm,
+    )
     raw_point_count = int(len(canonical_points))
     extents = compute_front_view_extents(canonical_points)
 
-    valid_all = mask_bool & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
+    valid_all = (
+        mask_bool
+        & (depth_mm >= depth_limits.min_depth_mm)
+        & (depth_mm <= depth_limits.max_reliable_depth_mm)
+    )
     depth_keep_mask = build_depth_border_keep_mask(mask_bool)
     valid_cropped = valid_all & ~depth_keep_mask
     discarded_points_export, _discarded_points_canonical = build_depth_pointcloud_from_valid_mask(
@@ -61,6 +77,9 @@ def main(argv: list[str]) -> int:
     )
 
     depthpointcloud = {
+        "depth_sensor": depth_limits.sensor,
+        "min_depth_mm": int(depth_limits.min_depth_mm),
+        "max_reliable_depth_mm": int(depth_limits.max_reliable_depth_mm),
         "width_pointcloud_units": extents["width_units"],
         "height_pointcloud_units": extents["height_units"],
         "depth_pointcloud_units": extents["depth_units"],

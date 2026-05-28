@@ -9,15 +9,14 @@ import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
 
 from config import (
-    AHAT_ENABLE_UPLOAD_GUARD,
-    AHAT_MAX_RELIABLE_DEPTH_MM,
-    AHAT_MAX_UPLOAD_PNG_BYTES,
-    AHAT_MIN_DEPTH_MM,
-    AHAT_MIN_USABLE_DEPTH_PIXELS,
-    AHAT_SENSOR_NAME,
     BLENDER_FBX_DIR,
     FOLDER_MAP,
     UPLOAD_FOLDER,
+)
+from depth_camera_config import (
+    DEPTH_SENSOR_AHAT,
+    get_depth_sensor_limits,
+    normalize_depth_sensor_name,
 )
 from task_worker import (
     create_task,
@@ -234,7 +233,8 @@ def _build_model_bounds_response(row: dict, hit_result: dict | None = None) -> d
     return model
 
 
-def _sanitize_ahat_depth_png(depth_png_bytes: bytes) -> tuple[bytes, dict]:
+def _sanitize_depth_png(depth_png_bytes: bytes, sensor_name: str) -> tuple[bytes, dict]:
+    limits = get_depth_sensor_limits(sensor_name)
     depth_png = np.frombuffer(depth_png_bytes, dtype=np.uint8)
     depth_image = cv2.imdecode(depth_png, cv2.IMREAD_UNCHANGED)
     if depth_image is None:
@@ -244,32 +244,36 @@ def _sanitize_ahat_depth_png(depth_png_bytes: bytes) -> tuple[bytes, dict]:
     if depth_image.ndim != 2:
         raise ValueError(f"depth_image must be a single-channel image, got shape {depth_image.shape}")
 
-    valid_mask = (depth_image >= AHAT_MIN_DEPTH_MM) & (depth_image <= AHAT_MAX_RELIABLE_DEPTH_MM)
+    valid_mask = (
+        (depth_image >= limits.min_depth_mm)
+        & (depth_image <= limits.max_reliable_depth_mm)
+    )
     sanitized_depth = np.where(valid_mask, depth_image, 0).astype(np.uint16)
 
     encoded_ok, encoded_png = cv2.imencode(".png", sanitized_depth)
     if not encoded_ok:
-        raise ValueError("Failed to re-encode sanitized AHAT depth image")
+        raise ValueError(f"Failed to re-encode sanitized {limits.sensor} depth image")
 
     stats = {
+        "sensor": limits.sensor,
         "width": int(depth_image.shape[1]),
         "height": int(depth_image.shape[0]),
         "raw_nonzero_pixels": int(np.count_nonzero(depth_image)),
         "valid_depth_pixels": int(valid_mask.sum()),
         "clipped_depth_pixels": int(np.count_nonzero(depth_image) - valid_mask.sum()),
-        "min_depth_mm": int(AHAT_MIN_DEPTH_MM),
-        "max_reliable_depth_mm": int(AHAT_MAX_RELIABLE_DEPTH_MM),
+        "min_depth_mm": int(limits.min_depth_mm),
+        "max_reliable_depth_mm": int(limits.max_reliable_depth_mm),
         "input_png_bytes": int(len(depth_png_bytes)),
         "sanitized_png_bytes": int(encoded_png.size),
     }
 
-    if AHAT_ENABLE_UPLOAD_GUARD and stats["valid_depth_pixels"] < int(AHAT_MIN_USABLE_DEPTH_PIXELS):
+    if limits.upload_guard_enabled and stats["valid_depth_pixels"] < int(limits.min_usable_depth_pixels):
         raise ValueError(
-            f"AHAT depth is not usable. Move the object closer and keep it within {AHAT_MAX_RELIABLE_DEPTH_MM / 1000.0:.1f} m."
+            f"{limits.sensor} depth is not usable. Keep the object within {limits.max_reliable_depth_mm / 1000.0:.1f} m."
         )
-    if AHAT_ENABLE_UPLOAD_GUARD and stats["sanitized_png_bytes"] > int(AHAT_MAX_UPLOAD_PNG_BYTES):
+    if limits.upload_guard_enabled and stats["sanitized_png_bytes"] > int(limits.max_upload_png_bytes):
         raise ValueError(
-            f"AHAT depth is still too large after near-range filtering. Move the object closer and keep it within {AHAT_MAX_RELIABLE_DEPTH_MM / 1000.0:.1f} m."
+            f"{limits.sensor} depth is still too large after range filtering. Keep the object within {limits.max_reliable_depth_mm / 1000.0:.1f} m."
         )
 
     return encoded_png.tobytes(), stats
@@ -522,9 +526,7 @@ def generate_model():
             dj = _parse_json_field("DepthCameraJ")
             sbj = _parse_json_field("SelectionBoxJ")
 
-            requested_sensor = str(dj.get("sensor") or AHAT_SENSOR_NAME).strip().upper()
-            if requested_sensor != AHAT_SENSOR_NAME:
-                raise ValueError(f"Only {AHAT_SENSOR_NAME} depth uploads are supported in this build")
+            requested_sensor = normalize_depth_sensor_name(dj.get("sensor") or DEPTH_SENSOR_AHAT)
 
             top_left = sbj.get("top_left")
             bottom_right = sbj.get("bottom_right")
@@ -561,7 +563,7 @@ def generate_model():
         depth_stats = None
         if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
             depth_png_bytes = _read_upload_file("depth_image")
-            depth_png_bytes, depth_stats = _sanitize_ahat_depth_png(depth_png_bytes)
+            depth_png_bytes, depth_stats = _sanitize_depth_png(depth_png_bytes, requested_sensor)
             depth_path = UPLOAD_FOLDER / f"{base}_depth.png"
             with open(depth_path, "wb") as f:
                 f.write(depth_png_bytes)
@@ -592,7 +594,7 @@ def generate_model():
             out_json["DepthCamera"] = {
                 "name": str(depth_path.name) if depth_path else None,
                 "pose": dj.get("pose") if dj else None,
-                "sensor": AHAT_SENSOR_NAME,
+                "sensor": requested_sensor,
                 "stats": depth_stats,
             }
             out_json["SelectionBox"] = {

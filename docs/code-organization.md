@@ -71,6 +71,9 @@
 `code/coordinate_systems.py`
 : 坐标系定义和转换唯一入口。不要在业务 stage 里散写新的轴翻转矩阵；新增坐标边界时先扩展这个文件，并同步更新 `docs/coordinate-systems.md`。
 
+`code/depth_camera_config.py`
+: HoloLens 深度相机类型、别名和有效深度范围的唯一入口。AHAT/Long Throw 的上传过滤和服务器配准都应从这里读取 sensor 约定。
+
 `code/object_alignment_common.py`
 : 物体对齐链路的共享几何、图像、mesh 工具。只有多个对齐/姿态 stage 共用的逻辑才放这里。
 

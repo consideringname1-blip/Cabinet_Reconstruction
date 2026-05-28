@@ -6,14 +6,27 @@ import cv2
 
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).resolve().parents[1]))
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 from config import (
-    AHAT_MAX_RELIABLE_DEPTH_MM,
-    AHAT_MIN_DEPTH_MM,
     CALIBRATION_DIR,
     UPLOAD_FOLDER,
     HOLOLENS2_OUTPUT_DEPTH_IMAGES,
 )
+from depth_camera_config import (
+    DEPTH_SENSOR_AHAT,
+    DEPTH_SENSOR_LONGTHROW,
+    get_depth_sensor_limits,
+    normalize_depth_sensor_name,
+)
+
+
+def depth_sensor_stream_port(sensor_name: str):
+    sensor_name = normalize_depth_sensor_name(sensor_name)
+    if sensor_name == DEPTH_SENSOR_AHAT:
+        return hl2ss.StreamPort.RM_DEPTH_AHAT
+    if sensor_name == DEPTH_SENSOR_LONGTHROW:
+        return hl2ss.StreamPort.RM_DEPTH_LONGTHROW
+    raise ValueError(f"Unsupported depth sensor: {sensor_name}")
 
 def get_homogeneous_component(array):
     return array[..., -1, np.newaxis]
@@ -40,9 +53,14 @@ def DepthConvertToRGB(json_path,calibration_base_path = CALIBRATION_DIR,data_bas
     
     calibration_path = calibration_base_path / data["device"]["ip"]
 
-    calibration_lt = hl2ss_3dcv.get_calibration_rm2(calibration_path, hl2ss.StreamPort.RM_DEPTH_AHAT)
-    uv2xy = calibration_lt.uv2xy
-    xy1, scale = hl2ss_3dcv.rm_depth_compute_rays(uv2xy, calibration_lt.scale)
+    depth_camera_info = data.get("DepthCamera") or {}
+    depth_sensor = normalize_depth_sensor_name(depth_camera_info.get("sensor"))
+    depth_limits = get_depth_sensor_limits(depth_sensor)
+    depth_stream_port = depth_sensor_stream_port(depth_sensor)
+
+    calibration_depth = hl2ss_3dcv.get_calibration_rm2(calibration_path, depth_stream_port)
+    uv2xy = calibration_depth.uv2xy
+    xy1, scale = hl2ss_3dcv.rm_depth_compute_rays(uv2xy, calibration_depth.scale)
     # print('xy1: %s, scale: %s' % (xy1, scale))
 
     xy1_o = xy1[:-1, :-1, :]
@@ -53,7 +71,7 @@ def DepthConvertToRGB(json_path,calibration_base_path = CALIBRATION_DIR,data_bas
     pv_extrinsics = np.eye(4, 4, dtype=np.float32)
 
     # Main Loop ---------------------------------------------------------------
-    depth_path = data_base_path / data["DepthCamera"]["name"]
+    depth_path = data_base_path / depth_camera_info["name"]
 
     # Preprocess frames ---------------------------------------------------
     depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
@@ -73,7 +91,7 @@ def DepthConvertToRGB(json_path,calibration_base_path = CALIBRATION_DIR,data_bas
     
     color_intrinsics, color_extrinsics = hl2ss_3dcv.pv_fix_calibration(pv_intrinsics, pv_extrinsics)
 
-    lt_to_world    = np.linalg.inv(calibration_lt.extrinsics) @ np.array(data["DepthCamera"]["pose"]).reshape(4, 4)
+    lt_to_world    = np.linalg.inv(calibration_depth.extrinsics) @ np.array(depth_camera_info["pose"]).reshape(4, 4)
     world_to_pv    = np.linalg.inv(np.array(data["PVCamera"]["pose"]).reshape(4, 4)) @ color_extrinsics
     pv_to_pv_image = color_intrinsics
 
@@ -124,13 +142,17 @@ def DepthConvertToRGB(json_path,calibration_base_path = CALIBRATION_DIR,data_bas
     print('Depth type: %s, shape : %s, max : %s' % (type(pv_z), str(pv_z.shape), np.max(pv_z)))
 
     align_depth = (pv_z * 1000).astype(np.uint16)
-    valid_align_mask = (align_depth >= AHAT_MIN_DEPTH_MM) & (align_depth <= AHAT_MAX_RELIABLE_DEPTH_MM)
+    valid_align_mask = (
+        (align_depth >= depth_limits.min_depth_mm)
+        & (align_depth <= depth_limits.max_reliable_depth_mm)
+    )
     align_depth = np.where(valid_align_mask, align_depth, 0).astype(np.uint16)
     align_depth_name = f"{data['task_name']}_align_depth.png"
     data["DepthCamera"]["align_depth_name"] = align_depth_name
     data["DepthCamera"]["align_depth_stats"] = {
-        "min_depth_mm": int(AHAT_MIN_DEPTH_MM),
-        "max_reliable_depth_mm": int(AHAT_MAX_RELIABLE_DEPTH_MM),
+        "sensor": depth_sensor,
+        "min_depth_mm": int(depth_limits.min_depth_mm),
+        "max_reliable_depth_mm": int(depth_limits.max_reliable_depth_mm),
         "valid_depth_pixels": int(valid_align_mask.sum()),
     }
     cv2.imwrite(os.path.join(HOLOLENS2_OUTPUT_DEPTH_IMAGES, align_depth_name), align_depth)

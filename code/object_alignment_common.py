@@ -9,14 +9,17 @@ import cv2
 import numpy as np
 
 from config import (
-    AHAT_MAX_RELIABLE_DEPTH_MM,
-    AHAT_MIN_DEPTH_MM,
     BLENDER_BIN,
     ICP_DEPTH_BORDER_CROP_RATIO,
     ICP_IGNORE_OCCLUDED_MODEL_POINTS,
     OBJECT_ALIGNMENT_OUTPUT_ROOT,
     SAM3_OUTPUT_ROOT,
     UPLOAD_FOLDER,
+)
+from depth_camera_config import (
+    DEPTH_SENSOR_AHAT,
+    depth_sensor_limits_for_task,
+    get_depth_sensor_limits,
 )
 from model_generation_common import resolve_model_generation_source
 from task_json import (
@@ -64,8 +67,13 @@ from coordinate_systems import (
 )
 
 
-MIN_DEPTH_MM = AHAT_MIN_DEPTH_MM
-MAX_DEPTH_MM = AHAT_MAX_RELIABLE_DEPTH_MM
+DEFAULT_DEPTH_LIMITS = get_depth_sensor_limits(DEPTH_SENSOR_AHAT)
+MIN_DEPTH_MM = DEFAULT_DEPTH_LIMITS.min_depth_mm
+MAX_DEPTH_MM = DEFAULT_DEPTH_LIMITS.max_reliable_depth_mm
+
+
+def depth_limits_for_task(task: dict):
+    return depth_sensor_limits_for_task(task)
 
 
 def ensure_file(path: Path, label: str) -> Path:
@@ -224,7 +232,14 @@ def mask_bbox(mask_bool: np.ndarray) -> tuple[int, int, int, int]:
     return int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())
 
 
-def compute_real_measurements(mask_bool: np.ndarray, depth_mm: np.ndarray, k: np.ndarray) -> dict:
+def compute_real_measurements(
+    mask_bool: np.ndarray,
+    depth_mm: np.ndarray,
+    k: np.ndarray,
+    *,
+    min_depth_mm: int = MIN_DEPTH_MM,
+    max_depth_mm: int = MAX_DEPTH_MM,
+) -> dict:
     fx = float(k[0, 0])
     fy = float(k[1, 1])
     crop_ratio = get_depth_border_crop_ratio()
@@ -237,9 +252,11 @@ def compute_real_measurements(mask_bool: np.ndarray, depth_mm: np.ndarray, k: np
     height_px = y1 - y0 + 1
 
     usable_mask = np.asarray(crop["keep_mask"], dtype=bool)
-    valid_depth = usable_mask & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
+    valid_depth = usable_mask & (depth_mm >= min_depth_mm) & (depth_mm <= max_depth_mm)
     if not np.any(valid_depth):
-        raise ValueError("No mask pixels remain within 20-120 cm after mask-border crop")
+        raise ValueError(
+            f"No mask pixels remain within {min_depth_mm}-{max_depth_mm} mm after mask-border crop"
+        )
 
     mean_depth_m = float(depth_mm[valid_depth].mean()) / 1000.0
     real_width_m = width_px * mean_depth_m / fx
@@ -271,8 +288,11 @@ def build_depth_pointcloud(
     depth_mm: np.ndarray,
     mask_bool: np.ndarray,
     k: np.ndarray,
+    *,
+    min_depth_mm: int = MIN_DEPTH_MM,
+    max_depth_mm: int = MAX_DEPTH_MM,
 ) -> tuple[np.ndarray, np.ndarray]:
-    valid = apply_depth_border_crop(mask_bool) & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
+    valid = apply_depth_border_crop(mask_bool) & (depth_mm >= min_depth_mm) & (depth_mm <= max_depth_mm)
     if not np.any(valid):
         raise ValueError("No valid depth points remain for pointcloud generation after mask-border crop")
     return build_depth_pointcloud_from_valid_mask(depth_mm, valid, k)

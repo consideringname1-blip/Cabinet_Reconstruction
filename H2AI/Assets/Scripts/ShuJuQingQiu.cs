@@ -285,6 +285,10 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             return "shangchuan_ERR_ahat_move_closer";
         }
+        if (isObjectReconstruction && lower.Contains("unsupported depth sensor"))
+        {
+            return "shangchuan_ERR_depth_sensor_unsupported";
+        }
         if (isObjectReconstruction && lower.Contains("only ahat"))
         {
             return "shangchuan_ERR_depth_sensor_not_ahat";
@@ -317,12 +321,27 @@ public class ShuJuQingQiu : MonoBehaviour
 
     public void ShangChuanTuPian()
     {
+        ShangChuanJinJingTuPian();
+    }
+
+    public void ShangChuanJinJingTuPian()
+    {
+        StartObjectReconstructionCapture(DepthSensorType.AHAT);
+    }
+
+    public void ShangChuanYuanJingTuPian()
+    {
+        StartObjectReconstructionCapture(DepthSensorType.LONGTHROW);
+    }
+
+    private void StartObjectReconstructionCapture(DepthSensorType depthSensorType)
+    {
         if (selectionPanelManager != null && selectionPanelManager.IsBusy)
         {
             Game_M.initialize.XianShi("shangchuan_ERR_selection_busy");
             return;
         }
-        StartCoroutine(ShangChuanTuPianCoroutine());
+        StartCoroutine(ShangChuanTuPianCoroutine(depthSensorType));
     }
 
     public void ShangChuanDingWeiMarkTuPian()
@@ -538,16 +557,19 @@ public class ShuJuQingQiu : MonoBehaviour
         request.Send();
         Game_M.initialize.XianShi("generate");
     }
-    private IEnumerator ShangChuanTuPianCoroutine()
+    private IEnumerator ShangChuanTuPianCoroutine(DepthSensorType depthSensorType)
     {
-        Game_M.initialize.XianShi("shangchuan");
+        string requestedDepthSensorName = DP_controler != null
+            ? DP_controler.GetDepthSensorName(depthSensorType)
+            : depthSensorType.ToString();
+        Game_M.initialize.XianShi("shangchuan_" + requestedDepthSensorName);
 
         // ==========================================================
         // 璁惧鐩稿叧淇℃伅
         // ==========================================================
         Game_M.initialize.XianShi("shangchuan_Device");
         bool pvFrozen = PV_controler.FreezeCurrentFrame();
-        bool depthFrozen = DP_controler.FreezeCurrentFrame();
+        bool depthFrozen = DP_controler != null && DP_controler.FreezeCurrentFrame(depthSensorType);
         if (!pvFrozen)
         {
             Game_M.initialize.XianShi("shangchuan_ERR_pv_freeze");
@@ -558,12 +580,8 @@ public class ShuJuQingQiu : MonoBehaviour
             Game_M.initialize.XianShi("shangchuan_ERR_depth_freeze");
             yield break;
         }
-        if (!DP_controler.IsUsingAhatSensor())
-        {
-            Game_M.initialize.XianShi("shangchuan_ERR_depth_sensor_not_ahat");
-            yield break;
-        }
-        if (HoloLensDepthAquirer.EnableAhatUploadGuard && !DP_controler.IsFrozenAhatDepthUsable())
+        bool isAhatCapture = depthSensorType == DepthSensorType.AHAT;
+        if (isAhatCapture && HoloLensDepthAquirer.EnableAhatUploadGuard && !DP_controler.IsFrozenAhatDepthUsable())
         {
             Debug.LogWarning(
                 "[UPLOAD] AHAT depth rejected before upload. valid="
@@ -618,7 +636,7 @@ public class ShuJuQingQiu : MonoBehaviour
             Game_M.initialize.XianShi("shangchuan_ERR_depth_png_empty");
             yield break;
         }
-        if (HoloLensDepthAquirer.EnableAhatUploadGuard && image_dp_P_C_F.Length > HoloLensDepthAquirer.AHATMaxUploadPngBytes)
+        if (isAhatCapture && HoloLensDepthAquirer.EnableAhatUploadGuard && image_dp_P_C_F.Length > HoloLensDepthAquirer.AHATMaxUploadPngBytes)
         {
             Debug.LogWarning(
                 "[UPLOAD] AHAT depth PNG too large after sanitizing. bytes="
@@ -630,7 +648,7 @@ public class ShuJuQingQiu : MonoBehaviour
             yield break;
         }
         float[,] pose_dp_C_F = DP_controler.pose_publish;
-        const string SENSOR_TYPE = "AHAT";
+        string sensorType = DP_controler.GetPublishedDepthSensorName();
         // ==========================================================
         // PV妗嗛€夛紝鍏堝脊鍑烘閫夌獥鍙ｏ紝绛夊緟鐢ㄦ埛纭/鍙栨秷
         // ==========================================================
@@ -698,7 +716,7 @@ public class ShuJuQingQiu : MonoBehaviour
             photoTimeUtc,
             image_dp_P_C_F,
             pose_dp_C_F,
-            SENSOR_TYPE,
+            sensorType,
             boxTL,
             boxBR
         );

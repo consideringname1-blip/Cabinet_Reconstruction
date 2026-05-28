@@ -42,11 +42,10 @@ from object_alignment_common import (
     build_depth_border_keep_mask,
     build_depth_pointcloud_from_valid_mask,
     compute_front_view_extents,
+    depth_limits_for_task,
     extract_front_visible_points,
     MODEL_INPUT_TO_CANONICAL_RH_BASIS,
     model_pose_canonical_rh_to_blender_world,
-    MAX_DEPTH_MM,
-    MIN_DEPTH_MM,
     obj_vertices_to_canonical_rh,
     object_alignment_output_path,
     read_depth_image,
@@ -1143,12 +1142,19 @@ def main(argv: list[str]) -> int:
 
     mask_bool = read_mask(paths["mask_path"])
     depth_mm = read_depth_image(paths["depth_path"])
+    depth_limits = depth_limits_for_task(task)
     pointcloud_points_export, pointcloud_points_unity = build_depth_pointcloud(
         depth_mm,
         mask_bool,
         k,
+        min_depth_mm=depth_limits.min_depth_mm,
+        max_depth_mm=depth_limits.max_reliable_depth_mm,
     )
-    valid_all = mask_bool & (depth_mm >= MIN_DEPTH_MM) & (depth_mm <= MAX_DEPTH_MM)
+    valid_all = (
+        mask_bool
+        & (depth_mm >= depth_limits.min_depth_mm)
+        & (depth_mm <= depth_limits.max_reliable_depth_mm)
+    )
     discarded_mask = valid_all & ~build_depth_border_keep_mask(mask_bool)
     discarded_points_export, _discarded_points_canonical = build_depth_pointcloud_from_valid_mask(
         depth_mm,
