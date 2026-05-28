@@ -7,7 +7,7 @@ HOLOLENS2_HOST = "10.40.1.132"
 IS_RUN_FLASK_SERVER = True
 # Model generation backend for the shared model-generation stage slot.
 # Use "sam3d_objects" or "instantmesh".
-MODEL_GENERATION_BACKEND = "sam3d_objects"
+MODEL_GENERATION_BACKEND = "instantmesh"
 
 # Depth / alignment tuning
 # Fraction cropped inward from the SAM3 mask periphery before depth->pointcloud
