@@ -74,14 +74,13 @@ p_parent = R_parent_child * p_child + t_parent_child
 
 ### `unity_runtime_local`
 
-- Handedness: left-handed
-- `+X`: right
-- `+Y`: up
-- `+Z`: forward
-- Used by: RuntimeMesh OBJ/FBX assets consumed by Unity
-- Conversion from `model_input`: `runtime_xyz = [source_y, source_z, -source_x]`
-- RuntimeMesh flips face winding after this transform because the transform
-  changes handedness.
+- RuntimeMesh preserves the generated OBJ/model-input local axes.
+- Used by: RuntimeMesh OBJ/FBX assets consumed by Unity/TriLib.
+- Conversion from `model_input`: `runtime_xyz = source_xyz`.
+- Pose output applies `RUNTIME_LOCAL_TO_UNITY_POSE_ROTATION` so downloaded
+  models keep the same HoloLens orientation as the pre-refactor pipeline.
+- Face winding is not flipped at this stage because no handedness-changing
+  vertex transform is applied.
 
 ### `blender_world`
 
@@ -121,8 +120,8 @@ p_parent = R_parent_child * p_child + t_parent_child
   boundary.
 - `code/stages/hololens3d_reconstruction/run_pose_from_json.py`: converts the
   solved camera-local `canonical_rh` pose to Unity/HoloLens output.
-- `code/stages/hololens3d_reconstruction/bake_runtime_mesh.py`: bakes generated
-  model axes into `unity_runtime_local` before Unity loads the mesh.
+- `code/stages/hololens3d_reconstruction/bake_runtime_mesh.py`: builds the
+  runtime OBJ/MTL/texture while preserving generated model axes.
 - `code/stages/hololens_aruco_reference/aruco_common.py`: converts OpenCV ArUco
   marker poses and HoloLens PV poses at the boundary.
 - `code/server_api.py`: converts raw uploaded HoloLens PV matrices before

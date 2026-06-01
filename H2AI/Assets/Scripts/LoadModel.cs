@@ -142,14 +142,7 @@ public class LoadModel : MonoBehaviour
         }
 
         AddGameObjectCollider(game);
-        if (game.GetComponent<ObjectManipulator>() == null)
-        {
-            game.AddComponent<ObjectManipulator>();
-        }
-        if (game.GetComponent<NearInteractionGrabbable>() == null)
-        {
-            game.AddComponent<NearInteractionGrabbable>();
-        }
+        DisableRuntimeModelManipulation(game);
 
         if (manager == null)
         {
@@ -226,6 +219,20 @@ public class LoadModel : MonoBehaviour
         if (handler != null)
         {
             handler.Invoke(instance, success);
+        }
+    }
+
+
+    private static void DisableRuntimeModelManipulation(GameObject gameObject)
+    {
+        foreach (ObjectManipulator manipulator in gameObject.GetComponentsInChildren<ObjectManipulator>(true))
+        {
+            Destroy(manipulator);
+        }
+
+        foreach (NearInteractionGrabbable grabbable in gameObject.GetComponentsInChildren<NearInteractionGrabbable>(true))
+        {
+            Destroy(grabbable);
         }
     }
 

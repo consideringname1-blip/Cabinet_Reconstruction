@@ -13,6 +13,7 @@ from config import (
 from coordinate_systems import (
     FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY,
     RUNTIME_AXIS_CONTRACT,
+    RUNTIME_LOCAL_TO_UNITY_POSE_ROTATION,
     convert_hololens_pv_pose_matrix_to_unity_pose_components,
     model_pose_canonical_rh_to_unity_camera,
 )
@@ -26,10 +27,12 @@ from task_json import save_task_json
 
 
 def resolve_runtime_local_to_unity_rotation() -> np.ndarray:
-    # RuntimeMesh now bakes generated model axes into Unity's runtime local
-    # contract (+Z forward, +Y up). Pose composition therefore should not carry
-    # any model-axis compatibility correction.
-    return np.asarray(FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY, dtype=np.float64)
+    # Keep the pre-coordinate-refactor runtime local correction from d6be0ff.
+    # RuntimeMesh preserves generated model axes, so pose composition still has
+    # to rotate that local basis into the Unity-facing object transform.
+    base = np.asarray(FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY, dtype=np.float64)
+    legacy_remap = np.asarray(RUNTIME_LOCAL_TO_UNITY_POSE_ROTATION, dtype=np.float64)
+    return base @ legacy_remap
 
 
 def _normalize_vector(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
@@ -165,8 +168,8 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     runtime_local_to_unity = resolve_runtime_local_to_unity_rotation()
 
     world_position = (R_cam_raw @ local_position) + t_cam
-    # Compose only the solved pose; generated runtime assets already use
-    # Unity's +Z-forward, +Y-up local axis contract.
+    # Compose the solved pose with the legacy runtime local-axis correction so
+    # the loaded model orientation matches the pre-refactor HoloLens result.
     world_rotation = R_cam @ local_rotation @ runtime_local_to_unity
     det_world = float(np.linalg.det(world_rotation))
     if not np.isfinite(det_world) or det_world <= 0.0:

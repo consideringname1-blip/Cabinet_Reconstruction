@@ -47,12 +47,12 @@ COORDINATE_SYSTEMS = {
         "usage": "Generated OBJ model vertices before runtime-axis baking.",
     },
     "unity_runtime_local": {
-        "handedness": "left",
-        "x": "right",
-        "y": "up",
-        "z": "forward",
-        "forward": "+Z",
-        "usage": "RuntimeMesh/FBX local asset contract consumed by Unity.",
+        "handedness": "right",
+        "x": "generated OBJ X",
+        "y": "generated OBJ Y",
+        "z": "generated OBJ Z",
+        "forward": "legacy pose remap",
+        "usage": "RuntimeMesh/FBX local asset contract; pose stage remaps this basis for Unity.",
     },
     "blender_world": {
         "handedness": "right",
@@ -122,12 +122,17 @@ MODEL_INPUT_TO_CANONICAL_RH_BASIS = np.array(
 )
 CANONICAL_RH_TO_MODEL_INPUT_BASIS = MODEL_INPUT_TO_CANONICAL_RH_BASIS.T
 
-RUNTIME_AXIS_CONTRACT = "unity_local_z_forward_y_up"
 MODEL_INPUT_AXIS_CONTRACT = "model_input_minus_x_forward_z_up"
+RUNTIME_AXIS_CONTRACT = "legacy_model_input_local_pose_remapped"
 SOURCE_AXIS_CONTRACT = MODEL_INPUT_AXIS_CONTRACT
-MODEL_INPUT_TO_UNITY_RUNTIME_LOCAL = (
-    np.asarray(CANONICAL_RH_TO_UNITY_BASIS, dtype=np.float32)
-    @ MODEL_INPUT_TO_CANONICAL_RH_BASIS
+MODEL_INPUT_TO_UNITY_RUNTIME_LOCAL = np.eye(3, dtype=np.float32)
+RUNTIME_LOCAL_TO_UNITY_POSE_ROTATION = np.array(
+    [
+        [0.0, 1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [1.0, 0.0, 0.0],
+    ],
+    dtype=np.float32,
 )
 
 # Blender import/export axis declarations.
@@ -161,8 +166,9 @@ BLENDER_WORLD_TO_FBX_EXPORT_LOCAL = np.array(
     dtype=np.float32,
 )
 
-# RuntimeMesh now bakes generated model-input axes into the Unity runtime local
-# asset contract. Runtime OBJ/FBX vertices are already final local coordinates.
+# RuntimeMesh preserves the generated model-input axes. The pose stage applies
+# RUNTIME_LOCAL_TO_UNITY_POSE_ROTATION so the final loaded model matches the
+# pre-coordinate-refactor HoloLens orientation.
 MODEL_INPUT_TO_FBX_RUNTIME_LOCAL = np.eye(3, dtype=np.float32)
 FBX_RUNTIME_LOCAL_TO_MODEL_INPUT = MODEL_INPUT_TO_FBX_RUNTIME_LOCAL.T
 FBX_RUNTIME_LOCAL_TO_UNITY_BASIS = np.eye(3, dtype=np.float32)
@@ -503,18 +509,18 @@ def rotation_canonical_rh_to_blender_default_obj_import(rotation: np.ndarray) ->
 
 def transform_model_input_to_unity_runtime(values: list[float] | tuple[float, float, float] | np.ndarray) -> list[float]:
     x, y, z = [float(v) for v in values]
-    return [y, z, -x]
+    return [x, y, z]
 
 
 def runtime_axis_transform_info(stats: dict | None = None) -> dict:
     info = {
         "axis_contract": RUNTIME_AXIS_CONTRACT,
         "source_axis_contract": SOURCE_AXIS_CONTRACT,
-        "axis_transform": "model_input_to_unity_runtime_local",
+        "axis_transform": "preserve_model_input_axes",
         "axis_transform_matrix": MODEL_INPUT_TO_UNITY_RUNTIME_LOCAL.astype(float).tolist(),
-        "axis_transform_expression": "runtime_xyz = [source_y, source_z, -source_x]",
-        "axis_transform_determinant": -1.0,
-        "face_winding_flipped_for_axis_transform": True,
+        "axis_transform_expression": "runtime_xyz = source_xyz",
+        "axis_transform_determinant": 1.0,
+        "face_winding_flipped_for_axis_transform": False,
     }
     if stats:
         info["axis_transform_stats"] = stats

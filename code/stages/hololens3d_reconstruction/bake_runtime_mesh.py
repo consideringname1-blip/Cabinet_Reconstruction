@@ -26,74 +26,7 @@ from config import (
 from model_generation_common import MODEL_STAGE_SAM3D_OBJECTS, ModelFileSource, resolve_model_generation_source
 from stage_common import parse_blender_stage_args
 from task_json import load_task_json, resolve_task_json_path, save_task_json
-from coordinate_systems import (
-    runtime_axis_transform_info,
-    transform_model_input_to_unity_runtime,
-)
 
-
-def _axis_transform_info(stats: dict | None = None) -> dict:
-    return runtime_axis_transform_info(stats)
-
-
-def _split_obj_comment(line: str) -> tuple[str, str]:
-    if "#" not in line:
-        return line, ""
-    body, comment = line.split("#", 1)
-    return body.rstrip(), f" #" + comment.rstrip()
-
-
-def _format_obj_float(value: float) -> str:
-    return f"{float(value):.9g}"
-
-
-def _transform_model_input_to_unity_runtime(values: list[float]) -> list[float]:
-    return transform_model_input_to_unity_runtime(values)
-
-
-def _normalize_runtime_obj_axes(obj_path: Path) -> dict:
-    if not obj_path.is_file():
-        raise FileNotFoundError(f"Runtime mesh obj not found: {obj_path}")
-
-    transformed_vertices = 0
-    transformed_normals = 0
-    rewound_faces = 0
-    output_lines = []
-    for raw_line in obj_path.read_text(encoding="utf-8").splitlines():
-        body, comment = _split_obj_comment(raw_line)
-        tokens = body.split()
-        if not tokens:
-            output_lines.append(raw_line.rstrip())
-            continue
-
-        if tokens[0] in {"v", "vn"} and len(tokens) >= 4:
-            xyz = [float(tokens[1]), float(tokens[2]), float(tokens[3])]
-            transformed = _transform_model_input_to_unity_runtime(xyz)
-            suffix = tokens[4:]
-            output_lines.append(
-                " ".join([tokens[0], *(_format_obj_float(v) for v in transformed), *suffix]) + comment
-            )
-            if tokens[0] == "v":
-                transformed_vertices += 1
-            else:
-                transformed_normals += 1
-            continue
-
-        if tokens[0] == "f" and len(tokens) > 3:
-            # The axis bake changes handedness, so face winding must be reversed
-            # to keep normals and back-face culling consistent after import.
-            output_lines.append(" ".join(["f", *reversed(tokens[1:])]) + comment)
-            rewound_faces += 1
-            continue
-
-        output_lines.append(raw_line.rstrip())
-
-    obj_path.write_text("\n".join(output_lines) + "\n", encoding="utf-8")
-    return {
-        "transformed_vertices": transformed_vertices,
-        "transformed_normals": transformed_normals,
-        "rewound_faces": rewound_faces,
-    }
 
 def _ratio_label(ratio: float) -> str:
     return f"{int(round(float(ratio) * 100)):02d}pct"
@@ -253,11 +186,8 @@ def _reuse_runtime_ready_sam3d_mesh(
     shutil.copy2(source_mtl, output_mtl)
     shutil.copy2(source_texture, output_texture)
     _fix_mtl_texture(output_mtl, output_texture.name)
-    axis_stats = _normalize_runtime_obj_axes(output_obj)
-
     postprocess = source.payload.get("postprocess") if isinstance(source.payload.get("postprocess"), dict) else {}
     runtime_mesh = {
-        **_axis_transform_info(axis_stats),
         "mesh": output_obj.name,
         "mtl": output_mtl.name,
         "image": output_texture.name,
@@ -317,7 +247,6 @@ def build_runtime_mesh_from_json(json_path: Path) -> dict:
     _bake_texture(high, low, output_texture)
     _export_obj(low, output_obj)
     _fix_mtl_texture(output_mtl, output_texture.name)
-    axis_stats = _normalize_runtime_obj_axes(output_obj)
     output_vertices, output_faces = _count_mesh(low)
 
     for output_path, label in (
@@ -328,7 +257,6 @@ def build_runtime_mesh_from_json(json_path: Path) -> dict:
         ensure_file(output_path, label)
 
     runtime_mesh = {
-        **_axis_transform_info(axis_stats),
         "mesh": output_obj.name,
         "mtl": output_mtl.name,
         "image": output_texture.name,
