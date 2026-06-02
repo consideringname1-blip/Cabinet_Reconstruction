@@ -3,8 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import socket
 import sys
+import traceback
 from pathlib import Path
+from typing import Any
 
 import cv2
 import imageio.v2 as imageio
@@ -131,67 +134,194 @@ def _read_mask(path: Path) -> np.ndarray:
     return np.ascontiguousarray(mask > 0)
 
 
-def main() -> int:
+WORKER_RESPONSE_ENCODING = "utf-8"
+
+
+class FoundationPoseAlignmentRunner:
+    def __init__(self) -> None:
+        (
+            self.FoundationPose,
+            self.PoseRefinePredictor,
+            self.ScorePredictor,
+            self.dr,
+            self.set_logging_format,
+            self.set_seed,
+        ) = _load_foundationpose_modules()
+        _install_foundationpose_runtime_patches()
+        import torch
+
+        self.torch = torch
+        self.set_logging_format()
+        self.set_seed(0)
+        self.cuda_available = bool(torch.cuda.is_available())
+        self.torch_device = "cuda" if self.cuda_available else "cpu"
+        self.torch_device_name = torch.cuda.get_device_name(0) if self.cuda_available else ""
+        self.scorer = self.ScorePredictor()
+        self.refiner = self.PoseRefinePredictor()
+        self.glctx = self.dr.RasterizeCudaContext()
+
+    def run_alignment(self, request: dict[str, Any]) -> dict[str, Any]:
+        mesh_file = Path(str(request["mesh_file"]))
+        color_file = Path(str(request["color_file"]))
+        depth_file = Path(str(request["depth_file"]))
+        mask_file = Path(str(request["mask_file"]))
+        model_scale = float(request["model_scale"])
+        iteration = int(request.get("iteration") or 5)
+        debug_dir = str(request.get("debug_dir") or "/tmp/foundationpose_alignment_debug")
+
+        k_value = request.get("k")
+        if k_value is None:
+            k_value = json.loads(str(request["k_json"]))
+        k = np.asarray(k_value, dtype=np.float32).reshape(3, 3)
+
+        mesh = trimesh.load(mesh_file)
+        mesh.apply_scale(model_scale)
+        mesh.vertices = np.asarray(mesh.vertices, dtype=np.float32)
+        if mesh.vertex_normals is None or len(mesh.vertex_normals) == 0:
+            mesh.vertex_normals
+        vertex_normals = np.asarray(mesh.vertex_normals, dtype=np.float32)
+
+        color = _read_color(color_file)
+        depth = _read_depth_m(depth_file)
+        mask = _read_mask(mask_file)
+
+        if hasattr(self.refiner, "last_trans_update"):
+            self.refiner.last_trans_update = None
+        if hasattr(self.refiner, "last_rot_update"):
+            self.refiner.last_rot_update = None
+
+        estimator = self.FoundationPose(
+            model_pts=np.asarray(mesh.vertices, dtype=np.float32),
+            model_normals=vertex_normals,
+            mesh=mesh,
+            scorer=self.scorer,
+            refiner=self.refiner,
+            debug_dir=debug_dir,
+            debug=0,
+            glctx=self.glctx,
+        )
+        pose = estimator.register(
+            K=k,
+            rgb=color,
+            depth=depth,
+            ob_mask=mask,
+            iteration=iteration,
+        )
+        return {
+            "pose": np.asarray(pose, dtype=float).reshape(4, 4).tolist(),
+            "backend": "foundationpose",
+            "torch_device": self.torch_device,
+            "torch_cuda_available": self.cuda_available,
+            "torch_device_name": self.torch_device_name,
+        }
+
+
+def _request_from_args(args: argparse.Namespace) -> dict[str, Any]:
+    return {
+        "mesh_file": args.mesh_file,
+        "color_file": args.color_file,
+        "depth_file": args.depth_file,
+        "mask_file": args.mask_file,
+        "k_json": args.k_json,
+        "model_scale": args.model_scale,
+        "iteration": args.iteration,
+        "debug_dir": args.debug_dir,
+    }
+
+
+def _read_socket_json(conn: socket.socket) -> dict[str, Any]:
+    chunks: list[bytes] = []
+    while True:
+        chunk = conn.recv(65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        if b"\n" in chunk:
+            break
+    raw = b"".join(chunks).splitlines()[0]
+    return json.loads(raw.decode(WORKER_RESPONSE_ENCODING))
+
+
+def _send_socket_json(conn: socket.socket, payload: dict[str, Any]) -> None:
+    conn.sendall((json.dumps(payload, ensure_ascii=False) + "\n").encode(WORKER_RESPONSE_ENCODING))
+
+
+def run_socket_server(socket_path: Path) -> None:
+    socket_path = socket_path.expanduser().resolve()
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        socket_path.unlink()
+    except FileNotFoundError:
+        pass
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+    server.listen(8)
+    print(f"[FoundationPose worker] listening: {socket_path}", flush=True)
+    runner: FoundationPoseAlignmentRunner | None = None
+
+    try:
+        while True:
+            conn, _ = server.accept()
+            with conn:
+                try:
+                    request = _read_socket_json(conn)
+                    if request.get("action") == "shutdown":
+                        _send_socket_json(conn, {"ok": True, "shutdown": True})
+                        break
+                    if runner is None:
+                        print("[FoundationPose worker] loading models", flush=True)
+                        runner = FoundationPoseAlignmentRunner()
+                        print("[FoundationPose worker] models ready", flush=True)
+                    payload = runner.run_alignment(request)
+                    _send_socket_json(conn, {"ok": True, "result": payload})
+                except Exception as exc:
+                    traceback.print_exc(file=sys.stderr)
+                    _send_socket_json(conn, {"ok": False, "error": str(exc)})
+    finally:
+        server.close()
+        try:
+            socket_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mesh-file", required=True)
-    parser.add_argument("--color-file", required=True)
-    parser.add_argument("--depth-file", required=True)
-    parser.add_argument("--mask-file", required=True)
-    parser.add_argument("--k-json", required=True)
-    parser.add_argument("--model-scale", type=float, required=True)
+    parser.add_argument("--socket-server")
+    parser.add_argument("--mesh-file")
+    parser.add_argument("--color-file")
+    parser.add_argument("--depth-file")
+    parser.add_argument("--mask-file")
+    parser.add_argument("--k-json")
+    parser.add_argument("--model-scale", type=float)
     parser.add_argument("--iteration", type=int, default=5)
     parser.add_argument("--debug-dir", default="/tmp/foundationpose_alignment_debug")
+    return parser
+
+
+def main() -> int:
+    parser = build_arg_parser()
     args = parser.parse_args()
 
-    FoundationPose, PoseRefinePredictor, ScorePredictor, dr, set_logging_format, set_seed = _load_foundationpose_modules()
-    _install_foundationpose_runtime_patches()
-    import torch
+    if args.socket_server:
+        run_socket_server(Path(args.socket_server))
+        return 0
 
-    set_logging_format()
-    set_seed(0)
-    cuda_available = bool(torch.cuda.is_available())
-    torch_device = "cuda" if cuda_available else "cpu"
-    torch_device_name = torch.cuda.get_device_name(0) if cuda_available else ""
+    required = {
+        "--mesh-file": args.mesh_file,
+        "--color-file": args.color_file,
+        "--depth-file": args.depth_file,
+        "--mask-file": args.mask_file,
+        "--k-json": args.k_json,
+        "--model-scale": args.model_scale,
+    }
+    missing = [name for name, value in required.items() if value is None]
+    if missing:
+        parser.error(f"missing required arguments: {', '.join(missing)}")
 
-    mesh = trimesh.load(args.mesh_file)
-    mesh.apply_scale(float(args.model_scale))
-    mesh.vertices = np.asarray(mesh.vertices, dtype=np.float32)
-    if mesh.vertex_normals is None or len(mesh.vertex_normals) == 0:
-        mesh.vertex_normals
-    vertex_normals = np.asarray(mesh.vertex_normals, dtype=np.float32)
-
-    color = _read_color(Path(args.color_file))
-    depth = _read_depth_m(Path(args.depth_file))
-    mask = _read_mask(Path(args.mask_file))
-    k = np.asarray(json.loads(args.k_json), dtype=np.float32).reshape(3, 3)
-
-    scorer = ScorePredictor()
-    refiner = PoseRefinePredictor()
-    glctx = dr.RasterizeCudaContext()
-    estimator = FoundationPose(
-        model_pts=np.asarray(mesh.vertices, dtype=np.float32),
-        model_normals=vertex_normals,
-        mesh=mesh,
-        scorer=scorer,
-        refiner=refiner,
-        debug_dir=args.debug_dir,
-        debug=0,
-        glctx=glctx,
-    )
-    pose = estimator.register(
-        K=k,
-        rgb=color,
-        depth=depth,
-        ob_mask=mask,
-        iteration=int(args.iteration),
-    )
-    print(json.dumps({
-        "pose": np.asarray(pose, dtype=float).reshape(4, 4).tolist(),
-        "backend": "foundationpose",
-        "torch_device": torch_device,
-        "torch_cuda_available": cuda_available,
-        "torch_device_name": torch_device_name,
-    }))
+    runner = FoundationPoseAlignmentRunner()
+    print(json.dumps(runner.run_alignment(_request_from_args(args))))
     return 0
 
 

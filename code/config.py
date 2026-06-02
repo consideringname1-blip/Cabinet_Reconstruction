@@ -37,6 +37,14 @@ DEPTHPOINTCLOUD_MAX_EXPORT_POINTS = 6000
 ENABLE_ALIGNMENT_RENDER_OUTPUTS = False
 # Enable InstantMesh circular-view MP4 generation.
 ENABLE_INSTANTMESH_VIDEO_OUTPUT = True
+# Maximum number of InstantMesh stage workers. If INSTANTMESH_GPU_IDS is set,
+# workers are capped to the number of listed GPU ids.
+INSTANTMESH_MAX_WORKERS = int(os.environ.get("INSTANTMESH_MAX_WORKERS", "1"))
+INSTANTMESH_GPU_IDS = tuple(
+    gpu_id.strip()
+    for gpu_id in os.environ.get("INSTANTMESH_GPU_IDS", "").split(",")
+    if gpu_id.strip()
+)
 # Remove tiny disconnected mesh islands immediately after InstantMesh export.
 INSTANTMESH_CLEAN_ENABLE = True
 INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO = 0.01
@@ -106,6 +114,7 @@ UPLOAD_FOLDER = DATA_ROOT / "upload"
 OUTPUT_ROOT = DATA_ROOT / "output"
 ENV_CONFIG_ROOT = DATA_ROOT / "config"
 DATABASE_ROOT = DATA_ROOT / "database"
+WORKER_SOCKET_ROOT = DATA_ROOT / "worker_sockets"
 ARUCO_DATA_ROOT = DATA_ROOT / "aruco"
 ARUCO_REFERENCE_ROOT = ARUCO_DATA_ROOT / "reference"
 ARUCO_RUNTIME_ROOT = ARUCO_DATA_ROOT / "runtime"
@@ -201,6 +210,12 @@ SAM3_OUTPUT_ROOT = OUTPUT_ROOT / "sam3"
 SAM3D_OBJECTS_OUTPUT = OUTPUT_ROOT / "sam3d-objects"
 SAM3D_OBJECTS_OUTPUT_MESHES = SAM3D_OBJECTS_OUTPUT / "meshes"
 OBJECT_ALIGNMENT_OUTPUT_ROOT = OUTPUT_ROOT / "object_alignment"
+
+# Persistent model worker idle release windows.
+SAM3MASK_WORKER_IDLE_TIMEOUT_SEC = int(os.environ.get("SAM3MASK_WORKER_IDLE_TIMEOUT_SEC", "300"))
+FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC = int(
+    os.environ.get("FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC", "300")
+)
 
 BLENDER_OUTPUT_ROOT = OUTPUT_ROOT / "blender"
 BLENDER_FBX_DIR = BLENDER_OUTPUT_ROOT / "fbx"

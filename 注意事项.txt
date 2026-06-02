@@ -215,10 +215,18 @@ debug
 2.unity内放置的模型改为不可移动
 
 260601
-1.修改foundationpose的初值（可指定）和使用的模型应改为降面后的
+1.修改foundationpose的初值（可指定）
 2.foundationpose调用时的输出给去了
 3.把instantmesh搞到多个gpu里同时跑（config里设定最高数量）
 4.sam3和foundationpose看看可不可以一次加载模型跑多个任务（多任务提速）
+
+拆分worker，把instantmesh，sam3dmask，foundationpose放到不同的worker内。instantmesh可以多开，多个gpu里同时跑（config里设定最高数量）。sam3dmask：只要队列里还有任务没过 sam3mask，就保留 SAM3，如果没有任务5min左右，就会自动释放（config里设定最大时长）。foundationpose同样逻辑。sam3d_objects先不要管，能保证跑通就行。foundationpose调用时的输出给去了。
+
+arucomarker的行为是什么，依旧会保持高优先级吗？
+
+之后的测试，需要你复制出最新的一份数据，在不改变源数据的情况下自行测试（不跑完整主逻辑就行，内部的计算依照现行代码独立计算，不改原始数据（不动数据库，中间文件和json记录不输出覆盖应该就行））。
+我需要知道以现在导出的instantmesh的默认导入轴后（注意需要加上初始缩放+位置移动），与foundationpose计算结果差多少。不用过于关注小误差，instantmesh的初始结果应该是大致可信的，需要关注的是缩放完成后的模型本身的坐标轴导入时的不同的地方。我的目标是，在保证最终坐标和旋转结果不变的情况下，使用一个初始值，加速foundationpose计算。由于我的instantmesh的导入导出坐标轴逻辑可能是乱的，所以或许可以修改instantmesh的部分（注意修改后需保证最终结果一致）。
+在你计算并修改完坐标轴相关后，参考过去5次的结果，帮我看下具体的误差多大（注意不要修改原始数据）。随后把foundationpose改为依照现行初值（位置，instantmesh默认旋转），在一定范围内进行搜索。这个时候，稍微修改下缩放，分别对90%，95%，100%，105%，110%跑，找到最好的那个。
 
 260601-2
 关于点击模型显示是谁动过的功能。

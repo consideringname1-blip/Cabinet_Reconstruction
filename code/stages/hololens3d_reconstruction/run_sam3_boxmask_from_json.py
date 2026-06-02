@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import os
 import re
+import socket
 import sys
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -15,7 +18,7 @@ import config
 import numpy as np
 from PIL import Image, ImageDraw
 from stage_common import ensure_file, load_stage_task
-from task_json import save_task_json
+from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
 def require_attr(module: Any, *names: str) -> Any:
@@ -220,158 +223,254 @@ def resolve_device(torch_module: Any) -> Any:
     raise ValueError("config.SAM3_DEVICE must be one of: auto / cuda / mps / cpu")
 
 
-def main() -> int:
-    json_path, task = load_stage_task(
-        sys.argv,
-        usage="Usage: python code/stages/hololens3d_reconstruction/run_sam3_boxmask_from_json.py <task_meta.json or filename>",
-        stage_name="sam3mask",
-    )
+WORKER_RESPONSE_ENCODING = "utf-8"
 
-    upload_folder = Path(require_attr(config, "UPLOAD_FOLDER")).expanduser().resolve()
-    depth_root = Path(require_attr(config, "HOLOLENS2_OUTPUT_DEPTH_IMAGES")).expanduser().resolve()
-    output_root = Path(require_attr(config, "SAM3_OUTPUT_ROOT")).expanduser().resolve()
-    output_root.mkdir(parents=True, exist_ok=True)
 
-    pv_info = task.get("PVCamera") or {}
-    depth_info = task.get("DepthCamera") or {}
-    selection = task.get("SelectionBox") or {}
+class Sam3MaskRunner:
+    def __init__(self) -> None:
+        self._loaded = False
+        self.torch = None
+        self.device = None
+        self.model = None
+        self.processor_cls = None
+        self.bpe_path: Path | None = None
 
-    pv_name = pv_info.get("name")
-    align_depth_name = depth_info.get("align_depth_name")
-    json_width = int(pv_info.get("width"))
-    json_height = int(pv_info.get("height"))
+    def _load_model(self) -> None:
+        if self._loaded:
+            return
 
-    if not pv_name:
-        raise ValueError("PVCamera.name is missing")
-    if not align_depth_name:
-        raise ValueError("DepthCamera.align_depth_name is missing or null")
-    if "top_left" not in selection or "bottom_right" not in selection:
-        raise ValueError("SelectionBox.top_left / bottom_right is missing")
+        try:
+            import torch
+        except Exception as e:
+            raise RuntimeError(f"Failed to import torch: {e}") from e
 
-    color_path = ensure_file(upload_folder / pv_name, "PVCamera image")
-    depth_path = ensure_file(depth_root / align_depth_name, "Aligned depth image")
+        sam3_root = Path(require_attr(config, "SAM3_ROOT")).expanduser().resolve()
+        if str(sam3_root) not in sys.path:
+            sys.path.insert(0, str(sam3_root))
 
-    try:
-        import torch
-    except Exception as e:
-        raise RuntimeError(f"Failed to import torch: {e}")
+        import sam3  # noqa: F401
+        from sam3 import build_sam3_image_model
+        from sam3.model.sam3_image_processor import Sam3Processor
 
-    sam3_root = Path(require_attr(config, "SAM3_ROOT")).expanduser().resolve()
-    if str(sam3_root) not in sys.path:
-        sys.path.insert(0, str(sam3_root))
+        bpe_path = resolve_bpe_path()
+        device = resolve_device(torch)
 
-    import sam3
-    from sam3 import build_sam3_image_model
-    from sam3.model.sam3_image_processor import Sam3Processor
-
-    bpe_path = resolve_bpe_path()
-    device = resolve_device(torch)
-
-    if device.type == "cuda":
-        if torch.cuda.get_device_properties(0).major >= 8:
-            torch.backends.cuda.matmul.allow_tf32 = True
-            torch.backends.cudnn.allow_tf32 = True
-
-    color_pil = read_image_rgb(color_path)
-    color_np = np.array(color_pil)
-    depth_np = read_image_array_preserve(depth_path)
-
-    input_box = build_box_from_selection(
-        selection_box=selection,
-        json_width=json_width,
-        json_height=json_height,
-    )
-
-    print(f"[INFO] JSON         : {json_path}")
-    print(f"[INFO] Color image  : {color_path}")
-    print(f"[INFO] Depth image  : {depth_path}")
-    print(f"[INFO] Output dir   : {output_root}")
-    print(f"[INFO] Device       : {device}")
-    print(f"[INFO] SAM3 BPE     : {bpe_path}")
-    print(f"[INFO] Box (xyxy)   : {input_box.tolist()}")
-
-    model = build_sam3_image_model(
-        bpe_path=str(bpe_path),
-        device=str(device),
-        enable_inst_interactivity=True,
-        compile=False,
-    )
-
-    processor = Sam3Processor(model)
-    inference_state = processor.set_image(color_pil)
-
-    with torch.inference_mode():
         if device.type == "cuda":
-            with torch.autocast("cuda", dtype=torch.bfloat16):
-                masks, scores, _ = model.predict_inst(
+            if torch.cuda.get_device_properties(0).major >= 8:
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+
+        print(f"[SAM3 worker] loading model on {device}; BPE={bpe_path}", flush=True)
+        self.model = build_sam3_image_model(
+            bpe_path=str(bpe_path),
+            device=str(device),
+            enable_inst_interactivity=True,
+            compile=False,
+        )
+        self.torch = torch
+        self.device = device
+        self.processor_cls = Sam3Processor
+        self.bpe_path = bpe_path
+        self._loaded = True
+        print("[SAM3 worker] model ready", flush=True)
+
+    def run_task(self, json_path: Path, task: dict[str, Any]) -> None:
+        upload_folder = Path(require_attr(config, "UPLOAD_FOLDER")).expanduser().resolve()
+        depth_root = Path(require_attr(config, "HOLOLENS2_OUTPUT_DEPTH_IMAGES")).expanduser().resolve()
+        output_root = Path(require_attr(config, "SAM3_OUTPUT_ROOT")).expanduser().resolve()
+        output_root.mkdir(parents=True, exist_ok=True)
+
+        pv_info = task.get("PVCamera") or {}
+        depth_info = task.get("DepthCamera") or {}
+        selection = task.get("SelectionBox") or {}
+
+        pv_name = pv_info.get("name")
+        align_depth_name = depth_info.get("align_depth_name")
+        json_width = int(pv_info.get("width"))
+        json_height = int(pv_info.get("height"))
+
+        if not pv_name:
+            raise ValueError("PVCamera.name is missing")
+        if not align_depth_name:
+            raise ValueError("DepthCamera.align_depth_name is missing or null")
+        if "top_left" not in selection or "bottom_right" not in selection:
+            raise ValueError("SelectionBox.top_left / bottom_right is missing")
+
+        color_path = ensure_file(upload_folder / pv_name, "PVCamera image")
+        depth_path = ensure_file(depth_root / align_depth_name, "Aligned depth image")
+
+        self._load_model()
+        assert self.torch is not None
+        assert self.device is not None
+        assert self.model is not None
+        assert self.processor_cls is not None
+        assert self.bpe_path is not None
+
+        color_pil = read_image_rgb(color_path)
+        color_np = np.array(color_pil)
+        depth_np = read_image_array_preserve(depth_path)
+
+        input_box = build_box_from_selection(
+            selection_box=selection,
+            json_width=json_width,
+            json_height=json_height,
+        )
+
+        print(f"[INFO] JSON         : {json_path}")
+        print(f"[INFO] Color image  : {color_path}")
+        print(f"[INFO] Depth image  : {depth_path}")
+        print(f"[INFO] Output dir   : {output_root}")
+        print(f"[INFO] Device       : {self.device}")
+        print(f"[INFO] SAM3 BPE     : {self.bpe_path}")
+        print(f"[INFO] Box (xyxy)   : {input_box.tolist()}")
+
+        processor = self.processor_cls(self.model)
+        inference_state = processor.set_image(color_pil)
+
+        with self.torch.inference_mode():
+            if self.device.type == "cuda":
+                with self.torch.autocast("cuda", dtype=self.torch.bfloat16):
+                    masks, scores, _ = self.model.predict_inst(
+                        inference_state,
+                        point_coords=None,
+                        point_labels=None,
+                        box=input_box[None, :],
+                        multimask_output=False,
+                    )
+            else:
+                masks, scores, _ = self.model.predict_inst(
                     inference_state,
                     point_coords=None,
                     point_labels=None,
                     box=input_box[None, :],
                     multimask_output=False,
                 )
-        else:
-            masks, scores, _ = model.predict_inst(
-                inference_state,
-                point_coords=None,
-                point_labels=None,
-                box=input_box[None, :],
-                multimask_output=False,
-            )
 
-    if len(masks) < 1:
-        raise RuntimeError("SAM3 returned no masks")
+        if len(masks) < 1:
+            raise RuntimeError("SAM3 returned no masks")
 
-    mask_bool = squeeze_mask(np.asarray(masks[0]))
-    mask_bool = clip_mask_to_box(mask_bool, input_box)
-    mask_bool = refine_mask(mask_bool)
+        mask_bool = squeeze_mask(np.asarray(masks[0]))
+        mask_bool = clip_mask_to_box(mask_bool, input_box)
+        mask_bool = refine_mask(mask_bool)
 
-    mask_png = make_mask_png(mask_bool)
-    masked_color_rgba = make_masked_rgba(color_np, mask_bool)
-    masked_depth = make_masked_depth(depth_np, mask_bool)
-    overlay_rgb = make_overlay_image(color_np, mask_bool, input_box, alpha=0.5)
+        mask_png = make_mask_png(mask_bool)
+        masked_color_rgba = make_masked_rgba(color_np, mask_bool)
+        masked_depth = make_masked_depth(depth_np, mask_bool)
+        overlay_rgb = make_overlay_image(color_np, mask_bool, input_box, alpha=0.5)
 
-    task_name = str(task.get("task_name") or "task")
-    prefix = safe_name(task_name)
+        task_name = str(task.get("task_name") or "task")
+        prefix = safe_name(task_name)
 
-    mask_name = f"{prefix}_sam3_mask.png"
-    color_name = f"{prefix}_sam3_color.png"
-    depth_name = f"{prefix}_sam3_depth.png"
-    overlay_name = f"{prefix}_sam3_overlay.png"
+        mask_name = f"{prefix}_sam3_mask.png"
+        color_name = f"{prefix}_sam3_color.png"
+        depth_name = f"{prefix}_sam3_depth.png"
+        overlay_name = f"{prefix}_sam3_overlay.png"
 
-    mask_out = output_root / mask_name
-    color_out = output_root / color_name
-    depth_out = output_root / depth_name
-    overlay_out = output_root / overlay_name
+        mask_out = output_root / mask_name
+        color_out = output_root / color_name
+        depth_out = output_root / depth_name
+        overlay_out = output_root / overlay_name
 
-    save_array_png(mask_png, mask_out)
-    save_array_png(masked_color_rgba, color_out)
-    save_array_png(masked_depth, depth_out)
-    save_array_png(overlay_rgb, overlay_out)
+        save_array_png(mask_png, mask_out)
+        save_array_png(masked_color_rgba, color_out)
+        save_array_png(masked_depth, depth_out)
+        save_array_png(overlay_rgb, overlay_out)
 
-    task["sam3Name"] = {
-        "mask": mask_name,
-        "color": color_name,
-        "depth": depth_name,
-        "overlay": overlay_name,
-    }
-    save_task_json(json_path, task)
+        task["sam3Name"] = {
+            "mask": mask_name,
+            "color": color_name,
+            "depth": depth_name,
+            "overlay": overlay_name,
+        }
+        save_task_json(json_path, task)
 
-    best_score = None
-    try:
-        if len(scores) > 0:
-            best_score = float(np.asarray(scores).reshape(-1)[0])
-    except Exception:
         best_score = None
+        try:
+            if len(scores) > 0:
+                best_score = float(np.asarray(scores).reshape(-1)[0])
+        except Exception:
+            best_score = None
 
-    print(f"[OK] mask    -> {mask_out}")
-    print(f"[OK] color   -> {color_out}")
-    print(f"[OK] depth   -> {depth_out}")
-    print(f"[OK] overlay -> {overlay_out}")
-    if best_score is not None:
-        print(f"[INFO] score -> {best_score:.6f}")
-    print(f"[OK] JSON updated -> {json_path}")
-    return 0
+        print(f"[OK] mask    -> {mask_out}")
+        print(f"[OK] color   -> {color_out}")
+        print(f"[OK] depth   -> {depth_out}")
+        print(f"[OK] overlay -> {overlay_out}")
+        if best_score is not None:
+            print(f"[INFO] score -> {best_score:.6f}")
+        print(f"[OK] JSON updated -> {json_path}")
+
+
+def _read_socket_json(conn: socket.socket) -> dict[str, Any]:
+    chunks: list[bytes] = []
+    while True:
+        chunk = conn.recv(65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        if b"\n" in chunk:
+            break
+    raw = b"".join(chunks).splitlines()[0]
+    return json.loads(raw.decode(WORKER_RESPONSE_ENCODING))
+
+
+def _send_socket_json(conn: socket.socket, payload: dict[str, Any]) -> None:
+    conn.sendall((json.dumps(payload, ensure_ascii=False) + "\n").encode(WORKER_RESPONSE_ENCODING))
+
+
+def run_socket_server(socket_path: Path) -> None:
+    socket_path = socket_path.expanduser().resolve()
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        socket_path.unlink()
+    except FileNotFoundError:
+        pass
+
+    runner = Sam3MaskRunner()
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+    server.listen(8)
+    print(f"[SAM3 worker] listening: {socket_path}", flush=True)
+
+    try:
+        while True:
+            conn, _ = server.accept()
+            with conn:
+                try:
+                    request = _read_socket_json(conn)
+                    if request.get("action") == "shutdown":
+                        _send_socket_json(conn, {"ok": True, "shutdown": True})
+                        break
+                    json_path = ensure_file(resolve_task_json_path(request["json_path"]), "JSON file")
+                    task = load_task_json(json_path)
+                    runner.run_task(json_path, task)
+                    _send_socket_json(conn, {"ok": True})
+                except Exception as exc:
+                    traceback.print_exc(file=sys.stderr)
+                    _send_socket_json(conn, {"ok": False, "error": str(exc)})
+    finally:
+        server.close()
+        try:
+            socket_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def main() -> int:
+    try:
+        if len(sys.argv) == 3 and sys.argv[1] == "--socket-server":
+            run_socket_server(Path(sys.argv[2]))
+            return 0
+
+        json_path, task = load_stage_task(
+            sys.argv,
+            usage="Usage: python code/stages/hololens3d_reconstruction/run_sam3_boxmask_from_json.py <task_meta.json or filename>",
+            stage_name="sam3mask",
+        )
+        Sam3MaskRunner().run_task(json_path, task)
+        return 0
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

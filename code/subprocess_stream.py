@@ -13,8 +13,9 @@ def stream_command(
     cwd: str | Path | None = None,
     env: Mapping[str, str] | None = None,
     check: bool = True,
+    echo: bool = True,
 ) -> str:
-    """Run a command while forwarding combined stdout/stderr line by line."""
+    """Run a command while optionally forwarding combined stdout/stderr line by line."""
     process_env = dict(os.environ if env is None else env)
     process_env.setdefault("PYTHONUNBUFFERED", "1")
 
@@ -32,7 +33,8 @@ def stream_command(
     assert process.stdout is not None
     for line in process.stdout:
         output_parts.append(line)
-        print(line, end="", flush=True)
+        if echo:
+            print(line, end="", flush=True)
 
     return_code = process.wait()
     output = "".join(output_parts)

@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import sys
 import json
+import os
 import shutil
+import socket
 import uuid
 import warnings
 from pathlib import Path
@@ -624,6 +626,28 @@ def build_final_camera_local_rh_debug(
 FOUNDATIONPOSE_CV_TO_CANONICAL_RH_BASIS = np.asarray(OPENCV_CAMERA_TO_CANONICAL_RH_BASIS, dtype=np.float32)
 
 
+def _request_foundationpose_socket(socket_path: str, request: dict) -> dict:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.connect(socket_path)
+        client.sendall((json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"))
+        client.shutdown(socket.SHUT_WR)
+        chunks: list[bytes] = []
+        while True:
+            chunk = client.recv(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    if not chunks:
+        raise RuntimeError("FoundationPose worker returned no response")
+    response = json.loads(b"".join(chunks).decode("utf-8").splitlines()[0])
+    if not response.get("ok"):
+        raise RuntimeError(str(response.get("error") or "FoundationPose worker failed"))
+    result = response.get("result")
+    if not isinstance(result, dict):
+        raise RuntimeError("FoundationPose worker returned invalid result payload")
+    return result
+
+
 def _parse_foundationpose_stdout(stdout: str) -> dict:
     for line in reversed((stdout or "").splitlines()):
         stripped = line.strip()
@@ -649,30 +673,45 @@ def solve_foundationpose_alignment(
     if k.shape != (3, 3):
         raise ValueError(f"PVCamera.k must be 3x3, got {k.shape}")
 
-    command = [
-        str(FOUNDATIONPOSE_ALIGNMENT_PY),
-        str(FOUNDATIONPOSE_ALIGNMENT_RUN),
-        "--mesh-file",
-        str(paths["mesh_path"]),
-        "--color-file",
-        str(paths["color_path"]),
-        "--depth-file",
-        str(paths["depth_path"]),
-        "--mask-file",
-        str(paths["mask_path"]),
-        "--k-json",
-        json.dumps(k.tolist()),
-        "--model-scale",
-        str(float(overall_scale)),
-        "--iteration",
-        str(int(FOUNDATIONPOSE_EST_REFINE_ITER)),
-    ]
-    foundationpose_output = stream_command(
-        command,
-        cwd=FOUNDATIONPOSE_ALIGNMENT_RUN.parent,
-        check=True,
-    )
-    payload = _parse_foundationpose_stdout(foundationpose_output)
+    foundationpose_request = {
+        "mesh_file": str(paths["mesh_path"]),
+        "color_file": str(paths["color_path"]),
+        "depth_file": str(paths["depth_path"]),
+        "mask_file": str(paths["mask_path"]),
+        "k": k.tolist(),
+        "model_scale": float(overall_scale),
+        "iteration": int(FOUNDATIONPOSE_EST_REFINE_ITER),
+    }
+    foundationpose_output = ""
+    foundationpose_socket = str(os.environ.get("FOUNDATIONPOSE_WORKER_SOCKET") or "").strip()
+    if foundationpose_socket:
+        payload = _request_foundationpose_socket(foundationpose_socket, foundationpose_request)
+    else:
+        command = [
+            str(FOUNDATIONPOSE_ALIGNMENT_PY),
+            str(FOUNDATIONPOSE_ALIGNMENT_RUN),
+            "--mesh-file",
+            str(paths["mesh_path"]),
+            "--color-file",
+            str(paths["color_path"]),
+            "--depth-file",
+            str(paths["depth_path"]),
+            "--mask-file",
+            str(paths["mask_path"]),
+            "--k-json",
+            json.dumps(k.tolist()),
+            "--model-scale",
+            str(float(overall_scale)),
+            "--iteration",
+            str(int(FOUNDATIONPOSE_EST_REFINE_ITER)),
+        ]
+        foundationpose_output = stream_command(
+            command,
+            cwd=FOUNDATIONPOSE_ALIGNMENT_RUN.parent,
+            check=True,
+            echo=False,
+        )
+        payload = _parse_foundationpose_stdout(foundationpose_output)
     pose_cv = np.asarray(payload.get("pose"), dtype=np.float32)
     if pose_cv.shape != (4, 4):
         raise ValueError(f"FoundationPose returned invalid pose shape: {pose_cv.shape}")
