@@ -39,7 +39,7 @@ ENABLE_ALIGNMENT_RENDER_OUTPUTS = False
 ENABLE_INSTANTMESH_VIDEO_OUTPUT = True
 # Maximum number of InstantMesh stage workers. If INSTANTMESH_GPU_IDS is set,
 # workers are capped to the number of listed GPU ids.
-INSTANTMESH_MAX_WORKERS = int(os.environ.get("INSTANTMESH_MAX_WORKERS", "1"))
+INSTANTMESH_MAX_WORKERS = int(os.environ.get("INSTANTMESH_MAX_WORKERS", "3"))
 INSTANTMESH_GPU_IDS = tuple(
     gpu_id.strip()
     for gpu_id in os.environ.get("INSTANTMESH_GPU_IDS", "").split(",")
@@ -189,6 +189,12 @@ OBJECT_ALIGNMENT_STAGE_PY = SERVER_PY
 ICPALIGNMENT_STAGE_PY = SERVER_PY  # legacy wrapper
 FOUNDATIONPOSE_ALIGNMENT_PY = "/opt/miniconda/envs/foundationpose/bin/python"
 FOUNDATIONPOSE_EST_REFINE_ITER = int(os.environ.get("FOUNDATIONPOSE_EST_REFINE_ITER", "5"))
+FOUNDATIONPOSE_INITIAL_SEARCH_ENABLE = os.environ.get("FOUNDATIONPOSE_INITIAL_SEARCH_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
+FOUNDATIONPOSE_INITIAL_SCALE_FACTORS = tuple(
+    float(value.strip())
+    for value in os.environ.get("FOUNDATIONPOSE_INITIAL_SCALE_FACTORS", "0.90,0.95,1.00,1.05,1.10").split(",")
+    if value.strip()
+)
 POSE_STAGE_PY = SERVER_PY
 RUNTIME_MESH_STAGE_PY = SERVER_PY
 BLENDER_STAGE_PY = SERVER_PY

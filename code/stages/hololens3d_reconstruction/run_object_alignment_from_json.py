@@ -15,6 +15,8 @@ from config import (
     FOUNDATIONPOSE_ALIGNMENT_PY,
     FOUNDATIONPOSE_ALIGNMENT_RUN,
     FOUNDATIONPOSE_EST_REFINE_ITER,
+    FOUNDATIONPOSE_INITIAL_SEARCH_ENABLE,
+    FOUNDATIONPOSE_INITIAL_SCALE_FACTORS,
     ICP_ACCELERATION_DEVICE,
     ICP_ALIGNMENT_MODEL_MAX_POINTS,
     ICP_BBOX_SURFACE_DISTANCE_MODE,
@@ -648,6 +650,67 @@ def _request_foundationpose_socket(socket_path: str, request: dict) -> dict:
     return result
 
 
+def _foundationpose_pose_cv_from_canonical(rotation: np.ndarray, translation: np.ndarray) -> np.ndarray:
+    rotation = np.asarray(rotation, dtype=np.float32).reshape(3, 3)
+    translation = np.asarray(translation, dtype=np.float32).reshape(3)
+    pose_cv = np.eye(4, dtype=np.float32)
+    pose_cv[:3, :3] = (
+        FOUNDATIONPOSE_CV_TO_CANONICAL_RH_BASIS.T
+        @ rotation
+        @ MODEL_INPUT_TO_CANONICAL_RH_BASIS
+    ).astype(np.float32)
+    pose_cv[:3, 3] = (FOUNDATIONPOSE_CV_TO_CANONICAL_RH_BASIS.T @ translation.reshape(3, 1)).reshape(3)
+    return pose_cv
+
+
+def build_foundationpose_initial_candidates(
+    *,
+    model_vertices_unity: np.ndarray,
+    target_front_fit: np.ndarray,
+    target_context: dict,
+    overall_scale: float,
+) -> list[dict]:
+    if not bool(FOUNDATIONPOSE_INITIAL_SEARCH_ENABLE):
+        return []
+    scale_factors = tuple(float(value) for value in FOUNDATIONPOSE_INITIAL_SCALE_FACTORS) or (1.0,)
+    candidates: list[dict] = []
+    initial_rotation = np.eye(3, dtype=np.float32)
+    for scale_factor in scale_factors:
+        candidate_scale = float(overall_scale) * float(scale_factor)
+        candidate_full = transform_points(
+            model_vertices_unity,
+            candidate_scale,
+            initial_rotation,
+            np.zeros(3, dtype=np.float32),
+        )
+        candidate_front = extract_front_visible_points(
+            candidate_full,
+            bins=160,
+            max_points=ICP_TARGET_FRONT_MAX_POINTS,
+            seed=11,
+        )
+        candidate_translation = build_initial_translation(
+            model_full_points=candidate_full,
+            model_front_points=candidate_front,
+            target_front_points=target_front_fit,
+            target_context=target_context,
+        )
+        candidates.append(
+            {
+                "source": "instantmesh_default_axis",
+                "scale_factor": float(scale_factor),
+                "model_scale": float(candidate_scale),
+                "translation_canonical_rh": candidate_translation.astype(float).tolist(),
+                "rotation_canonical_rh": initial_rotation.astype(float).tolist(),
+                "pose_cv": _foundationpose_pose_cv_from_canonical(
+                    initial_rotation,
+                    candidate_translation,
+                ).astype(float).tolist(),
+            }
+        )
+    return candidates
+
+
 def _parse_foundationpose_stdout(stdout: str) -> dict:
     for line in reversed((stdout or "").splitlines()):
         stripped = line.strip()
@@ -673,6 +736,12 @@ def solve_foundationpose_alignment(
     if k.shape != (3, 3):
         raise ValueError(f"PVCamera.k must be 3x3, got {k.shape}")
 
+    initial_pose_candidates = build_foundationpose_initial_candidates(
+        model_vertices_unity=model_vertices_unity,
+        target_front_fit=target_front_fit,
+        target_context=target_context,
+        overall_scale=overall_scale,
+    )
     foundationpose_request = {
         "mesh_file": str(paths["mesh_path"]),
         "color_file": str(paths["color_path"]),
@@ -681,6 +750,7 @@ def solve_foundationpose_alignment(
         "k": k.tolist(),
         "model_scale": float(overall_scale),
         "iteration": int(FOUNDATIONPOSE_EST_REFINE_ITER),
+        "initial_pose_candidates_cv": initial_pose_candidates,
     }
     foundationpose_output = ""
     foundationpose_socket = str(os.environ.get("FOUNDATIONPOSE_WORKER_SOCKET") or "").strip()
@@ -704,6 +774,8 @@ def solve_foundationpose_alignment(
             str(float(overall_scale)),
             "--iteration",
             str(int(FOUNDATIONPOSE_EST_REFINE_ITER)),
+            "--initial-pose-candidates-json",
+            json.dumps(initial_pose_candidates),
         ]
         foundationpose_output = stream_command(
             command,
@@ -716,6 +788,7 @@ def solve_foundationpose_alignment(
     if pose_cv.shape != (4, 4):
         raise ValueError(f"FoundationPose returned invalid pose shape: {pose_cv.shape}")
 
+    selected_scale = float(payload.get("model_scale") or overall_scale)
     rotation_cv = pose_cv[:3, :3]
     translation_cv = pose_cv[:3, 3]
     rotation = (
@@ -727,7 +800,7 @@ def solve_foundationpose_alignment(
 
     transformed_full = transform_points(
         model_vertices_unity,
-        float(overall_scale),
+        float(selected_scale),
         rotation,
         translation,
     )
@@ -741,7 +814,7 @@ def solve_foundationpose_alignment(
         transformed_full_points=transformed_full,
         transformed_front_points=transformed_front,
         target_front_points=target_front_fit,
-        scale=float(overall_scale),
+        scale=float(selected_scale),
         nominal_scale=float(overall_scale),
         target_context=target_context,
         rotation=rotation,
@@ -753,7 +826,7 @@ def solve_foundationpose_alignment(
     alignment_device = str(payload.get("torch_device") or "unknown")
     alignment_device_name = str(payload.get("torch_device_name") or "")
     best = {
-        "scale": float(overall_scale),
+        "scale": float(selected_scale),
         "rotation": rotation,
         "translation": translation,
         "rmse": float(metrics["rmse_3d"]),
@@ -769,6 +842,7 @@ def solve_foundationpose_alignment(
         "center_error": float(metrics["center_error"]),
         "initial_rotation_penalty": float(metrics["initial_rotation_penalty"]),
         "foundationpose_stdout_tail": "\n".join((foundationpose_output or "").splitlines()[-20:]),
+        "foundationpose_initial_search": payload.get("initial_search"),
         "alignment_backend": alignment_backend,
         "alignment_device": alignment_device,
         "alignment_device_name": alignment_device_name,
@@ -783,6 +857,7 @@ def solve_foundationpose_alignment(
         "pose_cv": pose_cv.tolist(),
         "worker": str(FOUNDATIONPOSE_ALIGNMENT_RUN),
         "iteration": int(FOUNDATIONPOSE_EST_REFINE_ITER),
+        "initial_search": payload.get("initial_search"),
         "backend": alignment_backend,
         "torch_device": alignment_device,
         "torch_device_name": alignment_device_name,

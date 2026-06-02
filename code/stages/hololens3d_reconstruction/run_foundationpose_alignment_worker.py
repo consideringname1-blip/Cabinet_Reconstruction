@@ -148,8 +148,10 @@ class FoundationPoseAlignmentRunner:
             self.set_seed,
         ) = _load_foundationpose_modules()
         _install_foundationpose_runtime_patches()
+        import estimater as foundationpose_estimater
         import torch
 
+        self.estimater_mod = foundationpose_estimater
         self.torch = torch
         self.set_logging_format()
         self.set_seed(0)
@@ -159,6 +161,130 @@ class FoundationPoseAlignmentRunner:
         self.scorer = self.ScorePredictor()
         self.refiner = self.PoseRefinePredictor()
         self.glctx = self.dr.RasterizeCudaContext()
+
+    def _build_estimator(
+        self,
+        mesh_file: Path,
+        model_scale: float,
+        debug_dir: str,
+        *,
+        build_rotation_grid: bool = True,
+    ):
+        mesh = trimesh.load(mesh_file)
+        mesh.apply_scale(float(model_scale))
+        mesh.vertices = np.asarray(mesh.vertices, dtype=np.float32)
+        if mesh.vertex_normals is None or len(mesh.vertex_normals) == 0:
+            mesh.vertex_normals
+        vertex_normals = np.asarray(mesh.vertex_normals, dtype=np.float32)
+        kwargs = {
+            "model_pts": np.asarray(mesh.vertices, dtype=np.float32),
+            "model_normals": vertex_normals,
+            "mesh": mesh,
+            "scorer": self.scorer,
+            "refiner": self.refiner,
+            "debug_dir": debug_dir,
+            "debug": 0,
+            "glctx": self.glctx,
+        }
+        if build_rotation_grid:
+            return self.FoundationPose(**kwargs)
+
+        original_make_rotation_grid = self.FoundationPose.make_rotation_grid
+
+        def _skip_rotation_grid(instance, *args, **kwargs):
+            instance.rot_grid = self.torch.empty((0, 4, 4), dtype=self.torch.float, device="cuda")
+
+        self.FoundationPose.make_rotation_grid = _skip_rotation_grid
+        try:
+            return self.FoundationPose(**kwargs)
+        finally:
+            self.FoundationPose.make_rotation_grid = original_make_rotation_grid
+
+    def _reset_refiner_state(self) -> None:
+        if hasattr(self.refiner, "last_trans_update"):
+            self.refiner.last_trans_update = None
+        if hasattr(self.refiner, "last_rot_update"):
+            self.refiner.last_rot_update = None
+
+    def _tensor_to_numpy(self, value):
+        if hasattr(value, "detach"):
+            return value.detach().cpu().numpy()
+        if hasattr(value, "data") and hasattr(value.data, "cpu"):
+            return value.data.cpu().numpy()
+        return np.asarray(value)
+
+    def _run_initial_pose_candidates(
+        self,
+        *,
+        estimator,
+        candidates: list[dict[str, Any]],
+        rgb: np.ndarray,
+        depth: np.ndarray,
+        mask: np.ndarray,
+        k: np.ndarray,
+        iteration: int,
+    ) -> tuple[np.ndarray, dict[str, Any]]:
+        if not candidates:
+            raise ValueError("initial pose candidate list is empty")
+
+        depth_work = self.estimater_mod.erode_depth(depth, radius=2, device="cuda")
+        depth_work = self.estimater_mod.bilateral_filter_depth(depth_work, radius=2, device="cuda")
+        valid = (depth_work >= 0.001) & (mask > 0)
+        if valid.sum() < 4:
+            pose = np.eye(4, dtype=np.float32)
+            pose[:3, 3] = estimator.guess_translation(depth=depth_work, mask=mask, K=k)
+            return pose, {"mode": "initial_candidates_fallback_valid_too_small", "candidate_count": len(candidates)}
+
+        xyz_map = self.estimater_mod.depth2xyzmap(depth_work, k)
+        tf_to_center = self._tensor_to_numpy(estimator.get_tf_to_centered_mesh()).reshape(4, 4)
+        inv_tf_to_center = np.linalg.inv(tf_to_center)
+        final_poses = np.asarray([candidate["pose_cv"] for candidate in candidates], dtype=np.float32).reshape(-1, 4, 4)
+        centered_poses = final_poses @ inv_tf_to_center.reshape(1, 4, 4)
+
+        self._reset_refiner_state()
+        refined_poses, _vis = estimator.refiner.predict(
+            mesh=estimator.mesh,
+            mesh_tensors=estimator.mesh_tensors,
+            rgb=rgb,
+            depth=depth_work,
+            K=k,
+            ob_in_cams=centered_poses,
+            normal_map=None,
+            xyz_map=xyz_map,
+            glctx=estimator.glctx,
+            mesh_diameter=estimator.diameter,
+            iteration=iteration,
+            get_vis=False,
+        )
+        refined_poses_np = self._tensor_to_numpy(refined_poses).reshape(-1, 4, 4)
+        scores, _vis = estimator.scorer.predict(
+            mesh=estimator.mesh,
+            rgb=rgb,
+            depth=depth_work,
+            K=k,
+            ob_in_cams=refined_poses_np,
+            normal_map=None,
+            mesh_tensors=estimator.mesh_tensors,
+            glctx=estimator.glctx,
+            mesh_diameter=estimator.diameter,
+            get_vis=False,
+        )
+        scores_np = self._tensor_to_numpy(scores).reshape(-1)
+        best_index = int(np.argsort(scores_np)[::-1][0])
+        pose = refined_poses_np[best_index] @ tf_to_center
+        best_candidate = dict(candidates[best_index])
+        return pose, {
+            "mode": "initial_candidates",
+            "candidate_count": len(candidates),
+            "best_index": best_index,
+            "best_score": float(scores_np[best_index]),
+            "scores": [float(v) for v in scores_np],
+            "best_candidate": {
+                key: value
+                for key, value in best_candidate.items()
+                if key != "pose_cv"
+            },
+        }
 
     def run_alignment(self, request: dict[str, Any]) -> dict[str, Any]:
         mesh_file = Path(str(request["mesh_file"]))
@@ -174,50 +300,67 @@ class FoundationPoseAlignmentRunner:
             k_value = json.loads(str(request["k_json"]))
         k = np.asarray(k_value, dtype=np.float32).reshape(3, 3)
 
-        mesh = trimesh.load(mesh_file)
-        mesh.apply_scale(model_scale)
-        mesh.vertices = np.asarray(mesh.vertices, dtype=np.float32)
-        if mesh.vertex_normals is None or len(mesh.vertex_normals) == 0:
-            mesh.vertex_normals
-        vertex_normals = np.asarray(mesh.vertex_normals, dtype=np.float32)
-
         color = _read_color(color_file)
         depth = _read_depth_m(depth_file)
         mask = _read_mask(mask_file)
+        initial_candidates = list(request.get("initial_pose_candidates_cv") or [])
+        initial_search_info: dict[str, Any] | None = None
 
-        if hasattr(self.refiner, "last_trans_update"):
-            self.refiner.last_trans_update = None
-        if hasattr(self.refiner, "last_rot_update"):
-            self.refiner.last_rot_update = None
+        if initial_candidates:
+            grouped: dict[float, list[dict[str, Any]]] = {}
+            for candidate in initial_candidates:
+                grouped.setdefault(float(candidate.get("model_scale") or model_scale), []).append(candidate)
+            scale_results: list[dict[str, Any]] = []
+            best_payload: tuple[float, np.ndarray, dict[str, Any]] | None = None
+            for scale, candidates in grouped.items():
+                estimator = self._build_estimator(mesh_file, scale, debug_dir, build_rotation_grid=False)
+                pose_candidate, info = self._run_initial_pose_candidates(
+                    estimator=estimator,
+                    candidates=candidates,
+                    rgb=color,
+                    depth=depth,
+                    mask=mask,
+                    k=k,
+                    iteration=iteration,
+                )
+                raw_score = info.get("best_score")
+                score = float(raw_score) if raw_score is not None else 0.0
+                info["model_scale"] = float(scale)
+                scale_results.append(dict(info))
+                if best_payload is None or score > best_payload[0]:
+                    best_payload = (score, pose_candidate, info)
+            assert best_payload is not None
+            _score, pose, initial_search_info = best_payload
+            initial_search_info["total_candidate_count"] = len(initial_candidates)
+            initial_search_info["scale_candidate_count"] = len(grouped)
+            initial_search_info["scale_results"] = scale_results
+            model_scale = float(initial_search_info.get("model_scale") or model_scale)
+        else:
+            estimator = self._build_estimator(mesh_file, model_scale, debug_dir)
+            self._reset_refiner_state()
+            pose = estimator.register(
+                K=k,
+                rgb=color,
+                depth=depth,
+                ob_mask=mask,
+                iteration=iteration,
+            )
 
-        estimator = self.FoundationPose(
-            model_pts=np.asarray(mesh.vertices, dtype=np.float32),
-            model_normals=vertex_normals,
-            mesh=mesh,
-            scorer=self.scorer,
-            refiner=self.refiner,
-            debug_dir=debug_dir,
-            debug=0,
-            glctx=self.glctx,
-        )
-        pose = estimator.register(
-            K=k,
-            rgb=color,
-            depth=depth,
-            ob_mask=mask,
-            iteration=iteration,
-        )
-        return {
+        payload = {
             "pose": np.asarray(pose, dtype=float).reshape(4, 4).tolist(),
             "backend": "foundationpose",
+            "model_scale": float(model_scale),
             "torch_device": self.torch_device,
             "torch_cuda_available": self.cuda_available,
             "torch_device_name": self.torch_device_name,
         }
+        if initial_search_info is not None:
+            payload["initial_search"] = initial_search_info
+        return payload
 
 
 def _request_from_args(args: argparse.Namespace) -> dict[str, Any]:
-    return {
+    request = {
         "mesh_file": args.mesh_file,
         "color_file": args.color_file,
         "depth_file": args.depth_file,
@@ -227,6 +370,9 @@ def _request_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "iteration": args.iteration,
         "debug_dir": args.debug_dir,
     }
+    if args.initial_pose_candidates_json:
+        request["initial_pose_candidates_cv"] = json.loads(args.initial_pose_candidates_json)
+    return request
 
 
 def _read_socket_json(conn: socket.socket) -> dict[str, Any]:
@@ -297,6 +443,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model-scale", type=float)
     parser.add_argument("--iteration", type=int, default=5)
     parser.add_argument("--debug-dir", default="/tmp/foundationpose_alignment_debug")
+    parser.add_argument("--initial-pose-candidates-json")
     return parser
 
 
