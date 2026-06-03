@@ -40,11 +40,12 @@ ENABLE_INSTANTMESH_VIDEO_OUTPUT = True
 # Maximum number of InstantMesh stage workers. If INSTANTMESH_GPU_IDS is set,
 # workers are capped to the number of listed GPU ids.
 INSTANTMESH_MAX_WORKERS = int(os.environ.get("INSTANTMESH_MAX_WORKERS", "3"))
-INSTANTMESH_GPU_IDS = tuple(
-    gpu_id.strip()
-    for gpu_id in os.environ.get("INSTANTMESH_GPU_IDS", "").split(",")
-    if gpu_id.strip()
-)
+_instantmesh_gpu_ids = []
+for gpu_id in os.environ.get("INSTANTMESH_GPU_IDS", "0,1,2").split(","):
+    gpu_id = gpu_id.strip()
+    if gpu_id and gpu_id not in _instantmesh_gpu_ids:
+        _instantmesh_gpu_ids.append(gpu_id)
+INSTANTMESH_GPU_IDS = tuple(_instantmesh_gpu_ids)
 # Remove tiny disconnected mesh islands immediately after InstantMesh export.
 INSTANTMESH_CLEAN_ENABLE = True
 INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO = 0.01
@@ -190,11 +191,6 @@ ICPALIGNMENT_STAGE_PY = SERVER_PY  # legacy wrapper
 FOUNDATIONPOSE_ALIGNMENT_PY = "/opt/miniconda/envs/foundationpose/bin/python"
 FOUNDATIONPOSE_EST_REFINE_ITER = int(os.environ.get("FOUNDATIONPOSE_EST_REFINE_ITER", "5"))
 FOUNDATIONPOSE_INITIAL_SEARCH_ENABLE = os.environ.get("FOUNDATIONPOSE_INITIAL_SEARCH_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
-FOUNDATIONPOSE_INITIAL_SCALE_FACTORS = tuple(
-    float(value.strip())
-    for value in os.environ.get("FOUNDATIONPOSE_INITIAL_SCALE_FACTORS", "0.90,1.00,1.10").split(",")
-    if value.strip()
-)
 FOUNDATIONPOSE_INITIAL_ROTATION_GRID_DEGREES = tuple(
     float(value.strip())
     for value in os.environ.get("FOUNDATIONPOSE_INITIAL_ROTATION_GRID_DEGREES", "0,-30,30,-60,60").split(",")

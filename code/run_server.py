@@ -17,7 +17,10 @@ def _run_child(cmd, cwd):
 
     def _stop_child(signum=None, frame=None):
         if process.poll() is None:
-            process.terminate()
+            try:
+                process.send_signal(signum or signal.SIGTERM)
+            except Exception:
+                process.terminate()
             try:
                 process.wait(timeout=10)
             except subprocess.TimeoutExpired:
@@ -29,7 +32,11 @@ def _run_child(cmd, cwd):
     old_sigint = signal.signal(signal.SIGINT, _stop_child)
     old_sigterm = signal.signal(signal.SIGTERM, _stop_child)
     try:
-        return process.wait()
+        while True:
+            try:
+                return process.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                continue
     finally:
         signal.signal(signal.SIGINT, old_sigint)
         signal.signal(signal.SIGTERM, old_sigterm)
