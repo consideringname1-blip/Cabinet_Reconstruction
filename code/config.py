@@ -192,9 +192,15 @@ FOUNDATIONPOSE_EST_REFINE_ITER = int(os.environ.get("FOUNDATIONPOSE_EST_REFINE_I
 FOUNDATIONPOSE_INITIAL_SEARCH_ENABLE = os.environ.get("FOUNDATIONPOSE_INITIAL_SEARCH_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
 FOUNDATIONPOSE_INITIAL_SCALE_FACTORS = tuple(
     float(value.strip())
-    for value in os.environ.get("FOUNDATIONPOSE_INITIAL_SCALE_FACTORS", "0.90,0.95,1.00,1.05,1.10").split(",")
+    for value in os.environ.get("FOUNDATIONPOSE_INITIAL_SCALE_FACTORS", "0.90,1.00,1.10").split(",")
     if value.strip()
 )
+FOUNDATIONPOSE_INITIAL_ROTATION_GRID_DEGREES = tuple(
+    float(value.strip())
+    for value in os.environ.get("FOUNDATIONPOSE_INITIAL_ROTATION_GRID_DEGREES", "0,-30,30,-60,60").split(",")
+    if value.strip()
+)
+FOUNDATIONPOSE_INITIAL_ROTATION_MAX_DELTA_DEG = float(os.environ.get("FOUNDATIONPOSE_INITIAL_ROTATION_MAX_DELTA_DEG", "60"))
 POSE_STAGE_PY = SERVER_PY
 RUNTIME_MESH_STAGE_PY = SERVER_PY
 BLENDER_STAGE_PY = SERVER_PY

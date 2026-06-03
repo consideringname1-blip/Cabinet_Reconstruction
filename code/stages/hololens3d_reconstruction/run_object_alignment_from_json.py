@@ -15,6 +15,8 @@ from config import (
     FOUNDATIONPOSE_ALIGNMENT_PY,
     FOUNDATIONPOSE_ALIGNMENT_RUN,
     FOUNDATIONPOSE_EST_REFINE_ITER,
+    FOUNDATIONPOSE_INITIAL_ROTATION_GRID_DEGREES,
+    FOUNDATIONPOSE_INITIAL_ROTATION_MAX_DELTA_DEG,
     FOUNDATIONPOSE_INITIAL_SEARCH_ENABLE,
     FOUNDATIONPOSE_INITIAL_SCALE_FACTORS,
     ICP_ACCELERATION_DEVICE,
@@ -663,6 +665,35 @@ def _foundationpose_pose_cv_from_canonical(rotation: np.ndarray, translation: np
     return pose_cv
 
 
+def _build_foundationpose_initial_rotations() -> list[tuple[np.ndarray, tuple[float, float, float]]]:
+    angles = tuple(float(value) for value in FOUNDATIONPOSE_INITIAL_ROTATION_GRID_DEGREES)
+    if not angles:
+        angles = (0.0,)
+    max_delta = float(FOUNDATIONPOSE_INITIAL_ROTATION_MAX_DELTA_DEG)
+    rotations: list[tuple[np.ndarray, tuple[float, float, float]]] = []
+    seen: set[tuple[float, ...]] = set()
+
+    for rx in angles:
+        for ry in angles:
+            for rz in angles:
+                euler = (float(rx), float(ry), float(rz))
+                rotation = Rotation.from_euler("xyz", euler, degrees=True)
+                delta_deg = float(np.degrees(rotation.magnitude()))
+                if delta_deg > max_delta + 1e-6:
+                    continue
+                matrix = rotation.as_matrix().astype(np.float32)
+                key = tuple(np.round(matrix.reshape(-1), 6).astype(float))
+                if key in seen:
+                    continue
+                seen.add(key)
+                rotations.append((matrix, euler))
+
+    rotations.sort(key=lambda item: (float(np.degrees(Rotation.from_matrix(item[0]).magnitude())), item[1]))
+    if not rotations:
+        rotations.append((np.eye(3, dtype=np.float32), (0.0, 0.0, 0.0)))
+    return rotations
+
+
 def build_foundationpose_initial_candidates(
     *,
     model_vertices_unity: np.ndarray,
@@ -673,41 +704,43 @@ def build_foundationpose_initial_candidates(
     if not bool(FOUNDATIONPOSE_INITIAL_SEARCH_ENABLE):
         return []
     scale_factors = tuple(float(value) for value in FOUNDATIONPOSE_INITIAL_SCALE_FACTORS) or (1.0,)
+    rotations = _build_foundationpose_initial_rotations()
     candidates: list[dict] = []
-    initial_rotation = np.eye(3, dtype=np.float32)
     for scale_factor in scale_factors:
         candidate_scale = float(overall_scale) * float(scale_factor)
-        candidate_full = transform_points(
-            model_vertices_unity,
-            candidate_scale,
-            initial_rotation,
-            np.zeros(3, dtype=np.float32),
-        )
-        candidate_front = extract_front_visible_points(
-            candidate_full,
-            bins=160,
-            max_points=ICP_TARGET_FRONT_MAX_POINTS,
-            seed=11,
-        )
-        candidate_translation = build_initial_translation(
-            model_full_points=candidate_full,
-            model_front_points=candidate_front,
-            target_front_points=target_front_fit,
-            target_context=target_context,
-        )
-        candidates.append(
-            {
-                "source": "instantmesh_default_axis",
-                "scale_factor": float(scale_factor),
-                "model_scale": float(candidate_scale),
-                "translation_canonical_rh": candidate_translation.astype(float).tolist(),
-                "rotation_canonical_rh": initial_rotation.astype(float).tolist(),
-                "pose_cv": _foundationpose_pose_cv_from_canonical(
-                    initial_rotation,
-                    candidate_translation,
-                ).astype(float).tolist(),
-            }
-        )
+        for initial_rotation, euler_deg in rotations:
+            candidate_full = transform_points(
+                model_vertices_unity,
+                candidate_scale,
+                initial_rotation,
+                np.zeros(3, dtype=np.float32),
+            )
+            candidate_front = extract_front_visible_points(
+                candidate_full,
+                bins=160,
+                max_points=ICP_TARGET_FRONT_MAX_POINTS,
+                seed=11,
+            )
+            candidate_translation = build_initial_translation(
+                model_full_points=candidate_full,
+                model_front_points=candidate_front,
+                target_front_points=target_front_fit,
+                target_context=target_context,
+            )
+            candidates.append(
+                {
+                    "source": "instantmesh_local_rotation_grid",
+                    "scale_factor": float(scale_factor),
+                    "model_scale": float(candidate_scale),
+                    "rotation_euler_xyz_deg": [float(value) for value in euler_deg],
+                    "translation_canonical_rh": candidate_translation.astype(float).tolist(),
+                    "rotation_canonical_rh": initial_rotation.astype(float).tolist(),
+                    "pose_cv": _foundationpose_pose_cv_from_canonical(
+                        initial_rotation,
+                        candidate_translation,
+                    ).astype(float).tolist(),
+                }
+            )
     return candidates
 
 
