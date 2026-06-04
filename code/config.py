@@ -8,6 +8,7 @@ IS_RUN_FLASK_SERVER = True
 # Model generation backend for the shared model-generation stage slot.
 # Use "sam3d_objects" or "instantmesh".
 MODEL_GENERATION_BACKEND = "instantmesh"
+MODEL_EVENT_TRACKING_ENABLE = os.environ.get("MODEL_EVENT_TRACKING_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 # Depth / alignment tuning
 # Fraction cropped inward from the SAM3 mask periphery before depth->pointcloud
@@ -106,6 +107,7 @@ CODE_ROOT = PROJECT_ROOT / "code"
 STAGES_ROOT = CODE_ROOT / "stages"
 HOLOLENS3D_RECON_STAGE_ROOT = STAGES_ROOT / "hololens3d_reconstruction"
 ARUCO_STAGE_ROOT = STAGES_ROOT / "hololens_aruco_reference"
+MODEL_EVENT_STAGE_ROOT = STAGES_ROOT / "model_event_tracking"
 SCRIPTS_ROOT = CODE_ROOT / "scripts"
 RECON_ROOT = CODE_ROOT / "reconstruction"
 HOLOLENS_ROOT = CODE_ROOT / "Hololens2"
@@ -116,6 +118,7 @@ OUTPUT_ROOT = DATA_ROOT / "output"
 ENV_CONFIG_ROOT = DATA_ROOT / "config"
 DATABASE_ROOT = DATA_ROOT / "database"
 WORKER_SOCKET_ROOT = DATA_ROOT / "worker_sockets"
+SHIGURE_EVENT_CACHE_ROOT = DATA_ROOT / "shigure_event_cache"
 ARUCO_DATA_ROOT = DATA_ROOT / "aruco"
 ARUCO_REFERENCE_ROOT = ARUCO_DATA_ROOT / "reference"
 ARUCO_RUNTIME_ROOT = ARUCO_DATA_ROOT / "runtime"
@@ -177,6 +180,8 @@ RUNTIME_MESH_BAKE_SCRIPT = HOLOLENS3D_RECON_STAGE_ROOT / "bake_runtime_mesh.py"
 SAM3D_OBJECTS_POSTPROCESS_SCRIPT = HOLOLENS3D_RECON_STAGE_ROOT / "postprocess_sam3d_glb.py"
 BLENDER_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_blender_from_json.py"
 MODEL_BOUNDS_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_model_bounds_from_json.py"
+MODEL_EVENT_TRACKING_RUN = MODEL_EVENT_STAGE_ROOT / "run_model_event_tracking_from_json.py"
+SAM3_VIDEO_TRACKER_RUN = MODEL_EVENT_STAGE_ROOT / "run_sam3_video_tracker_worker.py"
 CONVERT_SCRIPT = HOLOLENS3D_RECON_STAGE_ROOT / "convert_obj_to_fbx.py"
 
 ARUCO_STAGE_PY = SERVER_PY
@@ -201,6 +206,8 @@ POSE_STAGE_PY = SERVER_PY
 RUNTIME_MESH_STAGE_PY = SERVER_PY
 BLENDER_STAGE_PY = SERVER_PY
 MODEL_BOUNDS_STAGE_PY = SERVER_PY
+MODEL_EVENT_TRACKING_STAGE_PY = SERVER_PY
+SAM3_VIDEO_TRACKER_STAGE_PY = SAM3_PY
 
 
 # Storage
@@ -218,12 +225,16 @@ SAM3_OUTPUT_ROOT = OUTPUT_ROOT / "sam3"
 SAM3D_OBJECTS_OUTPUT = OUTPUT_ROOT / "sam3d-objects"
 SAM3D_OBJECTS_OUTPUT_MESHES = SAM3D_OBJECTS_OUTPUT / "meshes"
 OBJECT_ALIGNMENT_OUTPUT_ROOT = OUTPUT_ROOT / "object_alignment"
+MODEL_EVENT_OUTPUT_ROOT = OUTPUT_ROOT / "model_events"
 
 # Persistent model worker idle release windows.
 SAM3MASK_WORKER_IDLE_TIMEOUT_SEC = int(os.environ.get("SAM3MASK_WORKER_IDLE_TIMEOUT_SEC", "300"))
 INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC = int(os.environ.get("INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC", "300"))
 FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC = int(
     os.environ.get("FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC", "300")
+)
+SAM3_VIDEO_TRACKER_WORKER_IDLE_TIMEOUT_SEC = int(
+    os.environ.get("SAM3_VIDEO_TRACKER_WORKER_IDLE_TIMEOUT_SEC", "300")
 )
 
 BLENDER_OUTPUT_ROOT = OUTPUT_ROOT / "blender"
@@ -311,5 +322,7 @@ for path in [
     RUNTIME_MESH_OUTPUT_ROOT,
     BLENDER_FBX_DIR,
     HOLOLENS2_OUTPUT_DEPTH_IMAGES,
+    MODEL_EVENT_OUTPUT_ROOT,
+    SHIGURE_EVENT_CACHE_ROOT,
 ]:
     path.mkdir(parents=True, exist_ok=True)

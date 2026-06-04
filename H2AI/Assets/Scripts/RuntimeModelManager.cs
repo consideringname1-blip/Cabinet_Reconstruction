@@ -191,6 +191,7 @@ public class RuntimeModelManager : MonoBehaviour
             Pose = instance.Pose ?? new RuntimeModelPoseData(),
         };
         _records.Add(record);
+        AttachEventIdentity(record);
         ApplyResolvedPose(record);
         EnforceCachedFileLimit();
     }
@@ -438,6 +439,22 @@ public class RuntimeModelManager : MonoBehaviour
 
         Destroy(record.RootGameObject);
         record.RootGameObject = null;
+    }
+
+    private void AttachEventIdentity(RuntimeModelRecord record)
+    {
+        if (record == null || record.RootGameObject == null)
+        {
+            return;
+        }
+
+        RuntimeModelEventIdentity identity = record.RootGameObject.GetComponent<RuntimeModelEventIdentity>();
+        if (identity == null)
+        {
+            identity = record.RootGameObject.AddComponent<RuntimeModelEventIdentity>();
+        }
+
+        identity.Configure(record.ModelKey, record.TaskId, record.FbxUrl);
     }
 
     private void EnforceCachedFileLimit()

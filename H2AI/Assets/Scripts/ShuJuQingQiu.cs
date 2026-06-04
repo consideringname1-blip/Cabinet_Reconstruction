@@ -808,6 +808,14 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
+        List<string> loadedTaskIds = manager.GetLoadedTaskIds();
+        ModelEventDisplay eventDisplay = ModelEventDisplay.Instance;
+        if (eventDisplay != null)
+        {
+            eventDisplay.DeleteServerEventsForTaskIds(loadedTaskIds);
+            eventDisplay.CloseAllAndClearLocalCache();
+        }
+
         int removedCount = manager.ClearLocalRuntimeModels();
         Debug.Log("[RuntimeModelManager] Cleared local runtime models: count="
             + removedCount.ToString(CultureInfo.InvariantCulture)

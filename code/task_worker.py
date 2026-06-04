@@ -11,7 +11,7 @@ import uuid
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional
 
 from subprocess_stream import stream_command
 
@@ -27,6 +27,9 @@ from config import (
     FOUNDATIONPOSE_ALIGNMENT_PY,
     FOUNDATIONPOSE_ALIGNMENT_RUN,
     FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
+    MODEL_EVENT_TRACKING_ENABLE,
+    MODEL_EVENT_TRACKING_RUN,
+    MODEL_EVENT_TRACKING_STAGE_PY,
     INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
     HOLOLENS2_CONVERT_DIR,
     HOLOLENS2_CONVERT_RUN,
@@ -52,6 +55,9 @@ from config import (
     SAM3D_OBJECTS_ROOT,
     SAM3D_OBJECTS_STAGE_PY,
     SAM3D_OBJECTS_STAGE_RUN,
+    SAM3_VIDEO_TRACKER_RUN,
+    SAM3_VIDEO_TRACKER_STAGE_PY,
+    SAM3_VIDEO_TRACKER_WORKER_IDLE_TIMEOUT_SEC,
     SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
     WORKER_SOCKET_ROOT,
 )
@@ -75,6 +81,11 @@ from task_json import (
     resolve_task_json_path,
     save_task_json,
 )
+
+try:
+    from gpu_budget import cuda_env_for_service
+except Exception:
+    cuda_env_for_service = None
 
 
 STAGE_ORDER = [
@@ -113,7 +124,7 @@ class SocketStageService:
         socket_name: str,
         idle_timeout_sec: int,
         echo_output: bool,
-        env_overrides: Mapping[str, str] | None = None,
+        env_overrides: Mapping[str, str] | Callable[[], Mapping[str, str] | None] | None = None,
     ) -> None:
         self.name = name
         self.python_path = python_path
@@ -122,7 +133,7 @@ class SocketStageService:
         self.socket_path = WORKER_SOCKET_ROOT / socket_name
         self.idle_timeout_sec = max(1, int(idle_timeout_sec or 300))
         self.echo_output = bool(echo_output)
-        self.env_overrides = dict(env_overrides or {})
+        self.env_overrides = env_overrides
         self._lock = threading.RLock()
         self._process: subprocess.Popen[str] | None = None
         self._reader_thread: threading.Thread | None = None
@@ -142,7 +153,7 @@ class SocketStageService:
                 pass
 
             env = os.environ.copy()
-            env.update(self.env_overrides)
+            env.update(self._resolve_env_overrides())
             env.setdefault("PYTHONUNBUFFERED", "1")
             command = [
                 _resolve_python(self.python_path),
@@ -169,6 +180,17 @@ class SocketStageService:
             self._last_used_at = time.monotonic()
 
         self._wait_for_socket_ready()
+
+    def _resolve_env_overrides(self) -> dict[str, str]:
+        if self.env_overrides is None:
+            return {}
+        if callable(self.env_overrides):
+            try:
+                return dict(self.env_overrides() or {})
+            except Exception as exc:
+                print(f"[worker] failed to resolve {self.name} env overrides: {exc}")
+                return {}
+        return dict(self.env_overrides)
 
     def request(self, payload: dict[str, Any]) -> dict[str, Any]:
         self.ensure_started()
@@ -294,6 +316,21 @@ _shutdown_hooks_installed = False
 _restore_scan_lock = threading.Lock()
 _last_restore_scan_at = 0.0
 
+
+def _service_gpu_env(service_name: str, allowed_ids: tuple[str, ...] | None = None) -> dict[str, str]:
+    if cuda_env_for_service is None:
+        return {}
+    env, placement = cuda_env_for_service(service_name, allowed_ids=allowed_ids)
+    required = placement.required_mib + placement.headroom_mib
+    print(
+        f"[worker] gpu placement {service_name}: {placement.reason} "
+        f"(budget={placement.required_mib}MiB headroom={placement.headroom_mib}MiB required={required}MiB)"
+    )
+    if placement.gpu is not None and not placement.fits:
+        print(f"[worker] warning: {service_name} may not fit on GPU {placement.gpu.index}")
+    return dict(env)
+
+
 _sam3mask_service = SocketStageService(
     name="sam3mask",
     python_path=SAM3_PY,
@@ -302,6 +339,7 @@ _sam3mask_service = SocketStageService(
     socket_name="sam3mask.sock",
     idle_timeout_sec=SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
     echo_output=True,
+    env_overrides=lambda: _service_gpu_env("sam3_image_mask"),
 )
 _instantmesh_service = SocketStageService(
     name="instantmesh",
@@ -311,11 +349,7 @@ _instantmesh_service = SocketStageService(
     socket_name="instantmesh.sock",
     idle_timeout_sec=INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
     echo_output=True,
-    env_overrides=(
-        {"CUDA_VISIBLE_DEVICES": str(INSTANTMESH_GPU_IDS[0])}
-        if INSTANTMESH_GPU_IDS
-        else None
-    ),
+    env_overrides=lambda: _service_gpu_env("instantmesh", INSTANTMESH_GPU_IDS or None),
 )
 _foundationpose_service = SocketStageService(
     name="foundationpose",
@@ -325,6 +359,17 @@ _foundationpose_service = SocketStageService(
     socket_name="foundationpose.sock",
     idle_timeout_sec=FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
     echo_output=False,
+    env_overrides=lambda: _service_gpu_env("foundationpose"),
+)
+_sam3video_service = SocketStageService(
+    name="sam3video",
+    python_path=SAM3_VIDEO_TRACKER_STAGE_PY,
+    script_path=SAM3_VIDEO_TRACKER_RUN,
+    cwd=SAM3_DIR,
+    socket_name="sam3video.sock",
+    idle_timeout_sec=SAM3_VIDEO_TRACKER_WORKER_IDLE_TIMEOUT_SEC,
+    echo_output=True,
+    env_overrides=lambda: _service_gpu_env("sam3_video_tracker"),
 )
 
 
@@ -436,6 +481,12 @@ def _run_sam3mask(json_path: Path, context: StageWorkerContext | None = None) ->
 
 
 def _instantmesh_env(context: StageWorkerContext | None) -> dict[str, str] | None:
+    if MODEL_GENERATION_BACKEND == "sam3d_objects":
+        selected = _service_gpu_env("sam3d_objects")
+        if selected:
+            env = os.environ.copy()
+            env.update(selected)
+            return env
     if context is None or not context.gpu_id:
         return None
     env = os.environ.copy()
@@ -531,6 +582,21 @@ def _run_blender(json_path: Path, context: StageWorkerContext | None = None) -> 
     )
 
 
+def _run_model_event_tracking(json_path: Path, context: StageWorkerContext | None = None) -> None:
+    if not MODEL_EVENT_TRACKING_ENABLE:
+        return
+    _sam3video_service.ensure_started()
+    env = os.environ.copy()
+    env["SAM3_VIDEO_TRACKER_WORKER_SOCKET"] = str(_sam3video_service.socket_path)
+    _run_python_script(
+        python_path=MODEL_EVENT_TRACKING_STAGE_PY,
+        script_path=MODEL_EVENT_TRACKING_RUN,
+        json_path=json_path,
+        cwd=MODEL_EVENT_TRACKING_RUN.parent,
+        env=env,
+    )
+
+
 def _run_model_bounds(json_path: Path, context: StageWorkerContext | None = None) -> None:
     _run_python_script(
         python_path=MODEL_BOUNDS_STAGE_PY,
@@ -538,6 +604,10 @@ def _run_model_bounds(json_path: Path, context: StageWorkerContext | None = None
         json_path=json_path,
         cwd=MODEL_BOUNDS_STAGE_RUN.parent,
     )
+    try:
+        _run_model_event_tracking(json_path, context)
+    except Exception as exc:
+        print(f"[worker] model event tracking failed for {json_path}: {exc}")
 
 
 STAGE_RUNNERS = {
@@ -732,6 +802,12 @@ def _service_monitor_loop() -> None:
                     and _has_unfinished_at_or_before("object_alignment")
                 ),
             )
+            _sam3video_service.maybe_stop_idle(
+                keep_alive=(
+                    MODEL_EVENT_TRACKING_ENABLE
+                    and _has_unfinished_at_or_before("model_bounds")
+                ),
+            )
         except Exception as exc:
             print(f"[worker] service monitor error: {exc}")
         time.sleep(5.0)
@@ -739,7 +815,7 @@ def _service_monitor_loop() -> None:
 
 def shutdown_worker() -> None:
     """Stop persistent model services owned by this server process."""
-    for service in (_sam3mask_service, _instantmesh_service, _foundationpose_service):
+    for service in (_sam3mask_service, _instantmesh_service, _foundationpose_service, _sam3video_service):
         try:
             service.stop()
         except Exception as exc:

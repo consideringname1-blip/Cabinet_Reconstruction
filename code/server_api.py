@@ -2,6 +2,7 @@
 
 import json
 import logging
+import shutil
 from datetime import datetime, timezone
 
 import cv2
@@ -11,6 +12,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from config import (
     BLENDER_FBX_DIR,
     FOLDER_MAP,
+    MODEL_EVENT_OUTPUT_ROOT,
     UPLOAD_FOLDER,
 )
 from depth_camera_config import (
@@ -149,6 +151,29 @@ def _url_for_file_if_present(folder: str, filename: str | None, file_path) -> st
     return f"{host}/files/{folder}/{filename}"
 
 
+def _safe_model_event_name(value: str) -> str:
+    text = "".join(ch if ch.isalnum() or ch in "._-" else "_" for ch in str(value))
+    text = text.strip("._")
+    return text or "model"
+
+
+def _model_event_dir(task_id: str, event_type: str = "taken_away"):
+    return MODEL_EVENT_OUTPUT_ROOT / _safe_model_event_name(task_id) / _safe_model_event_name(event_type)
+
+
+def _model_event_json_path(task_id: str, event_type: str = "taken_away"):
+    return _model_event_dir(task_id, event_type) / "event.json"
+
+
+def _model_event_url(task_id: str, event_type: str = "taken_away") -> str | None:
+    if not task_id or not _model_event_json_path(task_id, event_type).is_file():
+        return None
+    host = request.host_url.rstrip("/")
+    if event_type == "taken_away":
+        return f"{host}/model-events/{task_id}/taken-away"
+    return None
+
+
 def _build_bounds_download_urls(task_json: dict, fbx_name: str | None) -> dict:
     urls = {}
 
@@ -225,6 +250,10 @@ def _build_model_bounds_response(row: dict, hit_result: dict | None = None) -> d
             "object_aruco": object_aruco,
             "aruco_reference": None,
         }
+
+    event_url = _model_event_url(task_id)
+    if event_url:
+        model["taken_away_event_url"] = event_url
 
     if hit_result:
         model["hit_distance_m"] = hit_result.get("hit_distance_m")
@@ -877,6 +906,46 @@ def spatial_query_ray_range():
     except Exception as exc:
         print(f"Error in spatial_query_ray_range: {exc}")
         return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/model-events/<task_id>/taken-away", methods=["GET", "DELETE"], strict_slashes=False)
+def model_taken_away_event(task_id):
+    try:
+        event_dir = _model_event_dir(task_id)
+        event_json = event_dir / "event.json"
+        if request.method == "DELETE":
+            if event_dir.exists():
+                shutil.rmtree(event_dir)
+                try:
+                    event_dir.parent.rmdir()
+                except OSError:
+                    pass
+                return jsonify({"success": True, "deleted": True})
+            return jsonify({"success": True, "deleted": False})
+
+        if not event_json.is_file():
+            return jsonify({"success": False, "error": "event not found"}), 404
+        with event_json.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
+        host = request.host_url.rstrip("/")
+        urls = {}
+        for key, value in dict(payload.get("files") or {}).items():
+            filename = str(value).replace("\\", "/").rsplit("/", 1)[-1]
+            if filename:
+                urls[str(key)] = f"{host}/model-events/{task_id}/taken-away/files/{filename}"
+        payload["download_urls"] = urls
+        return jsonify({"success": True, "event": payload})
+    except Exception as exc:
+        print(f"Error in model_taken_away_event: {exc}")
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/model-events/<task_id>/taken-away/files/<path:filename>", methods=["GET"], strict_slashes=False)
+def model_taken_away_event_file(task_id, filename):
+    event_dir = _model_event_dir(task_id)
+    if not (event_dir / "event.json").is_file():
+        return jsonify({"success": False, "error": "event not found"}), 404
+    return send_from_directory(str(event_dir), filename)
 
 
 @app.route("/files/<path:folder>/<filename>", strict_slashes=False)
