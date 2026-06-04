@@ -37,9 +37,9 @@ DEPTHPOINTCLOUD_MAX_EXPORT_POINTS = 6000
 ENABLE_ALIGNMENT_RENDER_OUTPUTS = False
 # Enable InstantMesh circular-view MP4 generation.
 ENABLE_INSTANTMESH_VIDEO_OUTPUT = True
-# Maximum number of InstantMesh stage workers. If INSTANTMESH_GPU_IDS is set,
-# workers are capped to the number of listed GPU ids.
-INSTANTMESH_MAX_WORKERS = int(os.environ.get("INSTANTMESH_MAX_WORKERS", "3"))
+# Legacy compatibility knob; task_worker serializes InstantMesh to one
+# persistent service because the underlying model process is GPU-heavy.
+INSTANTMESH_MAX_WORKERS = int(os.environ.get("INSTANTMESH_MAX_WORKERS", "1"))
 _instantmesh_gpu_ids = []
 for gpu_id in os.environ.get("INSTANTMESH_GPU_IDS", "0,1,2").split(","):
     gpu_id = gpu_id.strip()
@@ -221,6 +221,7 @@ OBJECT_ALIGNMENT_OUTPUT_ROOT = OUTPUT_ROOT / "object_alignment"
 
 # Persistent model worker idle release windows.
 SAM3MASK_WORKER_IDLE_TIMEOUT_SEC = int(os.environ.get("SAM3MASK_WORKER_IDLE_TIMEOUT_SEC", "300"))
+INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC = int(os.environ.get("INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC", "300"))
 FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC = int(
     os.environ.get("FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC", "300")
 )

@@ -1,5 +1,9 @@
+import json
+import socket
 import sys
+import traceback
 from pathlib import Path
+from typing import Any
 
 import _bootstrap
 from PIL import Image
@@ -29,7 +33,7 @@ from model_generation_common import (
 )
 from stage_common import ensure_file, load_stage_task, resolve_python
 from subprocess_stream import stream_command
-from task_json import save_task_json
+from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
 def create_white_background_image(source_path: Path, target_path: Path) -> Path:
@@ -137,7 +141,84 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
     save_task_json(json_path, task)
 
 
+WORKER_RESPONSE_ENCODING = "utf-8"
+
+
+def _read_socket_json(conn: socket.socket) -> dict[str, Any]:
+    chunks: list[bytes] = []
+    while True:
+        chunk = conn.recv(65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        if b"\n" in chunk:
+            break
+    if not chunks:
+        raise RuntimeError("empty InstantMesh worker request")
+    raw = b"".join(chunks).splitlines()[0]
+    return json.loads(raw.decode(WORKER_RESPONSE_ENCODING))
+
+
+def _send_socket_json(conn: socket.socket, payload: dict[str, Any]) -> None:
+    conn.sendall((json.dumps(payload, ensure_ascii=False) + "\n").encode(WORKER_RESPONSE_ENCODING))
+
+
+def _request_json_paths(request: dict[str, Any]) -> list[Path]:
+    raw_paths = request.get("json_paths")
+    if raw_paths is None:
+        raw_path = request.get("json_path")
+        if raw_path is None:
+            raise ValueError("InstantMesh worker request requires json_path or json_paths")
+        raw_paths = [raw_path]
+    if not isinstance(raw_paths, list) or not raw_paths:
+        raise ValueError("json_paths must be a non-empty list")
+    return [resolve_task_json_path(str(raw_path)) for raw_path in raw_paths]
+
+
+def run_socket_server(socket_path: Path) -> None:
+    socket_path = socket_path.expanduser().resolve()
+    socket_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        socket_path.unlink()
+    except FileNotFoundError:
+        pass
+
+    server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    server.bind(str(socket_path))
+    server.listen(8)
+    print(f"[InstantMesh worker] listening: {socket_path}", flush=True)
+
+    try:
+        while True:
+            conn, _ = server.accept()
+            with conn:
+                try:
+                    request = _read_socket_json(conn)
+                    if request.get("action") == "shutdown":
+                        _send_socket_json(conn, {"ok": True, "shutdown": True})
+                        break
+                    results = []
+                    for json_path in _request_json_paths(request):
+                        task = load_task_json(json_path)
+                        run_instantmesh(json_path, task)
+                        results.append({"json_path": str(json_path), "ok": True})
+                    _send_socket_json(conn, {"ok": True, "results": results})
+                except Exception as exc:
+                    traceback.print_exc(file=sys.stderr)
+                    _send_socket_json(conn, {"ok": False, "error": str(exc)})
+    finally:
+        server.close()
+        try:
+            socket_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def main() -> int:
+    if len(sys.argv) == 3 and sys.argv[1] == "--socket-server":
+        run_socket_server(Path(sys.argv[2]))
+        return 0
+
     try:
         json_path, task = load_stage_task(
             sys.argv,

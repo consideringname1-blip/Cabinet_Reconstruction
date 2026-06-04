@@ -109,6 +109,144 @@ p_parent = R_parent_child * p_child + t_parent_child
 - OpenCV marker detections are converted at the ArUco boundary before world or
   ArUco-local poses are composed.
 
+## Pose And Asset Contracts
+
+### Runtime Pose Output
+
+`run_pose_from_json.py` emits `object_world` in Unity-style world coordinates.
+The alignment stage solves a camera-local pose in `canonical_rh`; the pose stage
+first converts that local pose to Unity camera coordinates, then composes it
+with the PV camera world pose.
+
+```text
+R_local_unity, t_local_unity =
+  model_pose_canonical_rh_to_unity_camera(R_local_canonical, t_local_canonical)
+
+t_world_object = R_world_camera_raw * t_local_unity + t_world_camera
+R_world_object = R_world_camera_filtered * R_local_unity * R_runtime_local_to_unity
+```
+
+`R_runtime_local_to_unity` currently resolves to:
+
+```text
+FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY @ RUNTIME_LOCAL_TO_UNITY_POSE_ROTATION
+
+RUNTIME_LOCAL_TO_UNITY_POSE_ROTATION =
+[[0, 1, 0],
+ [0, 0, 1],
+ [1, 0, 0]]
+```
+
+For `OBJECT_ALIGNMENT_MODE == "off"`, `R_world_camera_filtered` can be reduced
+by the `SKIP_ICP_POSE_USE_CAMERA_YAW`, `SKIP_ICP_POSE_USE_CAMERA_PITCH`, and
+`SKIP_ICP_POSE_USE_CAMERA_ROLL` settings. For FoundationPose and camera-refine
+alignment modes, the full PV camera rotation is used.
+
+### Runtime Mesh And FBX Export
+
+RuntimeMesh preserves generated model-input axes:
+
+```text
+runtime_xyz = source_xyz
+MODEL_INPUT_TO_UNITY_RUNTIME_LOCAL = identity
+```
+
+FBX export is a Blender boundary. Runtime OBJ/MTL/PNG sources are imported with:
+
+```text
+forward_axis = NEGATIVE_Z
+up_axis = Y
+```
+
+and exported as FBX with:
+
+```text
+axis_forward = -Z
+axis_up = Y
+bake_space_transform = True
+```
+
+The FBX stage applies `object_world.scale` to the exported mesh objects before
+writing the FBX. Verification renders that import the FBX back into Blender
+therefore treat FBX geometry as already in the runtime scale contract; they do
+not multiply `object_world.scale` into the overlay placement matrix again.
+
+## FBX On ROS RGB Overlay Verification
+
+`code/.test/overlay_fbx_models_on_ros_rgb.py` renders completed task FBX files
+onto a saved Shigurei/ROS RGB frame. The current trustworthy output relies on
+the following transform chain.
+
+1. `object_world` and `aruco_reference` are Unity-style world poses.
+2. The object pose is first expressed relative to the reference marker:
+
+```text
+R_marker_object_unity = R_world_marker.T * R_world_object
+t_marker_object_unity = R_world_marker.T * (t_world_object - t_world_marker)
+```
+
+3. The marker-local Unity pose is converted to OpenCV marker coordinates with:
+
+```text
+B_unity_to_opencv_camera = diag(1, -1, 1)
+
+R_marker_object_cv = B_unity_to_opencv_camera * R_marker_object_unity * B_unity_to_opencv_camera.T
+t_marker_object_cv = B_unity_to_opencv_camera * t_marker_object_unity
+```
+
+4. The current ROS snapshot marker pose comes from
+   `marker_6d_pose.json["opencv_camera_pose"]` and is already in OpenCV camera
+   coordinates. The object is placed in the current RGB camera frame by:
+
+```text
+R_camera_object_cv = R_camera_marker_cv * R_marker_object_cv
+t_camera_object_cv = R_camera_marker_cv * t_marker_object_cv + t_camera_marker_cv
+```
+
+5. Blender's camera is configured at the world origin with its default optical
+   direction (`-Z`) and the ROS RGB intrinsics from
+   `rs_aligned_depth_to_color_cameraInfo.json`. The OpenCV camera pose is
+   converted into Blender camera/world coordinates with:
+
+```text
+B_opencv_to_blender_camera = diag(1, -1, -1)
+t_blender_object = B_opencv_to_blender_camera * t_camera_object_cv
+```
+
+6. Re-imported FBX local axes are compensated before assigning
+   `matrix_world`. The overlay script currently uses:
+
+```text
+FBX_IMPORTED_LOCAL_FROM_RUNTIME =
+[[-1,  0,  0],
+ [ 0,  0, -1],
+ [ 0, -1,  0]]
+
+R_blender_imported_object =
+  B_opencv_to_blender_camera * R_camera_object_cv * FBX_IMPORTED_LOCAL_FROM_RUNTIME.T
+```
+
+7. Optional depth occlusion uses
+   `rs_aligned_depth_to_color_compressedDepth.png` and a Blender ray-cast depth
+   buffer. Model pixels are hidden when:
+
+```text
+model_depth_m > observed_depth_m + occlusion_depth_margin_m
+```
+
+The default overlay margin is `0.05 m`.
+
+Notes for this verification path:
+
+- ROS RGB/depth frames are treated as the `opencv_camera` boundary:
+  `+X` right, `+Y` down, `+Z` forward.
+- Blender render projection uses the pinhole camera matrix `K`. Distortion
+  coefficients are saved in the debug config, but the Blender render path does
+  not apply lens distortion.
+- The overlay script repeats a few boundary matrices locally because it is a
+  test/debug utility. Production stage code should continue importing shared
+  conversions from `code/coordinate_systems.py`.
+
 ## Current Usage Map
 
 - `code/coordinate_systems.py`: single source of truth for axis definitions,
@@ -128,8 +266,32 @@ p_parent = R_parent_child * p_child + t_parent_child
   responding to clients.
 - `code/model_bounds.py`: reads runtime-local mesh vertices and stores bounds in
   ArUco/Unity-style pose space.
+- `code/.test/overlay_fbx_models_on_ros_rgb.py`: debug verification renderer
+  for placing exported FBX assets back onto saved ROS RGB frames through the
+  ArUco/OpenCV/Blender chain above.
 - `code/Hololens2/DepthConvertToRGB`: depth/RGB registration boundary; not
   changed by this coordinate-system cleanup.
+
+## Related Settings
+
+- `OBJECT_ALIGNMENT_MODE`: selects FoundationPose, camera-refine, or placement
+  without ICP. This affects the solved camera-local pose and, for `off`, whether
+  camera yaw/pitch/roll filtering is applied in the pose stage.
+- `SKIP_ICP_POSE_USE_CAMERA_YAW`, `SKIP_ICP_POSE_USE_CAMERA_PITCH`,
+  `SKIP_ICP_POSE_USE_CAMERA_ROLL`: only affect pose-stage camera rotation
+  filtering when `OBJECT_ALIGNMENT_MODE == "off"`.
+- `ARUCO_ANCHOR_MARKER_ID`: chooses the anchor marker whose world pose becomes
+  the runtime ArUco reference.
+- `ARUCO_SYNC_MARKER_REGISTRY_ON_START`: controls whether marker registry data
+  is synced on server startup; pose conversion still uses the latest ArUco
+  reference for the task's startup session.
+- `RUNTIME_MESH_DECIMATE_RATIO`, `MODEL_FBX_DECIMATE_RATIO`, and
+  `SAM3D_OBJECTS_FBX_DECIMATE_RATIO`: change mesh density only; they do not
+  change axis contracts.
+- `BLENDER_BIN` and `BLENDER_FBX_DIR`: select the Blender executable and FBX
+  output location for the server stages. The overlay script also accepts a
+  `--blender` override and writes debug artifacts under
+  `code/.test/overlay_fbx_multi/`.
 
 ## Rules For New Code
 

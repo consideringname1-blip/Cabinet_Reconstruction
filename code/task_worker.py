@@ -27,11 +27,11 @@ from config import (
     FOUNDATIONPOSE_ALIGNMENT_PY,
     FOUNDATIONPOSE_ALIGNMENT_RUN,
     FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
+    INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
     HOLOLENS2_CONVERT_DIR,
     HOLOLENS2_CONVERT_RUN,
     HOLOLENS2_PY,
     INSTANTMESH_GPU_IDS,
-    INSTANTMESH_MAX_WORKERS,
     INSTANTMESH_STAGE_PY,
     INSTANTMESH_STAGE_RUN,
     MODEL_BOUNDS_STAGE_PY,
@@ -113,6 +113,7 @@ class SocketStageService:
         socket_name: str,
         idle_timeout_sec: int,
         echo_output: bool,
+        env_overrides: Mapping[str, str] | None = None,
     ) -> None:
         self.name = name
         self.python_path = python_path
@@ -121,6 +122,7 @@ class SocketStageService:
         self.socket_path = WORKER_SOCKET_ROOT / socket_name
         self.idle_timeout_sec = max(1, int(idle_timeout_sec or 300))
         self.echo_output = bool(echo_output)
+        self.env_overrides = dict(env_overrides or {})
         self._lock = threading.RLock()
         self._process: subprocess.Popen[str] | None = None
         self._reader_thread: threading.Thread | None = None
@@ -140,6 +142,7 @@ class SocketStageService:
                 pass
 
             env = os.environ.copy()
+            env.update(self.env_overrides)
             env.setdefault("PYTHONUNBUFFERED", "1")
             command = [
                 _resolve_python(self.python_path),
@@ -300,6 +303,20 @@ _sam3mask_service = SocketStageService(
     idle_timeout_sec=SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
     echo_output=True,
 )
+_instantmesh_service = SocketStageService(
+    name="instantmesh",
+    python_path=INSTANTMESH_STAGE_PY,
+    script_path=INSTANTMESH_STAGE_RUN,
+    cwd=INSTANTMESH_STAGE_RUN.parent,
+    socket_name="instantmesh.sock",
+    idle_timeout_sec=INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
+    echo_output=True,
+    env_overrides=(
+        {"CUDA_VISIBLE_DEVICES": str(INSTANTMESH_GPU_IDS[0])}
+        if INSTANTMESH_GPU_IDS
+        else None
+    ),
+)
 _foundationpose_service = SocketStageService(
     name="foundationpose",
     python_path=FOUNDATIONPOSE_ALIGNMENT_PY,
@@ -438,13 +455,7 @@ def _run_model_generation(json_path: Path, context: StageWorkerContext | None = 
         )
         return
 
-    _run_python_script(
-        python_path=INSTANTMESH_STAGE_PY,
-        script_path=INSTANTMESH_STAGE_RUN,
-        json_path=json_path,
-        cwd=INSTANTMESH_STAGE_RUN.parent,
-        env=env,
-    )
+    _instantmesh_service.request({"json_path": str(json_path)})
 
 
 def _run_instantmesh(json_path: Path, context: StageWorkerContext | None = None) -> None:
@@ -669,17 +680,8 @@ def _stage_worker_loop(context: StageWorkerContext) -> None:
 
 
 def _instantmesh_contexts() -> list[StageWorkerContext]:
-    max_workers = max(1, int(INSTANTMESH_MAX_WORKERS or 1))
-    if MODEL_GENERATION_BACKEND == "sam3d_objects":
-        max_workers = 1
-    gpu_ids = list(INSTANTMESH_GPU_IDS)
-    if gpu_ids:
-        worker_count = min(max_workers, len(gpu_ids))
-        return [
-            StageWorkerContext("instantmesh", worker_index=i, gpu_id=str(gpu_ids[i]))
-            for i in range(worker_count)
-        ]
-    return [StageWorkerContext("instantmesh", worker_index=i) for i in range(max_workers)]
+    gpu_id = str(INSTANTMESH_GPU_IDS[0]) if INSTANTMESH_GPU_IDS else None
+    return [StageWorkerContext("instantmesh", worker_index=0, gpu_id=gpu_id)]
 
 
 def _worker_contexts() -> list[StageWorkerContext]:
@@ -718,6 +720,12 @@ def _service_monitor_loop() -> None:
             _sam3mask_service.maybe_stop_idle(
                 keep_alive=_has_unfinished_at_or_before("sam3mask"),
             )
+            _instantmesh_service.maybe_stop_idle(
+                keep_alive=(
+                    MODEL_GENERATION_BACKEND == "instantmesh"
+                    and _has_unfinished_at_or_before("instantmesh")
+                ),
+            )
             _foundationpose_service.maybe_stop_idle(
                 keep_alive=(
                     OBJECT_ALIGNMENT_MODE == "foundationpose"
@@ -731,7 +739,7 @@ def _service_monitor_loop() -> None:
 
 def shutdown_worker() -> None:
     """Stop persistent model services owned by this server process."""
-    for service in (_sam3mask_service, _foundationpose_service):
+    for service in (_sam3mask_service, _instantmesh_service, _foundationpose_service):
         try:
             service.stop()
         except Exception as exc:
