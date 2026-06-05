@@ -536,25 +536,39 @@ def _restore_unfinished_tasks() -> None:
             )
 
 
-def _prewarm_post_generation_services(reason: str) -> None:
+def _prewarm_model_pipeline_services(reason: str) -> None:
     global _service_prewarm_thread
     if _shutdown_requested or not MODEL_SERVICE_PREWARM_ENABLE:
         return
 
+    def _start_service(service: SocketStageService) -> None:
+        if _shutdown_requested:
+            return
+        try:
+            print(f"[worker] prewarming {service.name} after {reason}")
+            service.ensure_started()
+        except Exception as exc:
+            print(f"[worker] failed to prewarm {service.name}: {exc}")
+
     def _run() -> None:
-        services: list[SocketStageService] = []
-        if OBJECT_ALIGNMENT_MODE == "foundationpose":
-            services.append(_foundationpose_service)
-        if MODEL_EVENT_TRACKING_ENABLE:
-            services.append(_sam3video_service)
+        services = (
+            _instantmesh_service,
+            _sam3mask_service,
+            _sam3video_service,
+            _foundationpose_service,
+        )
+        starters: list[threading.Thread] = []
         for service in services:
-            if _shutdown_requested:
-                return
-            try:
-                print(f"[worker] prewarming {service.name} after {reason}")
-                service.ensure_started()
-            except Exception as exc:
-                print(f"[worker] failed to prewarm {service.name}: {exc}")
+            thread = threading.Thread(
+                target=_start_service,
+                args=(service,),
+                daemon=True,
+                name=f"prewarm-{service.name}",
+            )
+            thread.start()
+            starters.append(thread)
+        for thread in starters:
+            thread.join()
 
     with _task_lock:
         if _service_prewarm_thread is not None and _service_prewarm_thread.is_alive():
@@ -562,7 +576,7 @@ def _prewarm_post_generation_services(reason: str) -> None:
         _service_prewarm_thread = threading.Thread(
             target=_run,
             daemon=True,
-            name="post-generation-service-prewarm",
+            name="model-pipeline-service-prewarm",
         )
         _service_prewarm_thread.start()
 
@@ -632,7 +646,7 @@ def _run_model_generation(json_path: Path, context: StageWorkerContext | None = 
         return
 
     _instantmesh_service.ensure_started()
-    _prewarm_post_generation_services("instantmesh start")
+    _prewarm_model_pipeline_services("instantmesh start")
     _instantmesh_service.request({"json_path": str(json_path)})
 
 
@@ -1108,6 +1122,9 @@ def create_task(json_path: Path | str) -> str:
         json_path=task_json_path,
         startup_session_id=startup_session_id,
     )
+
+    if _resolve_task_purpose(data) == PURPOSE_OBJECT_RECONSTRUCTION:
+        _prewarm_model_pipeline_services("new 3D model task")
 
     with _task_lock:
         _enqueue_task_no_lock(task_id, _resolve_task_purpose(data), task_json=data)

@@ -31,11 +31,13 @@ from task_db import (
     get_latest_completed_tasks,
     get_latest_aruco_reference,
     get_latest_ready_model_bounds,
+    get_json_path_by_task_id,
     get_model_bounds_by_task_id,
     get_ready_model_bounds_in_range,
     sync_marker_registry_from_reference_folder,
 )
 from model_bounds import decode_model_bounds_row, latest_bounds_for_ray, range_bounds_for_ray
+from stages.model_event_tracking.output_paths import task_output_dir as model_event_task_output_dir
 from model_generation_common import resolve_model_generation_source, resolve_runtime_mesh_source
 from task_json import save_task_json
 from coordinate_systems import convert_hololens_pv_pose_matrix_to_unity_pose_components
@@ -158,7 +160,15 @@ def _safe_model_event_name(value: str) -> str:
 
 
 def _model_event_dir(task_id: str, event_type: str = "taken_away"):
-    return MODEL_EVENT_OUTPUT_ROOT / _safe_model_event_name(task_id) / _safe_model_event_name(event_type)
+    json_path = get_json_path_by_task_id(task_id)
+    preferred = model_event_task_output_dir(
+        MODEL_EVENT_OUTPUT_ROOT,
+        task_id=task_id,
+        json_path=json_path,
+    )
+    legacy = MODEL_EVENT_OUTPUT_ROOT / _safe_model_event_name(task_id)
+    task_dir = preferred if preferred.exists() or not legacy.exists() else legacy
+    return task_dir / _safe_model_event_name(event_type)
 
 
 def _model_event_json_path(task_id: str, event_type: str = "taken_away"):

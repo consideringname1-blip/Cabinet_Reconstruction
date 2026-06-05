@@ -10,6 +10,7 @@ from PIL import Image
 
 from . import settings
 from .cache import safe_name
+from .output_paths import safe_output_name
 from .people import extract_people_skeletons
 from .schemas import HandContact, ModelEventRecord, MovementDecision, ShigureFrame, to_jsonable
 
@@ -43,8 +44,14 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> Path:
     return path
 
 
-def event_dir_for_task(task_id: str, *, event_type: str = "taken_away") -> Path:
-    return Path(settings.MODEL_EVENT_OUTPUT_ROOT) / safe_name(task_id) / safe_name(event_type)
+def event_dir_for_task(
+    task_id: str,
+    *,
+    event_type: str = "taken_away",
+    task_output_name: str | None = None,
+) -> Path:
+    folder_name = safe_output_name(task_output_name or task_id)
+    return Path(settings.MODEL_EVENT_OUTPUT_ROOT) / folder_name / safe_name(event_type)
 
 
 def persist_taken_away_event(
@@ -55,9 +62,14 @@ def persist_taken_away_event(
     hand_contact: HandContact | None = None,
     mask: np.ndarray | None = None,
     projected_box: Mapping[str, Any] | None = None,
+    task_output_name: str | None = None,
     replace: bool = False,
 ) -> ModelEventRecord:
-    output_dir = event_dir_for_task(task_id, event_type="taken_away")
+    output_dir = event_dir_for_task(
+        task_id,
+        event_type="taken_away",
+        task_output_name=task_output_name,
+    )
     event_json = output_dir / "event.json"
     if event_json.is_file() and not replace:
         with event_json.open("r", encoding="utf-8") as file:

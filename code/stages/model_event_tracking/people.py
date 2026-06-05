@@ -172,4 +172,4 @@ def choose_event_start_contact(
     if nearest_max_distance_m is None:
         return ordered[0]
     close = [contact for contact in ordered if contact.distance_m <= float(nearest_max_distance_m)]
-    return close[0] if close else ordered[0]
+    return close[0] if close else None

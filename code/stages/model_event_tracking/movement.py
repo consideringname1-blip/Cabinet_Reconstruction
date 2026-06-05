@@ -292,12 +292,35 @@ class MaskDepthMovementTracker:
         if complete_again and center_delta is not None and center_delta > thresholds.movement_threshold_m:
             movement_evidence = True
             evidence_reason = f"complete mask center moved {center_delta:.3f} m"
-        elif enough_visible and depth_delta is not None and depth_delta > thresholds.depth_stable_tolerance_m:
+        elif (
+            enough_visible
+            and depth_delta is not None
+            and depth_delta > max(thresholds.depth_stable_tolerance_m, thresholds.movement_threshold_m)
+        ):
             movement_evidence = True
             evidence_reason = f"visible overlap depth changed {depth_delta:.3f} m"
         elif enough_visible and visible_center_delta is not None and visible_center_delta > thresholds.movement_threshold_m:
             movement_evidence = True
             evidence_reason = f"visible overlap center moved {visible_center_delta:.3f} m"
+
+        if movement_evidence and settings.REQUIRE_HAND_CONTACT and self.trigger_contact() is None:
+            self.movement_candidate_frames = 0
+            return MovementDecision(
+                status="movement_without_hand_contact",
+                moved=False,
+                occluded=False,
+                stable_in_place=False,
+                should_stop_tracking=False,
+                reason=f"{evidence_reason}; waiting for a wrist near the projected box",
+                timestamp=timestamp,
+                trigger_contact=None,
+                center_delta_m=center_delta,
+                depth_delta_m=depth_delta,
+                overlap_pixels=overlap_pixels,
+                visible_area_ratio=visible_area_ratio,
+                area_ratio=area_ratio,
+                mask_iou=iou,
+            )
 
         if movement_evidence:
             self.movement_candidate_frames += 1
