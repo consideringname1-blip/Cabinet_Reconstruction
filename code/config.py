@@ -9,6 +9,7 @@ IS_RUN_FLASK_SERVER = True
 # Use "sam3d_objects" or "instantmesh".
 MODEL_GENERATION_BACKEND = "instantmesh"
 MODEL_EVENT_TRACKING_ENABLE = os.environ.get("MODEL_EVENT_TRACKING_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
+MODEL_SERVICE_PREWARM_ENABLE = os.environ.get("MODEL_SERVICE_PREWARM_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
 SHIGURE_EVENT_RECORDING_ENABLE = os.environ.get("SHIGURE_EVENT_RECORDING_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 # Depth / alignment tuning

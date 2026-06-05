@@ -176,21 +176,36 @@ class ShigureHistoryCache:
         return newest
 
     def prune(self, *, newest_stamp: RosStamp | None = None) -> None:
-        frames = list(self.iter_frames())
-        if newest_stamp is None and frames:
-            newest_stamp = frames[-1].stamp
+        frame_dirs = sorted(path for path in self.frames_root.iterdir() if path.is_dir())
+        entries: list[tuple[Path, ShigureFrame | None, float]] = []
+        for frame_dir in frame_dirs:
+            frame: ShigureFrame | None = None
+            try:
+                frame_json = frame_dir / "frame.json"
+                if frame_json.is_file():
+                    frame = self._load_frame(frame_json)
+            except Exception:
+                frame = None
+            sort_seconds = frame.stamp.seconds if frame is not None else frame_dir.stat().st_mtime
+            entries.append((frame_dir, frame, sort_seconds))
+
+        entries.sort(key=lambda item: item[2])
+        parsed_frames = [frame for _, frame, _ in entries if frame is not None]
+        if newest_stamp is None and parsed_frames:
+            newest_stamp = parsed_frames[-1].stamp
         cutoff = None
         if newest_stamp is not None:
             cutoff = newest_stamp.seconds - self.retention_seconds
 
         removable: list[Path] = []
-        for frame in frames:
-            if cutoff is not None and frame.stamp.seconds < cutoff:
-                removable.append(self.frames_root / frame_key(frame.stamp))
+        for frame_dir, frame, _sort_seconds in entries:
+            if frame is not None and cutoff is not None and frame.stamp.seconds < cutoff:
+                removable.append(frame_dir)
 
-        remaining = [frame for frame in frames if self.frames_root / frame_key(frame.stamp) not in removable]
+        removable_set = set(removable)
+        remaining = [entry for entry in entries if entry[0] not in removable_set]
         overflow = max(0, len(remaining) - self.max_frames)
-        removable.extend(self.frames_root / frame_key(frame.stamp) for frame in remaining[:overflow])
+        removable.extend(frame_dir for frame_dir, _frame, _sort_seconds in remaining[:overflow])
 
         seen: set[Path] = set()
         for path in removable:

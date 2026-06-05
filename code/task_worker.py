@@ -28,6 +28,7 @@ from config import (
     FOUNDATIONPOSE_ALIGNMENT_RUN,
     FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
     MODEL_EVENT_TRACKING_ENABLE,
+    MODEL_SERVICE_PREWARM_ENABLE,
     MODEL_EVENT_TRACKING_RUN,
     MODEL_EVENT_TRACKING_STAGE_PY,
     INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
@@ -316,9 +317,14 @@ _task_lock = threading.Lock()
 _worker_thread: Optional[threading.Thread] = None
 _worker_threads: list[threading.Thread] = []
 _service_monitor_thread: Optional[threading.Thread] = None
+_model_event_worker_thread: Optional[threading.Thread] = None
+_model_event_task_queue: deque[str] = deque()
+_queued_model_event_task_ids: set[str] = set()
+_running_model_event_task_ids: set[str] = set()
 _shigure_recorder_process: subprocess.Popen[str] | None = None
 _shigure_recorder_reader_thread: threading.Thread | None = None
 _last_shigure_recorder_start_attempt_at = 0.0
+_service_prewarm_thread: threading.Thread | None = None
 _shutdown_requested = False
 _shutdown_hooks_installed = False
 _restore_scan_lock = threading.Lock()
@@ -440,6 +446,15 @@ _foundationpose_service = SocketStageService(
     echo_output=False,
     env_overrides=lambda: _service_gpu_env("foundationpose"),
 )
+
+
+def _sam3video_env() -> dict[str, str]:
+    env = _service_gpu_env("sam3_video_tracker")
+    env.setdefault("SAM3_DISABLE_TRITON_NMS", "1")
+    env.setdefault("SAM3_DISABLE_TRITON_CONNECTED_COMPONENTS", "1")
+    return env
+
+
 _sam3video_service = SocketStageService(
     name="sam3video",
     python_path=SAM3_VIDEO_TRACKER_STAGE_PY,
@@ -448,7 +463,7 @@ _sam3video_service = SocketStageService(
     socket_name="sam3video.sock",
     idle_timeout_sec=SAM3_VIDEO_TRACKER_WORKER_IDLE_TIMEOUT_SEC,
     echo_output=True,
-    env_overrides=lambda: _service_gpu_env("sam3_video_tracker"),
+    env_overrides=_sam3video_env,
 )
 
 
@@ -521,6 +536,37 @@ def _restore_unfinished_tasks() -> None:
             )
 
 
+def _prewarm_post_generation_services(reason: str) -> None:
+    global _service_prewarm_thread
+    if _shutdown_requested or not MODEL_SERVICE_PREWARM_ENABLE:
+        return
+
+    def _run() -> None:
+        services: list[SocketStageService] = []
+        if OBJECT_ALIGNMENT_MODE == "foundationpose":
+            services.append(_foundationpose_service)
+        if MODEL_EVENT_TRACKING_ENABLE:
+            services.append(_sam3video_service)
+        for service in services:
+            if _shutdown_requested:
+                return
+            try:
+                print(f"[worker] prewarming {service.name} after {reason}")
+                service.ensure_started()
+            except Exception as exc:
+                print(f"[worker] failed to prewarm {service.name}: {exc}")
+
+    with _task_lock:
+        if _service_prewarm_thread is not None and _service_prewarm_thread.is_alive():
+            return
+        _service_prewarm_thread = threading.Thread(
+            target=_run,
+            daemon=True,
+            name="post-generation-service-prewarm",
+        )
+        _service_prewarm_thread.start()
+
+
 def _run_python_script(
     python_path: str,
     script_path: Path,
@@ -585,6 +631,8 @@ def _run_model_generation(json_path: Path, context: StageWorkerContext | None = 
         )
         return
 
+    _instantmesh_service.ensure_started()
+    _prewarm_post_generation_services("instantmesh start")
     _instantmesh_service.request({"json_path": str(json_path)})
 
 
@@ -667,13 +715,23 @@ def _run_model_event_tracking(json_path: Path, context: StageWorkerContext | Non
     _sam3video_service.ensure_started()
     env = os.environ.copy()
     env["SAM3_VIDEO_TRACKER_WORKER_SOCKET"] = str(_sam3video_service.socket_path)
-    _run_python_script(
-        python_path=MODEL_EVENT_TRACKING_STAGE_PY,
-        script_path=MODEL_EVENT_TRACKING_RUN,
-        json_path=json_path,
-        cwd=MODEL_EVENT_TRACKING_RUN.parent,
-        env=env,
-    )
+    env.setdefault("SAM3_DISABLE_TRITON_NMS", "1")
+    env.setdefault("SAM3_DISABLE_TRITON_CONNECTED_COMPONENTS", "1")
+    with _sam3video_service._lock:
+        _sam3video_service._active_requests += 1
+        _sam3video_service._last_used_at = time.monotonic()
+    try:
+        _run_python_script(
+            python_path=MODEL_EVENT_TRACKING_STAGE_PY,
+            script_path=MODEL_EVENT_TRACKING_RUN,
+            json_path=json_path,
+            cwd=MODEL_EVENT_TRACKING_RUN.parent,
+            env=env,
+        )
+    finally:
+        with _sam3video_service._lock:
+            _sam3video_service._active_requests = max(0, _sam3video_service._active_requests - 1)
+            _sam3video_service._last_used_at = time.monotonic()
 
 
 def _run_model_bounds(json_path: Path, context: StageWorkerContext | None = None) -> None:
@@ -683,10 +741,6 @@ def _run_model_bounds(json_path: Path, context: StageWorkerContext | None = None
         json_path=json_path,
         cwd=MODEL_BOUNDS_STAGE_RUN.parent,
     )
-    try:
-        _run_model_event_tracking(json_path, context)
-    except Exception as exc:
-        print(f"[worker] model event tracking failed for {json_path}: {exc}")
 
 
 STAGE_RUNNERS = {
@@ -798,10 +852,79 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
     update_task_status(task_id, next_status)
     if next_status == "completed":
         print(f"[worker] completed task: {task_id}")
+        if stage_name == "model_bounds":
+            _enqueue_model_event_tracking(task_id)
     else:
         with _task_lock:
             _enqueue_stage_task_no_lock(task_id, next_status, front=False)
         print(f"[worker] stage completed, queued {next_status}: {task_id}")
+
+
+def _enqueue_model_event_tracking_no_lock(task_id: str, *, front: bool = False) -> None:
+    if not MODEL_EVENT_TRACKING_ENABLE:
+        return
+    task_id = str(task_id)
+    if task_id in _queued_model_event_task_ids or task_id in _running_model_event_task_ids:
+        return
+    if front:
+        _model_event_task_queue.appendleft(task_id)
+    else:
+        _model_event_task_queue.append(task_id)
+    _queued_model_event_task_ids.add(task_id)
+
+
+def _enqueue_model_event_tracking(task_id: str, *, front: bool = False) -> None:
+    with _task_lock:
+        _enqueue_model_event_tracking_no_lock(task_id, front=front)
+
+
+def _dequeue_model_event_tracking_task() -> str | None:
+    with _task_lock:
+        if not _model_event_task_queue:
+            return None
+        task_id = _model_event_task_queue.popleft()
+        _queued_model_event_task_ids.discard(task_id)
+        _running_model_event_task_ids.add(task_id)
+        return task_id
+
+
+def _finish_model_event_tracking_task(task_id: str) -> None:
+    with _task_lock:
+        _running_model_event_task_ids.discard(task_id)
+
+
+def _has_pending_or_running_model_event_tracking() -> bool:
+    with _task_lock:
+        return bool(_model_event_task_queue or _running_model_event_task_ids)
+
+
+def _model_event_worker_loop() -> None:
+    while True:
+        task_id = _dequeue_model_event_tracking_task()
+        if task_id is None:
+            time.sleep(0.5)
+            continue
+        try:
+            task_record = get_task_by_task_id(task_id)
+            if task_record is None:
+                raise ValueError(f"Task not found in database: {task_id}")
+            json_path = resolve_task_json_path(task_record["json_path"])
+            if not json_path.is_file():
+                raise FileNotFoundError(f"JSON file not found: {json_path}")
+            print(f"[worker] start model_event_tracking#background: {task_id}")
+            mark_task_stage_started(task_id, "model_event_tracking")
+            _run_model_event_tracking(json_path)
+            mark_task_stage_completed(task_id, "model_event_tracking")
+            print(f"[worker] completed background model_event_tracking: {task_id}")
+        except Exception as exc:
+            error_message = exc.stderr or exc.stdout or str(exc) if isinstance(exc, subprocess.CalledProcessError) else str(exc)
+            print(f"[worker] model event tracking failed for task {task_id}: {error_message}")
+            try:
+                mark_task_stage_failed(task_id, "model_event_tracking", error_message=error_message)
+            except Exception as db_exc:
+                print(f"[worker] failed to write model_event_tracking error to database: {db_exc}")
+        finally:
+            _finish_model_event_tracking_task(task_id)
 
 
 def _stage_worker_loop(context: StageWorkerContext) -> None:
@@ -885,7 +1008,10 @@ def _service_monitor_loop() -> None:
             _sam3video_service.maybe_stop_idle(
                 keep_alive=(
                     MODEL_EVENT_TRACKING_ENABLE
-                    and _has_unfinished_at_or_before("model_bounds")
+                    and (
+                        _has_unfinished_at_or_before("model_bounds")
+                        or _has_pending_or_running_model_event_tracking()
+                    )
                 ),
             )
         except Exception as exc:
@@ -926,7 +1052,7 @@ def _install_shutdown_hooks() -> None:
 
 
 def start_worker() -> threading.Thread:
-    global _worker_thread, _service_monitor_thread
+    global _worker_thread, _service_monitor_thread, _model_event_worker_thread
 
     _install_shutdown_hooks()
     initialize_task_table()
@@ -945,6 +1071,14 @@ def start_worker() -> threading.Thread:
         )
         thread.start()
         _worker_threads.append(thread)
+
+    _model_event_worker_thread = threading.Thread(
+        target=_model_event_worker_loop,
+        daemon=True,
+        name="model-event-tracking-background",
+    )
+    _model_event_worker_thread.start()
+    _worker_threads.append(_model_event_worker_thread)
 
     _service_monitor_thread = threading.Thread(
         target=_service_monitor_loop,
@@ -1020,6 +1154,9 @@ def _sync_completed_tasks_for_startup(startup_session_id: str | None = None) -> 
             resolved_json_path = resolve_task_json_path(json_path)
             _run_aruco_sync(resolved_json_path)
             _run_model_bounds(resolved_json_path)
+            task_id = str(task_row.get("task_id") or "").strip()
+            if task_id:
+                _enqueue_model_event_tracking(task_id)
             synced_count += 1
         except Exception as exc:
             print(

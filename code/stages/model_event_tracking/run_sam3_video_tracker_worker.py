@@ -13,6 +13,18 @@ CODE_ROOT = Path(__file__).resolve().parents[2]
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
+try:
+    from config import SAM3_ROOT
+except Exception:
+    SAM3_ROOT = CODE_ROOT / "reconstruction" / "sam3"
+
+sam3_root_str = str(Path(SAM3_ROOT).expanduser().resolve())
+if sam3_root_str not in sys.path:
+    sys.path.insert(0, sam3_root_str)
+
+os.environ.setdefault("SAM3_DISABLE_TRITON_NMS", "1")
+os.environ.setdefault("SAM3_DISABLE_TRITON_CONNECTED_COMPONENTS", "1")
+
 import numpy as np
 from PIL import Image
 
@@ -62,6 +74,13 @@ class Sam3VideoWorker:
         predictor = self._build_predictor()
         session_id = None
         masks: list[dict[str, Any]] = []
+        diagnostics: dict[str, Any] = {
+            "prompt_saved": False,
+            "stream_frames": 0,
+            "stream_saved_masks": 0,
+            "empty_binary_mask_frames": 0,
+            "missing_binary_mask_frames": 0,
+        }
         try:
             response = predictor.handle_request(
                 {
@@ -72,7 +91,7 @@ class Sam3VideoWorker:
                 }
             )
             session_id = response["session_id"]
-            predictor.handle_request(
+            prompt_response = predictor.handle_request(
                 {
                     "type": "add_prompt",
                     "session_id": session_id,
@@ -82,6 +101,10 @@ class Sam3VideoWorker:
                     "rel_coordinates": True,
                 }
             )
+            prompt_saved = self._save_response_mask(prompt_response, mask_dir, diagnostics=diagnostics)
+            if prompt_saved is not None:
+                diagnostics["prompt_saved"] = True
+                masks.append(prompt_saved)
             max_frames = request.get("max_frame_num_to_track")
             stream_request = {
                 "type": "propagate_in_video",
@@ -93,9 +116,12 @@ class Sam3VideoWorker:
                 stream_request["max_frame_num_to_track"] = int(max_frames)
 
             for item in predictor.handle_stream_request(stream_request):
-                saved = self._save_response_mask(item, mask_dir)
+                diagnostics["stream_frames"] += 1
+                saved = self._save_response_mask(item, mask_dir, diagnostics=diagnostics)
                 if saved is not None:
-                    masks.append(saved)
+                    diagnostics["stream_saved_masks"] += 1
+                    if not any(existing["frame_index"] == saved["frame_index"] for existing in masks):
+                        masks.append(saved)
         finally:
             if session_id is not None:
                 try:
@@ -115,6 +141,7 @@ class Sam3VideoWorker:
             "frame_count": len(frame_paths),
             "mask_count": len(masks),
             "masks": masks,
+            "diagnostics": diagnostics,
             "output_dir": str(output_dir),
         }
 
@@ -162,7 +189,11 @@ class Sam3VideoWorker:
         return [x0 / width, y0 / height, (x1 - x0) / width, (y1 - y0) / height]
 
     @staticmethod
-    def _save_response_mask(response: dict[str, Any], mask_dir: Path) -> dict[str, Any] | None:
+    def _save_response_mask(
+        response: dict[str, Any],
+        mask_dir: Path,
+        diagnostics: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
         frame_index = response.get("frame_index")
         if frame_index is None:
             return None
@@ -173,6 +204,8 @@ class Sam3VideoWorker:
         if scores is None:
             scores = outputs.get("out_obj_scores")
         if binary_masks is None:
+            if diagnostics is not None:
+                diagnostics["missing_binary_mask_frames"] = int(diagnostics.get("missing_binary_mask_frames", 0)) + 1
             return None
 
         import torch
@@ -186,6 +219,8 @@ class Sam3VideoWorker:
 
         binary_masks = np.asarray(binary_masks)
         if binary_masks.size == 0:
+            if diagnostics is not None:
+                diagnostics["empty_binary_mask_frames"] = int(diagnostics.get("empty_binary_mask_frames", 0)) + 1
             return None
         obj_index = 0
         mask = binary_masks[obj_index]

@@ -308,3 +308,9 @@ UnityEngine.GUIUtility:ProcessEvent (int,intptr,bool&)
 }
 [OK] model_event_tracking
 shigurei没有正常记录，或许参考code/.test/save_latest_ros2_frame.py有帮助。
+
+
+260605
+1.sam3的video不要做那么多的缓存输出，只保留mask和人拿走的部分就好，空的可以不用存（为了限制所需的存储空间）。同时实时判定是否拿走，拿走判定后可以停掉sam3的视频追踪。
+2.对于拍摄时遮挡的问题，我认为可以综合mask框选部分+深度画像解决。我认为在遮挡时，mask会过小，甚至消失，但是这个由于不知道具体的mask有多大，所以不太好适于判断。但是同时，遮挡时，方框内的范围，应当有很大一部分深度在模型的位置之前，我觉得可以从这里出发，继续在之后尝试mask操作。
+3.这里就有引入问题，长期的尝试mask对于sam3当前的cpu处理是不是过重了，或许可以限制1s一帧的速度尝试绘制，或者在绘制前先检查box范围内的深度图像是不是有遮挡的很厉害（这个综合box和深度图，还有物体实际相对于shigurei的位置计算就行，可以放在sam3的videomask前，或许可以减少mask生成部分）
