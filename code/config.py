@@ -9,6 +9,7 @@ IS_RUN_FLASK_SERVER = True
 # Use "sam3d_objects" or "instantmesh".
 MODEL_GENERATION_BACKEND = "instantmesh"
 MODEL_EVENT_TRACKING_ENABLE = os.environ.get("MODEL_EVENT_TRACKING_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
+SHIGURE_EVENT_RECORDING_ENABLE = os.environ.get("SHIGURE_EVENT_RECORDING_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
 
 # Depth / alignment tuning
 # Fraction cropped inward from the SAM3 mask periphery before depth->pointcloud
@@ -182,6 +183,7 @@ BLENDER_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_blender_from_json.py"
 MODEL_BOUNDS_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_model_bounds_from_json.py"
 MODEL_EVENT_TRACKING_RUN = MODEL_EVENT_STAGE_ROOT / "run_model_event_tracking_from_json.py"
 SAM3_VIDEO_TRACKER_RUN = MODEL_EVENT_STAGE_ROOT / "run_sam3_video_tracker_worker.py"
+SHIGURE_EVENT_RECORDER_RUN = MODEL_EVENT_STAGE_ROOT / "run_shigure_history_recorder.py"
 CONVERT_SCRIPT = HOLOLENS3D_RECON_STAGE_ROOT / "convert_obj_to_fbx.py"
 
 ARUCO_STAGE_PY = SERVER_PY
@@ -208,6 +210,7 @@ BLENDER_STAGE_PY = SERVER_PY
 MODEL_BOUNDS_STAGE_PY = SERVER_PY
 MODEL_EVENT_TRACKING_STAGE_PY = SERVER_PY
 SAM3_VIDEO_TRACKER_STAGE_PY = SAM3_PY
+SHIGURE_EVENT_RECORDER_STAGE_PY = os.environ.get("SHIGURE_EVENT_RECORDER_PY", "/usr/bin/python3")
 
 
 # Storage

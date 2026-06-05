@@ -58,6 +58,10 @@ from config import (
     SAM3_VIDEO_TRACKER_RUN,
     SAM3_VIDEO_TRACKER_STAGE_PY,
     SAM3_VIDEO_TRACKER_WORKER_IDLE_TIMEOUT_SEC,
+    SHIGURE_EVENT_CACHE_ROOT,
+    SHIGURE_EVENT_RECORDER_RUN,
+    SHIGURE_EVENT_RECORDER_STAGE_PY,
+    SHIGURE_EVENT_RECORDING_ENABLE,
     SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
     WORKER_SOCKET_ROOT,
 )
@@ -312,9 +316,84 @@ _task_lock = threading.Lock()
 _worker_thread: Optional[threading.Thread] = None
 _worker_threads: list[threading.Thread] = []
 _service_monitor_thread: Optional[threading.Thread] = None
+_shigure_recorder_process: subprocess.Popen[str] | None = None
+_shigure_recorder_reader_thread: threading.Thread | None = None
+_last_shigure_recorder_start_attempt_at = 0.0
+_shutdown_requested = False
 _shutdown_hooks_installed = False
 _restore_scan_lock = threading.Lock()
 _last_restore_scan_at = 0.0
+
+
+
+def _consume_shigure_recorder_output(process: subprocess.Popen[str]) -> None:
+    if process.stdout is None:
+        return
+    for line in process.stdout:
+        print(f"[shigure-recorder] {line}", end="", flush=True)
+
+
+def _start_shigure_event_recorder(*, force: bool = False) -> None:
+    global _shigure_recorder_process, _shigure_recorder_reader_thread, _last_shigure_recorder_start_attempt_at
+    if _shutdown_requested or not MODEL_EVENT_TRACKING_ENABLE or not SHIGURE_EVENT_RECORDING_ENABLE:
+        return
+    if _shigure_recorder_process is not None and _shigure_recorder_process.poll() is None:
+        return
+
+    now = time.monotonic()
+    if not force and now - _last_shigure_recorder_start_attempt_at < 30.0:
+        return
+    _last_shigure_recorder_start_attempt_at = now
+
+    env = os.environ.copy()
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    env.setdefault("SHIGURE_EVENT_CACHE_ROOT", str(SHIGURE_EVENT_CACHE_ROOT))
+    command = [
+        _resolve_python(SHIGURE_EVENT_RECORDER_STAGE_PY),
+        str(SHIGURE_EVENT_RECORDER_RUN),
+        "--cache-root",
+        str(SHIGURE_EVENT_CACHE_ROOT),
+    ]
+    try:
+        _shigure_recorder_process = subprocess.Popen(
+            command,
+            cwd=str(SHIGURE_EVENT_RECORDER_RUN.parent),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+        _shigure_recorder_reader_thread = threading.Thread(
+            target=_consume_shigure_recorder_output,
+            args=(_shigure_recorder_process,),
+            daemon=True,
+            name="shigure-event-recorder-log-reader",
+        )
+        _shigure_recorder_reader_thread.start()
+        print(f"[worker] started Shigurei event recorder: pid={_shigure_recorder_process.pid}")
+    except Exception as exc:
+        _shigure_recorder_process = None
+        _shigure_recorder_reader_thread = None
+        print(f"[worker] failed to start Shigurei event recorder: {exc}")
+
+
+def _stop_shigure_event_recorder() -> None:
+    global _shigure_recorder_process, _shigure_recorder_reader_thread
+    process = _shigure_recorder_process
+    if process is None:
+        return
+    if process.poll() is None:
+        try:
+            process.terminate()
+            process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5.0)
+        except Exception as exc:
+            print(f"[worker] failed to stop Shigurei event recorder cleanly: {exc}")
+    _shigure_recorder_process = None
+    _shigure_recorder_reader_thread = None
 
 
 def _service_gpu_env(service_name: str, allowed_ids: tuple[str, ...] | None = None) -> dict[str, str]:
@@ -787,6 +866,7 @@ def _has_unfinished_at_or_before(stage_name: str) -> bool:
 def _service_monitor_loop() -> None:
     while True:
         try:
+            _start_shigure_event_recorder()
             _sam3mask_service.maybe_stop_idle(
                 keep_alive=_has_unfinished_at_or_before("sam3mask"),
             )
@@ -815,6 +895,9 @@ def _service_monitor_loop() -> None:
 
 def shutdown_worker() -> None:
     """Stop persistent model services owned by this server process."""
+    global _shutdown_requested
+    _shutdown_requested = True
+    _stop_shigure_event_recorder()
     for service in (_sam3mask_service, _instantmesh_service, _foundationpose_service, _sam3video_service):
         try:
             service.stop()
@@ -848,6 +931,7 @@ def start_worker() -> threading.Thread:
     _install_shutdown_hooks()
     initialize_task_table()
     _restore_unfinished_tasks()
+    _start_shigure_event_recorder(force=True)
 
     if _worker_thread is not None and _worker_thread.is_alive():
         return _worker_thread

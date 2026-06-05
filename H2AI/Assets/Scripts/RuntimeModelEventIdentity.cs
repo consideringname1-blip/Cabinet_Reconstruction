@@ -79,10 +79,6 @@ public class RuntimeModelEventIdentity : MonoBehaviour, IMixedRealityPointerHand
     {
     }
 
-    private void OnMouseDown()
-    {
-        ToggleEventPopup();
-    }
 
     private void ToggleEventPopup()
     {

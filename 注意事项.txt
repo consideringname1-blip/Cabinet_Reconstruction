@@ -292,3 +292,19 @@ event只需要记录这一个拿走就行，拿走判定后，结束对应的sam
 
 +1
 shigurei的缓存时间延长到10min，同时控制缓存的部分，只缓存必要的部分以降低存储空间压力。这样sam3就可以等待模型生成完毕后，从历史数据开始干道最新的，以弥补模型生成这段时间无法追踪的问题
+
+260604-2
+1.unity存在如下警告，我觉得问题不大：
+Game scripts or other custom code contains OnMouse_ event handlers. Presence of such handlers might impact performance on handheld devices.
+UnityEngine.GUIUtility:ProcessEvent (int,intptr,bool&)
+2.shigurei的追踪（新增加的模块相关）
+[STAGE] model_bounds : /workspace/data/upload/20260604_031202_386908Z_meta.json
+[INFO] model_bounds : status=ready
+[OK] model_bounds
+{
+  "status": "skipped",
+  "reason": "not enough cached Shigurei frames",
+  "frame_count": 0
+}
+[OK] model_event_tracking
+shigurei没有正常记录，或许参考code/.test/save_latest_ros2_frame.py有帮助。
