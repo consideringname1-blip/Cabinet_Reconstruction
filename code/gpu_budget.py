@@ -57,16 +57,6 @@ DEFAULT_BUDGETS_MIB: dict[str, ServiceGpuBudget] = {
         required_mib=12 * 1024,
         note="Conservative SAM3 image mask worker budget with encoder and decoder resident.",
     ),
-    "sam3_video_tracker": ServiceGpuBudget(
-        service="sam3_video_tracker",
-        required_mib=24 * 1024,
-        note="Conservative SAM3 video tracker budget; video memory state grows with frames/objects.",
-    ),
-    "sam3_video_tracker_pair": ServiceGpuBudget(
-        service="sam3_video_tracker_pair",
-        required_mib=32 * 1024,
-        note="Budget for two independent video tracking states on the same GPU.",
-    ),
     "sam3d_objects": ServiceGpuBudget(
         service="sam3d_objects",
         required_mib=24 * 1024,
@@ -78,7 +68,6 @@ DEFAULT_BUDGETS_MIB: dict[str, ServiceGpuBudget] = {
 ALIASES = {
     "sam3mask": "sam3_image_mask",
     "sam3_mask": "sam3_image_mask",
-    "sam3_video": "sam3_video_tracker",
 }
 
 

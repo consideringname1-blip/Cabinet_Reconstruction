@@ -3,9 +3,10 @@ from __future__ import annotations
 import fcntl
 import json
 import os
-import socket
 import shutil
 import sys
+import time
+from dataclasses import replace
 from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
@@ -18,18 +19,36 @@ if str(CODE_ROOT) not in sys.path:
 import numpy as np
 from PIL import Image, ImageDraw
 
-from config import MODEL_EVENT_OUTPUT_ROOT
+from config import (
+    MODEL_EVENT_OUTPUT_ROOT,
+    MODEL_EVENT_TRACKING_POLL_INTERVAL_SEC,
+    MODEL_EVENT_TRACKING_TIMEOUT_SEC,
+)
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
-from stages.model_event_tracking.cache import ShigureHistoryCache
 from stages.model_event_tracking import settings
+from stages.model_event_tracking.cache import ShigureHistoryCache
+from stages.model_event_tracking.event_store import persist_taken_away_event
 from stages.model_event_tracking.geometry import load_camera_matrix, project_model_bounds_to_shigurei
+from stages.model_event_tracking.model_depth import (
+    DepthFrameDecision,
+    DynamicDepthMaskTracker,
+    calibrate_depth_bias,
+    render_model_depth_template,
+)
 from stages.model_event_tracking.output_paths import (
     task_output_dir as model_event_task_output_dir,
     task_output_name,
 )
-from stages.model_event_tracking.schemas import ShigureFrame, to_jsonable
-from stages.model_event_tracking.tracker import read_depth_image_m
+from stages.model_event_tracking.people import find_hand_contacts
+from stages.model_event_tracking.schemas import (
+    HandContact,
+    MovementDecision,
+    ProjectedBox,
+    RosStamp,
+    ShigureFrame,
+    to_jsonable,
+)
 
 
 def utc_now() -> str:
@@ -41,45 +60,6 @@ def _task_id(task: dict[str, Any]) -> str:
     if not value:
         raise ValueError("task_id is missing")
     return value
-
-
-def _exclusive_tracking_run(function: Any) -> Any:
-    @wraps(function)
-    def wrapped(json_path_arg: str | Path) -> dict[str, Any]:
-        json_path = resolve_task_json_path(json_path_arg)
-        task = load_task_json(json_path)
-        task_id = _task_id(task)
-        output_name = task_output_name(json_path, fallback=task_id)
-        output_dir = model_event_task_output_dir(
-            MODEL_EVENT_OUTPUT_ROOT,
-            task_id=task_id,
-            json_path=json_path,
-        )
-        output_dir.mkdir(parents=True, exist_ok=True)
-        lock_path = output_dir / ".tracking.lock"
-        with lock_path.open("a+", encoding="utf-8") as lock_file:
-            try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                _write_status(
-                    json_path,
-                    task,
-                    "already_running",
-                    reason="model event tracking is already running for this task",
-                    task_output_name=output_name,
-                    task_output_dir=str(output_dir),
-                )
-                return {
-                    "status": "already_running",
-                    "task_id": task_id,
-                    "task_output_name": output_name,
-                }
-            try:
-                return function(json_path)
-            finally:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
-
-    return wrapped
 
 
 def _write_status(json_path: Path, task: dict[str, Any], status: str, **fields: Any) -> None:
@@ -95,47 +75,66 @@ def _write_status(json_path: Path, task: dict[str, Any], status: str, **fields: 
     save_task_json(json_path, task)
 
 
-def _model_bounds_ready(task: dict[str, Any]) -> bool:
-    bounds = task.get("ModelBounds") or {}
-    return isinstance(bounds, dict) and bounds.get("status") == "ready" and bool(bounds.get("corners_aruco"))
+def _exclusive_tracking_run(function: Any) -> Any:
+    @wraps(function)
+    def wrapped(json_path_arg: str | Path) -> dict[str, Any]:
+        json_path = resolve_task_json_path(json_path_arg)
+        task = load_task_json(json_path)
+        task_id = _task_id(task)
+        output_dir = model_event_task_output_dir(
+            MODEL_EVENT_OUTPUT_ROOT,
+            task_id=task_id,
+            json_path=json_path,
+        )
+        output_dir.mkdir(parents=True, exist_ok=True)
+        with (output_dir / ".tracking.lock").open("a+", encoding="utf-8") as lock_file:
+            try:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return {"status": "already_running", "task_id": task_id}
+            try:
+                return function(json_path)
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    return wrapped
+
+
+def _model_ready(task: dict[str, Any]) -> bool:
+    bounds = task.get("ModelBounds")
+    blender = task.get("Blender")
+    return (
+        isinstance(bounds, dict)
+        and bounds.get("status") == "ready"
+        and bool(bounds.get("corners_aruco"))
+        and isinstance(blender, dict)
+        and bool(blender.get("fbx"))
+    )
 
 
 def _marker_search_roots() -> list[Path]:
     configured = str(os.environ.get("MODEL_EVENT_MARKER_POSE_SEARCH_ROOTS") or "").strip()
     if configured:
         return [Path(value) for value in configured.split(os.pathsep) if value.strip()]
-    return [
-        CODE_ROOT / ".test" / "marker",
-        CODE_ROOT.parent / ".test" / "fusion_runs",
-    ]
+    return [CODE_ROOT / ".test" / "marker", CODE_ROOT.parent / ".test" / "fusion_runs"]
 
 
-def _latest_historical_marker_pose() -> Path | None:
+def _select_marker_pose(frames: list[ShigureFrame]) -> tuple[Path | None, str | None]:
+    configured = str(os.environ.get("MODEL_EVENT_MARKER_POSE_JSON") or "").strip()
+    if configured and Path(configured).is_file():
+        return Path(configured), "env:MODEL_EVENT_MARKER_POSE_JSON"
+    for frame in frames:
+        if frame.marker_pose_path and frame.marker_pose_path.is_file():
+            return frame.marker_pose_path, "cached_frame"
     candidates: list[Path] = []
     for root in _marker_search_roots():
         if root.is_file() and root.name == "marker_6d_pose.json":
             candidates.append(root)
-            continue
-        if root.is_dir():
-            candidates.extend(path for path in root.rglob("marker_6d_pose.json") if path.is_file())
+        elif root.is_dir():
+            candidates.extend(root.rglob("marker_6d_pose.json"))
     if not candidates:
-        return None
-    return max(candidates, key=lambda path: path.stat().st_mtime)
-
-
-def _select_marker_pose(frames: list[ShigureFrame]) -> tuple[Path | None, str | None]:
-    env_path = str(os.environ.get("MODEL_EVENT_MARKER_POSE_JSON") or "").strip()
-    if env_path:
-        path = Path(env_path)
-        if path.is_file():
-            return path, "env:MODEL_EVENT_MARKER_POSE_JSON"
-    for frame in frames:
-        if frame.marker_pose_path and frame.marker_pose_path.is_file():
-            return frame.marker_pose_path, "cached_frame"
-    marker_pose = _latest_historical_marker_pose()
-    if marker_pose is not None:
-        return marker_pose, "historical_marker_pose"
-    return None, None
+        return None, None
+    return max(candidates, key=lambda path: path.stat().st_mtime), "historical_marker_pose"
 
 
 def _first_camera_info(frames: list[ShigureFrame]) -> Path | None:
@@ -145,53 +144,26 @@ def _first_camera_info(frames: list[ShigureFrame]) -> Path | None:
     return None
 
 
-def _image_size(path: Path) -> tuple[int, int]:
-    with Image.open(path) as image:
-        return image.size
-
-
-def _write_projection_debug_image(
-    frame: ShigureFrame,
-    projected_box: Any,
-    output_dir: Path,
-) -> Path | None:
-    if frame.rgb_path is None or not frame.rgb_path.is_file():
-        return None
-    output_dir.mkdir(parents=True, exist_ok=True)
-    target = output_dir / "projection_start.jpg"
-    with Image.open(frame.rgb_path) as image:
-        canvas = image.convert("RGB")
-    draw = ImageDraw.Draw(canvas)
-    x0, y0, x1, y1 = [float(value) for value in projected_box.bbox_xyxy]
-    draw.rectangle((x0, y0, x1, y1), outline=(255, 64, 64), width=4)
-    points = [(float(x), float(y)) for x, y in np.asarray(projected_box.pixel_points, dtype=np.float64)]
-    edges = ((0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7))
-    for a, b in edges:
-        if a < len(points) and b < len(points):
-            draw.line((points[a], points[b]), fill=(64, 220, 255), width=3)
-    draw.ellipse((x0 - 4, y0 - 4, x0 + 4, y0 + 4), fill=(255, 255, 0))
-    canvas.save(target, quality=95)
-    return target
-
-
 def _parse_iso_timestamp_seconds(value: Any) -> float | None:
     if not isinstance(value, str) or not value.strip():
         return None
-    text = value.strip()
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    if "." in text:
-        head, tail = text.split(".", 1)
-        tz_pos = min([pos for pos in (tail.find("+"), tail.find("-")) if pos >= 0], default=-1)
-        if tz_pos >= 0:
-            fraction, tz = tail[:tz_pos], tail[tz_pos:]
-        else:
-            fraction, tz = tail, ""
-        text = f"{head}.{fraction[:6]}{tz}"
+    text = value.strip().replace("Z", "+00:00")
     try:
         parsed = datetime.fromisoformat(text)
-    except Exception:
-        return None
+    except ValueError:
+        if "." not in text:
+            return None
+        head, tail = text.split(".", 1)
+        timezone_pos = min(
+            [position for position in (tail.find("+"), tail.find("-")) if position >= 0],
+            default=-1,
+        )
+        fraction = tail if timezone_pos < 0 else tail[:timezone_pos]
+        suffix = "" if timezone_pos < 0 else tail[timezone_pos:]
+        try:
+            parsed = datetime.fromisoformat(f"{head}.{fraction[:6]}{suffix}")
+        except ValueError:
+            return None
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     return parsed.timestamp()
@@ -203,290 +175,248 @@ def _task_capture_time_seconds(task: dict[str, Any]) -> tuple[float | None, str 
             seconds = _parse_iso_timestamp_seconds(frame.get("time"))
             if seconds is not None:
                 return seconds, "PVCameraFrames.time"
-    pv = task.get("PVCamera") if isinstance(task.get("PVCamera"), dict) else {}
-    seconds = _parse_iso_timestamp_seconds(pv.get("time"))
-    if seconds is not None:
-        return seconds, "PVCamera.time"
-    device = task.get("device") if isinstance(task.get("device"), dict) else {}
-    seconds = _parse_iso_timestamp_seconds(device.get("time"))
-    if seconds is not None:
-        return seconds, "device.time"
+    for key in ("PVCamera", "device"):
+        payload = task.get(key)
+        if isinstance(payload, dict):
+            seconds = _parse_iso_timestamp_seconds(payload.get("time"))
+            if seconds is not None:
+                return seconds, f"{key}.time"
     seconds = _parse_iso_timestamp_seconds(task.get("server_received_utc"))
-    if seconds is not None:
-        return seconds, "server_received_utc"
-    return None, None
+    return (seconds, "server_received_utc") if seconds is not None else (None, None)
 
 
-def _float_env(name: str, default: float) -> float:
-    try:
-        return float(os.environ.get(name, str(default)))
-    except Exception:
-        return float(default)
-
-
-def _is_enabled_env(name: str, default: bool = True) -> bool:
-    raw = os.environ.get(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() not in {"0", "false", "no", "off"}
-
-
-def _select_tracking_frames(task: dict[str, Any], frames: list[ShigureFrame]) -> tuple[list[ShigureFrame], dict[str, Any]]:
-    metadata: dict[str, Any] = {"input_frame_count": len(frames)}
+def _select_tracking_frames(
+    task: dict[str, Any],
+    frames: list[ShigureFrame],
+) -> tuple[list[ShigureFrame], dict[str, Any]]:
+    capture_seconds, source = _task_capture_time_seconds(task)
+    settle_seconds = max(0.0, float(os.environ.get("MODEL_EVENT_CAPTURE_SETTLE_SECONDS", "2.0")))
+    timeout_seconds = max(0.0, float(MODEL_EVENT_TRACKING_TIMEOUT_SEC))
     selected = list(frames)
-    capture_seconds, capture_source = _task_capture_time_seconds(task)
-    settle_seconds = max(0.0, _float_env("MODEL_EVENT_CAPTURE_SETTLE_SECONDS", 2.0))
-    metadata["capture_time_source"] = capture_source
-    metadata["capture_time_seconds"] = capture_seconds
-    metadata["capture_settle_seconds"] = settle_seconds
-
-    if _is_enabled_env("MODEL_EVENT_START_AFTER_CAPTURE", True) and capture_seconds is not None:
-        after_capture = [frame for frame in selected if frame.stamp.seconds >= capture_seconds]
-        after_settle = [frame for frame in after_capture if frame.stamp.seconds >= capture_seconds + settle_seconds]
-        if len(after_settle) >= 2:
-            selected = after_settle
-            metadata["window_start_reason"] = "capture_time_plus_settle"
-        else:
-            selected = after_capture
-            metadata["window_start_reason"] = "capture_time_without_full_settle"
-        metadata["post_capture_frame_count"] = len(after_capture)
-        metadata["post_settle_frame_count"] = len(after_settle)
-
-    max_post_capture_seconds = max(0.0, _float_env("MODEL_EVENT_MAX_POST_CAPTURE_SECONDS", 60.0))
-    if max_post_capture_seconds > 0.0 and selected:
-        window_origin_seconds = capture_seconds if capture_seconds is not None else selected[0].stamp.seconds
+    forced_start = _stamp_seconds_from_env(os.environ.get("MODEL_EVENT_DEBUG_FRAME_START"))
+    forced_end = _stamp_seconds_from_env(os.environ.get("MODEL_EVENT_DEBUG_FRAME_END"))
+    tracking_origin_seconds = None
+    if forced_start is not None or forced_end is not None:
         selected = [
             frame
-            for frame in selected
-            if frame.stamp.seconds <= window_origin_seconds + max_post_capture_seconds
+            for frame in frames
+            if (forced_start is None or frame.stamp.seconds + 1.0e-9 >= forced_start)
+            and (forced_end is None or frame.stamp.seconds - 1.0e-9 <= forced_end)
         ]
-        metadata["max_post_capture_seconds"] = max_post_capture_seconds
-
-    selected = _limited_frames(selected)
-    metadata["selected_frame_count"] = len(selected)
+        tracking_origin_seconds = forced_start if forced_start is not None else (selected[0].stamp.seconds if selected else None)
+    elif capture_seconds is not None:
+        tracking_origin_seconds = capture_seconds + settle_seconds
+        selected = [frame for frame in selected if frame.stamp.seconds >= tracking_origin_seconds]
+        if timeout_seconds > 0.0:
+            selected = [
+                frame
+                for frame in selected
+                if frame.stamp.seconds <= tracking_origin_seconds + timeout_seconds
+            ]
+    elif selected:
+        tracking_origin_seconds = selected[0].stamp.seconds
+        if timeout_seconds > 0.0:
+            selected = [
+                frame
+                for frame in selected
+                if frame.stamp.seconds <= tracking_origin_seconds + timeout_seconds
+            ]
+    try:
+        limit = int(os.environ.get("MODEL_EVENT_MAX_REPLAY_FRAMES", "0"))
+    except ValueError:
+        limit = 0
+    if limit > 0:
+        selected = selected[:limit]
+    metadata: dict[str, Any] = {
+        "input_frame_count": len(frames),
+        "capture_time_source": source,
+        "capture_time_seconds": capture_seconds,
+        "capture_settle_seconds": settle_seconds,
+        "tracking_origin_seconds": tracking_origin_seconds,
+        "timeout_seconds": timeout_seconds,
+        "forced_debug_start_seconds": forced_start,
+        "forced_debug_end_seconds": forced_end,
+        "selected_frame_count": len(selected),
+    }
     if selected:
         metadata["selected_start_stamp"] = selected[0].stamp.to_dict()
         metadata["selected_end_stamp"] = selected[-1].stamp.to_dict()
     return selected, metadata
 
 
-def _sample_frames_by_interval(frames: list[ShigureFrame], sample_hz: float) -> list[ShigureFrame]:
-    if not frames:
-        return []
-    interval = 1.0 / max(0.01, float(sample_hz))
-    sampled = [frames[0]]
-    last_seconds = frames[0].stamp.seconds
-    for frame in frames[1:]:
-        if frame.stamp.seconds - last_seconds + 1.0e-6 < interval:
-            continue
-        sampled.append(frame)
-        last_seconds = frame.stamp.seconds
-    return sampled
+def _write_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as file:
+        json.dump(to_jsonable(payload), file, ensure_ascii=False, indent=2)
+        file.write("\n")
 
 
-def _box_depth_profile(frame: ShigureFrame, projected_box: Any) -> dict[str, Any]:
-    if frame.depth_path is None or not frame.depth_path.is_file():
-        return {"usable": False, "reason": "depth_missing"}
-    depth_m = read_depth_image_m(frame.depth_path)
-    height, width = depth_m.shape[:2]
-    x0, y0, x1, y1 = [float(value) for value in projected_box.bbox_xyxy]
-    ix0 = min(max(int(np.floor(x0)), 0), max(0, width - 1))
-    iy0 = min(max(int(np.floor(y0)), 0), max(0, height - 1))
-    ix1 = min(max(int(np.ceil(x1)), ix0 + 1), width)
-    iy1 = min(max(int(np.ceil(y1)), iy0 + 1), height)
-    crop = np.asarray(depth_m[iy0:iy1, ix0:ix1], dtype=np.float64)
-    valid_mask = np.isfinite(crop) & (crop > 0.0)
-    valid = crop[valid_mask]
-    if valid.size == 0:
-        return {
-            "usable": False,
-            "reason": "no_valid_depth_in_box",
-            "bbox_xyxy": [ix0, iy0, ix1, iy1],
-        }
-
-    corner_depths = np.asarray(projected_box.corners_camera_m, dtype=np.float64)[:, 2]
-    front_depth_m = float(np.nanmin(corner_depths))
-    back_depth_m = float(np.nanmax(corner_depths))
-    foreground_limit_m = front_depth_m - settings.OCCLUSION_FRONT_MARGIN_M
-    model_min_m = front_depth_m - settings.OCCLUSION_FRONT_MARGIN_M
-    model_max_m = back_depth_m + settings.OCCLUSION_MODEL_DEPTH_BAND_M
-    foreground_mask = valid_mask & (crop < foreground_limit_m)
-    foreground_ratio = float(np.count_nonzero(foreground_mask)) / float(valid.size)
-    model_depth_ratio = float(np.count_nonzero((valid >= model_min_m) & (valid <= model_max_m))) / float(valid.size)
-    return {
-        "usable": True,
-        "bbox_xyxy": [ix0, iy0, ix1, iy1],
-        "valid_depth_pixels": int(valid.size),
-        "median_depth_m": float(np.nanmedian(valid)),
-        "front_depth_m": front_depth_m,
-        "back_depth_m": back_depth_m,
-        "foreground_ratio": foreground_ratio,
-        "foreground_present": foreground_ratio >= settings.OCCLUSION_FOREGROUND_PRESENCE_RATIO,
-        "model_depth_ratio": model_depth_ratio,
-        "heavily_occluded": foreground_ratio >= settings.OCCLUSION_FOREGROUND_RATIO,
-        "_depth_crop": crop,
-        "_valid_mask": valid_mask,
-        "_foreground_mask": foreground_mask,
-    }
-
-
-def _public_depth_profile(profile: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in profile.items() if not key.startswith("_")}
-
-
-def _foreground_change_ratio(previous: dict[str, Any], current: dict[str, Any]) -> float | None:
-    if not previous.get("usable") or not current.get("usable"):
+def _write_projection_debug(
+    frame: ShigureFrame,
+    projected_box: ProjectedBox,
+    model_mask: np.ndarray,
+    output_path: Path,
+) -> Path | None:
+    if frame.rgb_path is None or not frame.rgb_path.is_file():
         return None
-    previous_foreground = np.asarray(previous["_foreground_mask"], dtype=bool)
-    current_foreground = np.asarray(current["_foreground_mask"], dtype=bool)
-    if previous_foreground.shape != current_foreground.shape:
+    with Image.open(frame.rgb_path) as image:
+        canvas = np.asarray(image.convert("RGB"), dtype=np.uint8).copy()
+    mask = np.asarray(model_mask, dtype=bool)
+    if mask.shape == canvas.shape[:2]:
+        canvas[mask] = (0.55 * canvas[mask] + 0.45 * np.array([40, 235, 100])).astype(np.uint8)
+    rendered = Image.fromarray(canvas)
+    draw = ImageDraw.Draw(rendered)
+    points = [(float(x), float(y)) for x, y in projected_box.pixel_points]
+    edges = ((0, 1), (1, 2), (2, 3), (3, 0), (4, 5), (5, 6), (6, 7), (7, 4), (0, 4), (1, 5), (2, 6), (3, 7))
+    for start, end in edges:
+        draw.line((points[start], points[end]), fill=(40, 220, 255), width=3)
+    draw.rectangle(projected_box.bbox_xyxy, outline=(255, 64, 64), width=3)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    rendered.save(output_path, quality=95)
+    return output_path
+
+
+
+def _is_enabled_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off", ""}
+
+
+def _stamp_seconds_from_env(value: str | None) -> float | None:
+    if not value:
         return None
-    union = previous_foreground | current_foreground
-    union_pixels = int(np.count_nonzero(union))
-    if union_pixels == 0:
-        return 0.0
-
-    occupancy_changed = previous_foreground ^ current_foreground
-    both_foreground = previous_foreground & current_foreground
-    previous_depth = np.asarray(previous["_depth_crop"], dtype=np.float64)
-    current_depth = np.asarray(current["_depth_crop"], dtype=np.float64)
-    depth_changed = (
-        both_foreground
-        & np.isfinite(previous_depth)
-        & np.isfinite(current_depth)
-        & (np.abs(current_depth - previous_depth) >= settings.OCCLUSION_FOREGROUND_DEPTH_CHANGE_M)
-    )
-    return float(np.count_nonzero((occupancy_changed | depth_changed) & union)) / float(union_pixels)
-
-
-def _prefilter_tracking_frames(
-    frames: list[ShigureFrame],
-    projected_box: Any,
-) -> tuple[list[ShigureFrame], list[dict[str, Any]], dict[str, Any]]:
-    sampled = _sample_frames_by_interval(frames, settings.MASK_ATTEMPT_HZ)
-    profiles = [_box_depth_profile(frame, projected_box) for frame in sampled]
-    reference_index = None
-    foreground_stable_frames = 0
-    previous_usable: dict[str, Any] | None = None
-
-    for index, profile in enumerate(profiles):
-        if not profile.get("usable"):
-            foreground_stable_frames = 0
-            previous_usable = None
-            continue
-
-        change_ratio = (
-            _foreground_change_ratio(previous_usable, profile)
-            if previous_usable is not None
-            else None
-        )
-        profile["foreground_change_ratio"] = change_ratio
-        foreground_present = bool(profile.get("foreground_present"))
-        if not foreground_present:
-            foreground_stable_frames = 0
-        elif change_ratio is not None and change_ratio <= settings.OCCLUSION_FOREGROUND_CHANGE_RATIO:
-            foreground_stable_frames += 1
-        else:
-            foreground_stable_frames = 0
-        profile["foreground_stable_frames"] = foreground_stable_frames
-
-        model_supported = (
-            float(profile.get("model_depth_ratio") or 0.0)
-            >= settings.REFERENCE_MODEL_DEPTH_RATIO
-        )
-        foreground_ready = (
-            not foreground_present
-            or foreground_stable_frames >= max(1, settings.OCCLUSION_STABLE_FRAMES)
-        )
-        profile["reference_model_supported"] = model_supported
-        profile["reference_foreground_ready"] = foreground_ready
-        profile["reference_eligible"] = model_supported and foreground_ready
-        if profile["reference_eligible"]:
-            reference_index = index
-            break
-        previous_usable = profile
-
-    public_profiles = [_public_depth_profile(profile) for profile in profiles]
-    metadata: dict[str, Any] = {
-        "input_frame_count": len(frames),
-        "sample_hz": settings.MASK_ATTEMPT_HZ,
-        "sampled_frame_count": len(sampled),
-        "foreground_presence_ratio": settings.OCCLUSION_FOREGROUND_PRESENCE_RATIO,
-        "foreground_change_ratio": settings.OCCLUSION_FOREGROUND_CHANGE_RATIO,
-        "foreground_stable_frames_required": settings.OCCLUSION_STABLE_FRAMES,
-        "heavily_occluded_frame_count": sum(bool(item.get("heavily_occluded")) for item in profiles),
-        "foreground_present_frame_count": sum(bool(item.get("foreground_present")) for item in profiles),
-        "unusable_depth_frame_count": sum(not bool(item.get("usable")) for item in profiles),
-        "reference_index": reference_index,
-        "reference_scan": public_profiles[: reference_index + 1 if reference_index is not None else None],
-    }
-    if reference_index is None:
-        return [], [], metadata
-
-    # Occlusion only delays initialization. Once SAM3 starts, every sampled
-    # frame remains in chronological order so a hand crossing the box and the
-    # subsequent object motion are not removed from the video.
-    selected_frames = sampled[reference_index:]
-    selected_profiles = public_profiles[reference_index:]
-    metadata["selected_frame_count"] = len(selected_frames)
-    metadata["skipped_after_reference"] = 0
-    if selected_frames:
-        metadata["selected_start_stamp"] = selected_frames[0].stamp.to_dict()
-        metadata["selected_end_stamp"] = selected_frames[-1].stamp.to_dict()
-        metadata["reference_depth_profile"] = selected_profiles[0]
-    return selected_frames, selected_profiles, metadata
-
-
-def _prepare_video_output_dir(task_output_dir: Path) -> tuple[Path, int]:
-    runs_root = task_output_dir / "sam3_video_runs"
-    removed_run_count = 0
-    if runs_root.is_dir():
-        removed_run_count = sum(1 for path in runs_root.iterdir() if path.is_dir())
-        shutil.rmtree(runs_root)
-    video_output_dir = runs_root / "current"
-    video_output_dir.mkdir(parents=True, exist_ok=True)
-    return video_output_dir, removed_run_count
-
-
-def _frame_request_payload(frame: ShigureFrame, depth_profile: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "stamp": frame.stamp.to_dict(),
-        "rgb_path": str(frame.rgb_path) if frame.rgb_path is not None else None,
-        "depth_path": str(frame.depth_path) if frame.depth_path is not None else None,
-        "camera_info_path": str(frame.camera_info_path) if frame.camera_info_path is not None else None,
-        "people_path": str(frame.people_path) if frame.people_path is not None else None,
-        "marker_pose_path": str(frame.marker_pose_path) if frame.marker_pose_path is not None else None,
-        "depth_profile": depth_profile,
-    }
-
-
-def _request_video_tracker(socket_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
-    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
-        client.connect(str(socket_path))
-        client.sendall((json.dumps(payload, ensure_ascii=False) + "\n").encode("utf-8"))
-        client.shutdown(socket.SHUT_WR)
-        chunks: list[bytes] = []
-        while True:
-            chunk = client.recv(65536)
-            if not chunk:
-                break
-            chunks.append(chunk)
-    if not chunks:
-        raise RuntimeError(f"No response from SAM3 video tracker worker: {socket_path}")
-    response = json.loads(b"".join(chunks).decode("utf-8").splitlines()[0])
-    if not response.get("ok"):
-        raise RuntimeError(str(response.get("error") or "SAM3 video tracker worker failed"))
-    return response.get("result") or {}
-
-
-def _limited_frames(frames: list[ShigureFrame]) -> list[ShigureFrame]:
+    text = str(value).strip().rstrip("/").rsplit("/", 1)[-1]
+    if "_" not in text:
+        try:
+            return float(text)
+        except ValueError:
+            return None
+    sec_text, nsec_text = text.split("_", 1)
     try:
-        limit = int(os.environ.get("MODEL_EVENT_MAX_REPLAY_FRAMES", "0"))
+        return float(int(sec_text)) + float(int(nsec_text)) * 1.0e-9
+    except ValueError:
+        return None
+
+
+def _blend_debug_mask(canvas: np.ndarray, mask: np.ndarray, color: tuple[int, int, int], alpha: float) -> None:
+    if mask.shape != canvas.shape[:2] or not np.any(mask):
+        return
+    rgb = np.asarray(color, dtype=np.float32)
+    canvas[mask] = ((1.0 - alpha) * canvas[mask].astype(np.float32) + alpha * rgb).astype(np.uint8)
+
+
+def _write_frame_debug(
+    frame: ShigureFrame,
+    decision: DepthFrameDecision,
+    *,
+    model_mask: np.ndarray,
+    output_dir: Path,
+    index: int,
+) -> Path | None:
+    if frame.rgb_path is None or not frame.rgb_path.is_file():
+        return None
+    with Image.open(frame.rgb_path) as image:
+        canvas = np.asarray(image.convert("RGB"), dtype=np.uint8).copy()
+    _blend_debug_mask(canvas, np.asarray(model_mask, dtype=bool), (40, 235, 100), 0.32)
+    _blend_debug_mask(canvas, np.asarray(decision.unoccluded_mask, dtype=bool), (255, 225, 40), 0.55)
+    _blend_debug_mask(canvas, np.asarray(decision.removed_mask, dtype=bool), (255, 60, 60), 0.70)
+    rendered = Image.fromarray(canvas)
+    draw = ImageDraw.Draw(rendered)
+    label = (
+        f"{decision.status} removed={decision.removed_ratio:.3f} "
+        f"visible={decision.evaluable_ratio:.3f}"
+    )
+    draw.rectangle((8, 8, 620, 38), fill=(0, 0, 0))
+    draw.text((14, 14), label, fill=(255, 255, 255))
+    name = f"{index:03d}_{decision.timestamp.sec}_{decision.timestamp.nanosec:09d}_{decision.status}_r{decision.removed_ratio:.3f}.jpg"
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = output_dir / name
+    rendered.save(path, quality=95)
+    return path
+
+
+
+def _previous_frame_before_timestamp(
+    frames: list[ShigureFrame],
+    timestamp: RosStamp | None,
+) -> ShigureFrame | None:
+    if timestamp is None:
+        return None
+    previous: ShigureFrame | None = None
+    for frame in frames:
+        if frame.stamp.seconds < timestamp.seconds:
+            previous = frame
+            continue
+        break
+    return previous
+
+
+def _people_frame_has_id(frame: ShigureFrame, people_id: str) -> bool:
+    if frame.people_path is None or not frame.people_path.is_file() or not people_id:
+        return False
+    try:
+        with frame.people_path.open("r", encoding="utf-8") as file:
+            payload = json.load(file)
     except Exception:
-        limit = 0
-    if limit > 0 and len(frames) > limit:
-        return frames[-limit:]
-    return frames
+        return False
+    message = payload.get("message") if isinstance(payload, dict) else None
+    if not isinstance(message, dict):
+        message = payload if isinstance(payload, dict) else {}
+    for person in message.get("pose_key_points_list") or []:
+        if isinstance(person, dict) and str(person.get("people_id") or "") == people_id:
+            return True
+    return False
+
+
+def _nearby_skeleton_frame(
+    frames: list[ShigureFrame],
+    center_frame: ShigureFrame,
+    contact: HandContact | None,
+    *,
+    radius_frames: int = 5,
+) -> ShigureFrame | None:
+    if contact is None or not contact.people_id:
+        return None
+    try:
+        center_index = next(index for index, frame in enumerate(frames) if frame.stamp == center_frame.stamp)
+    except StopIteration:
+        return None
+    radius = max(0, int(radius_frames))
+    indices = range(max(0, center_index - radius), min(len(frames), center_index + radius + 1))
+    ordered = sorted(indices, key=lambda index: (abs(index - center_index), index))
+    for index in ordered:
+        frame = frames[index]
+        if _people_frame_has_id(frame, contact.people_id):
+            return frame
+    return None
+
+
+def _closest_wrist_frame(
+    frames: list[ShigureFrame],
+    projected_box: ProjectedBox,
+    event_seconds: float,
+) -> tuple[ShigureFrame | None, HandContact | None]:
+    start_seconds = event_seconds - settings.HAND_LOOKBACK_SECONDS
+    inside: list[tuple[ShigureFrame, HandContact]] = []
+    nearest: list[tuple[ShigureFrame, HandContact]] = []
+    for frame in frames:
+        if frame.stamp.seconds < start_seconds or frame.stamp.seconds > event_seconds:
+            continue
+        if frame.people_path is None or not frame.people_path.is_file():
+            continue
+        for contact in find_hand_contacts(frame.people_path, projected_box):
+            nearest.append((frame, contact))
+            if contact.inside_box:
+                inside.append((frame, contact))
+    if inside:
+        return min(inside, key=lambda item: item[0].stamp.seconds)
+    if nearest:
+        frame, contact = min(nearest, key=lambda item: (item[1].distance_m, -item[1].score))
+        if contact.distance_m <= settings.HAND_NEAREST_MAX_DISTANCE_M:
+            return frame, contact
+    return None, None
 
 
 @_exclusive_tracking_run
@@ -494,67 +424,64 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
     json_path = resolve_task_json_path(json_path_arg)
     task = load_task_json(json_path)
     task_id = _task_id(task)
-
-    if not _model_bounds_ready(task):
-        _write_status(json_path, task, "skipped", reason="model bounds are not ready")
-        return {"status": "skipped", "reason": "model bounds are not ready"}
-
-    socket_value = str(os.environ.get("SAM3_VIDEO_TRACKER_WORKER_SOCKET") or "").strip()
-    if not socket_value:
-        _write_status(json_path, task, "skipped", reason="SAM3_VIDEO_TRACKER_WORKER_SOCKET is not set")
-        return {"status": "skipped", "reason": "SAM3_VIDEO_TRACKER_WORKER_SOCKET is not set"}
-    socket_path = Path(socket_value)
+    if not _model_ready(task):
+        _write_status(json_path, task, "skipped", reason="trusted FBX/model bounds are not ready")
+        return {"status": "skipped", "reason": "model is not ready"}
 
     cache = ShigureHistoryCache(settings.SHIGURE_EVENT_CACHE_ROOT)
     cached_frames = list(cache.iter_frames())
-    cached_frame_count = len(cached_frames)
     valid_frames = [
         frame
         for frame in cached_frames
-        if frame.rgb_path and frame.depth_path and frame.rgb_path.is_file() and frame.depth_path.is_file()
+        if frame.rgb_path
+        and frame.depth_path
+        and frame.rgb_path.is_file()
+        and frame.depth_path.is_file()
     ]
     frames, tracking_window = _select_tracking_frames(task, valid_frames)
-    if len(frames) < 2:
-        _write_status(
-            json_path,
-            task,
-            "skipped",
-            reason="not enough cached Shigurei frames after capture window selection",
-            cache_root=str(settings.SHIGURE_EVENT_CACHE_ROOT),
-            cached_frame_count=cached_frame_count,
-            valid_frame_count=len(valid_frames),
-            frame_count=len(frames),
-            tracking_window=tracking_window,
-        )
-        return {"status": "skipped", "reason": "not enough cached Shigurei frames", "frame_count": len(frames)}
+    initial_wait_started = time.monotonic()
+    initial_wait_timeout = max(0.0, float(MODEL_EVENT_TRACKING_TIMEOUT_SEC))
+    while len(frames) < settings.MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES:
+        if (
+            initial_wait_timeout > 0.0
+            and time.monotonic() - initial_wait_started >= initial_wait_timeout
+        ):
+            reason = "timed out waiting for initial cached Shigurei frames"
+            _write_status(
+                json_path,
+                task,
+                "timeout",
+                reason=reason,
+                cached_frame_count=len(cached_frames),
+                valid_frame_count=len(valid_frames),
+                frame_count=len(frames),
+                tracking_window=tracking_window,
+                timeout_seconds=initial_wait_timeout,
+            )
+            return {"status": "timeout", "reason": reason, "frame_count": len(frames)}
+        time.sleep(max(0.05, float(MODEL_EVENT_TRACKING_POLL_INTERVAL_SEC)))
+        cached_frames = list(cache.iter_frames())
+        valid_frames = [
+            frame
+            for frame in cached_frames
+            if frame.rgb_path
+            and frame.depth_path
+            and frame.rgb_path.is_file()
+            and frame.depth_path.is_file()
+        ]
+        frames, tracking_window = _select_tracking_frames(task, valid_frames)
 
-    marker_pose, marker_pose_source = _select_marker_pose(frames)
-    if marker_pose is None:
-        _write_status(
-            json_path,
-            task,
-            "skipped",
-            reason=(
-                "no Shigurei marker_pose found; set MODEL_EVENT_MARKER_POSE_JSON "
-                "or add marker_6d_pose.json under MODEL_EVENT_MARKER_POSE_SEARCH_ROOTS"
-            ),
-            cache_root=str(settings.SHIGURE_EVENT_CACHE_ROOT),
-            cached_frame_count=cached_frame_count,
-            valid_frame_count=len(valid_frames),
-            frame_count=len(frames),
-            tracking_window=tracking_window,
-            marker_pose_search_roots=[str(path) for path in _marker_search_roots()],
-        )
-        return {"status": "skipped", "reason": "marker_pose missing", "frame_count": len(frames)}
-
+    marker_pose, marker_source = _select_marker_pose(frames)
     camera_info = _first_camera_info(frames)
-    if camera_info is None:
-        _write_status(json_path, task, "skipped", reason="cached frames do not contain camera_info")
-        return {"status": "skipped", "reason": "camera_info missing"}
+    if marker_pose is None or camera_info is None:
+        reason = "marker_pose missing" if marker_pose is None else "camera_info missing"
+        _write_status(json_path, task, "skipped", reason=reason, frame_count=len(frames))
+        return {"status": "skipped", "reason": reason, "frame_count": len(frames)}
 
     first_rgb = frames[0].rgb_path
     assert first_rgb is not None
-    image_size = _image_size(first_rgb)
+    with Image.open(first_rgb) as image:
+        image_size = image.size
     camera_matrix = load_camera_matrix(camera_info)
     projected_box = project_model_bounds_to_shigurei(
         task,
@@ -570,123 +497,351 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
         task_id=task_id,
         json_path=json_path,
     )
-    debug_projection_path = _write_projection_debug_image(
-        frames[0],
-        projected_box,
-        task_output_dir / "debug",
+    shutil.rmtree(task_output_dir / "taken_away", ignore_errors=True)
+    shutil.rmtree(task_output_dir / "depth_tracking", ignore_errors=True)
+    depth_output_dir = task_output_dir / "debug" / "depth_tracking"
+    shutil.rmtree(depth_output_dir, ignore_errors=True)
+    depth_output_dir.mkdir(parents=True, exist_ok=True)
+    frame_debug_dir = (
+        depth_output_dir / "frames"
+        if _is_enabled_env("MODEL_EVENT_DEBUG_EVERY_FRAME", False)
+        else None
     )
-
-    window_frames = list(frames)
-    frames, depth_profiles, depth_prefilter = _prefilter_tracking_frames(window_frames, projected_box)
-    tracking_window["depth_prefilter"] = depth_prefilter
-    if len(frames) < 2:
-        status = "target_occluded" if depth_prefilter.get("reference_index") is None else "skipped"
-        reason = (
-            "no reference frame after projected-box foreground became stable or cleared"
-            if status == "target_occluded"
-            else "not enough frames after projected-box foreground prefilter"
-        )
-        _write_status(
-            json_path,
-            task,
-            status,
-            reason=reason,
-            cache_root=str(settings.SHIGURE_EVENT_CACHE_ROOT),
-            cached_frame_count=cached_frame_count,
-            valid_frame_count=len(valid_frames),
-            frame_count=len(frames),
-            tracking_window=tracking_window,
-            marker_pose_path=str(marker_pose),
-            marker_pose_source=marker_pose_source,
-            camera_info_path=str(camera_info),
-            projected_box=projected_box.to_dict(),
-            debug_projection_path=str(debug_projection_path),
-            task_output_name=output_name,
-            task_output_dir=str(task_output_dir),
-        )
-        return {"status": status, "reason": reason, "frame_count": len(frames)}
-
-    video_output_dir, removed_run_count = _prepare_video_output_dir(task_output_dir)
-    tracking_window["removed_previous_sam3_run_dirs"] = removed_run_count
-    tracking_window["task_output_name"] = output_name
-    request = {
-        "action": "track_video",
-        "task_id": task_id,
-        "task_output_name": output_name,
-        "frames": [_frame_request_payload(frame, profile) for frame, profile in zip(frames, depth_profiles)],
-        "contact_frames": [
-            {
-                "stamp": frame.stamp.to_dict(),
-                "people_path": str(frame.people_path) if frame.people_path is not None else None,
-            }
-            for frame in window_frames
-            if frame.people_path is not None
-        ],
-        "box_xyxy": list(projected_box.bbox_xyxy),
-        "projected_box": projected_box.to_dict(),
-        "camera_matrix": np.asarray(camera_matrix, dtype=np.float64).tolist(),
-        "image_size": list(image_size),
-        "output_dir": str(video_output_dir),
-        "offload_video_to_cpu": True,
-        "offload_state_to_cpu": False,
-        "retry_box_prompt_on_empty": True,
-    }
+    if frame_debug_dir is not None:
+        frame_debug_dir.mkdir(parents=True, exist_ok=True)
 
     _write_status(
         json_path,
         task,
         "running",
-        cache_root=str(settings.SHIGURE_EVENT_CACHE_ROOT),
-        cached_frame_count=cached_frame_count,
+        detector="fbx_depth_template",
+        cached_frame_count=len(cached_frames),
         valid_frame_count=len(valid_frames),
         frame_count=len(frames),
         tracking_window=tracking_window,
         marker_pose_path=str(marker_pose),
-        marker_pose_source=marker_pose_source,
+        marker_pose_source=marker_source,
         camera_info_path=str(camera_info),
         projected_box=projected_box.to_dict(),
-        debug_projection_path=str(debug_projection_path) if debug_projection_path is not None else None,
         task_output_name=output_name,
         task_output_dir=str(task_output_dir),
     )
 
-    result = _request_video_tracker(socket_path, request)
-    sam3_video_diagnostics = result.get("diagnostics") if isinstance(result, dict) else None
-    status = str(result.get("status") or "no_event")
-    decisions = list(result.get("decisions") or [])
-    event_record = result.get("event_record")
-    tracked_frame_count = int(result.get("mask_count") or 0)
+    fallback_back_depth = float(np.max(projected_box.corners_camera_m[:, 2]))
+    template = render_model_depth_template(
+        task=task,
+        marker_pose_path=marker_pose,
+        camera_matrix=camera_matrix,
+        image_size=image_size,
+        bbox_xyxy=projected_box.bbox_xyxy,
+        fallback_back_depth_m=fallback_back_depth,
+        output_dir=depth_output_dir / "template",
+    )
+    depth_bias_m, tracking_mask, calibration = calibrate_depth_bias(frames, template)
+    Image.fromarray(tracking_mask.astype(np.uint8) * 255).save(
+        depth_output_dir / "reference_observed_mask.png"
+    )
+    debug_path = _write_projection_debug(
+        frames[0],
+        projected_box,
+        tracking_mask,
+        depth_output_dir / "projection_and_model_mask.jpg",
+    )
+
+    mask_tracker = DynamicDepthMaskTracker(
+        template,
+        initial_support_mask=tracking_mask,
+        depth_bias_m=depth_bias_m,
+    )
+    support_mask_path = depth_output_dir / "current_support_mask.png"
+    unoccluded_mask_path = depth_output_dir / "current_unoccluded_mask.png"
+
+    def save_current_masks() -> None:
+        Image.fromarray(mask_tracker.support_mask.astype(np.uint8) * 255).save(
+            support_mask_path
+        )
+        Image.fromarray(
+            mask_tracker.current_unoccluded_mask.astype(np.uint8) * 255
+        ).save(unoccluded_mask_path)
+
+    decisions: list[DepthFrameDecision] = []
+    processed_frames: list[ShigureFrame] = []
+    candidate_start: DepthFrameDecision | None = None
+    candidate_count = 0
+    confirmed: DepthFrameDecision | None = None
+    last_processed_frame: ShigureFrame | None = None
+    timed_out = False
+    timeout_seconds = max(0.0, float(MODEL_EVENT_TRACKING_TIMEOUT_SEC))
+    poll_interval_seconds = max(0.05, float(MODEL_EVENT_TRACKING_POLL_INTERVAL_SEC))
+    tracking_origin_seconds = tracking_window.get("tracking_origin_seconds")
+    if tracking_origin_seconds is None:
+        tracking_origin_seconds = frames[0].stamp.seconds
+    stream_deadline_seconds = (
+        float(tracking_origin_seconds) + timeout_seconds if timeout_seconds > 0.0 else None
+    )
+
+    def process_frame(frame: ShigureFrame) -> None:
+        nonlocal candidate_start, candidate_count, confirmed, last_processed_frame
+        decision = mask_tracker.update(
+            frame,
+            allow_support_update=candidate_count == 0,
+        )
+        decisions.append(decision)
+        processed_frames.append(frame)
+        last_processed_frame = frame
+        if frame_debug_dir is not None:
+            _write_frame_debug(
+                frame,
+                decision,
+                model_mask=template.mask,
+                output_dir=frame_debug_dir,
+                index=len(decisions) - 1,
+            )
+        if confirmed is not None:
+            return
+        if decision.candidate:
+            if candidate_count == 0:
+                candidate_start = decision
+            candidate_count += 1
+            if candidate_count >= settings.MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES:
+                confirmed = decision
+        else:
+            candidate_count = 0
+            candidate_start = None
+
+    for frame in frames:
+        process_frame(frame)
+        if confirmed is not None and frame_debug_dir is None:
+            break
+
+    save_current_masks()
+
+    initial_stream_elapsed = 0.0
+    if last_processed_frame is not None:
+        initial_stream_elapsed = max(
+            0.0,
+            last_processed_frame.stamp.seconds - float(tracking_origin_seconds),
+        )
+    wall_deadline = (
+        time.monotonic() + max(0.0, timeout_seconds - initial_stream_elapsed)
+        if timeout_seconds > 0.0
+        else None
+    )
+    last_status_update = 0.0
+
+    while confirmed is None and frame_debug_dir is None:
+        if timeout_seconds > 0.0:
+            stream_expired = (
+                last_processed_frame is not None
+                and stream_deadline_seconds is not None
+                and last_processed_frame.stamp.seconds >= stream_deadline_seconds
+            )
+            wall_expired = wall_deadline is not None and time.monotonic() >= wall_deadline
+            if stream_expired or wall_expired:
+                timed_out = True
+                break
+
+        new_frames = list(
+            cache.iter_frames_after(
+                last_processed_frame.stamp if last_processed_frame is not None else None
+            )
+        )
+        accepted_new_frame = False
+        for frame in new_frames:
+            if not (
+                frame.rgb_path
+                and frame.depth_path
+                and frame.rgb_path.is_file()
+                and frame.depth_path.is_file()
+            ):
+                continue
+            if frame.stamp.seconds < float(tracking_origin_seconds):
+                continue
+            if (
+                stream_deadline_seconds is not None
+                and frame.stamp.seconds > stream_deadline_seconds
+            ):
+                timed_out = True
+                break
+            process_frame(frame)
+            accepted_new_frame = True
+            if confirmed is not None and frame_debug_dir is None:
+                break
+        if confirmed is not None or timed_out:
+            break
+
+        now = time.monotonic()
+        if accepted_new_frame and now - last_status_update >= 5.0:
+            save_current_masks()
+            current = decisions[-1]
+            task = load_task_json(json_path)
+            _write_status(
+                json_path,
+                task,
+                "running",
+                detector="fbx_depth_template",
+                frame_count=len(processed_frames),
+                checked_frame_count=len(decisions),
+                last_frame_stamp=current.timestamp.to_dict(),
+                support_pixels=current.support_pixels,
+                unoccluded_pixels=current.evaluable_pixels,
+                removed_ratio=current.removed_ratio,
+                timeout_seconds=timeout_seconds,
+                current_support_mask_path=str(support_mask_path),
+                current_unoccluded_mask_path=str(unoccluded_mask_path),
+                task_output_name=output_name,
+                task_output_dir=str(task_output_dir),
+            )
+            last_status_update = now
+        if not accepted_new_frame:
+            time.sleep(poll_interval_seconds)
+
+    save_current_masks()
+
+    diagnostics = {
+        "detector": "fbx_depth_template",
+        "template": template.metadata,
+        "depth_bias_m": depth_bias_m,
+        "calibration": calibration,
+        "tracking": {
+            "timeout_seconds": timeout_seconds,
+            "poll_interval_seconds": poll_interval_seconds,
+            "tracking_origin_seconds": tracking_origin_seconds,
+            "stream_deadline_seconds": stream_deadline_seconds,
+            "timed_out": timed_out,
+            "followed_live_cache": len(processed_frames) > len(frames),
+            "initial_frame_count": len(frames),
+            "processed_frame_count": len(processed_frames),
+            "final_support_pixels": int(np.count_nonzero(mask_tracker.support_mask)),
+            "final_unoccluded_pixels": int(
+                np.count_nonzero(mask_tracker.current_unoccluded_mask)
+            ),
+        },
+        "thresholds": {
+            "removal_reference_surface": "front",
+            "occlusion_margin_m": settings.MODEL_DEPTH_OCCLUSION_MARGIN_M,
+            "removal_margin_m": settings.MODEL_DEPTH_REMOVAL_MARGIN_M,
+            "removed_ratio": settings.MODEL_DEPTH_REMOVED_RATIO,
+            "max_present_ratio": settings.MODEL_DEPTH_MAX_PRESENT_RATIO,
+            "min_evaluable_ratio": settings.MODEL_DEPTH_MIN_EVALUABLE_RATIO,
+            "stable_frames": settings.MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES,
+            "present_tolerance_m": settings.MODEL_DEPTH_PRESENT_TOLERANCE_M,
+            "reference_observed_pixels": int(np.count_nonzero(tracking_mask)),
+        },
+        "checked_frame_count": len(decisions),
+        "frames": [decision.to_dict() for decision in decisions],
+    }
+    diagnostics_path = depth_output_dir / "diagnostics.json"
+    _write_json(diagnostics_path, diagnostics)
+
+    event_record = None
+    status = "timeout" if timed_out else "no_event"
+    if confirmed is not None and candidate_start is not None:
+        event_frame = next(
+            frame
+            for frame in processed_frames
+            if frame.stamp == candidate_start.timestamp
+        )
+        wrist_frame, hand_contact = _closest_wrist_frame(
+            processed_frames,
+            projected_box,
+            candidate_start.timestamp.seconds,
+        )
+        display_frame = _previous_frame_before_timestamp(
+            processed_frames,
+            candidate_start.timestamp,
+        ) or event_frame
+        skeleton_frame = _nearby_skeleton_frame(
+            processed_frames,
+            display_frame,
+            hand_contact,
+            radius_frames=settings.SKELETON_SEARCH_RADIUS_FRAMES,
+        )
+        evidence_frame = replace(display_frame, marker_pose_path=marker_pose)
+        skeleton_frame = (
+            replace(skeleton_frame, marker_pose_path=marker_pose)
+            if skeleton_frame is not None
+            else None
+        )
+        movement = MovementDecision(
+            status="taken_away",
+            moved=True,
+            occluded=False,
+            stable_in_place=False,
+            should_stop_tracking=True,
+            reason=(
+                f"{candidate_start.removed_ratio:.3f} of the current unoccluded "
+                f"model support was deeper than the rendered front surface plus "
+                f"{settings.MODEL_DEPTH_REMOVAL_MARGIN_M:.3f} m for "
+                f"{settings.MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES} frames"
+            ),
+            timestamp=candidate_start.timestamp,
+            trigger_contact=hand_contact,
+            depth_delta_m=candidate_start.median_removal_excess_m,
+            overlap_pixels=candidate_start.evaluable_pixels,
+            visible_area_ratio=candidate_start.evaluable_ratio,
+            area_ratio=candidate_start.removed_ratio,
+            mask_iou=0.0,
+            movement_candidate_frames=settings.MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES,
+        )
+        event_record = persist_taken_away_event(
+            task_id=task_id,
+            frame=evidence_frame,
+            decision=movement,
+            hand_contact=hand_contact,
+            mask=candidate_start.removed_mask,
+            model_mask=template.mask,
+            trusted_mask=candidate_start.unoccluded_mask,
+            projected_box=projected_box.to_dict(),
+            people_frame=skeleton_frame,
+            task_output_name=output_name,
+            replace=True,
+        )
+        status = "taken_away"
 
     task = load_task_json(json_path)
     _write_status(
         json_path,
         task,
         status,
-        cached_frame_count=cached_frame_count,
+        detector="fbx_depth_template",
+        cached_frame_count=len(cached_frames),
         valid_frame_count=len(valid_frames),
-        frame_count=len(frames),
-        tracking_window=tracking_window,
-        tracked_frame_count=tracked_frame_count,
-        debug_projection_path=str(debug_projection_path) if debug_projection_path is not None else None,
+        frame_count=len(processed_frames),
+        initial_frame_count=len(frames),
         checked_frame_count=len(decisions),
+        tracking_window=tracking_window,
+        marker_pose_path=str(marker_pose),
+        marker_pose_source=marker_source,
+        camera_info_path=str(camera_info),
+        projected_box=projected_box.to_dict(),
+        debug_projection_path=str(debug_path) if debug_path else None,
+        depth_template_dir=str(template.output_dir),
+        depth_diagnostics_path=str(diagnostics_path),
+        depth_bias_m=depth_bias_m,
+        timeout_seconds=timeout_seconds,
+        timed_out=timed_out,
+        final_support_pixels=int(np.count_nonzero(mask_tracker.support_mask)),
+        final_unoccluded_pixels=int(
+            np.count_nonzero(mask_tracker.current_unoccluded_mask)
+        ),
+        current_support_mask_path=str(support_mask_path),
+        current_unoccluded_mask_path=str(unoccluded_mask_path),
+        event_record=event_record.to_dict() if event_record else None,
         task_output_name=output_name,
         task_output_dir=str(task_output_dir),
-        sam3_video_output_dir=str(video_output_dir),
-        sam3_video_diagnostics=sam3_video_diagnostics,
-        event_record=event_record,
-        last_decision=decisions[-1] if decisions else None,
     )
     return {
         "status": status,
-        "frame_count": len(frames),
-        "tracked_frame_count": tracked_frame_count,
-        "event_record": event_record,
+        "frame_count": len(processed_frames),
+        "initial_frame_count": len(frames),
+        "checked_frame_count": len(decisions),
+        "event_record": event_record.to_dict() if event_record else None,
     }
-
 
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
-        print("Usage: python run_model_event_tracking_from_json.py <task_meta.json or filename>", file=sys.stderr)
+        print("Usage: python run_model_event_tracking_from_json.py <task_meta.json>", file=sys.stderr)
         return 2
     try:
         result = run_model_event_tracking(argv[1])

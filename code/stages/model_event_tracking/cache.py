@@ -169,6 +169,23 @@ class ShigureHistoryCache:
                 continue
             yield frame
 
+    def iter_frames_after(self, stamp: RosStamp | None) -> Iterable[ShigureFrame]:
+        """Yield newer frames without reopening older frame JSON files."""
+        minimum_key = frame_key(stamp) if stamp is not None else None
+        for frame_dir in sorted(self.frames_root.glob("*")):
+            if minimum_key is not None and frame_dir.name <= minimum_key:
+                continue
+            frame_json = frame_dir / "frame.json"
+            if not frame_json.is_file():
+                continue
+            try:
+                frame = self._load_frame(frame_json)
+            except Exception:
+                continue
+            if stamp is not None and frame.stamp.seconds <= stamp.seconds:
+                continue
+            yield frame
+
     def newest_frame(self) -> ShigureFrame | None:
         newest: ShigureFrame | None = None
         for frame in self.iter_frames():
