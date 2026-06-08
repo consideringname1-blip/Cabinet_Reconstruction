@@ -351,3 +351,10 @@ shigurei没有正常记录，或许参考code/.test/save_latest_ros2_frame.py有
 1.把正式代码中改为前表面后移10cm，
 2.调整输出图片，输出可信区域距离上次变动超过整体的20%的融合图片，黄色可信，绿色完整，红色被移动。最终图片分为原图和融合判定的骨骼两种。输出除此之外还要有那个骨骼。原图和骨骼用于hololens的显示。剩下的扔debug里。其他的不输出
 3.跑四次结果，时间不足的话就停止，给我报告
+
+260608
+1.在/workspace/code/reconstruction里面放sam3d-body子仓库，由你主导安装一个专门的conda环境，把模型放到huggingface的默认缓存目录下，建立软链接，并测试是否可运行
+2./workspace/code/.test内写一个测试用代码，调用/workspace/data/shigure_event_cache/frames内的原始图片，实际任务来源在/workspace/data/output/model_events内的四个。相机参数不用使用估计，使用实际有的。目标是检测所有人物，推测人体mesh模型，放回3d空间内，算手腕距离物体最近的（一个可信范围内），然后输出mesh的覆盖rgb图（使用blender）。距离的话，由于是rgb-d图，所以使用第一步分割结果内的深度简单计算就可以，可以假设sam3dbody的旋转是大致可信的
+3.已完成sam3dbody的导入生成验证，暂未实装到主逻辑链路
+
+长期，最终：对输出等进行修改，比如im的视频输出可以去掉，中间没用的输出，调试用的输出，还有用处不大的文本数据等可以关掉。
