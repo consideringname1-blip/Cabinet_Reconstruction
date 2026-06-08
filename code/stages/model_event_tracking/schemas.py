@@ -151,6 +151,11 @@ class MovementDecision:
     area_ratio: float = 0.0
     mask_iou: float = 0.0
     movement_candidate_frames: int = 0
+    depth_decision_timestamp: RosStamp | None = None
+    rgb_motion_start_timestamp: RosStamp | None = None
+    display_timestamp: RosStamp | None = None
+    rgb_motion_score: float | None = None
+    rgb_motion_metadata: Mapping[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return to_jsonable(asdict(self))

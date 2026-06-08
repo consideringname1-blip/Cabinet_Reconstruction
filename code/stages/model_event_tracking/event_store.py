@@ -257,6 +257,7 @@ def persist_taken_away_event(
     )
     payload = event_record.to_dict()
     payload["projected_box"] = to_jsonable(projected_box or {})
+    payload["evidence_frame"] = frame.to_dict()
     if people_frame is not None:
         payload["skeleton_source_frame"] = people_frame.to_dict()
     payload["debug_files"] = to_jsonable(debug_files)

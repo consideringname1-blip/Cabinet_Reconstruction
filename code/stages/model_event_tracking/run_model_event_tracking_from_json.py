@@ -353,6 +353,126 @@ def _previous_frame_before_timestamp(
     return previous
 
 
+def _load_rgb_array(frame: ShigureFrame) -> np.ndarray | None:
+    if frame.rgb_path is None or not frame.rgb_path.is_file():
+        return None
+    try:
+        with Image.open(frame.rgb_path) as image:
+            return np.asarray(image.convert("RGB"), dtype=np.float32)
+    except Exception:
+        return None
+
+
+def _rgb_motion_ratio(
+    frame: ShigureFrame,
+    reference_rgb: np.ndarray,
+    mask: np.ndarray,
+) -> tuple[float, int]:
+    rgb = _load_rgb_array(frame)
+    if rgb is None or rgb.shape[:2] != reference_rgb.shape[:2] or mask.shape != reference_rgb.shape[:2]:
+        return 0.0, 0
+    diff = np.mean(np.abs(rgb - reference_rgb), axis=2)
+    changed = mask & (diff >= settings.RGB_MOTION_DIFF_THRESHOLD)
+    changed_pixels = int(np.count_nonzero(changed))
+    return changed_pixels / max(1, int(np.count_nonzero(mask))), changed_pixels
+
+
+def _select_rgb_motion_start_frame(
+    frames: list[ShigureFrame],
+    *,
+    depth_start: DepthFrameDecision,
+    depth_confirm: DepthFrameDecision,
+    model_mask: np.ndarray,
+    support_mask: np.ndarray,
+) -> tuple[ShigureFrame | None, ShigureFrame | None, dict[str, Any]]:
+    end_seconds = depth_start.timestamp.seconds
+    start_seconds = end_seconds - max(0.0, settings.RGB_MOTION_LOOKBACK_SECONDS)
+    window = [
+        frame
+        for frame in frames
+        if start_seconds - 1.0e-9 <= frame.stamp.seconds <= end_seconds + 1.0e-9
+        and frame.rgb_path
+        and frame.rgb_path.is_file()
+    ]
+    support = np.asarray(support_mask, dtype=bool)
+    full = np.asarray(model_mask, dtype=bool)
+    if support.shape == full.shape and np.count_nonzero(support) >= settings.RGB_MOTION_MIN_MASK_PIXELS:
+        motion_mask = support
+        mask_source = "depth_support_mask"
+    else:
+        motion_mask = full
+        mask_source = "model_mask"
+    mask_pixels = int(np.count_nonzero(motion_mask))
+    metadata: dict[str, Any] = {
+        "method": "rgb_motion_start_after_depth_confirmation",
+        "lookback_seconds": settings.RGB_MOTION_LOOKBACK_SECONDS,
+        "baseline_frames": settings.RGB_MOTION_BASELINE_FRAMES,
+        "diff_threshold": settings.RGB_MOTION_DIFF_THRESHOLD,
+        "start_ratio": settings.RGB_MOTION_START_RATIO,
+        "quiet_ratio": settings.RGB_MOTION_QUIET_RATIO,
+        "confirm_frames": settings.RGB_MOTION_CONFIRM_FRAMES,
+        "display_offset_frames": settings.RGB_MOTION_DISPLAY_OFFSET_FRAMES,
+        "mask_source": mask_source,
+        "mask_pixels": mask_pixels,
+        "depth_start_timestamp": depth_start.timestamp.to_dict(),
+        "depth_confirm_timestamp": depth_confirm.timestamp.to_dict(),
+        "window_frame_count": len(window),
+    }
+    if mask_pixels < settings.RGB_MOTION_MIN_MASK_PIXELS:
+        metadata["status"] = "fallback_mask_too_small"
+        return None, None, metadata
+    rgb_frames: list[tuple[ShigureFrame, np.ndarray]] = []
+    for frame in window:
+        rgb = _load_rgb_array(frame)
+        if rgb is not None and rgb.shape[:2] == motion_mask.shape:
+            rgb_frames.append((frame, rgb))
+    if not rgb_frames:
+        metadata["status"] = "fallback_no_rgb_frames"
+        return None, None, metadata
+    baseline_count = max(1, min(settings.RGB_MOTION_BASELINE_FRAMES, len(rgb_frames)))
+    reference = np.median(
+        np.stack([rgb for _frame, rgb in rgb_frames[:baseline_count]], axis=0),
+        axis=0,
+    ).astype(np.float32)
+    ratios: list[dict[str, Any]] = []
+    for frame, _rgb in rgb_frames:
+        ratio, changed_pixels = _rgb_motion_ratio(frame, reference, motion_mask)
+        ratios.append(
+            {
+                "timestamp": frame.stamp.to_dict(),
+                "ratio": ratio,
+                "changed_pixels": changed_pixels,
+            }
+        )
+    metadata["reference_timestamps"] = [frame.stamp.to_dict() for frame, _rgb in rgb_frames[:baseline_count]]
+    metadata["ratios"] = ratios
+    confirm = max(1, int(settings.RGB_MOTION_CONFIRM_FRAMES))
+    start_index: int | None = None
+    for index in range(0, len(ratios)):
+        if index + confirm > len(ratios):
+            break
+        run = ratios[index : index + confirm]
+        if not all(item["ratio"] >= settings.RGB_MOTION_START_RATIO for item in run):
+            continue
+        start_index = index
+        break
+    if start_index is None:
+        metadata["status"] = "fallback_no_rgb_motion_start"
+        best_index = max(range(len(ratios)), key=lambda idx: ratios[idx]["ratio"])
+        metadata["best_ratio"] = ratios[best_index]
+        return None, None, metadata
+    display_index = min(
+        len(rgb_frames) - 1,
+        max(0, start_index + int(settings.RGB_MOTION_DISPLAY_OFFSET_FRAMES)),
+    )
+    metadata["status"] = "found"
+    metadata["motion_start_index"] = start_index
+    metadata["display_index"] = display_index
+    metadata["motion_start_ratio"] = ratios[start_index]["ratio"]
+    metadata["display_ratio"] = ratios[display_index]["ratio"]
+    return rgb_frames[start_index][0], rgb_frames[display_index][0], metadata
+
+
 def _people_frame_has_id(frame: ShigureFrame, people_id: str) -> bool:
     if frame.people_path is None or not frame.people_path.is_file() or not people_id:
         return False
@@ -742,15 +862,30 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
             for frame in processed_frames
             if frame.stamp == candidate_start.timestamp
         )
+        rgb_start_frame, rgb_display_frame, rgb_motion_metadata = _select_rgb_motion_start_frame(
+            processed_frames,
+            depth_start=candidate_start,
+            depth_confirm=confirmed,
+            model_mask=template.mask,
+            support_mask=tracking_mask,
+        )
+        display_frame = (
+            rgb_display_frame
+            or _previous_frame_before_timestamp(processed_frames, candidate_start.timestamp)
+            or event_frame
+        )
+        event_timestamp = (rgb_start_frame or display_frame).stamp
         wrist_frame, hand_contact = _closest_wrist_frame(
             processed_frames,
             projected_box,
-            candidate_start.timestamp.seconds,
+            event_timestamp.seconds,
         )
-        display_frame = _previous_frame_before_timestamp(
-            processed_frames,
-            candidate_start.timestamp,
-        ) or event_frame
+        if hand_contact is None:
+            wrist_frame, hand_contact = _closest_wrist_frame(
+                processed_frames,
+                projected_box,
+                candidate_start.timestamp.seconds,
+            )
         skeleton_frame = _nearby_skeleton_frame(
             processed_frames,
             display_frame,
@@ -770,12 +905,16 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
             stable_in_place=False,
             should_stop_tracking=True,
             reason=(
+                f"depth confirmed removal at {candidate_start.timestamp.sec}_"
+                f"{candidate_start.timestamp.nanosec:09d}: "
                 f"{candidate_start.removed_ratio:.3f} of the current unoccluded "
                 f"model support was deeper than the rendered front surface plus "
                 f"{settings.MODEL_DEPTH_REMOVAL_MARGIN_M:.3f} m for "
-                f"{settings.MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES} frames"
+                f"{settings.MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES} frames; "
+                f"event image was selected by RGB motion start status "
+                f"{rgb_motion_metadata.get('status')}"
             ),
-            timestamp=candidate_start.timestamp,
+            timestamp=event_timestamp,
             trigger_contact=hand_contact,
             depth_delta_m=candidate_start.median_removal_excess_m,
             overlap_pixels=candidate_start.evaluable_pixels,
@@ -783,6 +922,11 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
             area_ratio=candidate_start.removed_ratio,
             mask_iou=0.0,
             movement_candidate_frames=settings.MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES,
+            depth_decision_timestamp=candidate_start.timestamp,
+            rgb_motion_start_timestamp=(rgb_start_frame.stamp if rgb_start_frame is not None else None),
+            display_timestamp=display_frame.stamp,
+            rgb_motion_score=rgb_motion_metadata.get("motion_start_ratio"),
+            rgb_motion_metadata=rgb_motion_metadata,
         )
         event_record = persist_taken_away_event(
             task_id=task_id,
