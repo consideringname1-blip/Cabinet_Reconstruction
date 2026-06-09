@@ -152,6 +152,8 @@ class MovementDecision:
     mask_iou: float = 0.0
     movement_candidate_frames: int = 0
     depth_decision_timestamp: RosStamp | None = None
+    depth_confirm_timestamp: RosStamp | None = None
+    full_occlusion_start_timestamp: RosStamp | None = None
     rgb_motion_start_timestamp: RosStamp | None = None
     display_timestamp: RosStamp | None = None
     rgb_motion_score: float | None = None

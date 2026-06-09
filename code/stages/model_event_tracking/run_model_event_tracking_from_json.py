@@ -473,6 +473,21 @@ def _select_rgb_motion_start_frame(
     return rgb_frames[start_index][0], rgb_frames[display_index][0], metadata
 
 
+def _is_full_occlusion_candidate(decision: DepthFrameDecision) -> bool:
+    return (
+        decision.occluded_pixels >= settings.MODEL_DEPTH_FULL_OCCLUSION_MIN_PIXELS
+        and decision.occluded_ratio >= settings.MODEL_DEPTH_FULL_OCCLUSION_RATIO
+        and decision.evaluable_ratio <= settings.MODEL_DEPTH_FULL_OCCLUSION_MAX_EVALUABLE_RATIO
+    )
+
+
+def _is_occlusion_cleared(decision: DepthFrameDecision) -> bool:
+    return (
+        decision.evaluable_ratio >= settings.MODEL_DEPTH_OCCLUSION_CLEAR_EVALUABLE_RATIO
+        or decision.occluded_ratio <= settings.MODEL_DEPTH_OCCLUSION_CLEAR_MAX_OCCLUDED_RATIO
+    )
+
+
 def _people_frame_has_id(frame: ShigureFrame, people_id: str) -> bool:
     if frame.people_path is None or not frame.people_path.is_file() or not people_id:
         return False
@@ -687,8 +702,13 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
     decisions: list[DepthFrameDecision] = []
     processed_frames: list[ShigureFrame] = []
     candidate_start: DepthFrameDecision | None = None
+    candidate_depth_start: DepthFrameDecision | None = None
     candidate_count = 0
     confirmed: DepthFrameDecision | None = None
+    full_occlusion_candidate_start: DepthFrameDecision | None = None
+    full_occlusion_candidate_count = 0
+    active_full_occlusion_start: DepthFrameDecision | None = None
+    full_occlusion_segments: list[dict[str, Any]] = []
     last_processed_frame: ShigureFrame | None = None
     timed_out = False
     timeout_seconds = max(0.0, float(MODEL_EVENT_TRACKING_TIMEOUT_SEC))
@@ -701,7 +721,9 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
     )
 
     def process_frame(frame: ShigureFrame) -> None:
-        nonlocal candidate_start, candidate_count, confirmed, last_processed_frame
+        nonlocal candidate_start, candidate_depth_start, candidate_count, confirmed
+        nonlocal full_occlusion_candidate_start, full_occlusion_candidate_count
+        nonlocal active_full_occlusion_start, last_processed_frame
         decision = mask_tracker.update(
             frame,
             allow_support_update=candidate_count == 0,
@@ -719,15 +741,45 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
             )
         if confirmed is not None:
             return
+
+        if _is_full_occlusion_candidate(decision):
+            candidate_count = 0
+            candidate_start = None
+            candidate_depth_start = None
+            if active_full_occlusion_start is None:
+                if full_occlusion_candidate_count == 0:
+                    full_occlusion_candidate_start = decision
+                full_occlusion_candidate_count += 1
+                if (
+                    full_occlusion_candidate_start is not None
+                    and full_occlusion_candidate_count >= settings.MODEL_DEPTH_FULL_OCCLUSION_STABLE_FRAMES
+                ):
+                    active_full_occlusion_start = full_occlusion_candidate_start
+                    full_occlusion_segments.append(
+                        {
+                            "start_timestamp": active_full_occlusion_start.timestamp.to_dict(),
+                            "confirmed_at_timestamp": decision.timestamp.to_dict(),
+                            "stable_frames": full_occlusion_candidate_count,
+                        }
+                    )
+            return
+
+        full_occlusion_candidate_start = None
+        full_occlusion_candidate_count = 0
+
         if decision.candidate:
             if candidate_count == 0:
                 candidate_start = decision
+                candidate_depth_start = active_full_occlusion_start or decision
             candidate_count += 1
             if candidate_count >= settings.MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES:
                 confirmed = decision
         else:
             candidate_count = 0
             candidate_start = None
+            candidate_depth_start = None
+            if active_full_occlusion_start is not None and _is_occlusion_cleared(decision):
+                active_full_occlusion_start = None
 
     for frame in frames:
         process_frame(frame)
@@ -836,6 +888,12 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
             "final_unoccluded_pixels": int(
                 np.count_nonzero(mask_tracker.current_unoccluded_mask)
             ),
+            "active_full_occlusion_start": (
+                active_full_occlusion_start.timestamp.to_dict()
+                if active_full_occlusion_start is not None
+                else None
+            ),
+            "full_occlusion_segments": full_occlusion_segments,
         },
         "thresholds": {
             "removal_reference_surface": "front",
@@ -845,6 +903,12 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
             "max_present_ratio": settings.MODEL_DEPTH_MAX_PRESENT_RATIO,
             "min_evaluable_ratio": settings.MODEL_DEPTH_MIN_EVALUABLE_RATIO,
             "stable_frames": settings.MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES,
+            "full_occlusion_ratio": settings.MODEL_DEPTH_FULL_OCCLUSION_RATIO,
+            "full_occlusion_max_evaluable_ratio": settings.MODEL_DEPTH_FULL_OCCLUSION_MAX_EVALUABLE_RATIO,
+            "full_occlusion_stable_frames": settings.MODEL_DEPTH_FULL_OCCLUSION_STABLE_FRAMES,
+            "full_occlusion_min_pixels": settings.MODEL_DEPTH_FULL_OCCLUSION_MIN_PIXELS,
+            "occlusion_clear_evaluable_ratio": settings.MODEL_DEPTH_OCCLUSION_CLEAR_EVALUABLE_RATIO,
+            "occlusion_clear_max_occluded_ratio": settings.MODEL_DEPTH_OCCLUSION_CLEAR_MAX_OCCLUDED_RATIO,
             "present_tolerance_m": settings.MODEL_DEPTH_PRESENT_TOLERANCE_M,
             "reference_observed_pixels": int(np.count_nonzero(tracking_mask)),
         },
@@ -855,24 +919,35 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
     _write_json(diagnostics_path, diagnostics)
 
     event_record = None
-    status = "timeout" if timed_out else "no_event"
+    status = (
+        "occluded_unresolved"
+        if timed_out and active_full_occlusion_start is not None
+        else ("timeout" if timed_out else "no_event")
+    )
     if confirmed is not None and candidate_start is not None:
-        event_frame = next(
+        depth_start_decision = candidate_depth_start or candidate_start
+        removed_event_frame = next(
             frame
             for frame in processed_frames
             if frame.stamp == candidate_start.timestamp
         )
+        depth_start_frame = next(
+            (frame for frame in processed_frames if frame.stamp == depth_start_decision.timestamp),
+            removed_event_frame,
+        )
+        used_full_occlusion_start = depth_start_decision.timestamp != candidate_start.timestamp
         rgb_start_frame, rgb_display_frame, rgb_motion_metadata = _select_rgb_motion_start_frame(
             processed_frames,
-            depth_start=candidate_start,
+            depth_start=depth_start_decision,
             depth_confirm=confirmed,
             model_mask=template.mask,
             support_mask=tracking_mask,
         )
         display_frame = (
             rgb_display_frame
-            or _previous_frame_before_timestamp(processed_frames, candidate_start.timestamp)
-            or event_frame
+            or _previous_frame_before_timestamp(processed_frames, depth_start_decision.timestamp)
+            or depth_start_frame
+            or removed_event_frame
         )
         event_timestamp = (rgb_start_frame or display_frame).stamp
         wrist_frame, hand_contact = _closest_wrist_frame(
@@ -911,6 +986,9 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
                 f"model support was deeper than the rendered front surface plus "
                 f"{settings.MODEL_DEPTH_REMOVAL_MARGIN_M:.3f} m for "
                 f"{settings.MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES} frames; "
+                f"depth event start was "
+                f"{depth_start_decision.timestamp.sec}_{depth_start_decision.timestamp.nanosec:09d}"
+                f"{' after full occlusion' if used_full_occlusion_start else ''}; "
                 f"event image was selected by RGB motion start status "
                 f"{rgb_motion_metadata.get('status')}"
             ),
@@ -922,11 +1000,21 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
             area_ratio=candidate_start.removed_ratio,
             mask_iou=0.0,
             movement_candidate_frames=settings.MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES,
-            depth_decision_timestamp=candidate_start.timestamp,
+            depth_decision_timestamp=depth_start_decision.timestamp,
+            depth_confirm_timestamp=confirmed.timestamp,
+            full_occlusion_start_timestamp=(
+                depth_start_decision.timestamp if used_full_occlusion_start else None
+            ),
             rgb_motion_start_timestamp=(rgb_start_frame.stamp if rgb_start_frame is not None else None),
             display_timestamp=display_frame.stamp,
             rgb_motion_score=rgb_motion_metadata.get("motion_start_ratio"),
-            rgb_motion_metadata=rgb_motion_metadata,
+            rgb_motion_metadata={
+                **rgb_motion_metadata,
+                "used_full_occlusion_start": used_full_occlusion_start,
+                "removed_depth_start_timestamp": candidate_start.timestamp.to_dict(),
+                "depth_confirm_timestamp": confirmed.timestamp.to_dict(),
+                "full_occlusion_segments": full_occlusion_segments,
+            },
         )
         event_record = persist_taken_away_event(
             task_id=task_id,
@@ -965,6 +1053,12 @@ def run_model_event_tracking(json_path_arg: str | Path) -> dict[str, Any]:
         depth_bias_m=depth_bias_m,
         timeout_seconds=timeout_seconds,
         timed_out=timed_out,
+        active_full_occlusion_start=(
+            active_full_occlusion_start.timestamp.to_dict()
+            if active_full_occlusion_start is not None
+            else None
+        ),
+        full_occlusion_segments=full_occlusion_segments,
         final_support_pixels=int(np.count_nonzero(mask_tracker.support_mask)),
         final_unoccluded_pixels=int(
             np.count_nonzero(mask_tracker.current_unoccluded_mask)

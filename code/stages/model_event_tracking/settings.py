@@ -58,6 +58,26 @@ MODEL_DEPTH_TAKEN_AWAY_STABLE_FRAMES = _int_env(
     "MODEL_EVENT_DEPTH_TAKEN_AWAY_STABLE_FRAMES", 3
 )
 
+# Full foreground occlusion is not taken-away by itself.  It is kept as a
+# possible interaction start; if the object is gone after occlusion clears, the
+# event depth start is rewound to the first full-occlusion frame.
+MODEL_DEPTH_FULL_OCCLUSION_RATIO = _float_env("MODEL_EVENT_DEPTH_FULL_OCCLUSION_RATIO", 0.80)
+MODEL_DEPTH_FULL_OCCLUSION_MAX_EVALUABLE_RATIO = _float_env(
+    "MODEL_EVENT_DEPTH_FULL_OCCLUSION_MAX_EVALUABLE_RATIO", 0.25
+)
+MODEL_DEPTH_FULL_OCCLUSION_STABLE_FRAMES = _int_env(
+    "MODEL_EVENT_DEPTH_FULL_OCCLUSION_STABLE_FRAMES", 3
+)
+MODEL_DEPTH_FULL_OCCLUSION_MIN_PIXELS = _int_env(
+    "MODEL_EVENT_DEPTH_FULL_OCCLUSION_MIN_PIXELS", 128
+)
+MODEL_DEPTH_OCCLUSION_CLEAR_EVALUABLE_RATIO = _float_env(
+    "MODEL_EVENT_DEPTH_OCCLUSION_CLEAR_EVALUABLE_RATIO", 0.35
+)
+MODEL_DEPTH_OCCLUSION_CLEAR_MAX_OCCLUDED_RATIO = _float_env(
+    "MODEL_EVENT_DEPTH_OCCLUSION_CLEAR_MAX_OCCLUDED_RATIO", 0.50
+)
+
 # A short post-capture calibration absorbs the remaining fixed marker/depth
 # bias without changing the trusted coordinate-transform contract.
 MODEL_DEPTH_CALIBRATION_SECONDS = _float_env("MODEL_EVENT_DEPTH_CALIBRATION_SECONDS", 5.0)
