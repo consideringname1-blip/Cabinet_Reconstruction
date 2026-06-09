@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -151,6 +152,56 @@ def _save_skeleton_overlay(
     return target
 
 
+
+def _try_generate_body_mesh(output_dir: Path, debug_dir: Path) -> tuple[Path | None, dict[str, Any] | None]:
+    if not settings.SAM3D_BODY_EVENT_MESH_ENABLED:
+        return None, {"status": "disabled"}
+    script = Path(settings.SAM3D_BODY_EVENT_MESH_SCRIPT)
+    python = Path(str(settings.SAM3D_BODY_PY))
+    if not script.is_file() or not python.is_file():
+        return None, {
+            "status": "missing_runtime",
+            "script": str(script),
+            "python": str(python),
+        }
+    target = output_dir / "body_mesh.json"
+    cmd = [
+        str(python),
+        str(script),
+        str(output_dir),
+        "--output",
+        str(target),
+        "--decimate-ratio",
+        str(float(settings.SAM3D_BODY_EVENT_MESH_DECIMATE_RATIO)),
+        "--max-distance-m",
+        str(float(settings.SAM3D_BODY_EVENT_MESH_MAX_DISTANCE_M)),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(output_dir),
+            text=True,
+            capture_output=True,
+            timeout=max(1.0, float(settings.SAM3D_BODY_EVENT_MESH_TIMEOUT_SEC)),
+            check=False,
+        )
+    except Exception as exc:
+        return None, {"status": "failed_to_start", "error": str(exc), "cmd": cmd}
+    metadata = {
+        "status": "ok" if proc.returncode == 0 and target.is_file() else "failed",
+        "cmd": cmd,
+        "returncode": proc.returncode,
+        "stdout": proc.stdout[-4000:],
+        "stderr": proc.stderr[-4000:],
+        "target": str(target),
+        "decimate_ratio": float(settings.SAM3D_BODY_EVENT_MESH_DECIMATE_RATIO),
+    }
+    if proc.returncode == 0 and target.is_file():
+        return target, metadata
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(debug_dir / "body_mesh_error.json", metadata)
+    return None, metadata
+
 def event_dir_for_task(
     task_id: str,
     *,
@@ -262,4 +313,29 @@ def persist_taken_away_event(
         payload["skeleton_source_frame"] = people_frame.to_dict()
     payload["debug_files"] = to_jsonable(debug_files)
     _write_json(event_json, payload)
+
+    body_mesh_path, body_mesh_metadata = _try_generate_body_mesh(output_dir, debug_dir)
+    if body_mesh_path is not None:
+        files["body_mesh"] = body_mesh_path
+        event_record = ModelEventRecord(
+            task_id=task_id,
+            event_type="taken_away",
+            event_timestamp=decision.timestamp,
+            trigger_timestamp=(contact.timestamp if contact is not None else None),
+            decision=decision,
+            hand_contact=contact,
+            output_dir=output_dir,
+            files=files,
+        )
+        payload = event_record.to_dict()
+        payload["projected_box"] = to_jsonable(projected_box or {})
+        payload["evidence_frame"] = frame.to_dict()
+        if people_frame is not None:
+            payload["skeleton_source_frame"] = people_frame.to_dict()
+        payload["debug_files"] = to_jsonable(debug_files)
+        payload["body_mesh_metadata"] = to_jsonable(body_mesh_metadata or {})
+        _write_json(event_json, payload)
+    elif body_mesh_metadata is not None:
+        payload["body_mesh_metadata"] = to_jsonable(body_mesh_metadata)
+        _write_json(event_json, payload)
     return event_record

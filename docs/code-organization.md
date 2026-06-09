@@ -28,7 +28,7 @@
 : ArUco 参考系相关 stage，包括 marker 检测和把已完成物体同步到 ArUco 坐标。
 
 `code/stages/model_event_tracking/`
-: 模型拿走事件模块。Shigurei 缓存随服务自动启停；事件分析使用可信 FBX 投影得到逐像素前/后表面深度，不依赖常驻视频分割模型。每个模型独立跟随新增缓存帧，直到事件或 `MODEL_EVENT_TRACKING_TIMEOUT_SEC`；设为 `0` 时不主动超时。
+: 模型拿走事件模块。Shigurei 缓存随服务自动启停；事件分析使用可信 FBX 投影得到逐像素前/后表面深度，不依赖常驻视频分割模型。每个模型独立跟随新增缓存帧，直到事件或 `MODEL_EVENT_TRACKING_TIMEOUT_SEC`；设为 `0` 时不主动超时。整体状态机见 `docs/model-event-tracking-state-machine.md`。
 
 `code/Hololens2/`
 : HoloLens 数据获取、标定、depth/RGB 配准等设备接入代码。depth 和 RGB 配准链路保持独立，不要为了普通 pipeline 改动随意移动或重写这里。上游依赖不要直接放这里，优先放到 `code/reconstruction/`，这里保留项目自己的设备接入脚本。
@@ -43,7 +43,7 @@
 : 临时实验、诊断和一次性跑数脚本。不要把生产逻辑放到这里；一旦需要长期保留，移动到 `code/scripts/` 或正式 stage 目录。
 
 `docs/`
-: 设计说明和约定文档。坐标系说明见 `docs/coordinate-systems.md`。
+: 设计说明和约定文档。坐标系说明见 `docs/coordinate-systems.md`；服务器处理流程、JSON 输出和目录契约见 `docs/server-processing-output-contract.md`。
 
 `data/`
 : 运行时输入、输出、数据库、配置快照。代码不要从 `data/` import Python 模块。

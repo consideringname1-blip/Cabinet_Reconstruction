@@ -104,3 +104,17 @@ RGB_MOTION_QUIET_RATIO = _float_env("MODEL_EVENT_RGB_MOTION_QUIET_RATIO", 0.03)
 RGB_MOTION_CONFIRM_FRAMES = _int_env("MODEL_EVENT_RGB_MOTION_CONFIRM_FRAMES", 2)
 RGB_MOTION_MIN_MASK_PIXELS = _int_env("MODEL_EVENT_RGB_MOTION_MIN_MASK_PIXELS", 128)
 RGB_MOTION_DISPLAY_OFFSET_FRAMES = _int_env("MODEL_EVENT_RGB_MOTION_DISPLAY_OFFSET_FRAMES", 0)
+
+# Optional SAM 3D Body mesh generated for HoloLens event display.  The mesh is
+# projected into the event image panel and decimated before Unity downloads it.
+SAM3D_BODY_EVENT_MESH_ENABLED = os.environ.get("MODEL_EVENT_SAM3D_BODY_MESH_ENABLED", "1").strip().lower() not in {"0", "false", "no", "off", ""}
+SAM3D_BODY_PY = os.environ.get("SAM3D_BODY_PY", "/opt/miniconda/envs/sam_3d_body/bin/python")
+SAM3D_BODY_EVENT_MESH_SCRIPT = Path(
+    os.environ.get(
+        "MODEL_EVENT_SAM3D_BODY_MESH_SCRIPT",
+        "/workspace/code/stages/model_event_tracking/generate_sam3d_body_event_mesh.py",
+    )
+)
+SAM3D_BODY_EVENT_MESH_DECIMATE_RATIO = _float_env("MODEL_EVENT_SAM3D_BODY_MESH_DECIMATE_RATIO", 1.0 / 8.0)
+SAM3D_BODY_EVENT_MESH_MAX_DISTANCE_M = _float_env("MODEL_EVENT_SAM3D_BODY_MESH_MAX_DISTANCE_M", 1.25)
+SAM3D_BODY_EVENT_MESH_TIMEOUT_SEC = _float_env("MODEL_EVENT_SAM3D_BODY_MESH_TIMEOUT_SEC", 180.0)

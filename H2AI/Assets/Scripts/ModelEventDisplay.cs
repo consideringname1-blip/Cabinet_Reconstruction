@@ -15,9 +15,11 @@ public class ModelEventDisplay : MonoBehaviour
     [SerializeField, Min(0.05f)] private float panelWidthMeters = 0.32f;
     [SerializeField] private Material imageMaterialTemplate;
     [SerializeField] private Material skeletonLineMaterial;
+    [SerializeField] private Material bodyMeshMaterialTemplate;
     [SerializeField] private Color imageColor = Color.white;
     [SerializeField] private Color skeletonLineColor = new Color(0.1f, 0.9f, 1.0f, 1f);
     [SerializeField] private Color wristColor = new Color(1.0f, 0.75f, 0.15f, 1f);
+    [SerializeField] private Color bodyMeshColor = new Color(0.55f, 0.55f, 0.55f, 0.38f);
     [SerializeField, Min(0.0005f)] private float skeletonLineWidth = 0.003f;
     [SerializeField, Min(0.002f)] private float jointPointSizeMeters = 0.01f;
     [SerializeField, Range(0f, 1f)] private float minJointScore = 0f;
@@ -31,6 +33,7 @@ public class ModelEventDisplay : MonoBehaviour
     private Material runtimeImageMaterial;
     private Material runtimeSkeletonMaterial;
     private Material runtimeWristMaterial;
+    private Material runtimeBodyMeshMaterial;
 
     private static readonly string[,] SkeletonPairs =
     {
@@ -88,6 +91,7 @@ public class ModelEventDisplay : MonoBehaviour
         DestroyMaterial(runtimeImageMaterial);
         DestroyMaterial(runtimeSkeletonMaterial);
         DestroyMaterial(runtimeWristMaterial);
+        DestroyMaterial(runtimeBodyMeshMaterial);
     }
 
     public void ToggleForModel(RuntimeModelEventIdentity identity)
@@ -203,6 +207,7 @@ public class ModelEventDisplay : MonoBehaviour
         JObject urls = eventJ != null ? eventJ["download_urls"] as JObject : null;
         string rgbUrl = urls != null ? urls["rgb"]?.ToString() : "";
         string skeletonsUrl = urls != null ? urls["skeletons"]?.ToString() : "";
+        string bodyMeshUrl = urls != null ? urls["body_mesh"]?.ToString() : "";
         if (string.IsNullOrEmpty(rgbUrl))
         {
             ShowFrontMessage("model_event_ERR_missing_rgb");
@@ -211,6 +216,7 @@ public class ModelEventDisplay : MonoBehaviour
 
         context.EventJson = eventJ;
         context.SkeletonsUrl = skeletonsUrl;
+        context.BodyMeshUrl = bodyMeshUrl;
 
         HTTPRequest imageRequest = new HTTPRequest(new Uri(rgbUrl), HTTPMethods.Get, OnEventImageFinished);
         imageRequest.Tag = context;
@@ -248,11 +254,48 @@ public class ModelEventDisplay : MonoBehaviour
         eventCache[context.TaskId] = cached;
         ShowPopup(context.Identity, cached);
 
-        if (!string.IsNullOrEmpty(context.SkeletonsUrl))
+        if (!string.IsNullOrEmpty(context.BodyMeshUrl))
+        {
+            HTTPRequest bodyMeshRequest = new HTTPRequest(new Uri(context.BodyMeshUrl), HTTPMethods.Get, OnEventBodyMeshFinished);
+            bodyMeshRequest.Tag = context;
+            bodyMeshRequest.Send();
+        }
+        else if (!string.IsNullOrEmpty(context.SkeletonsUrl))
         {
             HTTPRequest skeletonRequest = new HTTPRequest(new Uri(context.SkeletonsUrl), HTTPMethods.Get, OnEventSkeletonsFinished);
             skeletonRequest.Tag = context;
             skeletonRequest.Send();
+        }
+    }
+
+    private void OnEventBodyMeshFinished(HTTPRequest request, HTTPResponse response)
+    {
+        EventRequestContext context = request.Tag as EventRequestContext;
+        if (!IsCurrentRequest(context) || activePopup == null || activeTaskId != context.TaskId)
+        {
+            return;
+        }
+
+        if (response == null || !response.IsSuccess)
+        {
+            Debug.LogWarning("[ModelEvent] Event body mesh request failed.");
+            RequestSkeletonFallback(context);
+            return;
+        }
+
+        JObject bodyMesh = JsonConvert.DeserializeObject(response.DataAsText) as JObject;
+        JArray people = bodyMesh != null ? bodyMesh["people"] as JArray : null;
+        if (people == null || people.Count == 0)
+        {
+            RequestSkeletonFallback(context);
+            return;
+        }
+
+        if (eventCache.TryGetValue(context.TaskId, out CachedEventData cached) && cached != null)
+        {
+            cached.BodyMesh = bodyMesh;
+            cached.Skeletons = null;
+            DrawBodyMesh(activePopup.transform, cached);
         }
     }
 
@@ -280,7 +323,10 @@ public class ModelEventDisplay : MonoBehaviour
         if (eventCache.TryGetValue(context.TaskId, out CachedEventData cached) && cached != null)
         {
             cached.Skeletons = skeletons;
-            DrawSkeletons(activePopup.transform, cached);
+            if (cached.BodyMesh == null)
+            {
+                DrawSkeletons(activePopup.transform, cached);
+            }
         }
     }
 
@@ -350,8 +396,137 @@ public class ModelEventDisplay : MonoBehaviour
         activePopup = root;
         activeTaskId = !string.IsNullOrEmpty(identity.TaskId) ? identity.TaskId : identity.ModelKey;
 
-        DrawSkeletons(root.transform, cached);
+        if (cached.BodyMesh != null)
+        {
+            DrawBodyMesh(root.transform, cached);
+        }
+        else
+        {
+            DrawSkeletons(root.transform, cached);
+        }
         ShowFrontMessage("model_event_show");
+    }
+
+    private void DrawBodyMesh(Transform popupRoot, CachedEventData cached)
+    {
+        if (popupRoot == null || cached == null || cached.Texture == null || cached.BodyMesh == null)
+        {
+            return;
+        }
+
+        DestroyChild(popupRoot, "SkeletonOverlay");
+        DestroyChild(popupRoot, "BodyMeshOverlay");
+
+        JArray people = cached.BodyMesh["people"] as JArray;
+        if (people == null || people.Count == 0)
+        {
+            return;
+        }
+
+        GameObject overlay = new GameObject("BodyMeshOverlay");
+        overlay.transform.SetParent(popupRoot, false);
+        overlay.transform.localPosition = Vector3.zero;
+        overlay.transform.localRotation = Quaternion.identity;
+        overlay.transform.localScale = Vector3.one;
+
+        int personIndex = 0;
+        foreach (JObject person in people.Children<JObject>())
+        {
+            Mesh mesh = BuildBodyMesh(person, cached.PanelWidth, cached.PanelHeight);
+            if (mesh == null)
+            {
+                continue;
+            }
+
+            GameObject meshObject = new GameObject("body_mesh_" + personIndex.ToString(CultureInfo.InvariantCulture));
+            meshObject.transform.SetParent(overlay.transform, false);
+            meshObject.transform.localPosition = Vector3.zero;
+            meshObject.transform.localRotation = Quaternion.identity;
+            meshObject.transform.localScale = Vector3.one;
+
+            MeshFilter filter = meshObject.AddComponent<MeshFilter>();
+            filter.sharedMesh = mesh;
+
+            MeshRenderer renderer = meshObject.AddComponent<MeshRenderer>();
+            renderer.sharedMaterial = ResolveBodyMeshMaterial();
+            personIndex++;
+        }
+    }
+
+    private Mesh BuildBodyMesh(JObject person, float width, float height)
+    {
+        JArray vertexArray = person["vertices"] as JArray;
+        JArray triangleArray = person["triangles"] as JArray;
+        if (vertexArray == null || triangleArray == null || vertexArray.Count < 3 || triangleArray.Count < 3)
+        {
+            return null;
+        }
+
+        List<Vector3> vertices = new List<Vector3>(vertexArray.Count);
+        foreach (JArray rawVertex in vertexArray.Children<JArray>())
+        {
+            if (rawVertex.Count < 2)
+            {
+                continue;
+            }
+
+            float x = rawVertex[0].Value<float>() * width;
+            float y = rawVertex[1].Value<float>() * height;
+            float z = rawVertex.Count >= 3 ? rawVertex[2].Value<float>() : 0.006f;
+            vertices.Add(new Vector3(x, y, z));
+        }
+
+        if (vertices.Count < 3)
+        {
+            return null;
+        }
+
+        List<int> triangles = new List<int>(triangleArray.Count * 2);
+        for (int i = 0; i + 2 < triangleArray.Count; i += 3)
+        {
+            int a = triangleArray[i].Value<int>();
+            int b = triangleArray[i + 1].Value<int>();
+            int c = triangleArray[i + 2].Value<int>();
+            if (a < 0 || b < 0 || c < 0 || a >= vertices.Count || b >= vertices.Count || c >= vertices.Count)
+            {
+                continue;
+            }
+
+            triangles.Add(a);
+            triangles.Add(b);
+            triangles.Add(c);
+            triangles.Add(c);
+            triangles.Add(b);
+            triangles.Add(a);
+        }
+
+        if (triangles.Count < 3)
+        {
+            return null;
+        }
+
+        Mesh mesh = new Mesh();
+        if (vertices.Count > 65535)
+        {
+            mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+        }
+        mesh.SetVertices(vertices);
+        mesh.SetTriangles(triangles, 0);
+        mesh.RecalculateNormals();
+        mesh.RecalculateBounds();
+        return mesh;
+    }
+
+    private void RequestSkeletonFallback(EventRequestContext context)
+    {
+        if (context == null || string.IsNullOrEmpty(context.SkeletonsUrl))
+        {
+            return;
+        }
+
+        HTTPRequest skeletonRequest = new HTTPRequest(new Uri(context.SkeletonsUrl), HTTPMethods.Get, OnEventSkeletonsFinished);
+        skeletonRequest.Tag = context;
+        skeletonRequest.Send();
     }
 
     private void DrawSkeletons(Transform popupRoot, CachedEventData cached)
@@ -361,11 +536,7 @@ public class ModelEventDisplay : MonoBehaviour
             return;
         }
 
-        Transform existing = popupRoot.Find("SkeletonOverlay");
-        if (existing != null)
-        {
-            Destroy(existing.gameObject);
-        }
+        DestroyChild(popupRoot, "SkeletonOverlay");
 
         GameObject overlay = new GameObject("SkeletonOverlay");
         overlay.transform.SetParent(popupRoot, false);
@@ -492,6 +663,15 @@ public class ModelEventDisplay : MonoBehaviour
         }
     }
 
+    private void DestroyChild(Transform parent, string childName)
+    {
+        Transform existing = parent != null ? parent.Find(childName) : null;
+        if (existing != null)
+        {
+            Destroy(existing.gameObject);
+        }
+    }
+
     private bool IsCurrentRequest(EventRequestContext context)
     {
         return context != null
@@ -536,6 +716,10 @@ public class ModelEventDisplay : MonoBehaviour
         if (runtimeWristMaterial == null)
         {
             runtimeWristMaterial = CreateColorMaterial(wristColor);
+        }
+        if (runtimeBodyMeshMaterial == null)
+        {
+            runtimeBodyMeshMaterial = CreateTransparentMeshMaterial(bodyMeshColor);
         }
     }
 
@@ -585,6 +769,66 @@ public class ModelEventDisplay : MonoBehaviour
         return created;
     }
 
+    private Material ResolveBodyMeshMaterial()
+    {
+        if (runtimeBodyMeshMaterial != null)
+        {
+            return runtimeBodyMeshMaterial;
+        }
+
+        runtimeBodyMeshMaterial = CreateTransparentMeshMaterial(bodyMeshColor);
+        return runtimeBodyMeshMaterial;
+    }
+
+    private Material CreateTransparentMeshMaterial(Color color)
+    {
+        Material material;
+        if (bodyMeshMaterialTemplate != null)
+        {
+            material = new Material(bodyMeshMaterialTemplate);
+        }
+        else
+        {
+            Shader shader = Shader.Find("Unlit/Color");
+            if (shader == null)
+            {
+                shader = Shader.Find("Standard");
+            }
+            material = new Material(shader);
+        }
+
+        material.color = color;
+        if (material.HasProperty("_Color"))
+        {
+            material.SetColor("_Color", color);
+        }
+        if (material.HasProperty("_Cull"))
+        {
+            material.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+        }
+        if (material.HasProperty("_Mode"))
+        {
+            material.SetFloat("_Mode", 3f);
+        }
+        if (material.HasProperty("_SrcBlend"))
+        {
+            material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
+        }
+        if (material.HasProperty("_DstBlend"))
+        {
+            material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
+        }
+        if (material.HasProperty("_ZWrite"))
+        {
+            material.SetInt("_ZWrite", 0);
+        }
+        material.DisableKeyword("_ALPHATEST_ON");
+        material.EnableKeyword("_ALPHABLEND_ON");
+        material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
+        material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
+        return material;
+    }
+
     private void DestroyMaterial(Material material)
     {
         if (material != null)
@@ -608,6 +852,7 @@ public class ModelEventDisplay : MonoBehaviour
         public int Generation;
         public JObject EventJson;
         public string SkeletonsUrl;
+        public string BodyMeshUrl;
     }
 
     private class CachedEventData
@@ -615,6 +860,7 @@ public class ModelEventDisplay : MonoBehaviour
         public Texture2D Texture;
         public JObject EventJson;
         public JArray Skeletons;
+        public JObject BodyMesh;
         public float PanelWidth;
         public float PanelHeight;
     }
