@@ -9,11 +9,7 @@ import _bootstrap
 from PIL import Image
 
 from config import (
-    ENABLE_INSTANTMESH_VIDEO_OUTPUT,
     IMESH_PY,
-    INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO,
-    INSTANTMESH_CLEAN_COMPONENT_MIN_FACES,
-    INSTANTMESH_CLEAN_ENABLE,
     INSTANTMESH_CONFIG,
     INSTANTMESH_DIR,
     INSTANTMESH_INPUT_ROOT,
@@ -22,6 +18,12 @@ from config import (
     INSTANTMESH_RUN_PY,
     OUTPUT_ROOT,
     SAM3_OUTPUT_ROOT,
+)
+from settings import (
+    ENABLE_INSTANTMESH_VIDEO_OUTPUT,
+    INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO,
+    INSTANTMESH_CLEAN_COMPONENT_MIN_FACES,
+    INSTANTMESH_CLEAN_ENABLE,
 )
 from mesh_obj_utils import clean_obj_connected_components
 from model_generation_common import (

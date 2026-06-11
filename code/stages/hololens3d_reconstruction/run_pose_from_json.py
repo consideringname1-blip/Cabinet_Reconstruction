@@ -5,7 +5,7 @@ import sys
 import _bootstrap
 import numpy as np
 
-from config import (
+from settings import (
     SKIP_ICP_POSE_USE_CAMERA_PITCH,
     SKIP_ICP_POSE_USE_CAMERA_ROLL,
     SKIP_ICP_POSE_USE_CAMERA_YAW,

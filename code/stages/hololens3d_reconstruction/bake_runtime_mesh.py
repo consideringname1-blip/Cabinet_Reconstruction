@@ -16,10 +16,10 @@ import _bootstrap
 import bpy
 
 from blender_common import clean_scene, ensure_file
-from config import (
+from config import RUNTIME_MESH_OUTPUT_ROOT
+from settings import (
     RUNTIME_MESH_BAKE_MARGIN_PX,
     RUNTIME_MESH_DECIMATE_RATIO,
-    RUNTIME_MESH_OUTPUT_ROOT,
     RUNTIME_MESH_TEXTURE_SIZE,
     RUNTIME_MESH_UV_ISLAND_MARGIN,
 )

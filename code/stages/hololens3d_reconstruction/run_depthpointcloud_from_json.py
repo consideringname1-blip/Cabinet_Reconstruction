@@ -3,9 +3,7 @@ from __future__ import annotations
 import sys
 
 import _bootstrap
-from config import (
-    ICP_TARGET_FRONT_MAX_POINTS,
-)
+from settings import ICP_TARGET_FRONT_MAX_POINTS
 import numpy as np
 
 from object_alignment_common import (

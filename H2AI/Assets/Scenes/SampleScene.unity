@@ -24386,7 +24386,6 @@ MonoBehaviour:
   showRayLine: 1
   rayEndpointPaddingMeters: 0
   noSurfaceHitLogIntervalSeconds: 2
-  serverBaseUrl: http://10.40.1.122:7355
   historyLimit: 5
   shuJuQingQiu: {fileID: 1912203437}
   runtimeModelManager: {fileID: 223974233}
@@ -24415,18 +24414,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: d2f1d37b9aa049d9b66c746d542df6a1, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  serverBaseUrl: http://10.40.1.122:7355
-  targetCamera: {fileID: 0}
-  popupDistanceFromBoxMeters: 0.15
-  panelWidthMeters: 0.32
-  imageMaterialTemplate: {fileID: 0}
-  skeletonLineMaterial: {fileID: 0}
-  imageColor: {r: 1, g: 1, b: 1, a: 1}
-  skeletonLineColor: {r: 0.1, g: 0.9, b: 1, a: 1}
-  wristColor: {r: 1, g: 0.75, b: 0.15, a: 1}
-  skeletonLineWidth: 0.003
-  jointPointSizeMeters: 0.01
-  minJointScore: 0
 --- !u!1 &1915691417
 GameObject:
   m_ObjectHideFlags: 0

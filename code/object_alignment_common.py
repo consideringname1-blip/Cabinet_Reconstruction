@@ -10,11 +10,13 @@ import numpy as np
 
 from config import (
     BLENDER_BIN,
-    ICP_DEPTH_BORDER_CROP_RATIO,
-    ICP_IGNORE_OCCLUDED_MODEL_POINTS,
     OBJECT_ALIGNMENT_OUTPUT_ROOT,
     SAM3_OUTPUT_ROOT,
     UPLOAD_FOLDER,
+)
+from stages.hololens3d_reconstruction.settings import (
+    ICP_DEPTH_BORDER_CROP_RATIO,
+    ICP_IGNORE_OCCLUDED_MODEL_POINTS,
 )
 from depth_camera_config import (
     DEPTH_SENSOR_AHAT,
@@ -149,7 +151,7 @@ def read_color_image(path: Path) -> np.ndarray:
 def get_depth_border_crop_ratio() -> float:
     ratio = float(ICP_DEPTH_BORDER_CROP_RATIO)
     if not 0.0 <= ratio < 1.0:
-        raise ValueError("config.ICP_DEPTH_BORDER_CROP_RATIO must be in [0.0, 1.0)")
+        raise ValueError("settings.ICP_DEPTH_BORDER_CROP_RATIO must be in [0.0, 1.0)")
     return ratio
 
 

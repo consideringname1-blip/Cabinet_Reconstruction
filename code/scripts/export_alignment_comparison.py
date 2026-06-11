@@ -18,7 +18,7 @@ for path in (CODE_ROOT, STAGE_ROOT):
     if path_text not in sys.path:
         sys.path.insert(0, path_text)
 
-from config import (  # noqa: E402
+from stages.hololens3d_reconstruction.settings import (  # noqa: E402
     ICP_TARGET_FRONT_MAX_POINTS,
     INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO,
     INSTANTMESH_CLEAN_COMPONENT_MIN_FACES,

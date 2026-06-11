@@ -9,13 +9,13 @@ from typing import Any
 from _bootstrap import CODE_ROOT
 
 from config import (
-    ENABLE_INSTANTMESH_VIDEO_OUTPUT,
     INSTANTMESH_OUTPUT_MESHES,
     INSTANTMESH_OUTPUT_VIDEOS,
     INSTANTMESH_STAGE_RUN,
     SAM3_BOX_MASK_RUN,
     SAM3_OUTPUT_ROOT,
 )
+from stages.hololens3d_reconstruction.settings import ENABLE_INSTANTMESH_VIDEO_OUTPUT
 from task_db import get_latest_10_records, get_task_by_task_id, initialize_task_table
 from task_json import load_task_json, resolve_task_json_path
 

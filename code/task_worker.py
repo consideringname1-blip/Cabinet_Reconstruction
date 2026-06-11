@@ -27,7 +27,6 @@ from config import (
     FOUNDATIONPOSE_ALIGNMENT_PY,
     FOUNDATIONPOSE_ALIGNMENT_RUN,
     FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
-    MODEL_EVENT_TRACKING_ENABLE,
     MODEL_SERVICE_PREWARM_ENABLE,
     INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
     HOLOLENS2_CONVERT_DIR,
@@ -41,7 +40,6 @@ from config import (
     MODEL_GENERATION_BACKEND,
     MODELSCALE_STAGE_PY,
     MODELSCALE_STAGE_RUN,
-    OBJECT_ALIGNMENT_MODE,
     OBJECT_ALIGNMENT_STAGE_PY,
     OBJECT_ALIGNMENT_STAGE_RUN,
     POSE_STAGE_PY,
@@ -54,13 +52,14 @@ from config import (
     SAM3D_OBJECTS_ROOT,
     SAM3D_OBJECTS_STAGE_PY,
     SAM3D_OBJECTS_STAGE_RUN,
-    SHIGURE_EVENT_CACHE_ROOT,
-    SHIGURE_EVENT_RECORDER_RUN,
-    SHIGURE_EVENT_RECORDER_STAGE_PY,
-    SHIGURE_EVENT_RECORDING_ENABLE,
+    SHIGURE_HISTORY_CACHE_ROOT,
+    SHIGURE_HISTORY_RECORDER_RUN,
+    SHIGURE_HISTORY_RECORDER_STAGE_PY,
+    SHIGURE_HISTORY_RECORDING_ENABLE,
     SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
     WORKER_SOCKET_ROOT,
 )
+from stages.hololens3d_reconstruction.settings import OBJECT_ALIGNMENT_MODE
 from task_db import (
     create_task as create_task_record,
     get_completed_tasks_for_startup,
@@ -312,10 +311,6 @@ _task_lock = threading.Lock()
 _worker_thread: Optional[threading.Thread] = None
 _worker_threads: list[threading.Thread] = []
 _service_monitor_thread: Optional[threading.Thread] = None
-_model_event_worker_thread: Optional[threading.Thread] = None
-_model_event_task_queue: deque[str] = deque()
-_queued_model_event_task_ids: set[str] = set()
-_running_model_event_task_ids: set[str] = set()
 _shigure_recorder_process: subprocess.Popen[str] | None = None
 _shigure_recorder_reader_thread: threading.Thread | None = None
 _last_shigure_recorder_start_attempt_at = 0.0
@@ -327,16 +322,16 @@ _last_restore_scan_at = 0.0
 
 
 
-def _consume_shigure_recorder_output(process: subprocess.Popen[str]) -> None:
+def _consume_shigure_history_recorder_output(process: subprocess.Popen[str]) -> None:
     if process.stdout is None:
         return
     for line in process.stdout:
         print(f"[shigure-recorder] {line}", end="", flush=True)
 
 
-def _start_shigure_event_recorder(*, force: bool = False) -> None:
+def _start_shigure_history_recorder(*, force: bool = False) -> None:
     global _shigure_recorder_process, _shigure_recorder_reader_thread, _last_shigure_recorder_start_attempt_at
-    if _shutdown_requested or not MODEL_EVENT_TRACKING_ENABLE or not SHIGURE_EVENT_RECORDING_ENABLE:
+    if _shutdown_requested or not SHIGURE_HISTORY_RECORDING_ENABLE:
         return
     if _shigure_recorder_process is not None and _shigure_recorder_process.poll() is None:
         return
@@ -348,17 +343,17 @@ def _start_shigure_event_recorder(*, force: bool = False) -> None:
 
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
-    env.setdefault("SHIGURE_EVENT_CACHE_ROOT", str(SHIGURE_EVENT_CACHE_ROOT))
+    env.setdefault("SHIGURE_HISTORY_CACHE_ROOT", str(SHIGURE_HISTORY_CACHE_ROOT))
     command = [
-        _resolve_python(SHIGURE_EVENT_RECORDER_STAGE_PY),
-        str(SHIGURE_EVENT_RECORDER_RUN),
+        _resolve_python(SHIGURE_HISTORY_RECORDER_STAGE_PY),
+        str(SHIGURE_HISTORY_RECORDER_RUN),
         "--cache-root",
-        str(SHIGURE_EVENT_CACHE_ROOT),
+        str(SHIGURE_HISTORY_CACHE_ROOT),
     ]
     try:
         _shigure_recorder_process = subprocess.Popen(
             command,
-            cwd=str(SHIGURE_EVENT_RECORDER_RUN.parent),
+            cwd=str(SHIGURE_HISTORY_RECORDER_RUN.parent),
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -366,20 +361,20 @@ def _start_shigure_event_recorder(*, force: bool = False) -> None:
             bufsize=1,
         )
         _shigure_recorder_reader_thread = threading.Thread(
-            target=_consume_shigure_recorder_output,
+            target=_consume_shigure_history_recorder_output,
             args=(_shigure_recorder_process,),
             daemon=True,
-            name="shigure-event-recorder-log-reader",
+            name="shigure-history-recorder-log-reader",
         )
         _shigure_recorder_reader_thread.start()
-        print(f"[worker] started Shigurei event recorder: pid={_shigure_recorder_process.pid}")
+        print(f"[worker] started Shigurei history recorder: pid={_shigure_recorder_process.pid}")
     except Exception as exc:
         _shigure_recorder_process = None
         _shigure_recorder_reader_thread = None
-        print(f"[worker] failed to start Shigurei event recorder: {exc}")
+        print(f"[worker] failed to start Shigurei history recorder: {exc}")
 
 
-def _stop_shigure_event_recorder() -> None:
+def _stop_shigure_history_recorder() -> None:
     global _shigure_recorder_process, _shigure_recorder_reader_thread
     process = _shigure_recorder_process
     if process is None:
@@ -698,17 +693,6 @@ def _run_blender(json_path: Path, context: StageWorkerContext | None = None) -> 
     )
 
 
-def _run_model_event_tracking(json_path: Path, context: StageWorkerContext | None = None) -> None:
-    if not MODEL_EVENT_TRACKING_ENABLE:
-        return
-    # The tracker may remain alive indefinitely when timeout is zero. Run it in
-    # this process so daemon tracking threads stop with the server instead of
-    # leaving orphaned child Python processes.
-    from stages.model_event_tracking.run_model_event_tracking_from_json import (
-        run_model_event_tracking,
-    )
-
-    run_model_event_tracking(json_path)
 
 def _run_model_bounds(json_path: Path, context: StageWorkerContext | None = None) -> None:
     _run_python_script(
@@ -828,91 +812,12 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
     update_task_status(task_id, next_status)
     if next_status == "completed":
         print(f"[worker] completed task: {task_id}")
-        if stage_name == "model_bounds":
-            _enqueue_model_event_tracking(task_id)
     else:
         with _task_lock:
             _enqueue_stage_task_no_lock(task_id, next_status, front=False)
         print(f"[worker] stage completed, queued {next_status}: {task_id}")
 
 
-def _enqueue_model_event_tracking_no_lock(task_id: str, *, front: bool = False) -> None:
-    if not MODEL_EVENT_TRACKING_ENABLE:
-        return
-    task_id = str(task_id)
-    if task_id in _queued_model_event_task_ids or task_id in _running_model_event_task_ids:
-        return
-    if front:
-        _model_event_task_queue.appendleft(task_id)
-    else:
-        _model_event_task_queue.append(task_id)
-    _queued_model_event_task_ids.add(task_id)
-
-
-def _enqueue_model_event_tracking(task_id: str, *, front: bool = False) -> None:
-    with _task_lock:
-        _enqueue_model_event_tracking_no_lock(task_id, front=front)
-
-
-def _dequeue_model_event_tracking_task() -> str | None:
-    with _task_lock:
-        if not _model_event_task_queue:
-            return None
-        task_id = _model_event_task_queue.popleft()
-        _queued_model_event_task_ids.discard(task_id)
-        _running_model_event_task_ids.add(task_id)
-        return task_id
-
-
-def _finish_model_event_tracking_task(task_id: str) -> None:
-    with _task_lock:
-        _running_model_event_task_ids.discard(task_id)
-
-
-def _process_model_event_tracking_task(task_id: str) -> None:
-    try:
-        task_record = get_task_by_task_id(task_id)
-        if task_record is None:
-            raise ValueError(f"Task not found in database: {task_id}")
-        json_path = resolve_task_json_path(task_record["json_path"])
-        if not json_path.is_file():
-            raise FileNotFoundError(f"JSON file not found: {json_path}")
-        print(f"[worker] start model_event_tracking#background: {task_id}")
-        mark_task_stage_started(task_id, "model_event_tracking")
-        _run_model_event_tracking(json_path)
-        mark_task_stage_completed(task_id, "model_event_tracking")
-        print(f"[worker] completed background model_event_tracking: {task_id}")
-    except Exception as exc:
-        error_message = (
-            exc.stderr or exc.stdout or str(exc)
-            if isinstance(exc, subprocess.CalledProcessError)
-            else str(exc)
-        )
-        print(f"[worker] model event tracking failed for task {task_id}: {error_message}")
-        try:
-            mark_task_stage_failed(
-                task_id,
-                "model_event_tracking",
-                error_message=error_message,
-            )
-        except Exception as db_exc:
-            print(f"[worker] failed to write model_event_tracking error to database: {db_exc}")
-    finally:
-        _finish_model_event_tracking_task(task_id)
-
-
-def _model_event_worker_loop() -> None:
-    while True:
-        task_id = _dequeue_model_event_tracking_task()
-        if task_id is None:
-            time.sleep(0.5)
-            continue
-        threading.Thread(
-            target=_process_model_event_tracking_task,
-            args=(task_id,),
-            daemon=True,
-            name=f"model-event-{task_id[:8]}",
-        ).start()
 
 def _stage_worker_loop(context: StageWorkerContext) -> None:
     while True:
@@ -976,7 +881,7 @@ def _has_unfinished_at_or_before(stage_name: str) -> bool:
 def _service_monitor_loop() -> None:
     while True:
         try:
-            _start_shigure_event_recorder()
+            _start_shigure_history_recorder()
             _sam3mask_service.maybe_stop_idle(
                 keep_alive=_has_unfinished_at_or_before("sam3mask"),
             )
@@ -1001,7 +906,7 @@ def shutdown_worker() -> None:
     """Stop persistent model services owned by this server process."""
     global _shutdown_requested
     _shutdown_requested = True
-    _stop_shigure_event_recorder()
+    _stop_shigure_history_recorder()
     for service in (_sam3mask_service, _instantmesh_service, _foundationpose_service):
         try:
             service.stop()
@@ -1030,12 +935,12 @@ def _install_shutdown_hooks() -> None:
 
 
 def start_worker() -> threading.Thread:
-    global _worker_thread, _service_monitor_thread, _model_event_worker_thread
+    global _worker_thread, _service_monitor_thread
 
     _install_shutdown_hooks()
     initialize_task_table()
     _restore_unfinished_tasks()
-    _start_shigure_event_recorder(force=True)
+    _start_shigure_history_recorder(force=True)
 
     if _worker_thread is not None and _worker_thread.is_alive():
         return _worker_thread
@@ -1050,13 +955,6 @@ def start_worker() -> threading.Thread:
         thread.start()
         _worker_threads.append(thread)
 
-    _model_event_worker_thread = threading.Thread(
-        target=_model_event_worker_loop,
-        daemon=True,
-        name="model-event-tracking-background",
-    )
-    _model_event_worker_thread.start()
-    _worker_threads.append(_model_event_worker_thread)
 
     _service_monitor_thread = threading.Thread(
         target=_service_monitor_loop,
@@ -1135,9 +1033,6 @@ def _sync_completed_tasks_for_startup(startup_session_id: str | None = None) -> 
             resolved_json_path = resolve_task_json_path(json_path)
             _run_aruco_sync(resolved_json_path)
             _run_model_bounds(resolved_json_path)
-            task_id = str(task_row.get("task_id") or "").strip()
-            if task_id:
-                _enqueue_model_event_tracking(task_id)
             synced_count += 1
         except Exception as exc:
             print(

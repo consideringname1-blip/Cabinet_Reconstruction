@@ -12,11 +12,13 @@ import _bootstrap
 from config import (
     SAM3_OUTPUT_ROOT,
     SAM3D_OBJECTS_OUTPUT_MESHES,
-    SAM3D_OBJECTS_ATTN_BACKEND,
     SAM3D_OBJECTS_CONFIG,
     SAM3D_OBJECTS_POSTPROCESS_SCRIPT,
     SAM3D_OBJECTS_PY,
     SAM3D_OBJECTS_ROOT,
+)
+from settings import (
+    SAM3D_OBJECTS_ATTN_BACKEND,
     SAM3D_OBJECTS_SEED,
 )
 from model_generation_common import (

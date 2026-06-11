@@ -28,7 +28,7 @@ from blender_mesh_postprocess import (
     select_objects,
     smart_unwrap_objects,
 )
-from config import (
+from settings import (
     MODEL_FBX_CLEAN_COMPONENT_MIN_FACE_RATIO,
     MODEL_FBX_CLEAN_COMPONENT_MIN_FACES,
     MODEL_FBX_CLEAN_ENABLE,
