@@ -295,6 +295,8 @@ def _build_completed_task_response(task_data: dict) -> dict:
     response["placement_status"] = _resolve_placement_status(task_data, task_json)
     response["model_bounds"] = _build_task_model_bounds_status(task_id, task_json)
     response["model_generation"] = task_json.get("ModelGeneration") or None
+    response["taken_object_detection"] = task_json.get("TakenObjectDetection") or None
+    response["sam3d_body_mesh"] = task_json.get("SAM3DBodyMesh") or None
 
     try:
         generated_source = resolve_model_generation_source(task_json, require_mtl_image=True)

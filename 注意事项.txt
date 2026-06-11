@@ -369,7 +369,13 @@ shigurei没有正常记录，或许参考code/.test/save_latest_ros2_frame.py有
 
 260609-2
 1.从现在开始，shigurei只按时间戳缓存rgb-d图片以及相机参数，时间这些必要信息，不单独记录frame，peopledetection等无用数据（直接在当前文件夹以文件保存，而不是套个文件夹）。对于重复的相机参数参数，不保留，默认往前搜索最新信息。去除unity端和服务器端对于shigurei的骨骼数据支持(包括配置和状态机判断中的手腕骨骼)。
-2.hololens端应在点击模型后，显示shigurei的带有人物选框的图像（只有这一个人的那个最终结果的选框，不要加其他东西）+sam3dbody生成的人体3dmesh。具体的坐标变换，参考以下路径以及文档中的逻辑。hololens的unity端的人体mesh放置的整体坐标系映射，是否从数学上符合 instantmesh生成模型放置到hololens内显示到映射到shigurei的逻辑+sam3dbody生成mesh映射到shigurei的逻辑。
+2.删除/workspace/code/stages/model_event_tracking这个模块，以及和这个模块相关联的，我写的代码部分（不要改子仓库和docs的内容），这部分重写。
+3.将stages里，那2个模块的相关的设定（除了目录约定外），从code目录下的config里，移动到对应文件夹下的settings.py内。shigurei，服务器相关等总设定（包括输入输出目录相关），才写在config里（注意event相关的的好像都写到项目里了）。
+
+
+260611
+1.shigurei的arucomarker基本不会变，所以在worker启动时，获取最新的图片后，自动尝试使用之后的，能看到的5次左右计算，随后更新历史记录。一般不会在更新前有任务，所以如果任务有需要的话，直接用历史记录就行。检查所有和shigurei的armarker相关逻辑，都要使用这个历史记录。
+
 
 输入输出整理：
 1.

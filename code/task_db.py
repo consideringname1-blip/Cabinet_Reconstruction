@@ -42,6 +42,8 @@ ALLOWED_STATUSES = (
     "runtime_mesh",
     "blender",
     "model_bounds",
+    "taken_object_detection",
+    "sam3d_body_mesh",
     "completed",
     "aruco_completed",
     "failed",

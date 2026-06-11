@@ -99,7 +99,8 @@ def bootstrap_runtime_environment() -> None:
 bootstrap_runtime_environment()
 
 from stages.shigure_history import settings  # noqa: E402
-from stages.shigure_history.cache import RosStamp, ShigureRgbdCache, sample_key, write_json  # noqa: E402
+from stages.shigure_history.cache import CachedRgbdSample, RosStamp, ShigureRgbdCache, sample_key, write_json  # noqa: E402
+from stages.shigure_history.marker_history import MarkerHistoryWarmup  # noqa: E402
 
 REQUIRED_KEYS = ('rgb', 'depth', 'camera_info')
 _running = True
@@ -273,11 +274,11 @@ def append_cached_sample(
     states: dict[str, TopicState],
     *,
     last_key: str | None,
-) -> tuple[str | None, bool]:
+) -> tuple[str | None, bool, CachedRgbdSample | None]:
     stamp = selected_stamp(states)
     key = sample_key(stamp)
     if key == last_key:
-        return last_key, False
+        return last_key, False, None
 
     tmp_root = cache.root / 'tmp'
     tmp_root.mkdir(parents=True, exist_ok=True)
@@ -308,7 +309,7 @@ def append_cached_sample(
                 'depth_decode': depth_info,
             },
         )
-    return key, True
+    return key, True, sample
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -355,6 +356,16 @@ def main() -> int:
         last_counts: tuple[int, ...] | None = None
         last_log = 0.0
         sample_count = 0
+        marker_warmup = (
+            MarkerHistoryWarmup(
+                target_detections=settings.SHIGURE_MARKER_HISTORY_TARGET_DETECTIONS,
+                max_attempts=settings.SHIGURE_MARKER_HISTORY_MAX_ATTEMPTS,
+                max_reprojection_error_px=settings.SHIGURE_MARKER_HISTORY_MAX_REPROJECTION_ERROR_PX,
+                min_corner_area_px=settings.SHIGURE_MARKER_HISTORY_MIN_CORNER_AREA_PX,
+            )
+            if settings.SHIGURE_MARKER_HISTORY_WARMUP_ENABLE
+            else None
+        )
         print(
             '[shigure_history] started: cache_root='
             + str(args.cache_root)
@@ -384,12 +395,31 @@ def main() -> int:
             if counts == last_counts:
                 continue
             try:
-                last_key, appended = append_cached_sample(cache, states, last_key=last_key)
+                last_key, appended, sample = append_cached_sample(cache, states, last_key=last_key)
                 last_counts = counts
                 if appended:
                     sample_count += 1
+                    marker_status = None
+                    if marker_warmup is not None and sample is not None and not marker_warmup.completed:
+                        marker_status = marker_warmup.process_sample(sample)
+                        if marker_status.get('updated'):
+                            print(
+                                '[shigure_history] updated Shigurei ArMarker history: '
+                                + str(marker_status.get('latest_path')),
+                                flush=True,
+                            )
                     if now - last_log >= max(1.0, float(args.log_interval)):
                         print(f'[shigure_history] cached samples={sample_count} latest={last_key}', flush=True)
+                        if marker_status is not None:
+                            write_status(
+                                cache,
+                                {
+                                    'running': True,
+                                    'last_sample_key': last_key,
+                                    'marker_history_warmup': marker_status,
+                                    'topic_counts': {name: state.count for name, state in states.items()},
+                                },
+                            )
                         last_log = now
             except Exception as exc:
                 if now - last_log >= max(1.0, float(args.log_interval)):

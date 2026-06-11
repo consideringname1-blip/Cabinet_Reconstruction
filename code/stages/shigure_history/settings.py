@@ -38,3 +38,12 @@ TOPIC_SPECS: dict[str, tuple[str, str]] = {
     'depth': (DEPTH_TOPIC, DEPTH_TYPE),
     'camera_info': (CAMERA_INFO_TOPIC, CAMERA_INFO_TYPE),
 }
+
+
+# Shigurei ArMarker history warmup. The recorder keeps RGB-D cache files free of
+# marker/event data; these settings only control the separate global marker history.
+SHIGURE_MARKER_HISTORY_WARMUP_ENABLE = os.environ.get('SHIGURE_MARKER_HISTORY_WARMUP_ENABLE', '1').strip().lower() not in {'0', 'false', 'no', 'off', ''}
+SHIGURE_MARKER_HISTORY_TARGET_DETECTIONS = int(os.environ.get('SHIGURE_MARKER_HISTORY_TARGET_DETECTIONS', '5'))
+SHIGURE_MARKER_HISTORY_MAX_ATTEMPTS = int(os.environ.get('SHIGURE_MARKER_HISTORY_MAX_ATTEMPTS', '80'))
+SHIGURE_MARKER_HISTORY_MAX_REPROJECTION_ERROR_PX = float(os.environ.get('SHIGURE_MARKER_HISTORY_MAX_REPROJECTION_ERROR_PX', '5.0'))
+SHIGURE_MARKER_HISTORY_MIN_CORNER_AREA_PX = float(os.environ.get('SHIGURE_MARKER_HISTORY_MIN_CORNER_AREA_PX', '64.0'))

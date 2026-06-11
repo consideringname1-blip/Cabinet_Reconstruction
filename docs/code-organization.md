@@ -27,8 +27,17 @@
 `code/stages/hololens_aruco_reference/`
 : ArUco 参考系相关 stage，包括 marker 检测和把已完成物体同步到 ArUco 坐标。
 
+`code/stages/shigure_history/`
+: Shigurei RGB-D 历史缓存 stage。它只缓存按时间戳命名的 RGB 图、Depth 图、相机参数和必要时间信息；不记录独立 `frame` 目录、people detection、骨骼、手腕或其它事件判断数据。Shigurei 侧 ArMarker pose 作为稳定相机标定单独维护在全局历史文件中，不写进每帧 RGB-D cache。
+
+`code/stages/taken_object_detection/`
+: 新的拿取判断 stage。它从扁平 Shigurei RGB-D history 读取数据，输出 `TakenObjectDetection.result_timestamp` 和 `backup_shigurei_dir`，不依赖 Shigurei people detection、骨骼、手腕或旧事件缓存。
+
+`code/stages/sam3d_body_mesh/`
+: 新的人体 mesh stage。它只读取拿取判断备份出的结果帧，调用 SAM3D Body 生成人体 mesh/关节，用 SAM3D Body 自身手腕关节选择拿取者，并只导出被选中人的 FBX。
+
 `code/stages/model_event_tracking/`
-: 模型拿走事件模块。Shigurei 缓存随服务自动启停；事件分析使用可信 FBX 投影得到逐像素前/后表面深度，不依赖常驻视频分割模型。每个模型独立跟随新增缓存帧，直到事件或 `MODEL_EVENT_TRACKING_TIMEOUT_SEC`；设为 `0` 时不主动超时。整体状态机见 `docs/model-event-tracking-state-machine.md`。
+: 已废弃并删除。不要在这里新增代码，也不要恢复旧的模型拿走事件状态机、Shigurei 骨骼数据支持或旧 SAM 3D Body event mesh 逻辑。
 
 `code/Hololens2/`
 : HoloLens 数据获取、标定、depth/RGB 配准等设备接入代码。depth 和 RGB 配准链路保持独立，不要为了普通 pipeline 改动随意移动或重写这里。上游依赖不要直接放这里，优先放到 `code/reconstruction/`，这里保留项目自己的设备接入脚本。
@@ -57,7 +66,7 @@
 ## 核心模块职责
 
 `code/config.py`
-: 所有路径、Python 环境、stage 脚本入口、输出目录、运行开关和 HTTP 文件目录映射的集中入口。新增硬编码路径或运行参数前，先考虑是否应该放到这里。
+: 全局路径、Python 环境、stage 脚本入口、输出目录、服务级运行开关和 HTTP 文件目录映射的集中入口。stage 内部算法阈值、后处理比例、采样频率等局部设定不要继续塞进这里，应放到对应 stage 目录的 `settings.py`。
 
 `code/server_api.py`
 : Flask API。只做请求解析、任务创建、状态查询、文件服务和轻量接口组合，避免把重建算法塞进 API 层。
@@ -111,6 +120,8 @@ pose
 aruco_sync
 blender
 model_bounds
+taken_object_detection
+sam3d_body_mesh
 ```
 
 ArUco reference task 使用：
@@ -146,14 +157,38 @@ code/stages/hololens_aruco_reference/aruco_common.py
 
 ## 配置和路径规则
 
-不要在业务代码里直接写死 `/workspace`、输出目录、模型目录、Python 解释器或下载 URL。路径和运行开关优先进入 `config.py`，并用 `Path` 组合：
+不要在业务代码里直接写死 `/workspace`、输出目录、模型目录、Python 解释器或下载 URL。全局路径和服务级运行开关优先进入 `config.py`，并用 `Path` 组合：
 
 ```python
 OUTPUT_ROOT / "object_alignment"
 HOLOLENS3D_RECON_STAGE_ROOT / "run_pose_from_json.py"
 ```
 
-只有临时测试脚本可以少量硬编码本地样例路径；一旦脚本进入 `code/scripts/` 或 `code/stages/`，就应切换为 `config.py` 或命令行参数。
+stage 内部设定优先放在对应目录的 `settings.py`，例如：
+
+```text
+code/stages/hololens3d_reconstruction/settings.py
+code/stages/shigure_history/settings.py
+```
+
+目录约定、外部工具路径、Python runtime、worker socket、数据库、上传/输出根目录仍属于 `config.py`。只有临时测试脚本可以少量硬编码本地样例路径；一旦脚本进入 `code/scripts/` 或 `code/stages/`，就应切换为 `config.py`、stage `settings.py` 或命令行参数。
+
+## Shigurei 缓存约定
+
+Shigurei 侧只负责给服务器提供最近一段 RGB-D 历史，不承载事件语义。缓存写法固定为扁平文件，不再为每个采样创建子目录：
+
+```text
+<timestamp>_rgb.png
+<timestamp>_depth.png
+<timestamp>_meta.json
+<timestamp>_camera_info.json
+```
+
+相机参数去重：如果当前 camera info 与最近一次相同，不写新的 `_camera_info.json`；读取时默认向前查找最新可用相机参数。`_meta.json` 只记录时间戳、RGB/Depth 文件名、camera info 引用和必要的写入状态，不写 people detection、pose keypoints、skeleton、wrist、contact、event 等数据。
+
+Shigurei ArMarker 约定：worker 启动后，Shigurei history recorder 会在后续 RGB-D 样本中尝试累计约 5 次可见 marker 检测并更新 `data/aruco/shigure_marker_history/latest_marker_6d_pose.json`，同时保留历史快照。拿取判断备份和 SAM3D Body 的 Shigurei camera -> ArMarker 转换都从这个历史文件读取，不再扫描 `.test`、旧 fusion 输出或每帧缓存里的 marker 数据。
+
+Unity 端和服务器端都不再支持 Shigurei 骨骼数据。拿取判断、配置项、API 返回值和 UI 展示中不要新增依赖 Shigurei 手腕骨骼或 people detection 的判断。人体 mesh stage 可以使用 SAM3D Body 自己估计出的关节来选择拿取者，但这些关节属于 SAM3D Body 输出，不回写到 Shigurei history。
 
 ## 数据和 JSON 约定
 
@@ -170,6 +205,8 @@ InstantMesh
 RuntimeMesh
 Blender
 ModelBounds
+TakenObjectDetection
+SAM3DBodyMesh
 object_alignment
 object_world
 ```
@@ -194,7 +231,7 @@ HoloLens depth/RGB 配准链路是设备输入边界，除非正在处理配准�
 
 1. 判断功能属于服务/API、worker stage、HoloLens 接入、第三方模型 adapter、开发脚本还是文档。
 2. 选择对应目录，不把生产代码放进 `.test`。
-3. 在 `config.py` 增加路径、输出目录、运行开关和 Python 环境配置。
+3. 在 `config.py` 增加全局路径、输出目录、服务级运行开关和 Python 环境配置；stage 局部参数写到对应 `settings.py`。
 4. 如果是 stage，创建 `run_<stage>_from_json.py`，并使用 `stage_common`、`task_json`、`subprocess_stream` 等现有工具。
 5. 在 `task_worker.py` 和 `task_db.py` 注册 stage。
 6. 输出写入 `data/output/` 下的专用目录，并把稳定字段写回 task JSON。

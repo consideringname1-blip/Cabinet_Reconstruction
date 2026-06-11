@@ -52,10 +52,14 @@ from config import (
     SAM3D_OBJECTS_ROOT,
     SAM3D_OBJECTS_STAGE_PY,
     SAM3D_OBJECTS_STAGE_RUN,
+    SAM3D_BODY_MESH_STAGE_PY,
+    SAM3D_BODY_MESH_STAGE_RUN,
     SHIGURE_HISTORY_CACHE_ROOT,
     SHIGURE_HISTORY_RECORDER_RUN,
     SHIGURE_HISTORY_RECORDER_STAGE_PY,
     SHIGURE_HISTORY_RECORDING_ENABLE,
+    TAKEN_OBJECT_DETECTION_STAGE_PY,
+    TAKEN_OBJECT_DETECTION_STAGE_RUN,
     SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
     WORKER_SOCKET_ROOT,
 )
@@ -99,6 +103,8 @@ STAGE_ORDER = [
     "aruco_sync",
     "blender",
     "model_bounds",
+    "taken_object_detection",
+    "sam3d_body_mesh",
 ]
 
 PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction"
@@ -703,6 +709,24 @@ def _run_model_bounds(json_path: Path, context: StageWorkerContext | None = None
     )
 
 
+def _run_taken_object_detection(json_path: Path, context: StageWorkerContext | None = None) -> None:
+    _run_python_script(
+        python_path=TAKEN_OBJECT_DETECTION_STAGE_PY,
+        script_path=TAKEN_OBJECT_DETECTION_STAGE_RUN,
+        json_path=json_path,
+        cwd=TAKEN_OBJECT_DETECTION_STAGE_RUN.parent,
+    )
+
+
+def _run_sam3d_body_mesh(json_path: Path, context: StageWorkerContext | None = None) -> None:
+    _run_python_script(
+        python_path=SAM3D_BODY_MESH_STAGE_PY,
+        script_path=SAM3D_BODY_MESH_STAGE_RUN,
+        json_path=json_path,
+        cwd=SAM3D_BODY_MESH_STAGE_RUN.parent,
+    )
+
+
 STAGE_RUNNERS = {
     "hololens2depth": _run_hololens2depth,
     "aruco_detect": _run_aruco_detect,
@@ -716,6 +740,8 @@ STAGE_RUNNERS = {
     "runtime_mesh": _run_runtime_mesh,
     "blender": _run_blender,
     "model_bounds": _run_model_bounds,
+    "taken_object_detection": _run_taken_object_detection,
+    "sam3d_body_mesh": _run_sam3d_body_mesh,
 }
 
 
@@ -1014,6 +1040,8 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
         "instantmesh": task_json.get("InstantMesh") or {},
         "runtime_mesh": task_json.get("RuntimeMesh") or {},
         "blender": task_json.get("Blender") or {},
+        "taken_object_detection": task_json.get("TakenObjectDetection") or {},
+        "sam3d_body_mesh": task_json.get("SAM3DBodyMesh") or {},
     }
     return task_record
 
@@ -1085,5 +1113,7 @@ def get_latest_completed_task_data(
         "instantmesh": task_json.get("InstantMesh") or {},
         "runtime_mesh": task_json.get("RuntimeMesh") or {},
         "blender": task_json.get("Blender") or {},
+        "taken_object_detection": task_json.get("TakenObjectDetection") or {},
+        "sam3d_body_mesh": task_json.get("SAM3DBodyMesh") or {},
     }
     return task_record
