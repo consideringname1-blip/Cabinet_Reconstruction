@@ -39,11 +39,16 @@ __pycache__/
 ########################################
 
 /models/
+/code/LARM/
+/code/OPD/
+/code/SAMPart3D/
+/code/SIGMA/
 
 ########################################
 # ========== Data ==========
 ########################################
 
+/datasets/
 /data/database/
 /data/output/
 /data/RecordPhotoAndVideo/
@@ -54,11 +59,13 @@ __pycache__/
 /data/console_logs/
 /data/aruco/runtime/
 /data/aruco/shigure_marker_history/
+/data/shigure_history_cache/
 /data/shigure_recovery_debug/
 /data_backup/
 /.test/
 /tests/
 /test/
+/my_images/
 
 ########################################
 # ========== Code ==========
@@ -72,6 +79,16 @@ __pycache__/
 !/code/tests/test_gpu_lease.py
 !/code/tests/test_task_db_v3.py
 !/code/tests/test_shigure_mask_aabb.py
+
+########################################
+# ========== Local Environments / Caches ==========
+########################################
+
+/conda_pkgs/
+/envs/
+/pip_cache/
+/tmp/
+
 ########################################
 # ========== Logs ==========
 ########################################
