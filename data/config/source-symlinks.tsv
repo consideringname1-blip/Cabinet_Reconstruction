@@ -1,0 +1,11 @@
+tracked	status	target_exists	link_path	target
+false	runtime-only	true	code/reconstruction/shigure_core/shigure_core/resource/log/latest	latest_list
+false	runtime-only	true	code/reconstruction/shigure_core/shigure_core/resource/log/latest_list	list_2021-01-27_21-20-16
+false	runtime-only	true	code/reconstruction/FoundationPose/weights	/root/.cache/huggingface/foundationpose-weights
+false	runtime-only	true	code/reconstruction/sam-3d-objects/checkpoints/hf	/root/.cache/huggingface/hub/models--facebook--sam-3d-objects/snapshots/97f96a08e7e261512724a60d7cd6dbb14a2c7cde/checkpoints
+false	runtime-only	true	code/reconstruction/sam3d-body/checkpoints/sam-3d-body-dinov3	/root/.cache/huggingface/hub/models--facebook--sam-3d-body-dinov3/snapshots/11aaa346c7204874a1cbafe3d39a979080b2c55a
+true	tracked-index	true	code/ros2/shigure_recv_ws/src/bbox_ex_msgs	../../../reconstruction/shigure_core/bbox_ex_msgs
+true	tracked-index	true	code/ros2/shigure_recv_ws/src/shigure_core	../../../reconstruction/shigure_core/shigure_core
+true	tracked-index	true	code/ros2/shigure_recv_ws/src/shigure_core_msgs	../../../reconstruction/shigure_core/shigure_core_msgs
+false	runtime-only	true	code/ros2/shigure_recv_ws/log/latest	latest_build
+false	runtime-only	true	code/ros2/shigure_recv_ws/log/latest_build	build_2026-06-03_10-20-08

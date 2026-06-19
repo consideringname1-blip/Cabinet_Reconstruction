@@ -1,0 +1,3 @@
+## main...origin/main
+# Captured before writing this data/config snapshot.
+# git_dirty=false

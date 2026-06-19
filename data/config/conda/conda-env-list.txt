@@ -7,7 +7,12 @@ base                     /opt/miniconda
 dvc                      /opt/miniconda/envs/dvc
 foundationpose           /opt/miniconda/envs/foundationpose
 imesh                    /opt/miniconda/envs/imesh
+larm                     /opt/miniconda/envs/larm
+opd                      /opt/miniconda/envs/opd
 sam3                     /opt/miniconda/envs/sam3
 sam3d-objects-cu118      /opt/miniconda/envs/sam3d-objects-cu118
+sam_3d_body              /opt/miniconda/envs/sam_3d_body
 server                   /opt/miniconda/envs/server
+                         /workspace_whz/envs/sampart3d
+                         /workspace_whz/envs/sigma
 

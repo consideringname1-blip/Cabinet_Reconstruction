@@ -122,11 +122,9 @@ https://repo.anaconda.com/pkgs/main/linux-64/ruamel.yaml-0.18.16-py313h4aee224_0
 https://repo.anaconda.com/pkgs/main/linux-64/typer-slim-0.20.0-py313h06a4308_1.conda
 https://repo.anaconda.com/pkgs/main/linux-64/typing-extensions-4.15.0-py313h06a4308_0.conda
 https://repo.anaconda.com/pkgs/main/linux-64/typing-inspection-0.4.2-py313h06a4308_0.conda
-https://repo.anaconda.com/pkgs/main/linux-64/wheel-0.46.3-py313h06a4308_0.conda
 https://repo.anaconda.com/pkgs/main/linux-64/brotlicffi-1.2.0.0-py313h7354ed3_0.conda
 https://repo.anaconda.com/pkgs/main/linux-64/cryptography-45.0.7-py313h0a354b3_0.conda
 https://repo.anaconda.com/pkgs/main/linux-64/httpx-0.28.1-py313h06a4308_1.conda
-https://repo.anaconda.com/pkgs/main/noarch/pip-26.0.1-pyhc872135_1.conda
 https://repo.anaconda.com/pkgs/main/linux-64/pydantic-core-2.46.2-py313h6e1b9ff_0.conda
 https://repo.anaconda.com/pkgs/main/linux-64/rich-14.2.0-py313h06a4308_0.conda
 https://repo.anaconda.com/pkgs/main/linux-64/zstandard-0.25.0-py313h89db63a_0.conda

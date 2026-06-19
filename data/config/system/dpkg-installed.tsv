@@ -130,8 +130,8 @@ libapt-pkg6.0:amd64	2.4.10	amd64
 libarchive13:amd64	3.6.0-1ubuntu1.6	amd64
 libargon2-1:amd64	0~20171227-0.3	amd64
 libasan6:amd64	11.4.0-1ubuntu1~22.04	amd64
-libasound2-data	1.2.6.1-1ubuntu1.1	all
 libasound2:amd64	1.2.6.1-1ubuntu1.1	amd64
+libasound2-data	1.2.6.1-1ubuntu1.1	all
 libass9:amd64	1:0.15.2-1	amd64
 libassuan0:amd64	2.5.5-1build1	amd64
 libasyncns0:amd64	0.8-6build2	amd64
@@ -167,14 +167,14 @@ libbullet3.06:amd64	3.06+dfsg-4build2	amd64
 libbz2-1.0:amd64	1.0.8-5build1	amd64
 libc-bin	2.35-0ubuntu3.4	amd64
 libc-dev-bin	2.35-0ubuntu3.4	amd64
-libc6-dev:amd64	2.35-0ubuntu3.4	amd64
 libc6:amd64	2.35-0ubuntu3.4	amd64
+libc6-dev:amd64	2.35-0ubuntu3.4	amd64
 libcaca0:amd64	0.99.beta19-2.2ubuntu4.1	amd64
 libcairo-gobject2:amd64	1.16.0-5ubuntu2.1	amd64
 libcairo2:amd64	1.16.0-5ubuntu2.1	amd64
 libcap-ng0:amd64	0.7.9-2.2build3	amd64
-libcap2-bin	1:2.44-1ubuntu0.22.04.3	amd64
 libcap2:amd64	1:2.44-1ubuntu0.22.04.1	amd64
+libcap2-bin	1:2.44-1ubuntu0.22.04.3	amd64
 libcbor0.8:amd64	0.8.0-2ubuntu1	amd64
 libcc1-0:amd64	12.3.0-1ubuntu1~22.04.3	amd64
 libcdio-cdda2:amd64	10.2+2.0.0-1build3	amd64
@@ -236,8 +236,8 @@ libeigen3-dev	3.4.0-2ubuntu2	all
 libelf1:amd64	0.186-1ubuntu0.1	amd64
 libepoxy0:amd64	1.5.10-1	amd64
 liberror-perl	0.17029-1	all
-libexpat1-dev:amd64	2.4.7-1ubuntu0.7	amd64
 libexpat1:amd64	2.4.7-1ubuntu0.7	amd64
+libexpat1-dev:amd64	2.4.7-1ubuntu0.7	amd64
 libext2fs2:amd64	1.46.5-2ubuntu1.1	amd64
 libffi8:amd64	3.4.2-4	amd64
 libfido2-1:amd64	1.10.0-1	amd64
@@ -260,9 +260,9 @@ libgdk-pixbuf2.0-bin	2.42.8+dfsg-1ubuntu0.5	amd64
 libgdk-pixbuf2.0-common	2.42.8+dfsg-1ubuntu0.5	all
 libgfortran5:amd64	12.3.0-1ubuntu1~22.04.3	amd64
 libgirepository-1.0-1:amd64	1.72.0-1	amd64
+libgl1:amd64	1.4.0-1	amd64
 libgl1-amber-dri:amd64	21.3.9-0ubuntu1~22.04.1	amd64
 libgl1-mesa-dri:amd64	23.2.1-1ubuntu3.1~22.04.3	amd64
-libgl1:amd64	1.4.0-1	amd64
 libglapi-mesa:amd64	23.2.1-1ubuntu3.1~22.04.3	amd64
 libglib2.0-0:amd64	2.72.4-0ubuntu2.9	amd64
 libglib2.0-bin	2.72.4-0ubuntu2.9	amd64
@@ -369,8 +369,8 @@ liborocos-kdl1.5:amd64	1.5.1-2build1	amd64
 libp11-kit0:amd64	0.24.0-6build1	amd64
 libpackagekit-glib2-18:amd64	1.2.5-2ubuntu3.1	amd64
 libpam-cap:amd64	1:2.44-1ubuntu0.22.04.3	amd64
-libpam-modules-bin	1.4.0-11ubuntu2.3	amd64
 libpam-modules:amd64	1.4.0-11ubuntu2.3	amd64
+libpam-modules-bin	1.4.0-11ubuntu2.3	amd64
 libpam-runtime	1.4.0-11ubuntu2.3	all
 libpam-systemd:amd64	249.11-0ubuntu3.20	amd64
 libpam0g:amd64	1.4.0-11ubuntu2.3	amd64
@@ -396,10 +396,10 @@ libpsl5:amd64	0.21.0-1.2build2	amd64
 libpulse0:amd64	1:15.99.1+dfsg1-1ubuntu2.2	amd64
 libpython3-dev:amd64	3.10.6-1~22.04.1	amd64
 libpython3-stdlib:amd64	3.10.6-1~22.04.1	amd64
+libpython3.10:amd64	3.10.12-1~22.04.15	amd64
 libpython3.10-dev:amd64	3.10.12-1~22.04.15	amd64
 libpython3.10-minimal:amd64	3.10.12-1~22.04.15	amd64
 libpython3.10-stdlib:amd64	3.10.12-1~22.04.15	amd64
-libpython3.10:amd64	3.10.12-1~22.04.15	amd64
 libquadmath0:amd64	12.3.0-1ubuntu1~22.04.3	amd64
 librabbitmq4:amd64	0.10.0-1ubuntu2	amd64
 libraqm0:amd64	0.7.0-4ubuntu1	amd64
@@ -521,8 +521,8 @@ libxfixes3:amd64	1:6.0.0-1	amd64
 libxi6:amd64	2:1.8-1build1	amd64
 libxinerama1:amd64	2:1.1.4-3	amd64
 libxkbcommon0:amd64	1.4.0-1	amd64
-libxml2-utils	2.9.13+dfsg-1ubuntu0.11	amd64
 libxml2:amd64	2.9.13+dfsg-1ubuntu0.11	amd64
+libxml2-utils	2.9.13+dfsg-1ubuntu0.11	amd64
 libxmlb2:amd64	0.3.6-2build1	amd64
 libxmu6:amd64	2:1.1.3-3	amd64
 libxmuu1:amd64	2:1.1.3-3	amd64
@@ -950,5 +950,5 @@ xdg-user-dirs	0.17-2ubuntu4	amd64
 xkb-data	2.33-1	all
 xml-core	0.18+nmu1	all
 xz-utils	5.2.5-2ubuntu1	amd64
-zlib1g-dev:amd64	1:1.2.11.dfsg-2ubuntu9.2	amd64
 zlib1g:amd64	1:1.2.11.dfsg-2ubuntu9.2	amd64
+zlib1g-dev:amd64	1:1.2.11.dfsg-2ubuntu9.2	amd64

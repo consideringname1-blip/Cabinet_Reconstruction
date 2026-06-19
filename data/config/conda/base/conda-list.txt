@@ -91,7 +91,7 @@ nlohmann_json               3.11.2           h6a678d5_0
 openssl                     3.5.6            h1b28b03_0
 packaging                   26.0             py313h06a4308_0
 pcre2                       10.46            hf426167_0
-pip                         26.0.1           pyhc872135_1
+pip                         26.1.1           pypi_0              pypi
 pkce                        1.0.3            py313h06a4308_0
 platformdirs                4.9.4            py313h06a4308_0
 pluggy                      1.6.0            py313h06a4308_0
@@ -135,7 +135,7 @@ typing-inspection           0.4.2            py313h06a4308_0
 typing_extensions           4.15.0           py313h06a4308_0
 tzdata                      2026a            he532380_0
 urllib3                     2.6.3            py313h06a4308_0
-wheel                       0.46.3           py313h06a4308_0
+wheel                       0.47.0           pypi_0              pypi
 xorg-libx11                 1.8.12           h9b100fa_1
 xorg-libxau                 1.0.12           h9b100fa_0
 xorg-libxdmcp               1.1.5            h9b100fa_0

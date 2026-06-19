@@ -12,7 +12,12 @@ Generated from the currently working container/server state. The goal is to rebu
 - `system/apt-installed-versioned.txt`: all apt packages with exact versions.
 - `ros2/ros-humble-apt-versioned.txt`: installed ROS Humble apt packages with exact versions.
 - `docker/Dockerfile.current` and `docker/docker-compose.current.yml`: Docker definition files that were present in this project.
-- `runtime-env-summary.env`: important ROS2/CUDA/PYTHONPATH runtime variables.
+- `docker/Dockerfile.shigure_core` and `docker/docker-compose.shigure_core.yml`: Docker definition files copied from the current branch's `code/reconstruction/shigure_core`.
+- `runtime-env-summary.env`: important ROS2/CUDA/PYTHONPATH runtime variables. Full process environment is intentionally not captured; `docker/environment.txt` is a whitelist to avoid storing secrets.
+- `source-git-manifest.tsv`: current branch Git index manifest with mode, object, size, and symlink target information. Git symlinks are recorded as mode `120000`.
+- `source-symlinks.tsv`: runtime symlinks visible in this worktree, including tracked links and external model/checkpoint links.
+- `source-submodules.txt`: recursive submodule commits for the current branch.
+- `source-status.txt`: branch/status summary captured when this snapshot was generated.
 
 ## Rebuild Conda Environments
 

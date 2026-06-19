@@ -153,5 +153,6 @@ ubuntu-keyring
 usrmerge
 util-linux
 wget
+xauth
 xz-utils
 zlib1g

@@ -1,148 +1,59 @@
 {
-  "GID": 0,
-  "UID": 0,
-  "active_prefix": null,
-  "active_prefix_name": null,
+  "platform": "linux-64",
+  "conda_version": "26.3.2",
+  "conda_env_version": "26.3.2",
+  "conda_build_version": "not installed",
+  "root_prefix": "/opt/miniconda",
+  "conda_prefix": "/opt/miniconda",
   "av_data_dir": "/opt/miniconda/etc/conda",
   "av_metadata_url_base": null,
+  "root_writable": true,
+  "pkgs_dirs": [
+    "/opt/miniconda/pkgs",
+    "/root/.conda/pkgs"
+  ],
+  "envs_dirs": [
+    "/opt/miniconda/envs",
+    "/root/.conda/envs"
+  ],
+  "default_prefix": "/opt/miniconda",
+  "active_prefix": null,
+  "active_prefix_name": null,
+  "conda_shlvl": 0,
   "channels": [
     "https://repo.anaconda.com/pkgs/main/linux-64",
     "https://repo.anaconda.com/pkgs/main/noarch",
     "https://repo.anaconda.com/pkgs/r/linux-64",
     "https://repo.anaconda.com/pkgs/r/noarch"
   ],
-  "conda_build_version": "not installed",
-  "conda_env_version": "26.3.2",
-  "conda_location": "/opt/miniconda/lib/python3.13/site-packages/conda",
-  "conda_prefix": "/opt/miniconda",
-  "conda_shlvl": 0,
-  "conda_version": "26.3.2",
-  "config_files": [
-    "/opt/miniconda/.condarc",
-    "/opt/miniconda/condarc.d/anaconda-auth.yml",
-    "/root/.condarc"
-  ],
-  "default_prefix": "/opt/miniconda",
-  "env_vars": {
-    "AMENT_PREFIX_PATH": "/opt/ros/humble",
-    "CIO_TEST": "<not set>",
-    "CONDA_DIR": "/opt/miniconda",
-    "CONDA_EXE": "/opt/miniconda/bin/conda",
-    "CONDA_PYTHON_EXE": "/opt/miniconda/bin/python",
-    "CONDA_ROOT": "/opt/miniconda",
-    "CONDA_SHLVL": "0",
-    "CURL_CA_BUNDLE": "<not set>",
-    "LD_LIBRARY_PATH": "/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64",
-    "LD_PRELOAD": "<not set>",
-    "LIBRARY_PATH": "/usr/local/cuda/lib64/stubs",
-    "PATH": "<redacted>",
-    "PYTHONPATH": "/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:/workspace:/workspace/code",
-    "REQUESTS_CA_BUNDLE": "<not set>",
-    "SSL_CERT_FILE": "<not set>"
-  },
+  "user_rc_path": "/root/.condarc",
+  "rc_path": "/root/.condarc",
+  "sys_rc_path": "/opt/miniconda/.condarc",
+  "offline": false,
   "envs": [
     "/opt/miniconda",
     "/opt/miniconda/envs/dvc",
     "/opt/miniconda/envs/foundationpose",
     "/opt/miniconda/envs/imesh",
+    "/opt/miniconda/envs/larm",
+    "/opt/miniconda/envs/opd",
     "/opt/miniconda/envs/sam3",
     "/opt/miniconda/envs/sam3d-objects-cu118",
-    "/opt/miniconda/envs/server"
+    "/opt/miniconda/envs/sam_3d_body",
+    "/opt/miniconda/envs/server",
+    "/workspace_whz/envs/sampart3d",
+    "/workspace_whz/envs/sigma"
   ],
-  "envs_details": {
-    "/opt/miniconda": {
-      "active": false,
-      "base": true,
-      "created": null,
-      "frozen": false,
-      "last_modified": "2026-04-27T21:46:24.036468+00:00",
-      "name": "base",
-      "writable": true
-    },
-    "/opt/miniconda/envs/dvc": {
-      "active": false,
-      "base": false,
-      "created": "2026-05-14T08:28:15.374632+00:00",
-      "frozen": false,
-      "last_modified": "2026-05-14T08:28:15.374023+00:00",
-      "name": "dvc",
-      "writable": true
-    },
-    "/opt/miniconda/envs/foundationpose": {
-      "active": false,
-      "base": false,
-      "created": "2026-05-18T05:44:16.376443+00:00",
-      "frozen": false,
-      "last_modified": "2026-05-18T07:53:20.741834+00:00",
-      "name": "foundationpose",
-      "writable": true
-    },
-    "/opt/miniconda/envs/imesh": {
-      "active": false,
-      "base": false,
-      "created": "2026-05-14T08:57:13.137779+00:00",
-      "frozen": false,
-      "last_modified": "2026-05-14T08:57:13.135238+00:00",
-      "name": "imesh",
-      "writable": true
-    },
-    "/opt/miniconda/envs/sam3": {
-      "active": false,
-      "base": false,
-      "created": "2026-05-14T09:11:12.381188+00:00",
-      "frozen": false,
-      "last_modified": "2026-05-14T09:11:12.378595+00:00",
-      "name": "sam3",
-      "writable": true
-    },
-    "/opt/miniconda/envs/sam3d-objects-cu118": {
-      "active": false,
-      "base": false,
-      "created": "2026-05-21T02:14:17.494327+00:00",
-      "frozen": false,
-      "last_modified": "2026-05-21T02:39:15.786298+00:00",
-      "name": "sam3d-objects-cu118",
-      "writable": true
-    },
-    "/opt/miniconda/envs/server": {
-      "active": false,
-      "base": false,
-      "created": "2026-05-14T09:16:43.866231+00:00",
-      "frozen": false,
-      "last_modified": "2026-05-14T09:16:43.865493+00:00",
-      "name": "server",
-      "writable": true
-    }
-  },
-  "envs_dirs": [
-    "/opt/miniconda/envs",
-    "/root/.conda/envs"
+  "python_version": "3.13.13.final.0",
+  "requests_version": "2.33.1",
+  "user_agent": "conda/26.3.2 requests/2.33.1 CPython/3.13.13 Linux/5.4.0-87-generic ubuntu/22.04.3 glibc/2.35 solver/libmamba conda-libmamba-solver/26.4.0 libmambapy/2.3.2 aau/0.7.6 c/HJ7bTLCukb_OTwoadsbwb3 s/cESV34lXh3_ziVywTXE1Cn e/qZTeFR58tbO5UXWC7CsWZX",
+  "conda_location": "/opt/miniconda/lib/python3.13/site-packages/conda",
+  "config_files": [
+    "/opt/miniconda/.condarc",
+    "/opt/miniconda/condarc.d/anaconda-auth.yml",
+    "/root/.condarc"
   ],
   "netrc_file": null,
-  "offline": false,
-  "pkgs_dirs": [
-    "/opt/miniconda/pkgs",
-    "/root/.conda/pkgs"
-  ],
-  "platform": "linux-64",
-  "python_version": "3.13.13.final.0",
-  "rc_path": "/root/.condarc",
-  "requests_version": "2.33.1",
-  "root_prefix": "/opt/miniconda",
-  "root_writable": true,
-  "site_dirs": [],
-  "solver": {
-    "default": true,
-    "name": "libmamba",
-    "user_agent": "solver/libmamba conda-libmamba-solver/26.4.0 libmambapy/2.3.2"
-  },
-  "sys.executable": "/opt/miniconda/bin/python",
-  "sys.prefix": "/opt/miniconda",
-  "sys.version": "3.13.13 | packaged by Anaconda, Inc. | (main, Apr 14 2026, 06:19:41) [GCC 14.3.0]",
-  "sys_rc_path": "/opt/miniconda/.condarc",
-  "tmp_dir": "/tmp",
-  "user_agent": "conda/26.3.2 requests/2.33.1 CPython/3.13.13 Linux/5.4.0-87-generic ubuntu/22.04.3 glibc/2.35 solver/libmamba conda-libmamba-solver/26.4.0 libmambapy/2.3.2 aau/0.7.6 c/HJ7bTLCukb_OTwoadsbwb3 s/sctBNpuIYu9ZL9n4777mwl e/qZTeFR58tbO5UXWC7CsWZX",
-  "user_rc_path": "/root/.condarc",
   "virtual_pkgs": [
     [
       "__archspec",
@@ -174,5 +85,144 @@
       "0",
       "0"
     ]
-  ]
+  ],
+  "solver": {
+    "name": "libmamba",
+    "user_agent": "solver/libmamba conda-libmamba-solver/26.4.0 libmambapy/2.3.2",
+    "default": true
+  },
+  "tmp_dir": "/tmp",
+  "UID": 0,
+  "GID": 0,
+  "sys.version": "3.13.13 | packaged by Anaconda, Inc. | (main, Apr 14 2026, 06:19:41) [GCC 14.3.0]",
+  "sys.prefix": "/opt/miniconda",
+  "sys.executable": "/opt/miniconda/bin/python",
+  "site_dirs": [],
+  "env_vars": {
+    "LD_PRELOAD": "<not set>",
+    "CIO_TEST": "<not set>",
+    "CONDA_PYTHON_EXE": "/opt/miniconda/bin/python",
+    "CURL_CA_BUNDLE": "<not set>",
+    "LIBRARY_PATH": "/usr/local/cuda/lib64/stubs",
+    "LD_LIBRARY_PATH": "/opt/ros/humble/lib/x86_64-linux-gnu:/opt/ros/humble/lib:/usr/local/nvidia/lib:/usr/local/nvidia/lib64",
+    "REQUESTS_CA_BUNDLE": "<not set>",
+    "AMENT_PREFIX_PATH": "/opt/ros/humble",
+    "CONDA_SHLVL": "0",
+    "CONDA_DIR": "/opt/miniconda",
+    "CONDA_EXE": "/opt/miniconda/bin/conda",
+    "PATH": "/root/.codex/tmp/arg0/codex-arg0Jx8vcP:/root/.vscode-server/cli/servers/Stable-6928394f91b684055b873eecb8bc281365131f1c/server/bin/remote-cli:/opt/miniconda/condabin:/opt/ros/humble/bin:/opt/miniconda/bin:/usr/local/nvidia/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.vscode-server/extensions/openai.chatgpt-26.609.30741-linux-x64/bin/linux-x86_64",
+    "SSL_CERT_FILE": "<not set>",
+    "PYTHONPATH": "/opt/ros/humble/lib/python3.10/site-packages:/opt/ros/humble/local/lib/python3.10/dist-packages:/workspace:/workspace/code",
+    "CONDA_ROOT": "/opt/miniconda"
+  },
+  "envs_details": {
+    "/opt/miniconda": {
+      "name": "base",
+      "created": null,
+      "last_modified": "2026-04-27T21:46:24.036468+00:00",
+      "active": false,
+      "base": true,
+      "frozen": false,
+      "writable": true
+    },
+    "/opt/miniconda/envs/dvc": {
+      "name": "dvc",
+      "created": "2026-05-14T08:28:15.374632+00:00",
+      "last_modified": "2026-05-14T08:28:15.374023+00:00",
+      "active": false,
+      "base": false,
+      "frozen": false,
+      "writable": true
+    },
+    "/opt/miniconda/envs/foundationpose": {
+      "name": "foundationpose",
+      "created": "2026-05-18T05:44:16.376443+00:00",
+      "last_modified": "2026-05-18T07:53:20.741834+00:00",
+      "active": false,
+      "base": false,
+      "frozen": false,
+      "writable": true
+    },
+    "/opt/miniconda/envs/imesh": {
+      "name": "imesh",
+      "created": "2026-05-14T08:57:13.137779+00:00",
+      "last_modified": "2026-05-14T08:57:13.135238+00:00",
+      "active": false,
+      "base": false,
+      "frozen": false,
+      "writable": true
+    },
+    "/opt/miniconda/envs/larm": {
+      "name": "larm",
+      "created": "2026-06-10T18:53:00.895496+00:00",
+      "last_modified": "2026-06-10T18:53:00.891536+00:00",
+      "active": false,
+      "base": false,
+      "frozen": false,
+      "writable": true
+    },
+    "/opt/miniconda/envs/opd": {
+      "name": "opd",
+      "created": "2026-05-27T03:51:56.171339+00:00",
+      "last_modified": "2026-05-27T03:51:56.170637+00:00",
+      "active": false,
+      "base": false,
+      "frozen": false,
+      "writable": true
+    },
+    "/opt/miniconda/envs/sam3": {
+      "name": "sam3",
+      "created": "2026-05-14T09:11:12.381188+00:00",
+      "last_modified": "2026-05-14T09:11:12.378595+00:00",
+      "active": false,
+      "base": false,
+      "frozen": false,
+      "writable": true
+    },
+    "/opt/miniconda/envs/sam3d-objects-cu118": {
+      "name": "sam3d-objects-cu118",
+      "created": "2026-05-21T02:14:17.494327+00:00",
+      "last_modified": "2026-05-21T02:39:15.786298+00:00",
+      "active": false,
+      "base": false,
+      "frozen": false,
+      "writable": true
+    },
+    "/opt/miniconda/envs/sam_3d_body": {
+      "name": "sam_3d_body",
+      "created": "2026-06-08T06:01:12.267868+00:00",
+      "last_modified": "2026-06-08T06:01:12.263965+00:00",
+      "active": false,
+      "base": false,
+      "frozen": false,
+      "writable": true
+    },
+    "/opt/miniconda/envs/server": {
+      "name": "server",
+      "created": "2026-05-14T09:16:43.866231+00:00",
+      "last_modified": "2026-05-14T09:16:43.865493+00:00",
+      "active": false,
+      "base": false,
+      "frozen": false,
+      "writable": true
+    },
+    "/workspace_whz/envs/sampart3d": {
+      "name": "",
+      "created": "2026-05-27T16:03:46.429014+00:00",
+      "last_modified": "2026-05-27T16:03:46.425643+00:00",
+      "active": false,
+      "base": false,
+      "frozen": false,
+      "writable": true
+    },
+    "/workspace_whz/envs/sigma": {
+      "name": "",
+      "created": "2026-06-10T14:05:40.619914+00:00",
+      "last_modified": "2026-06-10T14:10:43.447222+00:00",
+      "active": false,
+      "base": false,
+      "frozen": false,
+      "writable": true
+    }
+  }
 }

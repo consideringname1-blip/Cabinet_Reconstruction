@@ -5,7 +5,7 @@ inet4        : ['127.0.0.1']
 inet6        : ['::1']
 netmask      : 255.0.0.0
 device       : lo
-flags        : 73<LOOPBACK,RUNNING,UP>
+flags        : 73<LOOPBACK,UP,RUNNING>
 mtu          : 65536
 inet         : 10.40.1.122
 inet4        : ['10.40.1.122']
@@ -13,7 +13,7 @@ ether        : 3c:ec:ef:04:b9:a2
 inet6        : ['fe80::95b9:6e46:fa58:b473%eno1']
 netmask      : 255.255.254.0
 device       : eno1
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 broadcast    : 10.40.1.255
 inet         : 172.17.0.1
@@ -22,7 +22,7 @@ ether        : 02:42:b7:7a:2b:8a
 inet6        : ['fe80::42:b7ff:fe7a:2b8a%docker0']
 netmask      : 255.255.0.0
 device       : docker0
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 broadcast    : 172.17.255.255
 inet         : 172.30.0.1
@@ -40,128 +40,128 @@ ether        : 02:42:f4:c9:60:ce
 inet6        : ['fe80::42:f4ff:fec9:60ce%br-bcc408015b3d']
 netmask      : 255.255.0.0
 device       : br-bcc408015b3d
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 broadcast    : 172.28.255.255
 ether        : 96:41:48:de:53:57
 inet6        : ['fe80::9441:48ff:fede:5357%veth960d293']
 device       : veth960d293
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 9a:36:77:b7:0b:51
 inet6        : ['fe80::9836:77ff:feb7:b51%vethf27071c']
 device       : vethf27071c
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 7a:1d:7a:d8:54:50
 inet6        : ['fe80::781d:7aff:fed8:5450%veth74f2d8c']
 device       : veth74f2d8c
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 0a:74:b9:26:f1:92
 inet6        : ['fe80::874:b9ff:fe26:f192%veth70850da']
 device       : veth70850da
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 1a:4c:41:2f:9f:68
 inet6        : ['fe80::184c:41ff:fe2f:9f68%vethcf83c05']
 device       : vethcf83c05
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 6e:a1:a5:78:40:33
 inet6        : ['fe80::6ca1:a5ff:fe78:4033%veth150003c']
 device       : veth150003c
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : da:c4:fc:32:75:f2
 inet6        : ['fe80::d8c4:fcff:fe32:75f2%veth50d2754']
 device       : veth50d2754
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 06:9c:27:80:eb:f8
 inet6        : ['fe80::49c:27ff:fe80:ebf8%veth86f7c64']
 device       : veth86f7c64
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 76:92:cf:5d:63:e7
 inet6        : ['fe80::7492:cfff:fe5d:63e7%veth9f4ffb1']
 device       : veth9f4ffb1
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 6a:cf:9f:05:c1:28
 inet6        : ['fe80::68cf:9fff:fe05:c128%veth683fc53']
 device       : veth683fc53
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 5a:9c:c3:c0:7b:74
 inet6        : ['fe80::589c:c3ff:fec0:7b74%veth9f7532b']
 device       : veth9f7532b
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : ca:ea:9f:88:5b:df
 inet6        : ['fe80::c8ea:9fff:fe88:5bdf%vethc17cc65']
 device       : vethc17cc65
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 2a:fd:ae:2f:5f:ae
 inet6        : ['fe80::28fd:aeff:fe2f:5fae%vethe195528']
 device       : vethe195528
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 0e:d1:3b:94:14:c9
 inet6        : ['fe80::cd1:3bff:fe94:14c9%vethfaca326']
 device       : vethfaca326
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 06:e8:d2:f5:21:71
 inet6        : ['fe80::4e8:d2ff:fef5:2171%veth91e1f84']
 device       : veth91e1f84
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : b6:46:55:79:59:11
 inet6        : ['fe80::b446:55ff:fe79:5911%veth3db2d75']
 device       : veth3db2d75
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 6a:78:ef:8f:50:05
 inet6        : ['fe80::6878:efff:fe8f:5005%veth405e38d']
 device       : veth405e38d
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : ea:ab:c8:6b:01:69
 inet6        : ['fe80::e8ab:c8ff:fe6b:169%vethe80ebd6']
 device       : vethe80ebd6
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 3e:fb:97:f7:82:67
 inet6        : ['fe80::3cfb:97ff:fef7:8267%veth6e59c86']
 device       : veth6e59c86
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 56:a7:88:12:a6:85
 inet6        : ['fe80::54a7:88ff:fe12:a685%vethb7b1d72']
 device       : vethb7b1d72
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 4a:f5:39:fa:cc:3b
 inet6        : ['fe80::48f5:39ff:fefa:cc3b%veth4f7e9e0']
 device       : veth4f7e9e0
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : be:17:4e:59:89:fc
 inet6        : ['fe80::bc17:4eff:fe59:89fc%veth1e34ddc']
 device       : veth1e34ddc
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : d2:45:79:d9:82:8a
 inet6        : ['fe80::d045:79ff:fed9:828a%vethc4f06ca']
 device       : vethc4f06ca
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
-ether        : ca:da:4e:2d:14:81
-inet6        : ['fe80::c8da:4eff:fe2d:1481%veth6b80227']
-device       : veth6b80227
-flags        : 4163<MULTICAST,RUNNING,UP,BROADCAST>
+ether        : 86:56:9f:e4:d0:06
+inet6        : ['fe80::8456:9fff:fee4:d006%vethe1efbbf']
+device       : vethe1efbbf
+flags        : 4163<MULTICAST,UP,BROADCAST,RUNNING>
 mtu          : 1500
 ether        : 3c:ec:ef:04:b9:a3
 device       : eno2
@@ -198,19 +198,19 @@ ament_cmake                               : latest=1.3.14, local=1.3.14
 ament_index_python                        : latest=1.4.1, local=1.4.1
 python_cmake_module                       : latest=0.10.0, local=0.10.0
 rcutils                                   : latest=5.1.8, local=5.1.8
-rosidl_typesupport_interface              : latest=3.1.8, local=3.1.8
-rosidl_runtime_c                          : latest=3.1.8, local=3.1.8
+rosidl_typesupport_interface              : latest=3.1.9, local=3.1.8
+rosidl_runtime_c                          : latest=3.1.9, local=3.1.8
 rmw                                       : latest=6.1.2, local=6.1.2
-rosidl_cli                                : latest=3.1.8, local=3.1.8
-rosidl_adapter                            : latest=3.1.8, local=3.1.8
-rosidl_parser                             : latest=3.1.8, local=3.1.8
-rosidl_cmake                              : latest=3.1.8, local=3.1.8
-rosidl_generator_c                        : latest=3.1.8, local=3.1.8
+rosidl_cli                                : latest=3.1.9, local=3.1.8
+rosidl_adapter                            : latest=3.1.9, local=3.1.8
+rosidl_parser                             : latest=3.1.9, local=3.1.8
+rosidl_cmake                              : latest=3.1.9, local=3.1.8
+rosidl_generator_c                        : latest=3.1.9, local=3.1.8
 rcpputils                                 : latest=2.4.6, local=2.4.6
 rosidl_typesupport_c                      : latest=2.0.2, local=2.0.2
 rpyutils                                  : latest=0.2.2, local=0.2.2
 rosidl_generator_py                       : latest=0.14.6, local=0.14.6
-rosidl_runtime_cpp                        : latest=3.1.8, local=3.1.8
+rosidl_runtime_cpp                        : latest=3.1.9, local=3.1.8
 rosidl_typesupport_cpp                    : latest=2.0.2, local=2.0.2
 ament_cmake_gtest                         : latest=1.3.14, local=1.3.14
 ament_cmake_gmock                         : latest=1.3.14, local=1.3.14
@@ -218,11 +218,11 @@ ament_cmake_pytest                        : latest=1.3.14, local=1.3.14
 domain_coordinator                        : latest=0.10.0, local=0.10.0
 ament_cmake_ros                           : latest=0.10.0, local=0.10.0
 fastrtps_cmake_module                     : latest=2.2.4, local=2.2.4
-rosidl_generator_cpp                      : latest=3.1.8, local=3.1.8
+rosidl_generator_cpp                      : latest=3.1.9, local=3.1.8
 rosidl_typesupport_fastrtps_cpp           : latest=2.2.4, local=2.2.4
 rosidl_typesupport_fastrtps_c             : latest=2.2.4, local=2.2.4
-rosidl_typesupport_introspection_c        : latest=3.1.8, local=3.1.8
-rosidl_typesupport_introspection_cpp      : latest=3.1.8, local=3.1.8
+rosidl_typesupport_introspection_c        : latest=3.1.9, local=3.1.8
+rosidl_typesupport_introspection_cpp      : latest=3.1.9, local=3.1.8
 rosidl_default_runtime                    : latest=1.2.1, local=1.2.1
 builtin_interfaces                        : latest=1.2.3, local=1.2.2
 unique_identifier_msgs                    : latest=2.2.1, local=2.2.1
@@ -287,7 +287,7 @@ rcl_action                                : latest=5.3.13, local=5.3.12
 lifecycle_msgs                            : latest=1.2.3, local=1.2.2
 rcl_lifecycle                             : latest=5.3.13, local=5.3.12
 rclpy                                     : latest=3.3.21, local=3.3.21
-message_filters                           : latest=4.3.16, local=4.3.15
+message_filters                           : latest=4.3.18, local=4.3.15
 rclcpp_action                             : latest=16.0.19, local=16.0.19
 rclcpp_components                         : latest=16.0.19, local=16.0.19
 tf2_msgs                                  : latest=0.25.20, local=0.25.20
@@ -373,13 +373,85 @@ topic [type]            : /openpose/pose_key_points [openpose_ros2_msgs/msg/Pose
 publisher node          : openpose_node
 subscriber node         : people_tracking_node
 compatibility status    : OK
-topic [type]            : /openpose/pose_key_points [openpose_ros2_msgs/msg/PoseKeyPointsList]
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : bbox_visualizer_node
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : _ros2cli_3643727
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : _ros2cli_3643759
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : _ros2cli_daemon_10_4cd370078eeb4565bda569e06460d169
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
 publisher node          : openpose_node
-subscriber node         : people_tracking_node
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : tracking_node_ros2pub
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : yolox_object_detection_node
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : hololens_tf2_listener
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : people_tracking_node
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : contact_detection_node
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : compressed_image_preview_node
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : UnityEndpoint
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : _NODE_NAME_UNKNOWN_
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : _NODE_NAME_UNKNOWN_
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : _NODE_NAME_UNKNOWN_
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : _NODE_NAME_UNKNOWN_
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : _NODE_NAME_UNKNOWN_
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : realsense_node
+subscriber node         : v4l2_camera
+compatibility status    : OK
+topic [type]            : /parameter_events [rcl_interfaces/msg/ParameterEvent]
+publisher node          : v4l2_camera
+subscriber node         : v4l2_camera
 compatibility status    : OK
 topic [type]            : /rs/aligned_depth_to_color/cameraInfo [sensor_msgs/msg/CameraInfo]
 publisher node          : realsense_node
-subscriber node         : compressed_image_preview_node
+subscriber node         : bbox_visualizer_node
 compatibility status    : OK
 topic [type]            : /rs/aligned_depth_to_color/cameraInfo [sensor_msgs/msg/CameraInfo]
 publisher node          : realsense_node
@@ -392,6 +464,18 @@ compatibility status    : OK
 topic [type]            : /rs/aligned_depth_to_color/cameraInfo [sensor_msgs/msg/CameraInfo]
 publisher node          : realsense_node
 subscriber node         : contact_detection_node
+compatibility status    : OK
+topic [type]            : /rs/aligned_depth_to_color/cameraInfo [sensor_msgs/msg/CameraInfo]
+publisher node          : realsense_node
+subscriber node         : compressed_image_preview_node
+compatibility status    : OK
+topic [type]            : /rs/aligned_depth_to_color/compressedDepth [sensor_msgs/msg/CompressedImage]
+publisher node          : realsense_node
+subscriber node         : bbox_visualizer_node
+compatibility status    : OK
+topic [type]            : /rs/aligned_depth_to_color/compressedDepth [sensor_msgs/msg/CompressedImage]
+publisher node          : realsense_node
+subscriber node         : _ros2cli_3643759
 compatibility status    : OK
 topic [type]            : /rs/aligned_depth_to_color/compressedDepth [sensor_msgs/msg/CompressedImage]
 publisher node          : realsense_node
@@ -399,15 +483,15 @@ subscriber node         : people_tracking_node
 compatibility status    : OK
 topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
 publisher node          : realsense_node
+subscriber node         : bbox_visualizer_node
+compatibility status    : OK
+topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
+publisher node          : realsense_node
 subscriber node         : openpose_node
 compatibility status    : OK
 topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
 publisher node          : realsense_node
-subscriber node         : compressed_image_preview_node_patched
-compatibility status    : OK
-topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
-publisher node          : realsense_node
-subscriber node         : compressed_image_preview_node
+subscriber node         : tracking_node_ros2pub
 compatibility status    : OK
 topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
 publisher node          : realsense_node
@@ -415,7 +499,15 @@ subscriber node         : yolox_object_detection_node
 compatibility status    : OK
 topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
 publisher node          : realsense_node
+subscriber node         : people_tracking_node
+compatibility status    : OK
+topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
+publisher node          : realsense_node
 subscriber node         : contact_detection_node
+compatibility status    : OK
+topic [type]            : /rs/color/compressed [sensor_msgs/msg/CompressedImage]
+publisher node          : realsense_node
+subscriber node         : compressed_image_preview_node
 compatibility status    : OK
 topic [type]            : /shigure/contacted [shigure_core_msgs/msg/ContactedList]
 publisher node          : contact_detection_node
@@ -423,10 +515,6 @@ subscriber node         : _NODE_NAME_UNKNOWN_
 compatibility status    : OK
 topic [type]            : /shigure/people_detection [shigure_core_msgs/msg/PoseKeyPointsList]
 publisher node          : people_tracking_node
-subscriber node         : shigurepeople_detection_RosSubscriber
-compatibility status    : OK
-topic [type]            : /shigure/people_detection [shigure_core_msgs/msg/PoseKeyPointsList]
-publisher node          : people_tracking_node
 subscriber node         : yolox_object_detection_node
 compatibility status    : OK
 topic [type]            : /shigure/people_detection [shigure_core_msgs/msg/PoseKeyPointsList]
@@ -435,15 +523,7 @@ subscriber node         : contact_detection_node
 compatibility status    : OK
 topic [type]            : /shigure/people_detection [shigure_core_msgs/msg/PoseKeyPointsList]
 publisher node          : people_tracking_node
-subscriber node         : shigurepeople_detection_RosSubscriber
-compatibility status    : OK
-topic [type]            : /shigure/people_detection [shigure_core_msgs/msg/PoseKeyPointsList]
-publisher node          : people_tracking_node
-subscriber node         : yolox_object_detection_node
-compatibility status    : OK
-topic [type]            : /shigure/people_detection [shigure_core_msgs/msg/PoseKeyPointsList]
-publisher node          : people_tracking_node
-subscriber node         : contact_detection_node
+subscriber node         : _NODE_NAME_UNKNOWN_
 compatibility status    : OK
 topic [type]            : /tf [tf2_msgs/msg/TFMessage]
 publisher node          : compressed_image_preview_node
@@ -451,7 +531,7 @@ subscriber node         : hololens_tf2_listener
 compatibility status    : OK
 topic [type]            : /tf [tf2_msgs/msg/TFMessage]
 publisher node          : compressed_image_preview_node
-subscriber node         : _NODE_NAME_UNKNOWN_
+subscriber node         : tf_RosSubscriber
 compatibility status    : OK
 topic [type]            : /tf [tf2_msgs/msg/TFMessage]
 publisher node          : _NODE_NAME_UNKNOWN_
@@ -459,7 +539,7 @@ subscriber node         : hololens_tf2_listener
 compatibility status    : OK
 topic [type]            : /tf [tf2_msgs/msg/TFMessage]
 publisher node          : _NODE_NAME_UNKNOWN_
-subscriber node         : _NODE_NAME_UNKNOWN_
+subscriber node         : tf_RosSubscriber
 compatibility status    : OK
 
    RMW MIDDLEWARE
@@ -472,42 +552,48 @@ distribution status    : active
 release platforms      : {'rhel': ['8'], 'ubuntu': ['jammy']}
 
    TOPIC LIST
+topic               : /Segments
+publisher count     : 0
+subscriber count    : 1
 topic               : /bounding_boxes
 publisher count     : 0
-subscriber count    : 2
-topic               : /debug/combined_view/compressed
-publisher count     : 0
+subscriber count    : 3
+topic               : /camera_info
+publisher count     : 1
 subscriber count    : 0
-topic               : /dictionary_update
-publisher count     : 0
-subscriber count    : 1
-topic               : /face_recognition/results
-publisher count     : 0
-subscriber count    : 1
+topic               : /debug/combined_view/compressed
+publisher count     : 1
+subscriber count    : 0
+topic               : /image_raw
+publisher count     : 1
+subscriber count    : 0
 topic               : /openpose/pose_key_points
-publisher count     : 1
-subscriber count    : 2
+publisher count     : 0
+subscriber count    : 1
 topic               : /openpose/preview
-publisher count     : 1
+publisher count     : 0
 subscriber count    : 0
 topic               : /openpose/preview/compressed
-publisher count     : 1
+publisher count     : 0
 subscriber count    : 0
 topic               : /rs/aligned_depth_to_color/cameraInfo
 publisher count     : 1
-subscriber count    : 4
+subscriber count    : 5
 topic               : /rs/aligned_depth_to_color/compressedDepth
 publisher count     : 1
-subscriber count    : 1
+subscriber count    : 3
 topic               : /rs/color/cameraInfo
 publisher count     : 1
 subscriber count    : 0
 topic               : /rs/color/compressed
 publisher count     : 1
-subscriber count    : 5
+subscriber count    : 6
+topic               : /shigure/bbox_visualization
+publisher count     : 1
+subscriber count    : 0
 topic               : /shigure/contacted
 publisher count     : 1
-subscriber count    : 1
+subscriber count    : 0
 topic               : /shigure/object_detection
 publisher count     : 0
 subscriber count    : 0
@@ -515,14 +601,23 @@ topic               : /shigure/object_tracking
 publisher count     : 0
 subscriber count    : 1
 topic               : /shigure/people_detection
-publisher count     : 2
-subscriber count    : 3
-topic               : /shigure/recognition_history
-publisher count     : 1
-subscriber count    : 0
-topic               : /tf
 publisher count     : 1
 subscriber count    : 2
+topic               : /tf
+publisher count     : 1
+subscriber count    : 1
 topic               : /tf_static
 publisher count     : 0
 subscriber count    : 1
+topic               : /tracking/active_objects
+publisher count     : 1
+subscriber count    : 0
+topic               : /tracking/bring_event_confirmed
+publisher count     : 1
+subscriber count    : 0
+topic               : /tracking/feature_vector
+publisher count     : 1
+subscriber count    : 0
+topic               : /tracking/object_event
+publisher count     : 1
+subscriber count    : 0
