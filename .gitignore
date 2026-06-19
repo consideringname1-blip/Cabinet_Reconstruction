@@ -49,7 +49,8 @@ __pycache__/
 /data/RecordPhotoAndVideo/
 /data/upload/
 /data/aruco/runtime/
-/data/shigure_event_cache/
+/data/aruco/shigure_marker_history/
+/data/shigure_history_cache/
 /.test/
 
 ########################################

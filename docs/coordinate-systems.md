@@ -247,45 +247,40 @@ Notes for this verification path:
   test/debug utility. Production stage code should continue importing shared
   conversions from `code/coordinate_systems.py`.
 
-## FBX Depth-Based Taken-Away Detection
+## Taken Object Detection Projection Boundary
 
-`code/stages/model_event_tracking/model_depth.py` uses the same verified
-ArUco/OpenCV/Blender transform chain above. It imports one completed model FBX
-in isolation and ray-casts only its projected bounding rectangle. The first and
-last mesh intersections along each camera ray form per-pixel front and back
-depth maps.
+The current taken-object path lives in
+`code/stages/taken_object_detection/run_taken_object_detection_from_json.py`. It
+uses Shigurei RGB-D history as the OpenCV camera boundary (`+X` right, `+Y`
+down, `+Z` forward) and relies on the same ArUco/OpenCV/Blender transform
+chain documented above when a projected model mask is supplied.
 
-At the start of the post-capture replay window, several cached Shigurei frames
-are used to estimate a fixed depth bias and an initial observed-surface support
-mask. Permanent mesh holes and background pixels therefore cannot vote that the
-object was removed. While the stream continues, pixels that newly match the
-rendered front surface are added to this support mask, allowing previously
-occluded model regions to become usable later.
+The stage operates on a fixed projected object mask and Shigurei aligned depth
+frames. At initialization it looks for a stable depth window after the HoloLens
+photo timestamp, rejects background pixels beyond the projected front-surface
+range, and builds a trusted mask. Permanent mesh holes and background pixels do
+not become trusted object pixels.
 
-For each aligned depth frame:
+For each aligned depth frame, the current implementation compares observed depth
+against the initialized trusted depth mean:
 
 ```text
-front_match = abs(observed_depth - model_front_depth) <= present_tolerance
-support_mask = support_mask OR front_match
-occluded = observed_depth < model_front_depth - occlusion_margin
-current_unoccluded_mask = support_mask AND valid_depth AND NOT occluded
-removed = current_unoccluded_mask AND observed_depth > model_back_depth + removal_margin
+delta = observed_depth_m - trusted_depth_mean_m
+occluded = valid_depth AND delta <= TAKEN_OBJECT_OCCLUSION_DELTA_M
+unoccluded = trusted_mask AND valid_depth AND NOT occluded
+taken = unoccluded AND delta >= TAKEN_OBJECT_TAKEN_DELTA_M
 ```
 
-Occlusion is therefore an instantaneous exclusion, not a permanent mask update.
-The current unoccluded range shrinks while a hand or body is in front and
-automatically returns when the surface is visible again. A `taken_away` event is
-emitted only when the removed-pixel ratio is high enough for several consecutive
-frames and enough support pixels remain evaluable. The default margins are both
-`0.10 m`; all depth thresholds are exposed as `MODEL_EVENT_DEPTH_*` environment
-settings in `code/stages/model_event_tracking/settings.py`.
+A result is confirmed only after `TAKEN_OBJECT_TAKEN_RATIO` is satisfied for
+`TAKEN_OBJECT_TAKEN_CONSECUTIVE_FRAMES` consecutive frames. Full foreground
+occlusion is tracked separately with `TAKEN_OBJECT_FULL_OCCLUSION_RATIO` and
+does not by itself mean the object was taken. RGB backtracking is used to choose
+a better result/display frame, while depth remains the confirmation signal.
 
-After historical replay, the tracker follows newly appended Shigurei cache
-frames until an event or `MODEL_EVENT_TRACKING_TIMEOUT_SEC`. The default is
-`600` seconds; `0` disables the timeout. Independent models use independent
-tracking threads. After confirmation, both wrist joints are searched in the
-preceding cached frames and the first wrist inside the projected box, or
-otherwise the nearest wrist, is stored with the event.
+Current tuning lives in `code/stages/taken_object_detection/settings.py` and uses
+`TAKEN_OBJECT_*` environment variables. The selected result frame is backed up
+for `sam3d_body_mesh`, which then uses real Shigurei CameraInfo rather than
+re-estimating camera intrinsics.
 
 ## Current Usage Map
 
@@ -306,6 +301,12 @@ otherwise the nearest wrist, is stored with the event.
   responding to clients.
 - `code/model_bounds.py`: reads runtime-local mesh vertices and stores bounds in
   ArUco/Unity-style pose space.
+- `code/stages/taken_object_detection/run_taken_object_detection_from_json.py`:
+  uses Shigurei OpenCV-camera RGB-D frames, the projected object mask, and
+  current `TAKEN_OBJECT_*` thresholds for taken-object detection.
+- `code/stages/sam3d_body_mesh/run_sam3d_body_mesh_from_json.py`: consumes the
+  backed-up Shigurei result frame and CameraInfo produced by taken-object
+  detection.
 - `code/.test/overlay_fbx_models_on_ros_rgb.py`: debug verification renderer
   for placing exported FBX assets back onto saved ROS RGB frames through the
   ArUco/OpenCV/Blender chain above.

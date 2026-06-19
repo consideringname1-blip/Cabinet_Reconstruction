@@ -13,6 +13,19 @@
 
 所有正式 stage 都以同一个 task JSON 为交换边界。`server_api.py` 在 `/generate` 中创建 `data/upload/<task_name>_meta.json`，worker 后续只读写这个 JSON，并把大文件放到 `data/output/`、`data/aruco/` 或 Shigurei history 目录。
 
+### Server Startup
+
+常规服务启动入口：
+
+```bash
+cd /workspace_whs
+python code/run_server.py
+```
+
+`run_server.py` 从 `code/config.py` 读取目标 Python 和入口脚本，并在启动子进程前自动 `source /workspace_whs/setup_env.sh`。因此 server 子进程会获得项目 `PYTHONPATH`、ROS2 Humble setup、Shigurei receive workspace setup、`ROS_DOMAIN_ID` 和 `ROS_LOCALHOST_ONLY`。外层 shell 已经 source 过也没有冲突，因为项目路径会先去重再重新写入。
+
+这个自动 source 只影响 `run_server.py` 创建的子进程，不会修改调用者所在的父 shell。手动跑独立脚本时仍可以按需 `source ./setup_env.sh`。
+
 ### Object Reconstruction 顺序
 
 当前 `task_worker.STAGE_ORDER`：
@@ -50,6 +63,8 @@ run_shigure_history_recorder.py
 ```
 
 它持续写最近 RGB-D history，并在启动后尝试更新 Shigurei ArMarker history。普通 task 在 `taken_object_detection` / `sam3d_body_mesh` 阶段读取这些 sidecar 数据。
+
+启动链路是：`server_api.py` import 时调用 `task_worker.start_worker()`，worker 启动 recorder 子进程；recorder 如发现尚未处于 ROS2 Python 环境，会自己 source `code/ros2/shigure_recv_ws/setup_env.sh` 并用 ROS Python 重新 exec 自身。
 
 ## Runtime Roots And HTTP Folders
 
@@ -199,7 +214,7 @@ Minimum runtime input:
   - RGB compressed image, default `/rs/color/compressed`
   - aligned depth compressed image, default `/rs/aligned_depth_to_color/compressedDepth`
   - CameraInfo, default `/rs/aligned_depth_to_color/cameraInfo`
-- ROS environment from `code/ros2/shigure_recv_ws/setup_env.sh`.
+- ROS environment from `code/ros2/shigure_recv_ws/setup_env.sh`; normal server startup bootstraps this automatically through the recorder. Manual ROS2 topic checks can source the same file directly.
 
 Stable output files in `data/shigure_history_cache/`:
 

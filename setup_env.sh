@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Source this before running ros2 echo/subscribers for Shigurei data.
-_ros_ws="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-_repo_root="$(cd "${_ros_ws}/../../.." && pwd)"
+# Source this from any shell before running the project from this checkout.
+
+_repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 _clean_pythonpath=""
 if [ -n "${PYTHONPATH:-}" ]; then
@@ -18,11 +18,14 @@ export PYTHONPATH="${_repo_root}/code:${_repo_root}${_clean_pythonpath:+:${_clea
 if [ -f /opt/ros/humble/setup.bash ]; then
   source /opt/ros/humble/setup.bash
 fi
+
+_ros_ws="${_repo_root}/code/ros2/shigure_recv_ws"
 if [ -f "${_ros_ws}/install/setup.bash" ]; then
   source "${_ros_ws}/install/setup.bash"
 fi
-export ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-10}
-export ROS_LOCALHOST_ONLY=${ROS_LOCALHOST_ONLY:-0}
+
+export ROS_DOMAIN_ID="${ROS_DOMAIN_ID:-10}"
+export ROS_LOCALHOST_ONLY="${ROS_LOCALHOST_ONLY:-0}"
 
 unset _repo_root
 unset _ros_ws

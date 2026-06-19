@@ -6,7 +6,7 @@ from pathlib import Path
 try:
     from config import SHIGURE_HISTORY_CACHE_ROOT as CONFIG_SHIGURE_HISTORY_CACHE_ROOT
 except Exception:  # pragma: no cover - keeps this module usable in small tests.
-    CONFIG_SHIGURE_HISTORY_CACHE_ROOT = Path('/workspace/data/shigure_history_cache')
+    CONFIG_SHIGURE_HISTORY_CACHE_ROOT = Path(__file__).resolve().parents[3] / 'data' / 'shigure_history_cache'
 
 
 def _float_env(name: str, default: float) -> float:

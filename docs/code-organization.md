@@ -48,6 +48,9 @@
 `code/scripts/`
 : 开发、验证、导出、手动检查脚本。可以依赖项目代码，但不作为正式 worker stage。
 
+`setup_env.sh`
+: 根目录运行环境入口。日常手动调试可以 `source ./setup_env.sh`，它会把项目根目录和 `code/` 放进 `PYTHONPATH`，并加载 ROS2 Humble 与本项目 Shigurei receive workspace 的 setup 文件。该脚本会清理重复项目路径，重复 source 不会让 `PYTHONPATH` 套娃增长。
+
 `code/.test/` 和 `.test/`
 : 临时实验、诊断和一次性跑数脚本。不要把生产逻辑放到这里；一旦需要长期保留，移动到 `code/scripts/` 或正式 stage 目录。
 
@@ -65,6 +68,9 @@
 
 ## 核心模块职责
 
+`code/run_server.py`
+: 服务端默认启动入口。它从 `config.py` 读取 `SERVER_PY`、`SERVER_API_RUN`、`HOLOLENS2_PY` 等路径，并在启动真正子进程前自动 `source` 根目录 `setup_env.sh`，再用 `exec` 进入目标 Python 进程。直接运行 `python code/run_server.py` 即可；如果外层 shell 已经手动 source 过也没有冲突。这个自动 source 只影响 server 子进程，不会反向修改父 shell。
+
 `code/config.py`
 : 全局路径、Python 环境、stage 脚本入口、输出目录、服务级运行开关和 HTTP 文件目录映射的集中入口。stage 内部算法阈值、后处理比例、采样频率等局部设定不要继续塞进这里，应放到对应 stage 目录的 `settings.py`。
 
@@ -72,7 +78,7 @@
 : Flask API。只做请求解析、任务创建、状态查询、文件服务和轻量接口组合，避免把重建算法塞进 API 层。
 
 `code/task_worker.py`
-: 队列和 stage 调度。新增正式 stage 时，需要在这里注册执行函数、`STAGE_RUNNERS`，并按需要插入 stage 顺序。
+: 队列和 stage 调度。新增正式 stage 时，需要在这里注册执行函数、`STAGE_RUNNERS`，并按需要插入 stage 顺序。worker 启动时会启动 Shigurei history recorder；该 recorder 自己会按需 source `code/ros2/shigure_recv_ws/setup_env.sh` 来获得 ROS2 Python 模块和本地消息定义。
 
 `code/task_db.py`
 : SQLite schema、任务状态和 stage run 记录。新增 worker status 时同步更新 `ALLOWED_STATUSES`。
@@ -97,6 +103,25 @@
 
 `code/subprocess_stream.py`
 : 子进程日志流式输出工具。worker 和 stage 调用外部命令时优先用它，方便在服务日志里定位问题。
+
+## 启动和环境约定
+
+常规服务启动命令：
+
+```bash
+cd /workspace_whs
+python code/run_server.py
+```
+
+`run_server.py` 会自动加载根目录 `setup_env.sh` 后再启动 `server_api.py` 或 HoloLens calibration 下载脚本。不要在 `server_api.py` 或普通 stage 里再次手写项目根目录路径；需要项目 import 时依赖这个启动入口、`config.py` 路径定义或 stage 自身的 bootstrap。
+
+手动运行 ROS2 topic、构建 Shigurei receive workspace 或调试 ROS 消息时，使用：
+
+```bash
+source code/ros2/shigure_recv_ws/setup_env.sh
+```
+
+根目录 `setup_env.sh` 是更通用的项目 shell 环境入口；ROS workspace 里的 `setup_env.sh` 是 Shigurei ROS2 接收工作区的局部入口。两者都按可重复 source 设计。
 
 ## Stage 放置和命名
 

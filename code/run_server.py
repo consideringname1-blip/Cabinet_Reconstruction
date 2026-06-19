@@ -1,8 +1,10 @@
 import subprocess
 import signal
+import shlex
 import sys
 from config import (
     CODE_ROOT,
+    PROJECT_ROOT,
     IS_RUN_FLASK_SERVER,
     HOLOLENS2_PY,
     SERVER_API_RUN,
@@ -12,8 +14,22 @@ from config import (
 )
 from pathlib import Path
 
+PROJECT_SETUP_ENV = PROJECT_ROOT / "setup_env.sh"
+
+
+def _source_project_env_cmd(cmd):
+    if not PROJECT_SETUP_ENV.exists():
+        return cmd
+    quoted_cmd = " ".join(shlex.quote(str(part)) for part in cmd)
+    return [
+        "bash",
+        "-lc",
+        f"source {shlex.quote(str(PROJECT_SETUP_ENV))} && exec {quoted_cmd}",
+    ]
+
+
 def _run_child(cmd, cwd):
-    process = subprocess.Popen(cmd, cwd=cwd)
+    process = subprocess.Popen(_source_project_env_cmd(cmd), cwd=cwd)
 
     def _stop_child(signum=None, frame=None):
         if process.poll() is None:
