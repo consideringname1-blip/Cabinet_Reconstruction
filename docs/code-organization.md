@@ -22,7 +22,7 @@
 : pipeline stage 脚本。新增的可排队处理步骤应该放到这里的具体业务子目录。
 
 `code/stages/hololens3d_reconstruction/`
-: 物体重建主链路，包括 SAM3 mask、模型生成、深度点云、尺度估计、物体对齐、runtime mesh、pose、Blender/FBX、bounds 等。
+: 物体重建主链路，包括 SAM3 mask、基于 mask+depth 的快速 Unity-world display box、模型生成、深度点云、尺度估计、物体对齐、runtime mesh、pose、Blender/FBX、bounds 等。
 
 `code/stages/hololens_aruco_reference/`
 : ArUco 参考系相关 stage，包括 marker 检测和把已完成物体同步到 ArUco 坐标。
@@ -64,7 +64,7 @@
 : 模型权重和静态模型资产。
 
 `H2AI/`
-: Unity/HoloLens 客户端工程。服务端只通过 API、生成文件和约定 JSON 字段与它交互。
+: Unity/HoloLens 客户端工程。服务端只通过 API、生成文件和约定 JSON 字段与它交互；运行时模型可消费 `model_instance.sam3_spatial_box`，在本地渲染半透明 box、线框和面向用户的进度面板。
 
 ## 核心模块职责
 

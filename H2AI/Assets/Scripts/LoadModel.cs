@@ -106,14 +106,17 @@ public class LoadModel : MonoBehaviour
         ClearPendingModel();
 
         Debug.LogError("An error occurred while loading your Model: " + obj.GetInnerException());
+        UpdateSpatialHint(failedInstance, "failed");
         ShowFrontMessage("load_ERR_failed");
         NotifyRuntimeModelLoadCompleted(failedInstance, false);
     }
 
     private void OnProgress(AssetLoaderContext assetLoaderContext, float progress)
     {
+        string progressText = progress.ToString("P0");
         Debug.Log("Loading Model. Progress: " + progress.ToString("P"));
-        ShowFrontMessage(progress.ToString("P0"));
+        UpdateSpatialHint(_pendingInstance, progressText);
+        ShowFrontMessage(progressText);
     }
 
     private void OnMaterialsLoad(AssetLoaderContext assetLoaderContext)
@@ -155,6 +158,7 @@ public class LoadModel : MonoBehaviour
         }
 
         manager.RegisterLoadedModel(_pendingInstance, _pendingLocalPath, game);
+        UpdateSpatialHint(_pendingInstance, "ready");
 
         ShowFrontMessageForSeconds("download_completed", 3f);
         ClearPendingModel();
@@ -210,6 +214,15 @@ public class LoadModel : MonoBehaviour
         if (Game_M.initialize != null)
         {
             Game_M.initialize.XianShiForSeconds(message, seconds);
+        }
+    }
+
+    private void UpdateSpatialHint(RuntimeModelInstance instance, string message)
+    {
+        ModelEventDisplay display = ModelEventDisplay.Instance;
+        if (display != null)
+        {
+            display.UpdateProgressForModel(instance, message);
         }
     }
 

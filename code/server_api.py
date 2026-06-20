@@ -95,7 +95,7 @@ def _build_model_key(task_id: str | None, fbx_url: str) -> str:
 
 def _build_model_instance(task_data: dict, task_json: dict, fbx_url: str) -> dict:
     task_id = task_data.get("task_id")
-    return {
+    instance = {
         "model_key": _build_model_key(task_id, fbx_url),
         "task_id": task_id,
         "fbx_url": fbx_url,
@@ -103,6 +103,9 @@ def _build_model_instance(task_data: dict, task_json: dict, fbx_url: str) -> dic
         "object_aruco": task_json.get("object_aruco") or None,
         "aruco_reference": task_json.get("aruco_reference") or None,
     }
+    if task_json.get("Sam3SpatialBox"):
+        instance["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
+    return instance
 
 
 def _resolve_placement_status(task_data: dict, task_json: dict) -> str:
@@ -226,7 +229,9 @@ def _build_model_bounds_response(row: dict, hit_result: dict | None = None) -> d
             "object_aruco": object_aruco,
             "aruco_reference": None,
         }
-
+        if task_json.get("Sam3SpatialBox"):
+            model["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
+            model["model_instance"]["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
 
     if hit_result:
         model["hit_distance_m"] = hit_result.get("hit_distance_m")
@@ -297,6 +302,7 @@ def _build_completed_task_response(task_data: dict) -> dict:
     response["model_generation"] = task_json.get("ModelGeneration") or None
     response["taken_object_detection"] = task_json.get("TakenObjectDetection") or None
     response["sam3d_body_mesh"] = task_json.get("SAM3DBodyMesh") or None
+    response["sam3_spatial_box"] = task_json.get("Sam3SpatialBox") or None
 
     try:
         generated_source = resolve_model_generation_source(task_json, require_mtl_image=True)

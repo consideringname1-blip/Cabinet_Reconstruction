@@ -18,12 +18,37 @@ public class RuntimeModelPoseData
     public Quaternion ResponseArucoReferenceRotation = Quaternion.identity;
 }
 
+
+public class RuntimeSpatialBoxData
+{
+    public bool IsReady;
+    public string Status = "";
+    public string CoordinateSpace = "unity_world";
+    public Vector3 AabbMinWorld = Vector3.zero;
+    public Vector3 AabbMaxWorld = Vector3.zero;
+
+    public Vector3 CenterWorld
+    {
+        get { return (AabbMinWorld + AabbMaxWorld) * 0.5f; }
+    }
+
+    public Vector3 SizeWorld
+    {
+        get
+        {
+            Vector3 size = AabbMaxWorld - AabbMinWorld;
+            return new Vector3(Mathf.Abs(size.x), Mathf.Abs(size.y), Mathf.Abs(size.z));
+        }
+    }
+}
+
 public class RuntimeModelInstance
 {
     public string ModelKey = "";
     public string TaskId = "";
     public string FbxUrl = "";
     public RuntimeModelPoseData Pose = new RuntimeModelPoseData();
+    public RuntimeSpatialBoxData SpatialBox;
 }
 
 public class RuntimeModelRecord
@@ -36,6 +61,7 @@ public class RuntimeModelRecord
     public DateTime CreatedAtUtc;
     public DateTime LastTouchedAtUtc;
     public RuntimeModelPoseData Pose = new RuntimeModelPoseData();
+    public RuntimeSpatialBoxData SpatialBox;
 }
 
 [DisallowMultipleComponent]
@@ -189,10 +215,15 @@ public class RuntimeModelManager : MonoBehaviour
             CreatedAtUtc = DateTime.UtcNow,
             LastTouchedAtUtc = DateTime.UtcNow,
             Pose = instance.Pose ?? new RuntimeModelPoseData(),
+            SpatialBox = instance.SpatialBox,
         };
         _records.Add(record);
         AttachEventIdentity(record);
         ApplyResolvedPose(record);
+        if (record.SpatialBox != null && record.SpatialBox.IsReady && ModelEventDisplay.Instance != null)
+        {
+            ModelEventDisplay.Instance.ShowForModel(instance, "ready");
+        }
         EnforceCachedFileLimit();
     }
 

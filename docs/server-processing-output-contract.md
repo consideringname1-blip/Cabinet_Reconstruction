@@ -398,6 +398,11 @@ Output files in `data/output/sam3/`:
 <task_name>_sam3_overlay.png    # preview overlay
 ```
 
+The stage also estimates a quick display box from the SAM3 mask and aligned depth.
+It is intentionally robust/approximate, using valid mask depth percentiles and PV
+camera intrinsics/pose to produce a Unity-world AABB for immediate HoloLens
+feedback.
+
 Task JSON output:
 
 ```json
@@ -407,9 +412,25 @@ Task JSON output:
     "color": "<task_name>_sam3_color.png",
     "depth": "<task_name>_sam3_depth.png",
     "overlay": "<task_name>_sam3_overlay.png"
+  },
+  "Sam3SpatialBox": {
+    "status": "ready",
+    "coordinate_space": "unity_world",
+    "aabb_min_world": [0.0, 0.0, 0.0],
+    "aabb_max_world": [0.0, 0.0, 0.0],
+    "center_world": [0.0, 0.0, 0.0],
+    "size_world": [0.0, 0.0, 0.0],
+    "source": "sam3_mask_aligned_depth_percentile"
   }
 }
 ```
+
+
+Unity display note:
+
+- Completed model and spatial-query responses include `sam3_spatial_box` and `model_instance.sam3_spatial_box` when `Sam3SpatialBox.status == "ready"`.
+- The HoloLens client renders this as a semi-transparent filled box plus bright wireframe.
+- The progress panel is placed 20 cm outside the box face nearest the viewer, billboards toward the camera, and only changes face after the user remains clearly on another side.
 
 Minimum downstream dependency:
 

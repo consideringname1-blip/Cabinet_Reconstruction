@@ -5,7 +5,7 @@ using UnityEngine;
 public class ModelEventDisplay : MonoBehaviour
 {
     private static ModelEventDisplay _instance;
-    private GameObject activePopup;
+    private readonly Dictionary<string, GameObject> activeHints = new Dictionary<string, GameObject>();
 
     public static ModelEventDisplay Instance
     {
@@ -17,6 +17,11 @@ public class ModelEventDisplay : MonoBehaviour
             }
 
             _instance = FindObjectOfType<ModelEventDisplay>();
+            if (_instance == null)
+            {
+                GameObject displayObject = new GameObject("ModelEventDisplay");
+                _instance = displayObject.AddComponent<ModelEventDisplay>();
+            }
             return _instance;
         }
     }
@@ -44,32 +49,131 @@ public class ModelEventDisplay : MonoBehaviour
 
     public void ToggleForModel(RuntimeModelEventIdentity identity)
     {
-        if (activePopup != null)
+        if (identity == null)
         {
-            ClosePopup();
             return;
         }
 
-        ShowFrontMessage("model_event_disabled");
+        string key = ResolveKey(identity.TaskId, identity.ModelKey);
+        if (activeHints.ContainsKey(key))
+        {
+            CloseHint(key);
+            return;
+        }
+
+        ShowFrontMessage("model_event_no_local_hint");
+    }
+
+    public void ShowForModel(RuntimeModelInstance instance, string message)
+    {
+        if (instance == null || instance.SpatialBox == null || !instance.SpatialBox.IsReady)
+        {
+            return;
+        }
+
+        string key = ResolveKey(instance.TaskId, instance.ModelKey);
+        if (string.IsNullOrEmpty(key))
+        {
+            return;
+        }
+
+        GameObject root;
+        RuntimeSpatialBoxDisplay display;
+        if (!activeHints.TryGetValue(key, out root) || root == null)
+        {
+            root = new GameObject("RuntimeSpatialHint_" + key);
+            display = root.AddComponent<RuntimeSpatialBoxDisplay>();
+            activeHints[key] = root;
+        }
+        else
+        {
+            display = root.GetComponent<RuntimeSpatialBoxDisplay>();
+            if (display == null)
+            {
+                display = root.AddComponent<RuntimeSpatialBoxDisplay>();
+            }
+        }
+
+        display.Configure(instance.SpatialBox, message);
+    }
+
+    public void UpdateProgressForModel(RuntimeModelInstance instance, string message)
+    {
+        if (instance == null)
+        {
+            return;
+        }
+
+        string key = ResolveKey(instance.TaskId, instance.ModelKey);
+        if (string.IsNullOrEmpty(key))
+        {
+            return;
+        }
+
+        GameObject root;
+        if (!activeHints.TryGetValue(key, out root) || root == null)
+        {
+            ShowForModel(instance, message);
+            return;
+        }
+
+        RuntimeSpatialBoxDisplay display = root.GetComponent<RuntimeSpatialBoxDisplay>();
+        if (display != null)
+        {
+            display.UpdateMessage(message);
+        }
     }
 
     public void CloseAllAndClearLocalCache()
     {
-        ClosePopup();
+        foreach (GameObject hint in new List<GameObject>(activeHints.Values))
+        {
+            if (hint != null)
+            {
+                Destroy(hint);
+            }
+        }
+        activeHints.Clear();
     }
 
     public void DeleteServerEventsForTaskIds(IEnumerable<string> taskIds)
     {
-        ClosePopup();
+        if (taskIds == null)
+        {
+            return;
+        }
+
+        foreach (string taskId in taskIds)
+        {
+            CloseHint(ResolveKey(taskId, ""));
+        }
     }
 
-    private void ClosePopup()
+    private void CloseHint(string key)
     {
-        if (activePopup != null)
+        if (string.IsNullOrEmpty(key))
         {
-            Destroy(activePopup);
-            activePopup = null;
+            return;
         }
+
+        GameObject hint;
+        if (activeHints.TryGetValue(key, out hint))
+        {
+            if (hint != null)
+            {
+                Destroy(hint);
+            }
+            activeHints.Remove(key);
+        }
+    }
+
+    private string ResolveKey(string taskId, string modelKey)
+    {
+        if (!string.IsNullOrEmpty(taskId))
+        {
+            return taskId;
+        }
+        return string.IsNullOrEmpty(modelKey) ? "" : modelKey;
     }
 
     private void ShowFrontMessage(string message)

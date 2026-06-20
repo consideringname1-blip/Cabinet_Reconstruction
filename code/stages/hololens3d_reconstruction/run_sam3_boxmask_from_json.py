@@ -153,6 +153,151 @@ def make_masked_depth(depth: np.ndarray, mask_bool: np.ndarray) -> np.ndarray:
     raise ValueError(f"Unsupported depth image shape: {depth.shape}")
 
 
+
+
+def _depth_raw_to_m(depth_raw: np.ndarray) -> np.ndarray:
+    depth = np.asarray(depth_raw).astype(np.float32)
+    finite = depth[np.isfinite(depth) & (depth > 0)]
+    if finite.size and float(np.nanmedian(finite)) > 20.0:
+        depth = depth / 1000.0
+    return depth.astype(np.float32)
+
+
+def _parse_vector3(value: Any, name: str) -> np.ndarray | None:
+    try:
+        array = np.asarray(value, dtype=np.float64).reshape(-1)
+    except Exception:
+        return None
+    if array.size < 3:
+        return None
+    return array[:3].astype(np.float64)
+
+
+def _parse_quaternion_xyzw(value: Any) -> np.ndarray | None:
+    try:
+        array = np.asarray(value, dtype=np.float64).reshape(-1)
+    except Exception:
+        return None
+    if array.size < 4:
+        return None
+    norm = float(np.linalg.norm(array[:4]))
+    if norm <= 1e-9:
+        return None
+    return (array[:4] / norm).astype(np.float64)
+
+
+def _quat_xyzw_to_matrix(q: np.ndarray) -> np.ndarray:
+    x, y, z, w = [float(v) for v in q]
+    xx, yy, zz = x * x, y * y, z * z
+    xy, xz, yz = x * y, x * z, y * z
+    wx, wy, wz = w * x, w * y, w * z
+    return np.array(
+        [
+            [1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)],
+            [2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)],
+            [2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _camera_matrix_from_task(task: dict[str, Any]) -> np.ndarray | None:
+    pvcamera = task.get("PVCamera") or {}
+    raw = pvcamera.get("k") or pvcamera.get("K") or pvcamera.get("camera_matrix")
+    if raw is None:
+        return None
+    try:
+        matrix = np.asarray(raw, dtype=np.float64).reshape(3, 3)
+    except Exception:
+        return None
+    if not np.isfinite(matrix).all() or matrix[0, 0] == 0 or matrix[1, 1] == 0:
+        return None
+    return matrix
+
+
+def compute_sam3_spatial_box(task: dict[str, Any], mask_bool: np.ndarray, depth_raw: np.ndarray) -> dict[str, Any]:
+    camera_matrix = _camera_matrix_from_task(task)
+    pvcamera = task.get("PVCamera") or {}
+    camera_position = _parse_vector3(pvcamera.get("position"), "PVCamera.position")
+    camera_rotation = _parse_quaternion_xyzw(pvcamera.get("rotation_quaternion_xyzw"))
+    if camera_matrix is None or camera_position is None or camera_rotation is None:
+        return {
+            "status": "unavailable",
+            "reason": "missing_pv_intrinsics_or_pose",
+        }
+
+    mask = np.asarray(mask_bool, dtype=bool)
+    depth_m = _depth_raw_to_m(depth_raw)
+    if depth_m.ndim == 3:
+        depth_m = depth_m[:, :, 0]
+    if depth_m.shape != mask.shape:
+        return {
+            "status": "unavailable",
+            "reason": "depth_mask_shape_mismatch",
+            "depth_shape": list(depth_m.shape),
+            "mask_shape": list(mask.shape),
+        }
+
+    valid = mask & np.isfinite(depth_m) & (depth_m > 0.0)
+    valid_count = int(np.count_nonzero(valid))
+    if valid_count < 32:
+        return {
+            "status": "unavailable",
+            "reason": "not_enough_valid_depth_pixels",
+            "valid_depth_pixels": valid_count,
+        }
+
+    ys, xs = np.nonzero(valid)
+    zs = depth_m[valid].astype(np.float64)
+    z_low, z_high = np.percentile(zs, [5.0, 95.0])
+    keep = (zs >= z_low) & (zs <= z_high)
+    if int(np.count_nonzero(keep)) < 32:
+        keep = np.ones_like(zs, dtype=bool)
+    xs = xs[keep].astype(np.float64)
+    ys = ys[keep].astype(np.float64)
+    zs = zs[keep].astype(np.float64)
+
+    fx, fy = float(camera_matrix[0, 0]), float(camera_matrix[1, 1])
+    cx, cy = float(camera_matrix[0, 2]), float(camera_matrix[1, 2])
+    x_cv = (xs - cx) * zs / fx
+    y_cv = (ys - cy) * zs / fy
+    # OpenCV camera: +X right, +Y down, +Z forward. Unity camera: +X right, +Y up, +Z forward.
+    points_camera_unity = np.stack([x_cv, -y_cv, zs], axis=1)
+    rotation_world_from_camera = _quat_xyzw_to_matrix(camera_rotation)
+    points_world = (rotation_world_from_camera @ points_camera_unity.T).T + camera_position.reshape(1, 3)
+
+    if points_world.shape[0] >= 64:
+        p_low = np.percentile(points_world, 2.0, axis=0)
+        p_high = np.percentile(points_world, 98.0, axis=0)
+    else:
+        p_low = np.min(points_world, axis=0)
+        p_high = np.max(points_world, axis=0)
+    size = np.maximum(p_high - p_low, np.array([0.03, 0.03, 0.03], dtype=np.float64))
+    center = (p_low + p_high) * 0.5
+    p_low = center - size * 0.5
+    p_high = center + size * 0.5
+
+    x0 = y0 = x1 = y1 = 0
+    mask_ys, mask_xs = np.nonzero(mask)
+    if mask_xs.size:
+        x0, x1 = int(mask_xs.min()), int(mask_xs.max())
+        y0, y1 = int(mask_ys.min()), int(mask_ys.max())
+
+    return {
+        "status": "ready",
+        "coordinate_space": "unity_world",
+        "aabb_min_world": [float(v) for v in p_low],
+        "aabb_max_world": [float(v) for v in p_high],
+        "center_world": [float(v) for v in center],
+        "size_world": [float(v) for v in size],
+        "source": "sam3_mask_aligned_depth_percentile",
+        "mask_bbox_xyxy": [int(x0), int(y0), int(x1), int(y1)],
+        "mask_pixels": int(np.count_nonzero(mask)),
+        "valid_depth_pixels": valid_count,
+        "used_depth_pixels": int(zs.size),
+        "depth_percentile_m": [float(z_low), float(z_high)],
+    }
+
 def make_overlay_image(
     color_rgb: np.ndarray,
     mask_bool: np.ndarray,
@@ -357,6 +502,7 @@ class Sam3MaskRunner:
         masked_color_rgba = make_masked_rgba(color_np, mask_bool)
         masked_depth = make_masked_depth(depth_np, mask_bool)
         overlay_rgb = make_overlay_image(color_np, mask_bool, input_box, alpha=0.5)
+        spatial_box = compute_sam3_spatial_box(task, mask_bool, depth_np)
 
         task_name = str(task.get("task_name") or "task")
         prefix = safe_name(task_name)
@@ -382,6 +528,7 @@ class Sam3MaskRunner:
             "depth": depth_name,
             "overlay": overlay_name,
         }
+        task["Sam3SpatialBox"] = spatial_box
         save_task_json(json_path, task)
 
         best_score = None
@@ -397,6 +544,7 @@ class Sam3MaskRunner:
         print(f"[OK] overlay -> {overlay_out}")
         if best_score is not None:
             print(f"[INFO] score -> {best_score:.6f}")
+        print(f"[INFO] spatial box -> {spatial_box.get('status')}")
         print(f"[OK] JSON updated -> {json_path}")
 
 

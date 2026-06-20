@@ -1342,6 +1342,65 @@ public class ShuJuQingQiu : MonoBehaviour
         return TryReadVector3(positionToken, out position) && TryReadQuaternion(rotationToken, out rotation);
     }
 
+    bool TryParseSpatialBoxToken(JToken boxToken, out RuntimeSpatialBoxData spatialBox)
+    {
+        spatialBox = null;
+        if (boxToken == null || boxToken.Type == JTokenType.Null)
+        {
+            return false;
+        }
+
+        string status = boxToken["status"]?.ToString() ?? "";
+        string coordinateSpace = boxToken["coordinate_space"]?.ToString() ?? "unity_world";
+        if (status != "ready" || coordinateSpace != "unity_world")
+        {
+            return false;
+        }
+
+        Vector3 minWorld;
+        Vector3 maxWorld;
+        if (!TryReadVector3(boxToken["aabb_min_world"], out minWorld)
+            || !TryReadVector3(boxToken["aabb_max_world"], out maxWorld))
+        {
+            Vector3 centerWorld;
+            Vector3 sizeWorld;
+            if (!TryReadVector3(boxToken["center_world"], out centerWorld)
+                || !TryReadVector3(boxToken["size_world"], out sizeWorld))
+            {
+                return false;
+            }
+
+            Vector3 half = new Vector3(
+                Mathf.Abs(sizeWorld.x) * 0.5f,
+                Mathf.Abs(sizeWorld.y) * 0.5f,
+                Mathf.Abs(sizeWorld.z) * 0.5f
+            );
+            minWorld = centerWorld - half;
+            maxWorld = centerWorld + half;
+        }
+
+        Vector3 sortedMin = new Vector3(
+            Mathf.Min(minWorld.x, maxWorld.x),
+            Mathf.Min(minWorld.y, maxWorld.y),
+            Mathf.Min(minWorld.z, maxWorld.z)
+        );
+        Vector3 sortedMax = new Vector3(
+            Mathf.Max(minWorld.x, maxWorld.x),
+            Mathf.Max(minWorld.y, maxWorld.y),
+            Mathf.Max(minWorld.z, maxWorld.z)
+        );
+
+        spatialBox = new RuntimeSpatialBoxData
+        {
+            IsReady = true,
+            Status = status,
+            CoordinateSpace = coordinateSpace,
+            AabbMinWorld = sortedMin,
+            AabbMaxWorld = sortedMax,
+        };
+        return true;
+    }
+
     JToken NonNullToken(JToken token)
     {
         return token == null || token.Type == JTokenType.Null ? null : token;
@@ -1487,12 +1546,19 @@ public class ShuJuQingQiu : MonoBehaviour
             poseData.ResponseArucoReferenceRotation = arucoReferenceRotation;
         }
 
+        RuntimeSpatialBoxData spatialBox = null;
+        TryParseSpatialBoxToken(
+            NonNullToken(modelJ["sam3_spatial_box"]) ?? NonNullToken(jo["sam3_spatial_box"]),
+            out spatialBox
+        );
+
         instance = new RuntimeModelInstance
         {
             ModelKey = modelKey,
             TaskId = modelJ["task_id"]?.ToString() ?? jo["task_id"]?.ToString() ?? "",
             FbxUrl = fbxUrl,
             Pose = poseData,
+            SpatialBox = spatialBox,
         };
         return true;
     }
@@ -1594,6 +1660,7 @@ public class ShuJuQingQiu : MonoBehaviour
         JToken objectWorld = NonNullToken(modelJ["object_world"]);
         JToken objectAruco = NonNullToken(modelJ["object_aruco"]);
         JToken arucoReference = NonNullToken(modelJ["aruco_reference"]);
+        JToken spatialBox = NonNullToken(modelJ["sam3_spatial_box"]);
         if (objectWorld != null)
         {
             modelInstance["object_world"] = objectWorld.DeepClone();
@@ -1605,6 +1672,10 @@ public class ShuJuQingQiu : MonoBehaviour
         if (arucoReference != null)
         {
             modelInstance["aruco_reference"] = arucoReference.DeepClone();
+        }
+        if (spatialBox != null)
+        {
+            modelInstance["sam3_spatial_box"] = spatialBox.DeepClone();
         }
 
         return modelInstance;
@@ -1636,6 +1707,7 @@ public class ShuJuQingQiu : MonoBehaviour
         JToken objectWorld = NonNullToken(modelJ["object_world"]);
         JToken objectAruco = NonNullToken(modelJ["object_aruco"]);
         JToken arucoReference = NonNullToken(modelJ["aruco_reference"]);
+        JToken spatialBox = NonNullToken(modelJ["sam3_spatial_box"]);
         if (objectWorld != null)
         {
             wrapper["object_world"] = objectWorld.DeepClone();
@@ -1648,6 +1720,15 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             wrapper["aruco_reference"] = arucoReference.DeepClone();
         }
+        if (spatialBox != null)
+        {
+            wrapper["sam3_spatial_box"] = spatialBox.DeepClone();
+            if (modelInstance["sam3_spatial_box"] == null)
+            {
+                modelInstance["sam3_spatial_box"] = spatialBox.DeepClone();
+            }
+        }
+        wrapper["model_instance"] = modelInstance.DeepClone();
 
         pendingModelShouldPlaceDebugMarkers = false;
         if (!ApplyCompletedTaskResponse(wrapper, "SPATIAL", false, false))
@@ -1731,6 +1812,10 @@ public class ShuJuQingQiu : MonoBehaviour
             pendingDownload.debugArucoRotation = pendingModelInstance.Pose.ResponseArucoReferenceRotation;
         }
 
+        if (ModelEventDisplay.Instance != null)
+        {
+            ModelEventDisplay.Instance.ShowForModel(pendingModelInstance, "download");
+        }
 
         var request = new HTTPRequest(new Uri(pendingModelInstance.FbxUrl), HTTPMethods.Get, OnRequestXiaZai);
         request.Tag = pendingDownload;
