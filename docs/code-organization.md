@@ -31,7 +31,7 @@
 : Shigurei RGB-D 历史缓存 stage。它只缓存按时间戳命名的 RGB 图、Depth 图、相机参数和必要时间信息；不记录独立 `frame` 目录、people detection、骨骼、手腕或其它事件判断数据。Shigurei 侧 ArMarker pose 作为稳定相机标定单独维护在全局历史文件中，不写进每帧 RGB-D cache。
 
 `code/stages/taken_object_detection/`
-: 新的拿取判断 stage。它从扁平 Shigurei RGB-D history 读取数据，输出 `TakenObjectDetection.result_timestamp` 和 `backup_shigurei_dir`，不依赖 Shigurei people detection、骨骼、手腕或旧事件缓存。
+: 新的拿取判断 stage。它从 chunked Shigurei RGB-D history 读取数据，输出 `TakenObjectDetection.result_timestamp` 和 `backup_shigurei_dir`，不依赖 Shigurei people detection、骨骼、手腕或旧事件缓存。
 
 `code/stages/sam3d_body_mesh/`
 : 新的人体 mesh stage。它只读取拿取判断备份出的结果帧，调用 SAM3D Body 生成人体 mesh/关节，用 SAM3D Body 自身手腕关节选择拿取者，并只导出被选中人的 FBX。
@@ -200,16 +200,17 @@ code/stages/shigure_history/settings.py
 
 ## Shigurei 缓存约定
 
-Shigurei 侧只负责给服务器提供最近一段 RGB-D 历史，不承载事件语义。缓存写法固定为扁平文件，不再为每个采样创建子目录：
+Shigurei 侧只负责给服务器提供最近一段 RGB-D + YOLO 历史，不承载旧事件语义。缓存写法固定为 10 秒视频 chunk，不再为每个采样创建长期 PNG 子目录：
 
 ```text
-<timestamp>_rgb.png
-<timestamp>_depth.png
-<timestamp>_meta.json
-<timestamp>_camera_info.json
+chunks/<chunk_start>/rgb.mp4
+chunks/<chunk_start>/depth.mkv
+chunks/<chunk_start>/camera_info.json
+chunks/<chunk_start>/chunk_manifest.json
+yolo_payloads/<sha256>.json
 ```
 
-相机参数去重：如果当前 camera info 与最近一次相同，不写新的 `_camera_info.json`；读取时默认向前查找最新可用相机参数。`_meta.json` 只记录时间戳、RGB/Depth 文件名、camera info 引用和必要的写入状态，不写 people detection、pose keypoints、skeleton、wrist、contact、event 等数据。
+`chunk_manifest.json` 记录每帧时间戳、视频帧号和 `yolo_hash`。读取大范围历史时以 chunk 为单位批量解码，并用内存 LRU 最多缓存 5 个 decoded chunk；不会把 decoded frames 重新落盘。YOLO payload 按 hash 去重，删除旧 chunk 后只清理未被任何剩余 manifest 引用的 payload。
 
 Shigurei ArMarker 约定：worker 启动后，Shigurei history recorder 会在后续 RGB-D 样本中尝试累计约 5 次可见 marker 检测并更新 `data/aruco/shigure_marker_history/latest_marker_6d_pose.json`，同时保留历史快照。拿取判断备份和 SAM3D Body 的 Shigurei camera -> ArMarker 转换都从这个历史文件读取，不再扫描 `.test`、旧 fusion 输出或每帧缓存里的 marker 数据。
 

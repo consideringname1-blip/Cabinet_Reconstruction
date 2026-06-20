@@ -64,8 +64,7 @@ def parse_float_array(value: Any, count: int, label: str) -> np.ndarray:
     return array
 
 
-def load_camera_info(camera_info_path: Path) -> tuple[np.ndarray, np.ndarray, int, int]:
-    payload = load_json(camera_info_path)
+def load_camera_info_payload(payload: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, int, int]:
     message = payload.get('message') if isinstance(payload.get('message'), dict) else payload
     camera_matrix = parse_float_array(
         message.get('k') or message.get('K') or message.get('camera_matrix'),
@@ -164,12 +163,17 @@ def pose_payload(rotation: np.ndarray, translation: np.ndarray) -> dict[str, Any
 
 
 def estimate_from_sample(sample: CachedRgbdSample) -> dict[str, Any] | None:
-    if sample.camera_info_path is None or not sample.camera_info_path.is_file():
+    if sample.camera_info is not None:
+        camera_matrix, distortion, width, height = load_camera_info_payload(sample.camera_info)
+    elif sample.camera_info_path is not None and sample.camera_info_path.is_file():
+        camera_matrix, distortion, width, height = load_camera_info(sample.camera_info_path)
+    else:
         return None
-    image = cv2.imread(str(sample.rgb_path), cv2.IMREAD_COLOR)
+    image = sample.rgb_bgr if sample.rgb_bgr is not None else None
+    if image is None and sample.rgb_path is not None:
+        image = cv2.imread(str(sample.rgb_path), cv2.IMREAD_COLOR)
     if image is None:
         return None
-    camera_matrix, distortion, width, height = load_camera_info(sample.camera_info_path)
     markers = resolve_marker_configs_for_shigure()
     if not markers:
         return None
@@ -214,8 +218,8 @@ def estimate_from_sample(sample: CachedRgbdSample) -> dict[str, Any] | None:
                 {
                     'stamp': sample.stamp.to_dict(),
                     'sample_key': sample_key(sample.stamp),
-                    'rgb_image': str(sample.rgb_path),
-                    'camera_info': str(sample.camera_info_path),
+                    'rgb_image': str(sample.rgb_path) if sample.rgb_path else f'chunk:{sample.chunk_id}:{sample.frame_index}',
+                    'camera_info': str(sample.camera_info_path) if sample.camera_info_path else f'chunk:{sample.chunk_id}:camera_info',
                     'marker_id': int(marker['marker_id']),
                     'dictionary': dictionary_name,
                     'marker_size_mm': float(marker['marker_size_mm']),

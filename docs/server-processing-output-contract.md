@@ -83,7 +83,7 @@ data/output/runtime_mesh/            # runtime OBJ/MTL/PNG
 data/output/blender/fbx/             # 物体最终 FBX
 data/output/taken_object_detection/  # 拿取判断结果帧备份和 debug
 data/output/sam3d_body/              # 人体 mesh/FBX 输出
-data/shigure_history_cache/          # 扁平 Shigurei RGB-D history
+data/shigure_history_cache/          # chunked Shigurei RGB-D + YOLO history
 data/aruco/runtime/                  # HoloLens ArUco reference record
 data/aruco/shigure_marker_history/   # Shigurei camera 下的 ArMarker pose history
 ```
@@ -214,39 +214,68 @@ Minimum runtime input:
   - RGB compressed image, default `/rs/color/compressed`
   - aligned depth compressed image, default `/rs/aligned_depth_to_color/compressedDepth`
   - CameraInfo, default `/rs/aligned_depth_to_color/cameraInfo`
-- ROS environment from `code/ros2/shigure_recv_ws/setup_env.sh`; normal server startup bootstraps this automatically through the recorder. Manual ROS2 topic checks can source the same file directly.
+  - YOLO/segmentation JSON, default `/tracking/active_objects`
+- ROS environment from `code/ros2/shigure_recv_ws/setup_env.sh`; normal server startup bootstraps this automatically through the recorder.
 
-Stable output files in `data/shigure_history_cache/`:
+Stable output layout in `data/shigure_history_cache/`:
 
 ```text
-<sec>_<nsec>_rgb.png
-<sec>_<nsec>_depth.png
-<sec>_<nsec>_meta.json
-<sec>_<nsec>_camera_info.json        # 仅 camera info 变化时写入
+chunks/
+  <chunk_start_sample_key>/
+    rgb.mp4                  # H.264 RGB video, default CRF 18
+    depth.mkv                # FFV1 lossless uint16 depth video
+    camera_info.json         # latest CameraInfo payload for the chunk
+    chunk_manifest.json      # frame stamps, frame indexes, yolo_hash refs
+yolo_payloads/
+  <sha256>.json              # deduplicated /tracking/active_objects JSON with mask_b64
 recorder_status.json
 ```
 
-`_meta.json` contains only RGB-D sample metadata:
+Default retention and encoding settings:
+
+- `SHIGURE_HISTORY_HZ=5.0`
+- `SHIGURE_HISTORY_CHUNK_SECONDS=10.0`, so a full chunk normally contains 50 frames
+- `SHIGURE_HISTORY_SECONDS=600.0`, so the ring buffer keeps about 10 minutes
+- `SHIGURE_HISTORY_DECODED_CHUNK_CACHE_MAX=5`, controlling the in-memory decoded chunk LRU
+
+`chunk_manifest.json` records each sampled frame:
 
 ```json
 {
-  "stamp": {"sec": 0, "nanosec": 0},
-  "rgb_path": "<timestamp>_rgb.png",
-  "depth_path": "<timestamp>_depth.png",
-  "camera_info_path": "<timestamp>_camera_info.json",
-  "camera_info_sha256": "...",
-  "camera_info_reused": false,
-  "written_at": "..."
+  "chunk_id": "<chunk_start_sample_key>",
+  "fps": 5.0,
+  "width": 1280,
+  "height": 720,
+  "frame_count": 50,
+  "start_seconds": 0.0,
+  "end_seconds": 0.0,
+  "rgb_video": "rgb.mp4",
+  "depth_video": "depth.mkv",
+  "camera_info": "camera_info.json",
+  "frames": [
+    {
+      "frame_index": 0,
+      "stamp": {"sec": 0, "nanosec": 0},
+      "sample_key": "0000000000_000000000",
+      "headers": {},
+      "topic_counts": {},
+      "yolo_hash": "..."
+    }
+  ]
 }
 ```
 
+The read side is `stages.shigure_history.cache.ShigureRgbdCache`. Large range reads should use `iter_samples(start=..., end=...)`; it filters manifests first, then decodes each overlapping chunk once and serves frames from an in-memory LRU. Single-frame callers can use `get_sample(stamp, mode="nearest")`. Active deletion of decoded frames is `clear_decoded_cache()`. No decoded frame cache is written to disk.
+
+Pruning deletes old whole chunk directories and then removes YOLO payloads that are no longer referenced by any remaining manifest. This reference-based cleanup preserves a YOLO result for every retained RGB-D frame even when `/tracking/active_objects` publishes more slowly than RGB-D.
+
 Important negative contract:
 
+- 不再写扁平 `<timestamp>_rgb.png` / `<timestamp>_depth.png` / `<timestamp>_meta.json` cache。
+- 不把 decoded chunk 帧缓存到磁盘；读取时只进入内存 LRU。
 - 不写 people detection。
 - 不写 skeleton / wrist / contact。
-- 不写 frame 子目录。
 - 不写事件判断状态。
-- CameraInfo 重复时不保留重复文件，读取时向前找最近 camera info。
 
 ### Shigurei ArMarker history
 

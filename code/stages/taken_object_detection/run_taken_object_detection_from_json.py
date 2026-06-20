@@ -135,17 +135,20 @@ def _stamp_from_seconds(seconds: float) -> RosStamp:
     return RosStamp(sec=int(sec), nanosec=int(nanosec))
 
 
-def _read_depth_m(path: Path) -> np.ndarray:
-    depth = np.asarray(Image.open(path)).astype(np.float32)
+def _depth_raw_to_m(depth_raw: np.ndarray) -> np.ndarray:
+    depth = np.asarray(depth_raw).astype(np.float32)
     finite = depth[np.isfinite(depth) & (depth > 0)]
     if finite.size and float(np.nanmedian(finite)) > 20.0:
         depth = depth / 1000.0
     return depth.astype(np.float32)
 
 
-def _read_rgb(path: Path) -> np.ndarray:
-    with Image.open(path) as image:
-        return np.asarray(image.convert('RGB'), dtype=np.float32)
+def _sample_depth_m(sample: CachedRgbdSample) -> np.ndarray:
+    return _depth_raw_to_m(sample.depth)
+
+
+def _sample_rgb(sample: CachedRgbdSample) -> np.ndarray:
+    return np.asarray(sample.rgb_bgr[:, :, ::-1], dtype=np.float32)
 
 
 def _resolve_upload_file(name: str | None) -> Path | None:
@@ -232,9 +235,7 @@ def _init_trusted_mask(frames: list[CachedRgbdSample], projected_mask: np.ndarra
     depths = []
     used_frames: list[CachedRgbdSample] = []
     for sample in frames:
-        if not sample.depth_path.is_file():
-            continue
-        depth = _read_depth_m(sample.depth_path)
+        depth = _sample_depth_m(sample)
         if depth.shape != projected_mask.shape:
             continue
         depths.append(depth)
@@ -286,7 +287,7 @@ def _init_trusted_mask(frames: list[CachedRgbdSample], projected_mask: np.ndarra
 
 
 def _classify_frame(sample: CachedRgbdSample, trusted_mask: np.ndarray, reference_depth: np.ndarray) -> tuple[FrameDecision, np.ndarray, np.ndarray]:
-    depth = _read_depth_m(sample.depth_path)
+    depth = _sample_depth_m(sample)
     if depth.shape != trusted_mask.shape:
         raise ValueError(f'depth shape {depth.shape} does not match trusted mask {trusted_mask.shape}')
     valid = trusted_mask & np.isfinite(depth) & (depth > 0.0) & (reference_depth > 0.0)
@@ -329,11 +330,11 @@ def _rgb_diff(a: np.ndarray, b: np.ndarray, mask: np.ndarray) -> float | None:
 
 def _backtrack_rgb_frame(frames: list[CachedRgbdSample], depth_frame: CachedRgbdSample, init_frame: CachedRgbdSample, trusted_mask: np.ndarray) -> tuple[CachedRgbdSample, dict[str, Any]]:
     start_seconds = depth_frame.stamp.seconds - max(0.0, settings.RGB_BACKTRACK_SECONDS)
-    candidates = [f for f in frames if start_seconds <= f.stamp.seconds <= depth_frame.stamp.seconds and f.rgb_path.is_file()]
+    candidates = [f for f in frames if start_seconds <= f.stamp.seconds <= depth_frame.stamp.seconds]
     if not candidates:
         return depth_frame, {'status': 'fallback_no_rgb_candidates'}
     try:
-        init_rgb = _read_rgb(init_frame.rgb_path)
+        init_rgb = _sample_rgb(init_frame)
     except Exception as exc:
         return depth_frame, {'status': 'fallback_no_init_rgb', 'reason': str(exc)}
     rgb_cache: dict[str, np.ndarray] = {}
@@ -343,11 +344,11 @@ def _backtrack_rgb_frame(frames: list[CachedRgbdSample], depth_frame: CachedRgbd
         frame = candidates[index]
         try:
             key = sample_key(frame.stamp)
-            rgb = rgb_cache.setdefault(key, _read_rgb(frame.rgb_path))
+            rgb = rgb_cache.setdefault(key, _sample_rgb(frame))
             prev_rgb = None
             if index > 0:
                 prev_key = sample_key(candidates[index - 1].stamp)
-                prev_rgb = rgb_cache.setdefault(prev_key, _read_rgb(candidates[index - 1].rgb_path))
+                prev_rgb = rgb_cache.setdefault(prev_key, _sample_rgb(candidates[index - 1]))
             init_diff = _rgb_diff(rgb, init_rgb, trusted_mask)
             adjacent_diff = _rgb_diff(rgb, prev_rgb, trusted_mask) if prev_rgb is not None else 0.0
         except Exception:
@@ -385,10 +386,16 @@ def _backup_sample(task: Mapping[str, Any], sample: CachedRgbdSample, output_roo
     if backup_dir.exists():
         shutil.rmtree(backup_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(sample.rgb_path, backup_dir / 'rgb.png')
-    shutil.copy2(sample.depth_path, backup_dir / 'depth.png')
-    if sample.camera_info_path and sample.camera_info_path.is_file():
+    Image.fromarray(sample.rgb_bgr[:, :, ::-1]).save(backup_dir / 'rgb.png')
+    Image.fromarray(np.asarray(sample.depth, dtype=np.uint16)).save(backup_dir / 'depth.png')
+    if sample.camera_info is not None:
+        _write_json(backup_dir / 'camera_info.json', sample.camera_info)
+    elif sample.camera_info_path and sample.camera_info_path.is_file():
         shutil.copy2(sample.camera_info_path, backup_dir / 'camera_info.json')
+    if sample.yolo is not None:
+        _write_json(backup_dir / 'active_objects.json', sample.yolo)
+    elif sample.yolo_path and sample.yolo_path.is_file():
+        shutil.copy2(sample.yolo_path, backup_dir / 'active_objects.json')
     marker_pose = _find_marker_pose_path()
     if marker_pose is not None:
         shutil.copy2(marker_pose, backup_dir / 'marker_6d_pose.json')
@@ -396,9 +403,10 @@ def _backup_sample(task: Mapping[str, Any], sample: CachedRgbdSample, output_roo
         backup_dir / 'meta.json',
         {
             'stamp': sample.stamp.to_dict(),
-            'source_rgb_path': str(sample.rgb_path),
-            'source_depth_path': str(sample.depth_path),
+            'source_chunk_id': sample.chunk_id,
+            'source_frame_index': sample.frame_index,
             'source_camera_info_path': str(sample.camera_info_path) if sample.camera_info_path else None,
+            'source_yolo_hash': sample.yolo_hash,
             'marker_pose_copied': marker_pose is not None,
             'written_at': _utc_now(),
         },
@@ -437,7 +445,7 @@ def run_taken_object_detection(json_path_arg: str | Path) -> dict[str, Any]:
 
     start = _stamp_from_seconds(capture_seconds)
     end = _stamp_from_seconds(capture_seconds + settings.TRACKING_DURATION_SECONDS)
-    frames = [sample for sample in cache.iter_samples(start=start, end=end) if sample.rgb_path.is_file() and sample.depth_path.is_file()]
+    frames = list(cache.iter_samples(start=start, end=end))
     tracking_window = {
         'capture_time_source': capture_source,
         'capture_time_seconds': capture_seconds,
@@ -455,7 +463,7 @@ def run_taken_object_detection(json_path_arg: str | Path) -> dict[str, Any]:
         _write_status(json_path, task, 'INIT_FAILED', reason='first_frame_too_late', tracking_window=tracking_window, output_dir=str(output_dir))
         return {'status': 'INIT_FAILED', 'reason': 'first_frame_too_late'}
 
-    first_depth = _read_depth_m(frames[0].depth_path)
+    first_depth = _sample_depth_m(frames[0])
     projected_mask, projection = _resolve_projected_mask(task, first_depth)
     if projected_mask is None:
         _write_status(json_path, task, 'INIT_FAILED', reason='projected_mask_missing', tracking_window=tracking_window, projection=projection, output_dir=str(output_dir))
