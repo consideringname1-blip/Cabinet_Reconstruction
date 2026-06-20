@@ -7,7 +7,7 @@
 - 会产生哪些图片、mesh、JSON、NPY/NPZ、数据库记录。
 - 哪些输出是客户端/下游稳定依赖，哪些只是调试或可选产物。
 
-坐标系细节见 `docs/coordinate-systems.md`。拿取判断算法细节见 `docs/拿取判断状态机.md`。SAM3D Body 设计细节见 `docs/sam3dbody相关.md`。
+坐标系细节见 `docs/coordinate-systems.md`。Shigurei ROS2 topic 和消息格式见 `docs/shigure-core-ros-messages.md`。拿取判断算法细节见 `docs/拿取判断状态机.md`。SAM3D Body 设计细节见 `docs/sam3dbody相关.md`。
 
 ## Pipeline Overview
 

@@ -55,7 +55,7 @@
 : 临时实验、诊断和一次性跑数脚本。不要把生产逻辑放到这里；一旦需要长期保留，移动到 `code/scripts/` 或正式 stage 目录。
 
 `docs/`
-: 设计说明和约定文档。坐标系说明见 `docs/coordinate-systems.md`；服务器处理流程、JSON 输出和目录契约见 `docs/server-processing-output-contract.md`。
+: 设计说明和约定文档。坐标系说明见 `docs/coordinate-systems.md`；服务器处理流程、JSON 输出和目录契约见 `docs/server-processing-output-contract.md`；Shigurei ROS2 topic 和消息格式见 `docs/shigure-core-ros-messages.md`。
 
 `data/`
 : 运行时输入、输出、数据库、配置快照。代码不要从 `data/` import Python 模块。
