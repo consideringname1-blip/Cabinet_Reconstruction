@@ -210,7 +210,9 @@ chunks/<chunk_start>/chunk_manifest.json
 yolo_payloads/<sha256>.json
 ```
 
-`chunk_manifest.json` 记录每帧时间戳、视频帧号和 `yolo_hash`。读取大范围历史时以 chunk 为单位批量解码，并用内存 LRU 最多缓存 5 个 decoded chunk；不会把 decoded frames 重新落盘。YOLO payload 按 hash 去重，删除旧 chunk 后只清理未被任何剩余 manifest 引用的 payload。
+`chunk_manifest.json` 记录每帧时间戳、视频帧号和 `yolo_hash`。读取大范围历史时，调用方应先使用 metadata/YOLO 迭代器扫描 manifest 和去重 YOLO；只有需要 RGB-D 的时间段才以 chunk 为单位解码。decoded chunk 用内存 LRU 最多缓存 5 个，不会把 decoded frames 重新落盘。YOLO payload 按 hash 去重，删除旧 chunk 后只清理未被任何剩余 manifest 引用的 payload。
+
+recorder 进程内还维护最近一个 chunk 长度的 raw RGB-D ring buffer，用于同进程实时读取当前未 finalize 的最新帧；跨进程读取仍以已经写完 manifest 的 chunk 为准。
 
 Shigurei ArMarker 约定：worker 启动后，Shigurei history recorder 会在后续 RGB-D 样本中尝试累计约 5 次可见 marker 检测并更新 `data/aruco/shigure_marker_history/latest_marker_6d_pose.json`，同时保留历史快照。拿取判断备份和 SAM3D Body 的 Shigurei camera -> ArMarker 转换都从这个历史文件读取，不再扫描 `.test`、旧 fusion 输出或每帧缓存里的 marker 数据。
 

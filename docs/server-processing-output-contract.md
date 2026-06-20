@@ -944,14 +944,17 @@ Minimum input:
 
 - Task capture time, preferably `PVCameraFrames[].time`, `PVCamera.time`, `device.time`, or fallback `server_received_utc`.
 - Shigurei RGB-D history in `data/shigure_history_cache/` covering capture time.
-- A projected/tracking mask source, in priority order:
+- Default YOLO-first mode requires:
+  - deduplicated `/tracking/active_objects` payloads in Shigure history, with `object_id`, `bbox`, `x`, `y`, and full-frame `mask_b64`.
+  - `ModelBounds.aabb_min_aruco` / `ModelBounds.aabb_max_aruco`, or fallback `object_aruco.position`, for object center projection.
+  - latest Shigurei ArMarker history: `data/aruco/shigure_marker_history/latest_marker_6d_pose.json`.
+- Legacy projected-mask mode is no longer the default. It is used only when explicitly selected or when `TAKEN_OBJECT_ENABLE_LEGACY_FALLBACK=true` after YOLO initialization failure. Its mask source priority is:
   - env `TAKEN_OBJECT_PROJECTED_MASK` or `TAKEN_OBJECT_PROJECTED_MASK_PATH`
   - `TakenObjectProjection.mask_path`
   - legacy `ModelEventTracking.current_support_mask_path`
   - `sam3Name.mask` resized fallback
   - `SelectionBox` scaled fallback, if enabled
-- For downstream body stage, latest Shigurei ArMarker history if available:
-  - `data/aruco/shigure_marker_history/latest_marker_6d_pose.json`
+- For downstream body stage, latest Shigurei ArMarker history is copied when available.
 
 Output root:
 
@@ -1036,6 +1039,13 @@ Minimum downstream dependency:
 Debug/optional:
 
 - `tracking_window`, `projection`, `init`, RGB backtrack metadata, masks, `decisions.json`.
+
+Configuration notes:
+
+- `TAKEN_OBJECT_TRACKING_MODE=yolo_primary` is the default.
+- Direct legacy mode requires `TAKEN_OBJECT_TRACKING_MODE=legacy_projected_mask` and `TAKEN_OBJECT_ENABLE_LEGACY_PROJECTED_MASK=true`.
+- YOLO-first initialization looks back up to `TAKEN_OBJECT_YOLO_PRE_CAPTURE_UNIQUE_COUNT` unique YOLO payloads only as auxiliary id evidence, then waits up to `TAKEN_OBJECT_YOLO_INIT_HARD_TIMEOUT_SECONDS` after capture for stable post-capture YOLO.
+- Large-range reads first scan chunk manifests and YOLO payload hashes. RGB-D chunks are decoded only for YOLO depth matching, initialization, depth confirmation, RGB backtracking, or legacy fallback.
 
 ### 13. `sam3d_body_mesh`
 

@@ -62,6 +62,83 @@ class CachedRgbdSample:
         }
 
 
+
+@dataclass(frozen=True)
+class CachedSampleMetadata:
+    stamp: RosStamp
+    camera_info_path: Path | None
+    camera_info: dict[str, Any] | None = None
+    yolo_path: Path | None = None
+    yolo_hash: str | None = None
+    chunk_id: str | None = None
+    frame_index: int = 0
+
+    @property
+    def key(self) -> str:
+        return sample_key(self.stamp)
+
+    def load_yolo(self) -> dict[str, Any] | None:
+        if self.yolo_path is None or not self.yolo_path.is_file():
+            return None
+        return load_json(self.yolo_path)
+
+
+class RecentRawSampleBuffer:
+    def __init__(self, *, max_seconds: float, max_samples: int) -> None:
+        self.max_seconds = max(0.0, float(max_seconds))
+        self.max_samples = max(0, int(max_samples))
+        self._samples: OrderedDict[str, CachedRgbdSample] = OrderedDict()
+
+    def append(self, sample: CachedRgbdSample) -> None:
+        if self.max_samples <= 0:
+            return
+        copied = CachedRgbdSample(
+            stamp=sample.stamp,
+            rgb_bgr=np.asarray(sample.rgb_bgr).copy(),
+            depth=np.asarray(sample.depth).copy(),
+            camera_info_path=sample.camera_info_path,
+            camera_info=dict(sample.camera_info) if sample.camera_info is not None else None,
+            yolo_path=sample.yolo_path,
+            yolo=dict(sample.yolo) if sample.yolo is not None else None,
+            yolo_hash=sample.yolo_hash,
+            chunk_id=sample.chunk_id,
+            frame_index=sample.frame_index,
+            rgb_path=sample.rgb_path,
+            depth_path=sample.depth_path,
+        )
+        self._samples[copied.key] = copied
+        self._samples.move_to_end(copied.key)
+        self._prune(newest_seconds=copied.stamp.seconds)
+
+    def iter_samples(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedRgbdSample]:
+        start_seconds = start.seconds if start is not None else None
+        end_seconds = end.seconds if end is not None else None
+        for sample in list(self._samples.values()):
+            seconds = sample.stamp.seconds
+            if start_seconds is not None and seconds < start_seconds:
+                continue
+            if end_seconds is not None and seconds > end_seconds:
+                continue
+            yield sample
+
+    def newest_sample(self) -> CachedRgbdSample | None:
+        if not self._samples:
+            return None
+        return next(reversed(self._samples.values()))
+
+    def clear(self) -> None:
+        self._samples.clear()
+
+    def _prune(self, *, newest_seconds: float) -> None:
+        cutoff = newest_seconds - self.max_seconds if self.max_seconds > 0 else None
+        while len(self._samples) > self.max_samples:
+            self._samples.popitem(last=False)
+        if cutoff is not None:
+            for key, sample in list(self._samples.items()):
+                if sample.stamp.seconds < cutoff:
+                    self._samples.pop(key, None)
+
+
 def sample_key(stamp: RosStamp) -> str:
     return f'{int(stamp.sec):010d}_{int(stamp.nanosec):09d}'
 
@@ -175,6 +252,7 @@ class ChunkedShigureHistoryWriter:
         self._camera_info: dict[str, Any] | None = None
         self._width: int | None = None
         self._height: int | None = None
+        self.recent_buffer = RecentRawSampleBuffer(max_seconds=self.chunk_seconds, max_samples=self.max_frames_per_chunk)
 
     def append_sample(self, *, stamp: RosStamp, rgb_bgr: np.ndarray, depth: np.ndarray, camera_info: Mapping[str, Any], yolo_payload: str | None, headers: Mapping[str, Any], topic_counts: Mapping[str, int]) -> dict[str, Any]:
         if rgb_bgr.ndim != 3 or rgb_bgr.shape[2] != 3:
@@ -188,11 +266,18 @@ class ChunkedShigureHistoryWriter:
         assert self._encoder is not None
         assert self._chunk_id is not None
         yolo_hash = self._store_yolo(yolo_payload) if yolo_payload else None
+        yolo = None
+        if yolo_payload:
+            try:
+                yolo = json.loads(yolo_payload)
+            except Exception:
+                yolo = None
         frame_index = len(self._frames)
         self._encoder.write(rgb_bgr, depth)
         self._camera_info = dict(camera_info)
         frame = {'frame_index': frame_index, 'stamp': stamp.to_dict(), 'sample_key': sample_key(stamp), 'headers': dict(headers), 'topic_counts': dict(topic_counts), 'yolo_hash': yolo_hash}
         self._frames.append(frame)
+        self.recent_buffer.append(CachedRgbdSample(stamp=stamp, rgb_bgr=rgb_bgr, depth=depth, camera_info_path=None, camera_info=dict(camera_info), yolo=yolo if isinstance(yolo, dict) else None, yolo_hash=yolo_hash, chunk_id=self._chunk_id, frame_index=frame_index))
         return {'chunk_id': self._chunk_id, **frame}
 
     def finalize_current_chunk(self) -> Path | None:
@@ -268,6 +353,31 @@ class ShigureRgbdCache:
     def clear_decoded_cache(self) -> None:
         self._decoded_chunks.clear()
 
+    def iter_sample_metadata(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedSampleMetadata]:
+        start_seconds = start.seconds if start is not None else None
+        end_seconds = end.seconds if end is not None else None
+        for chunk_dir, manifest in self._iter_chunk_manifests(start_seconds=start_seconds, end_seconds=end_seconds):
+            camera_info_path = chunk_dir / str(manifest.get('camera_info') or 'camera_info.json')
+            camera_info = load_json(camera_info_path) if camera_info_path.is_file() else None
+            for frame in manifest.get('frames') or []:
+                stamp = RosStamp.from_dict(frame.get('stamp') or {})
+                seconds = stamp.seconds
+                if start_seconds is not None and seconds < start_seconds:
+                    continue
+                if end_seconds is not None and seconds > end_seconds:
+                    continue
+                yolo_hash = frame.get('yolo_hash')
+                yolo_path = self.yolo_root / f'{yolo_hash}.json' if yolo_hash else None
+                yield CachedSampleMetadata(
+                    stamp=stamp,
+                    camera_info_path=camera_info_path if camera_info_path.is_file() else None,
+                    camera_info=camera_info,
+                    yolo_path=yolo_path if yolo_path and yolo_path.is_file() else None,
+                    yolo_hash=str(yolo_hash) if yolo_hash else None,
+                    chunk_id=str(manifest.get('chunk_id') or chunk_dir.name),
+                    frame_index=int(frame.get('frame_index', 0)),
+                )
+
     def iter_samples(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedRgbdSample]:
         start_seconds = start.seconds if start is not None else None
         end_seconds = end.seconds if end is not None else None
@@ -304,10 +414,14 @@ class ShigureRgbdCache:
         return newest
 
     def get_sample(self, stamp: RosStamp, *, mode: str = 'nearest') -> CachedRgbdSample | None:
+        target = stamp.seconds
+        if mode == 'nearest':
+            samples = list(self.iter_samples(start=stamp, end=stamp))
+            if samples:
+                return min(samples, key=lambda sample: abs(sample.stamp.seconds - target))
         samples = list(self.iter_samples())
         if not samples:
             return None
-        target = stamp.seconds
         if mode == 'before':
             candidates = [sample for sample in samples if sample.stamp.seconds <= target]
             return candidates[-1] if candidates else None
