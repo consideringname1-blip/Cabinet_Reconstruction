@@ -46,6 +46,10 @@ public class ShuJuQingQiu : MonoBehaviour
     public HoloLensDepthAquirer DP_controler;
 
     [SerializeField] private SelectionPanelManager selectionPanelManager;
+
+    [Header("History Placement Restoration")]
+    [SerializeField, Min(0)] private int historyPlacementRestorationModelLimit = 5;
+
     private bool isMarkerCaptureActive = false;
 
     private class MarkerCaptureFrame
@@ -93,6 +97,9 @@ public class ShuJuQingQiu : MonoBehaviour
     private bool asyncTaskQueueCheckInFlight = false;
     private bool asyncTaskQueuePaused = false;
     private string asyncTaskQueueActiveTaskId = "";
+    private bool historyPlacementRestorationRequestInFlight = false;
+    private bool historyPlacementRestorationActive = false;
+    private HTTPRequest historyPlacementRestorationRequest;
 
     void Start()
     {
@@ -1178,6 +1185,158 @@ public class ShuJuQingQiu : MonoBehaviour
     public void XiaZaiLiShiWuGeKeYongMoXing()
     {
         QueueLatestCompletedModelsForDownload();
+    }
+
+    public void StartHistoryPlacementRestoration()
+    {
+        if (historyPlacementRestorationActive || historyPlacementRestorationRequestInFlight)
+        {
+            historyPlacementRestorationActive = false;
+            HistoryPlacementRestorationDisplay activeDisplay = HistoryPlacementRestorationDisplay.Instance;
+            if (activeDisplay != null)
+            {
+                activeDisplay.Clear();
+            }
+            if (historyPlacementRestorationRequestInFlight && historyPlacementRestorationRequest != null)
+            {
+                historyPlacementRestorationRequest.Abort();
+            }
+            historyPlacementRestorationRequestInFlight = false;
+            historyPlacementRestorationRequest = null;
+            ShowFrontMessage("history_placement_restoration_off");
+            return;
+        }
+
+        int modelLimit = Mathf.Max(0, historyPlacementRestorationModelLimit);
+        JObject payload = new JObject
+        {
+            ["startup_session_id"] = string.IsNullOrEmpty(startup_session_id) ? "" : startup_session_id,
+            ["model_limit"] = modelLimit,
+        };
+
+        string url = "http://10.40.1.122:7355/history-placement-restoration/start";
+        var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnHistoryPlacementRestorationFinished);
+        request.AddHeader("Content-Type", "application/json;charset=UTF-8");
+        request.RawData = Encoding.UTF8.GetBytes(payload.ToString(Formatting.None));
+        historyPlacementRestorationActive = true;
+        historyPlacementRestorationRequestInFlight = true;
+        historyPlacementRestorationRequest = request;
+        request.Send();
+        ShowFrontMessage("history_placement_restoration_loading");
+    }
+
+    private int QueueHistoryPlacementRestorationModelsForDownload(JObject jo)
+    {
+        JArray results = jo != null ? jo["results"] as JArray : null;
+        if (results == null || results.Count == 0)
+        {
+            return 0;
+        }
+
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
+        int queuedCount = 0;
+        foreach (JToken token in results)
+        {
+            JObject result = token as JObject;
+            if (result == null || result["success"] == null || !result["success"].Value<bool>())
+            {
+                continue;
+            }
+
+            JObject modelInstance = result["model_instance"] as JObject;
+            if (modelInstance == null)
+            {
+                continue;
+            }
+
+            string taskId = modelInstance["task_id"]?.ToString() ?? result["task_id"]?.ToString() ?? "";
+            string modelKey = modelInstance["model_key"]?.ToString() ?? "";
+            bool alreadyLoaded = manager != null
+                && ((!string.IsNullOrEmpty(taskId) && manager.HasModel(taskId))
+                    || (!string.IsNullOrEmpty(modelKey) && manager.HasModel(modelKey)));
+            if (alreadyLoaded)
+            {
+                continue;
+            }
+
+            JObject downloadModel = new JObject
+            {
+                ["task_id"] = taskId,
+                ["model_instance"] = modelInstance.DeepClone(),
+            };
+            foreach (string key in new[] { "object_world", "object_aruco", "aruco_reference", "sam3_spatial_box" })
+            {
+                JToken extra = NonNullToken(result[key]);
+                if (extra != null)
+                {
+                    downloadModel[key] = extra.DeepClone();
+                }
+            }
+
+            if (DownloadRuntimeModelFromSpatialQueryModel(downloadModel))
+            {
+                queuedCount++;
+            }
+        }
+        return queuedCount;
+    }
+
+    private void OnHistoryPlacementRestorationFinished(HTTPRequest request, HTTPResponse response)
+    {
+        historyPlacementRestorationRequestInFlight = false;
+        if (request == historyPlacementRestorationRequest)
+        {
+            historyPlacementRestorationRequest = null;
+        }
+        if (!historyPlacementRestorationActive)
+        {
+            return;
+        }
+        if (response == null || !response.IsSuccess)
+        {
+            historyPlacementRestorationActive = false;
+            string statusCode = response != null ? response.StatusCode.ToString(CultureInfo.InvariantCulture) : "no_response";
+            string message = response != null ? response.Message : "No response from server";
+            Debug.LogError("[HistoryPlacementRestoration] request failed: " + statusCode + " - " + message);
+            ShowFrontMessage("history_placement_restoration_ERR_request_failed");
+            return;
+        }
+
+        JObject jo;
+        try
+        {
+            jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
+        }
+        catch (Exception exc)
+        {
+            historyPlacementRestorationActive = false;
+            Debug.LogError("[HistoryPlacementRestoration] invalid JSON response: " + exc.Message);
+            ShowFrontMessage("history_placement_restoration_ERR_server");
+            return;
+        }
+
+        bool success = jo["success"] == null || jo["success"].Value<bool>();
+        if (!success)
+        {
+            historyPlacementRestorationActive = false;
+            Debug.LogWarning("[HistoryPlacementRestoration] server returned success=false: " + response.DataAsText);
+            ShowFrontMessage("history_placement_restoration_ERR_server");
+            return;
+        }
+
+        int queuedDownloadCount = QueueHistoryPlacementRestorationModelsForDownload(jo);
+        HistoryPlacementRestorationDisplay display = HistoryPlacementRestorationDisplay.Instance;
+        int displayCount = display != null ? display.ShowFromServerResponse(jo) : 0;
+        if (displayCount <= 0)
+        {
+            historyPlacementRestorationActive = false;
+        }
+        int count = jo["count"] != null ? jo["count"].Value<int>() : displayCount;
+        Debug.Log("[HistoryPlacementRestoration] refreshed " + count.ToString(CultureInfo.InvariantCulture)
+            + " model(s), displayed " + displayCount.ToString(CultureInfo.InvariantCulture)
+            + ", queued downloads " + queuedDownloadCount.ToString(CultureInfo.InvariantCulture)
+            + ": " + response.DataAsText);
+        ShowFrontMessage("history_placement_restoration_ready_" + displayCount.ToString(CultureInfo.InvariantCulture));
     }
 
     private void QueueLatestCompletedModelsForDownload()

@@ -291,6 +291,31 @@ public class RuntimeModelManager : MonoBehaviour
         return taskIds;
     }
 
+    public bool TryGetLoadedRecord(string taskIdOrModelKey, out RuntimeModelRecord matchedRecord)
+    {
+        matchedRecord = null;
+        if (string.IsNullOrEmpty(taskIdOrModelKey))
+        {
+            return false;
+        }
+
+        foreach (RuntimeModelRecord record in _records)
+        {
+            if (record == null)
+            {
+                continue;
+            }
+
+            if (record.TaskId == taskIdOrModelKey || record.ModelKey == taskIdOrModelKey)
+            {
+                matchedRecord = record;
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public void DeleteCachedFile(string localPath)
     {
         if (string.IsNullOrEmpty(localPath))

@@ -42,6 +42,7 @@ pose
 aruco_sync
 blender
 model_bounds
+history_placement_restoration
 taken_object_detection
 sam3d_body_mesh
 completed
@@ -62,7 +63,7 @@ Shigurei RGB-D history recorder 不是普通 task stage，它随 worker 自动�
 run_shigure_history_recorder.py
 ```
 
-它持续写最近 RGB-D history，并在启动后尝试更新 Shigurei ArMarker history。普通 task 在 `taken_object_detection` / `sam3d_body_mesh` 阶段读取这些 sidecar 数据。
+它持续写最近 RGB-D history，并在启动后尝试更新 Shigurei ArMarker history。普通 task 在 `history_placement_restoration` / `taken_object_detection` / `sam3d_body_mesh` 阶段读取这些 sidecar 数据。
 
 启动链路是：`server_api.py` import 时调用 `task_worker.start_worker()`，worker 启动 recorder 子进程；recorder 如发现尚未处于 ROS2 Python 环境，会自己 source `code/ros2/shigure_recv_ws/setup_env.sh` 并用 ROS Python 重新 exec 自身。
 
@@ -81,6 +82,7 @@ data/output/sam3d-objects/meshes/    # SAM3D Objects raw/processed mesh
 data/output/object_alignment/        # 可选对齐 preview/debug
 data/output/runtime_mesh/            # runtime OBJ/MTL/PNG
 data/output/blender/fbx/             # 物体最终 FBX
+data/output/history_placement_restoration/ # 历史摆放再现状态、备份和 debug
 data/output/taken_object_detection/  # 拿取判断结果帧备份和 debug
 data/output/sam3d_body/              # 人体 mesh/FBX 输出
 data/shigure_history_cache/          # chunked Shigurei RGB-D + YOLO history
@@ -97,6 +99,7 @@ videos               -> data/output/instant-mesh-large/videos
 sam3d_object_meshes  -> data/output/sam3d-objects/meshes
 runtime_meshes       -> data/output/runtime_mesh
 fbx                  -> data/output/blender/fbx
+history_placement_restoration -> data/output/history_placement_restoration
 sam3d_body_meshes    -> data/output/sam3d_body/meshes
 sam3d_body_fbx       -> data/output/sam3d_body/fbx
 ```
@@ -957,7 +960,84 @@ Debug/optional:
 
 - `source_model_path`, DB row metadata.
 
-### 12. `taken_object_detection`
+
+### 12. `history_placement_restoration`
+
+Runner: `run_history_placement_restoration_from_json.py`
+
+Purpose:
+
+- Re-evaluate already modeled objects from Shigurei RGB-D + YOLO history without FoundationPose precise re-localization.
+- Establish a baseline YOLO id/signature near the model's original ArUco placement.
+- On the current or requested Shigurei frame, classify the object as:
+  - `ORIGINAL`: still at the original placement.
+  - `MOVED`: same object appears elsewhere; output a rough current ArUco pose for a floating regular polyhedron and a coarse current-to-original animation.
+  - `MISSING`: not visible and depth indicates the original support area is empty/deeper.
+  - `OCCLUDED_REUSE_LAST`: target id is temporarily lost but depth suggests occlusion; consumers may reuse the previous known result.
+  - `UNKNOWN`: YOLO/signature/depth evidence conflicts. Unity should show the original mesh with a rotating octahedron above it; this is not treated as disappeared.
+
+Output root:
+
+```text
+data/output/history_placement_restoration/<task_id>/
+data/output/history_placement_restoration/<task_id>/<task_name>_baseline_<sample_key>/rgb.png
+data/output/history_placement_restoration/<task_id>/<task_name>_baseline_<sample_key>/depth.png
+data/output/history_placement_restoration/<task_id>/<task_name>_baseline_<sample_key>/active_objects.json
+data/output/history_placement_restoration/<task_id>/<task_name>_current_<sample_key>/rgb.png
+data/output/history_placement_restoration/<task_id>/state_visualization.png
+data/output/history_placement_restoration/<task_id>/summary.json
+```
+
+Minimal task JSON:
+
+```json
+{
+  "HistoryPlacementRestoration": {
+    "status": "ORIGINAL | MOVED | MISSING | OCCLUDED_REUSE_LAST | UNKNOWN | SKIPPED",
+    "target_object_id": "46",
+    "baseline": {},
+    "current": {},
+    "classification": {},
+    "display": {
+      "mode": "original_only | current_polyhedron_to_original | restore_original_only | occluded_reuse_last | unknown_original_octahedron",
+      "polyhedron": {
+        "enabled": true,
+        "shape": "cube | octahedron",
+        "edge_length_m": 0.1,
+        "pose_aruco": {}
+      },
+      "animation": {
+        "enabled": true,
+        "from_pose_aruco": {},
+        "to_pose_aruco": {},
+        "duration_seconds": 1.2
+      }
+    },
+    "state_visualization_path": "data/output/history_placement_restoration/<task_id>/state_visualization.png"
+  }
+}
+```
+
+API trigger for the HoloLens button:
+
+```text
+POST /history-placement-restoration/start
+```
+
+Request fields:
+
+```json
+{
+  "startup_session_id": "optional HoloLens startup session",
+  "task_id": "optional specific model task id",
+  "model_limit": 5,
+  "target_time": "optional ISO timestamp"
+}
+```
+
+`model_limit` defaults to `5`. `0` means no limit. The Unity side exposes one hand-menu toggle entry point, `StartHistoryPlacementRestoration()`: first click requests analysis from the server and renders the returned `display` contract, while the next click clears the generated history-restoration display. `historyPlacementRestorationModelLimit` remains editable in the Unity Inspector.
+
+### 13. `taken_object_detection`
 
 Runner: `run_taken_object_detection_from_json.py`
 
@@ -1085,7 +1165,7 @@ Configuration notes:
 - YOLO-first initialization looks back up to `TAKEN_OBJECT_YOLO_PRE_CAPTURE_UNIQUE_COUNT` unique YOLO payloads only as auxiliary id evidence, then waits up to `TAKEN_OBJECT_YOLO_INIT_HARD_TIMEOUT_SECONDS` after capture for stable post-capture YOLO.
 - Large-range reads first scan chunk manifests and YOLO payload hashes. RGB-D chunks are decoded only for YOLO depth matching, initialization, depth confirmation, RGB backtracking, or legacy fallback.
 
-### 13. `sam3d_body_mesh`
+### 14. `sam3d_body_mesh`
 
 Runner: `run_sam3d_body_mesh_from_json.py`
 
@@ -1274,6 +1354,7 @@ aruco_sync
 runtime_mesh
 blender
 model_bounds
+history_placement_restoration
 taken_object_detection
 sam3d_body_mesh
 completed
@@ -1356,6 +1437,7 @@ Completed object response includes at least:
     "placement_status": "aruco_synced | world_temporary | missing_pose",
     "model_bounds": {},
     "model_generation": {},
+    "history_placement_restoration": {},
     "taken_object_detection": {},
     "sam3d_body_mesh": {},
     "object_world": {},

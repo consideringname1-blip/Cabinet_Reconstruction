@@ -35,6 +35,8 @@ from task_db import (
 )
 from model_bounds import decode_model_bounds_row, latest_bounds_for_ray, range_bounds_for_ray
 from model_generation_common import resolve_model_generation_source, resolve_runtime_mesh_source
+from stages.history_placement_restoration import settings as history_placement_settings
+from stages.history_placement_restoration.run_history_placement_restoration_from_json import run_history_placement_restoration
 from task_json import save_task_json
 from coordinate_systems import convert_hololens_pv_pose_matrix_to_unity_pose_components
 
@@ -300,6 +302,7 @@ def _build_completed_task_response(task_data: dict) -> dict:
     response["placement_status"] = _resolve_placement_status(task_data, task_json)
     response["model_bounds"] = _build_task_model_bounds_status(task_id, task_json)
     response["model_generation"] = task_json.get("ModelGeneration") or None
+    response["history_placement_restoration"] = task_json.get("HistoryPlacementRestoration") or None
     response["taken_object_detection"] = task_json.get("TakenObjectDetection") or None
     response["sam3d_body_mesh"] = task_json.get("SAM3DBodyMesh") or None
     response["sam3_spatial_box"] = task_json.get("Sam3SpatialBox") or None
@@ -443,6 +446,7 @@ def index():
                 "/model-bounds/range?start=<uploaded_at>&end=<uploaded_at>",
                 "/spatial-query/ray",
                 "/spatial-query/ray-range",
+                "/history-placement-restoration/start",
                 "/aruco/latest-reference?startup_session_id=<startup_session_id>",
                 "/aruco/markers",
                 "/aruco/markers/sync",
@@ -888,6 +892,84 @@ def spatial_query_ray_range():
         print(f"Error in spatial_query_ray_range: {exc}")
         return jsonify({"success": False, "error": str(exc)}), 500
 
+
+
+@app.route("/history-placement-restoration/start", methods=["POST"], strict_slashes=False)
+def history_placement_restoration_start():
+    try:
+        payload = request.get_json(silent=True) or {}
+        task_id = str(payload.get("task_id") or "").strip()
+        startup_session_id = str(payload.get("startup_session_id") or "").strip() or None
+        target_time = str(payload.get("target_time") or "").strip() or None
+        raw_limit = payload.get("model_limit", payload.get("limit", history_placement_settings.DEFAULT_MODEL_LIMIT))
+        try:
+            model_limit = int(raw_limit)
+        except Exception:
+            model_limit = history_placement_settings.DEFAULT_MODEL_LIMIT
+        model_limit = max(0, model_limit)
+
+        if task_id:
+            task_data = get_task(task_id)
+            if not task_data:
+                return jsonify({"success": False, "error": "task_id not found", "task_id": task_id}), 404
+            rows = [task_data]
+        else:
+            rows = get_latest_completed_tasks(
+                startup_session_id=startup_session_id,
+                require_aruco_coordinate_synced=True,
+                limit=model_limit,
+            )
+
+        results = []
+        for row in rows:
+            row_task_id = str(row.get("task_id") or "")
+            json_path = row.get("json_path")
+            if not json_path:
+                results.append({"task_id": row_task_id, "success": False, "error": "json_path_missing"})
+                continue
+            try:
+                result = run_history_placement_restoration(
+                    json_path,
+                    target_time=target_time,
+                    request_source="api_button",
+                )
+                result_payload = {
+                    "task_id": row_task_id,
+                    "success": True,
+                    "status": result.get("status"),
+                    "history_placement_restoration": result.get("payload"),
+                }
+                task_response = get_task(row_task_id) if row_task_id else None
+                if task_response:
+                    model_payload = _build_completed_task_response(task_response)
+                    for key in (
+                        "fbx_url",
+                        "model_instance",
+                        "object_world",
+                        "object_aruco",
+                        "aruco_reference",
+                        "sam3_spatial_box",
+                    ):
+                        if model_payload.get(key) is not None:
+                            result_payload[key] = model_payload.get(key)
+                    if model_payload.get("error"):
+                        result_payload["model_payload_error"] = model_payload.get("error")
+                results.append(result_payload)
+            except Exception as exc:
+                results.append({"task_id": row_task_id, "success": False, "error": str(exc)})
+
+        return jsonify(
+            {
+                "success": True,
+                "count": len(results),
+                "model_limit": model_limit,
+                "unlimited": model_limit == 0,
+                "results": results,
+            }
+        )
+    except Exception as exc:
+        print(f"Error in history_placement_restoration_start: {exc}")
+        return jsonify({"success": False, "error": str(exc)}), 500
 
 
 @app.route("/files/<path:folder>/<filename>", strict_slashes=False)

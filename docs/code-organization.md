@@ -30,6 +30,9 @@
 `code/stages/shigure_history/`
 : Shigurei RGB-D 历史缓存 stage。它只缓存按时间戳命名的 RGB 图、Depth 图、相机参数和必要时间信息；不记录独立 `frame` 目录、people detection、骨骼、手腕或其它事件判断数据。Shigurei 侧 ArMarker pose 作为稳定相机标定单独维护在全局历史文件中，不写进每帧 RGB-D cache。
 
+`code/stages/history_placement_restoration/`
+: 历史摆放再现 stage。它从 chunked Shigurei RGB-D + YOLO history 读取原始/当前 Shigurei 视角，判断已建模物体 `ORIGINAL`、`MOVED`、`MISSING`、`OCCLUDED_REUSE_LAST` 或 `UNKNOWN`，并输出 Unity 可消费的粗略 ArUco 位置、正多面体提示和动画参数；不运行 FoundationPose 精确定位。
+
 `code/stages/taken_object_detection/`
 : 新的拿取判断 stage。它从 chunked Shigurei RGB-D history 读取数据，输出 `TakenObjectDetection.result_timestamp`、`backup_shigurei_dir` 和 YOLO 稳定初始化第一帧的 `init_backup_shigurei_dir`，不依赖 Shigurei people detection、骨骼、手腕或旧事件缓存。
 
@@ -145,6 +148,7 @@ pose
 aruco_sync
 blender
 model_bounds
+history_placement_restoration
 taken_object_detection
 sam3d_body_mesh
 ```

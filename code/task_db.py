@@ -42,6 +42,7 @@ ALLOWED_STATUSES = (
     "runtime_mesh",
     "blender",
     "model_bounds",
+    "history_placement_restoration",
     "taken_object_detection",
     "sam3d_body_mesh",
     "completed",
@@ -813,7 +814,8 @@ def get_latest_completed_tasks(
 ) -> List[Dict[str, Any]]:
     initialize_task_table()
     startup_session_id = str(startup_session_id or "").strip()
-    limit = max(1, min(int(limit or 5), 50))
+    raw_limit = int(limit if limit is not None else 5)
+    bounded_limit = None if raw_limit <= 0 else max(1, min(raw_limit, 50))
     where_clauses = ["status = 'completed'"]
     params: List[Any] = []
     if startup_session_id:
@@ -822,6 +824,11 @@ def get_latest_completed_tasks(
     if require_aruco_coordinate_synced:
         where_clauses.append("aruco_coordinate_synced = 1")
 
+    limit_sql = "" if bounded_limit is None else "LIMIT ?"
+    query_params = list(params)
+    if bounded_limit is not None:
+        query_params.append(bounded_limit)
+
     with _get_connection() as conn:
         rows = conn.execute(
             f"""
@@ -829,9 +836,9 @@ def get_latest_completed_tasks(
             FROM {TABLE_NAME}
             WHERE {' AND '.join(where_clauses)}
             ORDER BY id DESC
-            LIMIT ?
+            {limit_sql}
             """,
-            tuple(params + [limit]),
+            tuple(query_params),
         ).fetchall()
     return [dict(row) for row in rows]
 

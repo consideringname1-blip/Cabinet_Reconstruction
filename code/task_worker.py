@@ -32,6 +32,8 @@ from config import (
     HOLOLENS2_CONVERT_DIR,
     HOLOLENS2_CONVERT_RUN,
     HOLOLENS2_PY,
+    HISTORY_PLACEMENT_RESTORATION_STAGE_PY,
+    HISTORY_PLACEMENT_RESTORATION_STAGE_RUN,
     INSTANTMESH_GPU_IDS,
     INSTANTMESH_STAGE_PY,
     INSTANTMESH_STAGE_RUN,
@@ -103,6 +105,7 @@ STAGE_ORDER = [
     "aruco_sync",
     "blender",
     "model_bounds",
+    "history_placement_restoration",
     "taken_object_detection",
     "sam3d_body_mesh",
 ]
@@ -709,6 +712,15 @@ def _run_model_bounds(json_path: Path, context: StageWorkerContext | None = None
     )
 
 
+def _run_history_placement_restoration(json_path: Path, context: StageWorkerContext | None = None) -> None:
+    _run_python_script(
+        python_path=HISTORY_PLACEMENT_RESTORATION_STAGE_PY,
+        script_path=HISTORY_PLACEMENT_RESTORATION_STAGE_RUN,
+        json_path=json_path,
+        cwd=HISTORY_PLACEMENT_RESTORATION_STAGE_RUN.parent,
+    )
+
+
 def _run_taken_object_detection(json_path: Path, context: StageWorkerContext | None = None) -> None:
     _run_python_script(
         python_path=TAKEN_OBJECT_DETECTION_STAGE_PY,
@@ -740,6 +752,7 @@ STAGE_RUNNERS = {
     "runtime_mesh": _run_runtime_mesh,
     "blender": _run_blender,
     "model_bounds": _run_model_bounds,
+    "history_placement_restoration": _run_history_placement_restoration,
     "taken_object_detection": _run_taken_object_detection,
     "sam3d_body_mesh": _run_sam3d_body_mesh,
 }
@@ -1040,6 +1053,7 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
         "instantmesh": task_json.get("InstantMesh") or {},
         "runtime_mesh": task_json.get("RuntimeMesh") or {},
         "blender": task_json.get("Blender") or {},
+        "history_placement_restoration": task_json.get("HistoryPlacementRestoration") or {},
         "taken_object_detection": task_json.get("TakenObjectDetection") or {},
         "sam3d_body_mesh": task_json.get("SAM3DBodyMesh") or {},
     }
@@ -1113,6 +1127,7 @@ def get_latest_completed_task_data(
         "instantmesh": task_json.get("InstantMesh") or {},
         "runtime_mesh": task_json.get("RuntimeMesh") or {},
         "blender": task_json.get("Blender") or {},
+        "history_placement_restoration": task_json.get("HistoryPlacementRestoration") or {},
         "taken_object_detection": task_json.get("TakenObjectDetection") or {},
         "sam3d_body_mesh": task_json.get("SAM3DBodyMesh") or {},
     }
