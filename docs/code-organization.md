@@ -31,7 +31,7 @@
 : Shigurei RGB-D 历史缓存 stage。它只缓存按时间戳命名的 RGB 图、Depth 图、相机参数和必要时间信息；不记录独立 `frame` 目录、people detection、骨骼、手腕或其它事件判断数据。Shigurei 侧 ArMarker pose 作为稳定相机标定单独维护在全局历史文件中，不写进每帧 RGB-D cache。
 
 `code/stages/taken_object_detection/`
-: 新的拿取判断 stage。它从 chunked Shigurei RGB-D history 读取数据，输出 `TakenObjectDetection.result_timestamp` 和 `backup_shigurei_dir`，不依赖 Shigurei people detection、骨骼、手腕或旧事件缓存。
+: 新的拿取判断 stage。它从 chunked Shigurei RGB-D history 读取数据，输出 `TakenObjectDetection.result_timestamp`、`backup_shigurei_dir` 和 YOLO 稳定初始化第一帧的 `init_backup_shigurei_dir`，不依赖 Shigurei people detection、骨骼、手腕或旧事件缓存。
 
 `code/stages/sam3d_body_mesh/`
 : 新的人体 mesh stage。它只读取拿取判断备份出的结果帧，调用 SAM3D Body 生成人体 mesh/关节，用 SAM3D Body 自身手腕关节选择拿取者，并只导出被选中人的 FBX。

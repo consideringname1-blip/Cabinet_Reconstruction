@@ -965,10 +965,17 @@ def _find_marker_pose_path() -> Path | None:
     return latest_marker_pose_path()
 
 
-def _backup_sample(task: Mapping[str, Any], sample: CachedRgbdSample, output_root: Path) -> Path:
+def _backup_sample(
+    task: Mapping[str, Any],
+    sample: CachedRgbdSample,
+    output_root: Path,
+    *,
+    kind: str | None = None,
+) -> Path:
     task_name = str(task.get('task_name') or task.get('task_id') or 'task').strip()
     key = sample_key(sample.stamp)
-    backup_dir = output_root / f'{task_name}_{key}'
+    suffix = f'_{kind}' if kind else ''
+    backup_dir = output_root / f'{task_name}{suffix}_{key}'
     if backup_dir.exists():
         shutil.rmtree(backup_dir)
     backup_dir.mkdir(parents=True, exist_ok=True)
@@ -980,14 +987,17 @@ def _backup_sample(task: Mapping[str, Any], sample: CachedRgbdSample, output_roo
         shutil.copy2(sample.camera_info_path, backup_dir / 'camera_info.json')
     if sample.yolo is not None:
         _write_json(backup_dir / 'active_objects.json', sample.yolo)
+        _write_json(backup_dir / 'yolo.json', sample.yolo)
     elif sample.yolo_path and sample.yolo_path.is_file():
         shutil.copy2(sample.yolo_path, backup_dir / 'active_objects.json')
+        shutil.copy2(sample.yolo_path, backup_dir / 'yolo.json')
     marker_pose = _find_marker_pose_path()
     if marker_pose is not None:
         shutil.copy2(marker_pose, backup_dir / 'marker_6d_pose.json')
     _write_json(
         backup_dir / 'meta.json',
         {
+            'backup_kind': kind or 'result',
             'stamp': sample.stamp.to_dict(),
             'source_chunk_id': sample.chunk_id,
             'source_frame_index': sample.frame_index,
@@ -1235,13 +1245,19 @@ def run_taken_object_detection(json_path_arg: str | Path) -> dict[str, Any]:
     tracking_window['mode'] = 'yolo_primary'
     tracking_window['yolo_init_soft_timeout_seconds'] = settings.YOLO_INIT_SOFT_TIMEOUT_SECONDS
     tracking_window['yolo_init_hard_timeout_seconds'] = settings.YOLO_INIT_HARD_TIMEOUT_SECONDS
+    init_backup_dir = _backup_sample(task, yolo_init.init_frame, output_dir, kind='yolo_init')
+    yolo_init_stats = {
+        **yolo_init.init_stats,
+        'init_backup_shigurei_dir': str(init_backup_dir),
+    }
     _write_status(
         json_path,
         task,
         'RUNNING',
         tracking_window=tracking_window,
         projection=yolo_init.projection,
-        init=yolo_init.init_stats,
+        init=yolo_init_stats,
+        init_backup_shigurei_dir=str(init_backup_dir),
         output_dir=str(output_dir),
     )
 
@@ -1257,7 +1273,7 @@ def run_taken_object_detection(json_path_arg: str | Path) -> dict[str, Any]:
             task,
             tracking_window=tracking_window,
             projection=yolo_init.projection,
-            init=yolo_init.init_stats,
+            init=yolo_init_stats,
             decisions=decisions,
             debug_files=debug_files,
             output_dir=output_dir,
@@ -1274,7 +1290,7 @@ def run_taken_object_detection(json_path_arg: str | Path) -> dict[str, Any]:
         trusted=yolo_init.trusted_mask,
         tracking_window=tracking_window,
         projection=yolo_init.projection,
-        init_stats=yolo_init.init_stats,
+        init_stats=yolo_init_stats,
         decisions=decisions,
         debug_files=debug_files,
         output_dir=output_dir,

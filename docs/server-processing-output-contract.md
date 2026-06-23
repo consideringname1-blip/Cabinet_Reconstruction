@@ -983,14 +983,28 @@ Output root:
 data/output/taken_object_detection/<task_id>/
 ```
 
-On `TAKEN`, backup files under:
+YOLO-first initialization writes a post-capture stable-first-frame backup as soon as initialization succeeds. This backup is kept even when the final status later becomes `NOT_TAKEN`:
+
+```text
+data/output/taken_object_detection/<task_id>/<task_name>_yolo_init_<sample_key>/rgb.png
+data/output/taken_object_detection/<task_id>/<task_name>_yolo_init_<sample_key>/depth.png
+data/output/taken_object_detection/<task_id>/<task_name>_yolo_init_<sample_key>/camera_info.json
+data/output/taken_object_detection/<task_id>/<task_name>_yolo_init_<sample_key>/active_objects.json
+data/output/taken_object_detection/<task_id>/<task_name>_yolo_init_<sample_key>/yolo.json
+data/output/taken_object_detection/<task_id>/<task_name>_yolo_init_<sample_key>/marker_6d_pose.json   # copied from Shigurei marker history when available
+data/output/taken_object_detection/<task_id>/<task_name>_yolo_init_<sample_key>/meta.json             # backup_kind = yolo_init
+```
+
+On `TAKEN`, the final result-frame backup remains under the original path shape:
 
 ```text
 data/output/taken_object_detection/<task_id>/<task_name>_<sample_key>/rgb.png
 data/output/taken_object_detection/<task_id>/<task_name>_<sample_key>/depth.png
 data/output/taken_object_detection/<task_id>/<task_name>_<sample_key>/camera_info.json
+data/output/taken_object_detection/<task_id>/<task_name>_<sample_key>/active_objects.json
+data/output/taken_object_detection/<task_id>/<task_name>_<sample_key>/yolo.json
 data/output/taken_object_detection/<task_id>/<task_name>_<sample_key>/marker_6d_pose.json   # copied from Shigurei marker history when available
-data/output/taken_object_detection/<task_id>/<task_name>_<sample_key>/meta.json
+data/output/taken_object_detection/<task_id>/<task_name>_<sample_key>/meta.json             # backup_kind = result
 ```
 
 Task JSON output statuses:
@@ -1010,6 +1024,7 @@ Minimal task JSON on success:
     "status": "TAKEN",
     "result_timestamp": {"sec": 0, "nanosec": 0},
     "backup_shigurei_dir": "data/output/taken_object_detection/...",
+    "init_backup_shigurei_dir": "data/output/taken_object_detection/.../<task_name>_yolo_init_<sample_key>",
     "tracking_window": {},
     "projection": {},
     "init": {},
@@ -1033,6 +1048,7 @@ Task JSON on no event / init failure:
     "reason": "...",
     "result_timestamp": null,
     "backup_shigurei_dir": null,
+    "init_backup_shigurei_dir": "data/output/taken_object_detection/.../<task_name>_yolo_init_<sample_key> or null",
     "tracking_window": {},
     "projection": {},
     "init": {},
@@ -1055,7 +1071,8 @@ Minimum downstream dependency:
 
 - `TakenObjectDetection.status == "TAKEN"`.
 - `result_timestamp`.
-- `backup_shigurei_dir` containing `rgb.png`, `depth.png`, `camera_info.json`.
+- `backup_shigurei_dir` containing `rgb.png`, `depth.png`, `camera_info.json` for final taken events.
+- `init_backup_shigurei_dir` containing the YOLO-stable first post-capture RGB-D frame and YOLO payload, when YOLO-first initialization succeeds.
 
 Debug/optional:
 
