@@ -86,6 +86,9 @@ from task_json import (
     resolve_task_json_path,
     save_task_json,
 )
+from console_output_log import install_console_output_log
+
+install_console_output_log()
 
 try:
     from gpu_budget import cuda_env_for_service

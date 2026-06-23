@@ -13,6 +13,10 @@ from config import (
     FOLDER_MAP,
     UPLOAD_FOLDER,
 )
+from console_output_log import install_console_output_log
+
+install_console_output_log()
+
 from depth_camera_config import (
     DEPTH_SENSOR_AHAT,
     get_depth_sensor_limits,

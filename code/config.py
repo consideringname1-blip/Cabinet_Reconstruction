@@ -10,6 +10,7 @@ IS_RUN_FLASK_SERVER = True
 MODEL_GENERATION_BACKEND = "instantmesh"
 MODEL_SERVICE_PREWARM_ENABLE = os.environ.get("MODEL_SERVICE_PREWARM_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
 SHIGURE_HISTORY_RECORDING_ENABLE = os.environ.get("SHIGURE_HISTORY_RECORDING_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
+CONSOLE_OUTPUT_LOG_ENABLE = os.environ.get("CONSOLE_OUTPUT_LOG_ENABLE", "0").strip().lower() not in {"0", "false", "no", "off", ""}
 
 # Depth camera and ArUco server defaults
 AHAT_SENSOR_NAME = "AHAT"
@@ -49,6 +50,10 @@ RECON_ROOT = CODE_ROOT / "reconstruction"
 HOLOLENS_ROOT = CODE_ROOT / "Hololens2"
 
 DATA_ROOT = PROJECT_ROOT / "data"
+_console_output_log_root_raw = os.environ.get("CONSOLE_OUTPUT_LOG_ROOT")
+CONSOLE_OUTPUT_LOG_ROOT = Path(_console_output_log_root_raw).expanduser() if _console_output_log_root_raw else DATA_ROOT / "console_logs"
+if not CONSOLE_OUTPUT_LOG_ROOT.is_absolute():
+    CONSOLE_OUTPUT_LOG_ROOT = PROJECT_ROOT / CONSOLE_OUTPUT_LOG_ROOT
 UPLOAD_FOLDER = DATA_ROOT / "upload"
 OUTPUT_ROOT = DATA_ROOT / "output"
 ENV_CONFIG_ROOT = DATA_ROOT / "config"
@@ -199,6 +204,7 @@ FOLDER_MAP = {
 for path in [
     UPLOAD_FOLDER,
     ENV_CONFIG_ROOT,
+    CONSOLE_OUTPUT_LOG_ROOT,
     DATABASE_ROOT,
     ARUCO_DATA_ROOT,
     ARUCO_REFERENCE_ROOT,
