@@ -13,7 +13,10 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
     private readonly Dictionary<string, HistoryPlacementRestorationItem> activeItems = new Dictionary<string, HistoryPlacementRestorationItem>();
     private GameObject activeRoot;
     private Material cubeMaterial;
+    private Material tetrahedronMaterial;
     private Material octahedronMaterial;
+    private Material dodecahedronMaterial;
+    private Material icosahedronMaterial;
     private RuntimeModelManager runtimeModelManager;
 
     public static HistoryPlacementRestorationDisplay Instance
@@ -214,7 +217,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         HistoryPlacementRestorationInteractable interactable = polyObject.AddComponent<HistoryPlacementRestorationInteractable>();
         interactable.Configure(this, itemKey);
         HistoryPlacementRestorationRotator rotator = polyObject.AddComponent<HistoryPlacementRestorationRotator>();
-        rotator.EulerDegreesPerSecond = shape == "octahedron" ? new Vector3(0f, 75f, 45f) : new Vector3(0f, 90f, 0f);
+        rotator.EulerDegreesPerSecond = ResolveRotationSpeed(shape);
 
         HistoryPlacementRestorationItem item = new HistoryPlacementRestorationItem
         {
@@ -248,19 +251,53 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
 
     private GameObject CreatePolyhedron(string shape, float edgeLength, string status)
     {
+        float safeEdge = Mathf.Max(0.02f, edgeLength);
+        Material material = ResolveMaterial(shape, status);
+        if (shape == "tetrahedron")
+        {
+            return CreateTetrahedron(safeEdge, material);
+        }
         if (shape == "octahedron")
         {
-            return CreateOctahedron(Mathf.Max(0.02f, edgeLength), ResolveMaterial(shape, status));
+            return CreateOctahedron(safeEdge, material);
+        }
+        if (shape == "dodecahedron")
+        {
+            return CreateDodecahedron(safeEdge, material);
+        }
+        if (shape == "icosahedron")
+        {
+            return CreateIcosahedron(safeEdge, material);
         }
 
         GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        cube.transform.localScale = Vector3.one * Mathf.Max(0.02f, edgeLength);
+        cube.transform.localScale = Vector3.one * safeEdge;
         Renderer renderer = cube.GetComponent<Renderer>();
         if (renderer != null)
         {
-            renderer.material = ResolveMaterial("cube", status);
+            renderer.material = material;
         }
         return cube;
+    }
+
+    private GameObject CreateTetrahedron(float edgeLength, Material material)
+    {
+        float scale = edgeLength / Mathf.Sqrt(8f);
+        Vector3[] vertices =
+        {
+            new Vector3(1f, 1f, 1f) * scale,
+            new Vector3(1f, -1f, -1f) * scale,
+            new Vector3(-1f, 1f, -1f) * scale,
+            new Vector3(-1f, -1f, 1f) * scale,
+        };
+        int[] triangles =
+        {
+            0, 2, 1,
+            0, 1, 3,
+            0, 3, 2,
+            1, 2, 3,
+        };
+        return CreateMeshPolyhedron("HistoryPlacementTetrahedron", vertices, triangles, material);
     }
 
     private GameObject CreateOctahedron(float edgeLength, Material material)
@@ -286,14 +323,179 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             5, 4, 3,
             5, 1, 4,
         };
+        return CreateMeshPolyhedron("HistoryPlacementOctahedron", vertices, triangles, material);
+    }
+
+    private GameObject CreateIcosahedron(float edgeLength, Material material)
+    {
+        float phi = (1f + Mathf.Sqrt(5f)) * 0.5f;
+        float scale = edgeLength * 0.5f;
+        Vector3[] vertices =
+        {
+            new Vector3(-1f, phi, 0f) * scale,
+            new Vector3(1f, phi, 0f) * scale,
+            new Vector3(-1f, -phi, 0f) * scale,
+            new Vector3(1f, -phi, 0f) * scale,
+            new Vector3(0f, -1f, phi) * scale,
+            new Vector3(0f, 1f, phi) * scale,
+            new Vector3(0f, -1f, -phi) * scale,
+            new Vector3(0f, 1f, -phi) * scale,
+            new Vector3(phi, 0f, -1f) * scale,
+            new Vector3(phi, 0f, 1f) * scale,
+            new Vector3(-phi, 0f, -1f) * scale,
+            new Vector3(-phi, 0f, 1f) * scale,
+        };
+        int[] triangles = IcosahedronTriangles();
+        return CreateMeshPolyhedron("HistoryPlacementIcosahedron", vertices, triangles, material);
+    }
+
+    private GameObject CreateDodecahedron(float edgeLength, Material material)
+    {
+        float phi = (1f + Mathf.Sqrt(5f)) * 0.5f;
+        Vector3[] icoVertices =
+        {
+            new Vector3(-1f, phi, 0f),
+            new Vector3(1f, phi, 0f),
+            new Vector3(-1f, -phi, 0f),
+            new Vector3(1f, -phi, 0f),
+            new Vector3(0f, -1f, phi),
+            new Vector3(0f, 1f, phi),
+            new Vector3(0f, -1f, -phi),
+            new Vector3(0f, 1f, -phi),
+            new Vector3(phi, 0f, -1f),
+            new Vector3(phi, 0f, 1f),
+            new Vector3(-phi, 0f, -1f),
+            new Vector3(-phi, 0f, 1f),
+        };
+        int[] icoTriangles = IcosahedronTriangles();
+        List<Vector3> dodecaVertices = new List<Vector3>();
+        for (int i = 0; i < icoTriangles.Length; i += 3)
+        {
+            Vector3 center = (icoVertices[icoTriangles[i]] + icoVertices[icoTriangles[i + 1]] + icoVertices[icoTriangles[i + 2]]) / 3f;
+            dodecaVertices.Add(center.normalized);
+        }
+
+        List<int> triangles = new List<int>();
+        for (int vertexIndex = 0; vertexIndex < icoVertices.Length; vertexIndex++)
+        {
+            List<int> faceIndices = new List<int>();
+            for (int tri = 0; tri < icoTriangles.Length / 3; tri++)
+            {
+                int a = icoTriangles[tri * 3];
+                int b = icoTriangles[tri * 3 + 1];
+                int c = icoTriangles[tri * 3 + 2];
+                if (a == vertexIndex || b == vertexIndex || c == vertexIndex)
+                {
+                    faceIndices.Add(tri);
+                }
+            }
+            SortFaceAroundNormal(faceIndices, dodecaVertices, icoVertices[vertexIndex].normalized);
+            for (int i = 1; i + 1 < faceIndices.Count; i++)
+            {
+                AddOrientedTriangle(triangles, dodecaVertices, faceIndices[0], faceIndices[i], faceIndices[i + 1]);
+            }
+        }
+
+        Vector3[] vertices = dodecaVertices.ToArray();
+        NormalizeEdgeLength(vertices, edgeLength);
+        return CreateMeshPolyhedron("HistoryPlacementDodecahedron", vertices, triangles.ToArray(), material);
+    }
+
+    private static int[] IcosahedronTriangles()
+    {
+        return new int[]
+        {
+            0, 11, 5,
+            0, 5, 1,
+            0, 1, 7,
+            0, 7, 10,
+            0, 10, 11,
+            1, 5, 9,
+            5, 11, 4,
+            11, 10, 2,
+            10, 7, 6,
+            7, 1, 8,
+            3, 9, 4,
+            3, 4, 2,
+            3, 2, 6,
+            3, 6, 8,
+            3, 8, 9,
+            4, 9, 5,
+            2, 4, 11,
+            6, 2, 10,
+            8, 6, 7,
+            9, 8, 1,
+        };
+    }
+
+    private static void SortFaceAroundNormal(List<int> faceIndices, List<Vector3> vertices, Vector3 normal)
+    {
+        Vector3 axis = Mathf.Abs(Vector3.Dot(normal, Vector3.up)) > 0.9f ? Vector3.right : Vector3.up;
+        Vector3 tangent = Vector3.Cross(normal, axis).normalized;
+        Vector3 bitangent = Vector3.Cross(normal, tangent).normalized;
+        faceIndices.Sort((a, b) =>
+        {
+            Vector3 va = Vector3.ProjectOnPlane(vertices[a], normal).normalized;
+            Vector3 vb = Vector3.ProjectOnPlane(vertices[b], normal).normalized;
+            float angleA = Mathf.Atan2(Vector3.Dot(va, bitangent), Vector3.Dot(va, tangent));
+            float angleB = Mathf.Atan2(Vector3.Dot(vb, bitangent), Vector3.Dot(vb, tangent));
+            return angleA.CompareTo(angleB);
+        });
+    }
+
+    private static void AddOrientedTriangle(List<int> triangles, List<Vector3> vertices, int a, int b, int c)
+    {
+        Vector3 normal = Vector3.Cross(vertices[b] - vertices[a], vertices[c] - vertices[a]);
+        Vector3 center = (vertices[a] + vertices[b] + vertices[c]) / 3f;
+        if (Vector3.Dot(normal, center) < 0f)
+        {
+            triangles.Add(a);
+            triangles.Add(c);
+            triangles.Add(b);
+        }
+        else
+        {
+            triangles.Add(a);
+            triangles.Add(b);
+            triangles.Add(c);
+        }
+    }
+
+    private static void NormalizeEdgeLength(Vector3[] vertices, float edgeLength)
+    {
+        float minDistance = float.MaxValue;
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            for (int j = i + 1; j < vertices.Length; j++)
+            {
+                float distance = Vector3.Distance(vertices[i], vertices[j]);
+                if (distance > 0.0001f && distance < minDistance)
+                {
+                    minDistance = distance;
+                }
+            }
+        }
+        if (minDistance <= 0.0001f || minDistance == float.MaxValue)
+        {
+            return;
+        }
+        float scale = edgeLength / minDistance;
+        for (int i = 0; i < vertices.Length; i++)
+        {
+            vertices[i] *= scale;
+        }
+    }
+
+    private GameObject CreateMeshPolyhedron(string name, Vector3[] vertices, int[] triangles, Material material)
+    {
         Mesh mesh = new Mesh();
-        mesh.name = "HistoryPlacementOctahedronMesh";
+        mesh.name = name + "Mesh";
         mesh.vertices = vertices;
         mesh.triangles = triangles;
         mesh.RecalculateNormals();
         mesh.RecalculateBounds();
 
-        GameObject obj = new GameObject("HistoryPlacementOctahedron");
+        GameObject obj = new GameObject(name);
         MeshFilter filter = obj.AddComponent<MeshFilter>();
         filter.sharedMesh = mesh;
         MeshRenderer renderer = obj.AddComponent<MeshRenderer>();
@@ -304,8 +506,37 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         return obj;
     }
 
+    private Vector3 ResolveRotationSpeed(string shape)
+    {
+        if (shape == "tetrahedron")
+        {
+            return new Vector3(65f, 95f, 30f);
+        }
+        if (shape == "octahedron")
+        {
+            return new Vector3(0f, 75f, 45f);
+        }
+        if (shape == "dodecahedron")
+        {
+            return new Vector3(30f, 70f, 45f);
+        }
+        if (shape == "icosahedron")
+        {
+            return new Vector3(55f, 40f, 80f);
+        }
+        return new Vector3(0f, 90f, 0f);
+    }
+
     private Material ResolveMaterial(string shape, string status)
     {
+        if (shape == "tetrahedron")
+        {
+            if (tetrahedronMaterial == null)
+            {
+                tetrahedronMaterial = BuildMaterial(new Color(0.2f, 0.85f, 0.35f, 0.82f));
+            }
+            return tetrahedronMaterial;
+        }
         if (shape == "octahedron")
         {
             if (octahedronMaterial == null)
@@ -313,6 +544,22 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
                 octahedronMaterial = BuildMaterial(new Color(0.4f, 0.55f, 1f, 0.82f));
             }
             return octahedronMaterial;
+        }
+        if (shape == "dodecahedron")
+        {
+            if (dodecahedronMaterial == null)
+            {
+                dodecahedronMaterial = BuildMaterial(new Color(1f, 0.72f, 0.2f, 0.82f));
+            }
+            return dodecahedronMaterial;
+        }
+        if (shape == "icosahedron")
+        {
+            if (icosahedronMaterial == null)
+            {
+                icosahedronMaterial = BuildMaterial(new Color(0.9f, 0.35f, 1f, 0.82f));
+            }
+            return icosahedronMaterial;
         }
 
         if (cubeMaterial == null)

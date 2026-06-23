@@ -526,18 +526,32 @@ def _signature_score(candidate: dict[str, Any], reference: dict[str, Any]) -> di
     }
 
 
-def _unique_yolo_events(metadata: list[CachedSampleMetadata]) -> list[YoloEvent]:
+def _yolo_events_from_metadata(metadata: list[CachedSampleMetadata]) -> list[YoloEvent]:
     events: list[YoloEvent] = []
-    last_hash: str | None = None
     for sample in metadata:
-        if not sample.yolo_hash or sample.yolo_hash == last_hash:
+        if not sample.yolo_hash:
             continue
-        last_hash = sample.yolo_hash
         payload = sample.load_yolo()
         if not isinstance(payload, dict) or not isinstance(payload.get("objects"), list):
             continue
         events.append(YoloEvent(sample=sample, payload=payload))
     return events
+
+
+def _nearest_yolo_event(metadata: list[CachedSampleMetadata], target_seconds: float) -> tuple[YoloEvent | None, dict[str, Any]]:
+    events = _yolo_events_from_metadata(metadata)
+    if not events:
+        return None, {"reason": "no_yolo_payload_in_window", "metadata_frame_count": len(metadata)}
+    event = min(events, key=lambda item: abs(float(item.seconds) - float(target_seconds)))
+    delta = abs(float(event.seconds) - float(target_seconds))
+    return event, {
+        "reason": "nearest_yolo_payload",
+        "yolo_payload_time": event.sample.stamp.to_dict(),
+        "yolo_delta_to_target_seconds": float(delta),
+        "is_stale": bool(delta > settings.YOLO_MAX_DELTA_TO_TARGET_SECONDS),
+        "max_delta_to_target_seconds": settings.YOLO_MAX_DELTA_TO_TARGET_SECONDS,
+        "candidate_event_count": len(events),
+    }
 
 
 def _observation_from_object(
@@ -584,23 +598,6 @@ def _observations_for_events(
                 obs = _observation_from_object(cache, event, obj, shape)
                 if obs is not None:
                     observations.append(obs)
-    return observations
-
-
-def _collect_target_observations(
-    cache: ShigureRgbdCache,
-    events: list[YoloEvent],
-    object_id: str,
-    shape: tuple[int, int],
-) -> list[YoloObjectObservation]:
-    observations: list[YoloObjectObservation] = []
-    for event in events:
-        for obj in event.payload.get("objects") or []:
-            if isinstance(obj, dict) and str(obj.get("object_id")) == str(object_id):
-                obs = _observation_from_object(cache, event, obj, shape)
-                if obs is not None:
-                    observations.append(obs)
-                break
     return observations
 
 
@@ -664,41 +661,6 @@ def _find_yolo_target(
             for item in scored[:5]
         ],
     }
-
-
-def _stable_observation_window(
-    observations: list[YoloObjectObservation],
-    *,
-    minimum_count: int,
-) -> tuple[list[YoloObjectObservation], dict[str, Any]]:
-    if len(observations) < minimum_count:
-        return [], {"reason": "not_enough_unique_yolo", "available": len(observations), "required": minimum_count}
-    for start_index in range(0, len(observations) - minimum_count + 1):
-        window = observations[start_index : start_index + minimum_count]
-        anchor = window[0]
-        max_center = max(settings.ORIGINAL_MAX_CENTER_PX, anchor.bbox_diag * settings.ORIGINAL_MAX_CENTER_BBOX_RATIO)
-        center_distances = [_center_distance(anchor.center_xy, obs.center_xy) for obs in window[1:]]
-        depth_diffs = [
-            abs(float(obs.median_depth_m) - float(anchor.median_depth_m))
-            for obs in window[1:]
-            if obs.median_depth_m is not None and anchor.median_depth_m is not None
-        ]
-        stable = (
-            all(distance <= max_center for distance in center_distances)
-            and all(delta <= settings.ORIGINAL_MAX_DEPTH_DELTA_M for delta in depth_diffs)
-        )
-        stats = {
-            "reason": "stable" if stable else "unstable_yolo_window",
-            "start_index": start_index,
-            "required": minimum_count,
-            "max_center_px": max_center,
-            "center_distances_px": center_distances,
-            "depth_diffs_m": depth_diffs,
-            "window": [obs.to_dict() for obs in window],
-        }
-        if stable:
-            return window, stats
-    return [], {"reason": "no_stable_yolo_window", "available": len(observations), "required": minimum_count}
 
 
 def _save_sample_backup(task: dict[str, Any], sample: CachedRgbdSample, output_dir: Path, *, kind: str) -> Path:
@@ -770,6 +732,194 @@ def _load_baseline_arrays(baseline: dict[str, Any]) -> tuple[np.ndarray | None, 
     return mask, reference_depth
 
 
+def _bbox_center_xy(bbox: tuple[float, float, float, float]) -> tuple[float, float]:
+    x0, y0, x1, y1 = bbox
+    return (float(x0 + x1) * 0.5, float(y0 + y1) * 0.5)
+
+
+def _union_bbox(bboxes: list[tuple[float, float, float, float]]) -> tuple[float, float, float, float] | None:
+    if not bboxes:
+        return None
+    return (
+        float(min(b[0] for b in bboxes)),
+        float(min(b[1] for b in bboxes)),
+        float(max(b[2] for b in bboxes)),
+        float(max(b[3] for b in bboxes)),
+    )
+
+
+def _tracking_region_ids() -> set[str]:
+    return {str(value) for value in settings.TRACKING_REGION_YOLO_IDS if str(value).strip()}
+
+
+def _build_tracking_search_region(
+    cache: ShigureRgbdCache,
+    events: list[YoloEvent],
+    shape: tuple[int, int],
+    *,
+    reference_region: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    configured_ids = _tracking_region_ids()
+    if not configured_ids:
+        return {
+            "source": "unrestricted",
+            "configured_yolo_ids": [],
+            "is_unrestricted": True,
+            "valid": True,
+            "reason": "no_tracking_region_yolo_ids_configured",
+        }
+
+    observations: list[YoloObjectObservation] = []
+    for obs in _observations_for_events(cache, events, shape):
+        if obs.object_id in configured_ids:
+            observations.append(obs)
+
+    if not observations:
+        return {
+            "source": "configured_yolo_ids",
+            "configured_yolo_ids": sorted(configured_ids),
+            "is_unrestricted": False,
+            "valid": False,
+            "reason": "configured_region_yolo_ids_missing",
+        }
+
+    bbox = _union_bbox([obs.bbox_xyxy for obs in observations])
+    support_depth_values = [float(obs.median_depth_m) for obs in observations if obs.median_depth_m is not None]
+    support_depth = float(np.nanmedian(np.asarray(support_depth_values, dtype=np.float32))) if support_depth_values else None
+    centers = [_bbox_center_xy(obs.bbox_xyxy) for obs in observations]
+    center_xy = [
+        float(np.nanmean([center[0] for center in centers])),
+        float(np.nanmean([center[1] for center in centers])),
+    ]
+    region: dict[str, Any] = {
+        "source": "configured_yolo_ids",
+        "configured_yolo_ids": sorted(configured_ids),
+        "matched_yolo_ids": sorted({obs.object_id for obs in observations}),
+        "excluded_candidate_yolo_ids": sorted(configured_ids),
+        "bbox_xyxy": [float(v) for v in bbox] if bbox is not None else None,
+        "support_depth_summary": {"median_depth_m": support_depth, "object_count": len(observations)},
+        "support_center_xy": center_xy,
+        "is_unrestricted": False,
+        "valid": True,
+        "reason": "configured_region_ready",
+    }
+
+    if isinstance(reference_region, dict) and reference_region.get("source") == "configured_yolo_ids":
+        checks: dict[str, Any] = {}
+        reference_depth = None
+        reference_summary = reference_region.get("support_depth_summary")
+        if isinstance(reference_summary, dict) and reference_summary.get("median_depth_m") is not None:
+            reference_depth = float(reference_summary["median_depth_m"])
+        if support_depth is not None and reference_depth is not None:
+            depth_delta = abs(float(support_depth) - reference_depth)
+            checks["support_depth_delta_m"] = depth_delta
+            checks["support_depth_static"] = depth_delta <= settings.TRACKING_REGION_SUPPORT_STATIC_DEPTH_DELTA_M
+        reference_center = reference_region.get("support_center_xy")
+        if isinstance(reference_center, list) and len(reference_center) >= 2:
+            center_delta = _center_distance((float(reference_center[0]), float(reference_center[1])), (center_xy[0], center_xy[1]))
+            checks["support_center_delta_px"] = center_delta
+            checks["support_center_static"] = center_delta <= settings.TRACKING_REGION_SUPPORT_STATIC_CENTER_DELTA_PX
+        region["support_plane_static_check"] = checks
+        if any(value is False for value in checks.values() if isinstance(value, bool)):
+            region["valid"] = False
+            region["reason"] = "support_plane_moved"
+    return region
+
+
+def _tracking_region_allows_observation(obs: YoloObjectObservation, region: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+    if not isinstance(region, dict) or region.get("is_unrestricted"):
+        return True, {"reason": "unrestricted"}
+    excluded = {str(value) for value in region.get("excluded_candidate_yolo_ids") or []}
+    if obs.object_id in excluded:
+        return False, {"reason": "candidate_is_tracking_region_anchor"}
+    bbox = region.get("bbox_xyxy")
+    if not (isinstance(bbox, list) and len(bbox) == 4):
+        return False, {"reason": "tracking_region_bbox_missing"}
+    cx, cy = obs.center_xy
+    inside = float(bbox[0]) <= cx <= float(bbox[2]) and float(bbox[1]) <= cy <= float(bbox[3])
+    if not inside:
+        return False, {"reason": "outside_tracking_region_bbox"}
+    support_summary = region.get("support_depth_summary") if isinstance(region.get("support_depth_summary"), dict) else {}
+    support_depth = support_summary.get("median_depth_m")
+    if support_depth is not None and obs.median_depth_m is not None:
+        behind_delta = float(obs.median_depth_m) - float(support_depth)
+        if behind_delta > settings.TRACKING_REGION_SUPPORT_MAX_BEHIND_DEPTH_M:
+            return False, {"reason": "behind_support_plane", "behind_delta_m": behind_delta}
+        return True, {"reason": "inside_tracking_region", "behind_delta_m": behind_delta}
+    return True, {"reason": "inside_tracking_region_depth_unavailable"}
+
+
+def _search_current_candidate(
+    cache: ShigureRgbdCache,
+    events: list[YoloEvent],
+    shape: tuple[int, int],
+    baseline: dict[str, Any],
+    tracking_region: dict[str, Any],
+) -> tuple[YoloObjectObservation | None, dict[str, Any]]:
+    reference_signature = baseline.get("reference_signature") if isinstance(baseline.get("reference_signature"), dict) else {}
+    reference = baseline.get("reference_observation") if isinstance(baseline.get("reference_observation"), dict) else {}
+    reference_center = reference.get("center_xy") if isinstance(reference.get("center_xy"), list) else None
+    if not reference_signature:
+        return None, {"reason": "reference_signature_missing"}
+
+    scored: list[dict[str, Any]] = []
+    for obs in _observations_for_events(cache, events, shape):
+        allowed, region_check = _tracking_region_allows_observation(obs, tracking_region)
+        if not allowed:
+            scored.append({"observation": obs, "region_check": region_check, "rejected": True})
+            continue
+        signature = _signature_score(obs.signature, reference_signature)
+        spatial_distance = None
+        if isinstance(reference_center, list) and len(reference_center) >= 2:
+            spatial_distance = _center_distance(obs.center_xy, (float(reference_center[0]), float(reference_center[1])))
+        hard_thresholds_passed = float(signature["score"]) <= settings.SIGNATURE_MAX_SCORE
+        scored.append(
+            {
+                "observation": obs,
+                "signature": signature,
+                "spatial_distance_px": spatial_distance,
+                "region_check": region_check,
+                "hard_thresholds_passed": hard_thresholds_passed,
+                "rejected": False,
+            }
+        )
+
+    if not scored:
+        return None, {"reason": "no_candidates"}
+
+    viable = [item for item in scored if not item.get("rejected") and item.get("hard_thresholds_passed")]
+    viable.sort(
+        key=lambda item: (
+            float("inf") if item.get("spatial_distance_px") is None else float(item["spatial_distance_px"]),
+            float(item["signature"]["score"]),
+        )
+    )
+    selected = viable[0] if viable else None
+
+    def serialize(item: dict[str, Any]) -> dict[str, Any]:
+        payload = {k: v for k, v in item.items() if k != "observation"}
+        payload["observation"] = item["observation"].to_dict()
+        return payload
+
+    info = {
+        "reason": "matched" if selected is not None else "no_candidate_passed_hard_thresholds",
+        "candidate_count": len(scored),
+        "viable_candidate_count": len(viable),
+        "tracking_region": tracking_region,
+        "top_candidates": [serialize(item) for item in sorted(
+            scored,
+            key=lambda item: (
+                1 if item.get("rejected") else 0,
+                float("inf") if item.get("spatial_distance_px") is None else float(item.get("spatial_distance_px")),
+                float(item.get("signature", {}).get("score", 999.0)),
+            ),
+        )[:8]],
+    }
+    if selected is not None:
+        info["selected"] = serialize(selected)
+    return (selected["observation"] if selected is not None else None), info
+
+
 def _establish_baseline(
     json_path: Path,
     task: dict[str, Any],
@@ -778,96 +928,87 @@ def _establish_baseline(
     *,
     capture_seconds: float,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
-    start = _stamp_from_seconds(capture_seconds - max(0.0, settings.BASELINE_PRE_CAPTURE_LOOKBACK_SECONDS))
+    start = _stamp_from_seconds(capture_seconds)
     end = _stamp_from_seconds(capture_seconds + max(0.0, settings.BASELINE_POST_CAPTURE_SECONDS))
     metadata = list(cache.iter_sample_metadata(start=start, end=end))
-    after_metadata = [sample for sample in metadata if sample.stamp.seconds >= capture_seconds]
-    first_after = after_metadata[0] if after_metadata else None
-    if first_after is None:
-        return None, {"reason": "no_shigure_frames_for_baseline", "metadata_frame_count": len(metadata)}
-    first_sample = cache.get_sample(first_after.stamp, mode="nearest")
+    if not metadata:
+        return None, {"reason": "no_shigure_frames_for_baseline", "metadata_frame_count": 0}
+
+    first_sample = cache.get_sample(metadata[0].stamp, mode="nearest")
     if first_sample is None:
         return None, {"reason": "baseline_first_sample_unavailable"}
-    shape = _shape_from_camera_info(first_after.camera_info) or first_sample.depth.shape[:2]
-    projection, projection_info = _project_object_center_to_shigure(task, first_after.camera_info or first_sample.camera_info, shape)
-    if projection is None:
-        return None, {"reason": "baseline_projection_failed", "projection": projection_info}
 
-    unique_events = _unique_yolo_events(metadata)
-    post_events = [event for event in unique_events if event.seconds >= capture_seconds]
-    match_events = unique_events[-settings.RECENT_UNIQUE_COUNT :] + post_events
-    matched_obs, match_info = _find_yolo_target(cache, match_events, projection, shape)
-    if matched_obs is None:
+    yolo_events = _yolo_events_from_metadata(metadata)
+    if not yolo_events:
+        return None, {"reason": "no_yolo_payload_for_baseline", "metadata_frame_count": len(metadata)}
+
+    attempts: list[dict[str, Any]] = []
+    selected_obs: YoloObjectObservation | None = None
+    selected_projection_info: dict[str, Any] | None = None
+    selected_match_info: dict[str, Any] | None = None
+    selected_sample: CachedRgbdSample | None = None
+
+    for event in sorted(yolo_events, key=lambda item: abs(float(item.seconds) - float(capture_seconds))):
+        paired_sample = cache.get_sample(event.sample.stamp, mode="nearest")
+        if paired_sample is None:
+            attempts.append({"event_stamp": event.sample.stamp.to_dict(), "reason": "paired_sample_unavailable"})
+            continue
+        shape = paired_sample.depth.shape[:2]
+        projection, projection_info = _project_object_center_to_shigure(task, paired_sample.camera_info or event.sample.camera_info, shape)
+        if projection is None:
+            attempts.append({"event_stamp": event.sample.stamp.to_dict(), "reason": "projection_failed", "projection": projection_info})
+            continue
+        matched_obs, match_info = _find_yolo_target(cache, [event], projection, shape)
+        attempts.append(
+            {
+                "event_stamp": event.sample.stamp.to_dict(),
+                "seconds_from_capture": float(event.seconds - capture_seconds),
+                "match": match_info,
+            }
+        )
+        if matched_obs is None:
+            continue
+        selected_obs = matched_obs
+        selected_projection_info = projection_info
+        selected_match_info = match_info
+        selected_sample = paired_sample
+        break
+
+    if selected_obs is None or selected_sample is None:
         return None, {
             "reason": "baseline_yolo_match_failed",
-            "projection": projection_info,
-            "match": match_info,
-            "unique_yolo_count": len(unique_events),
+            "metadata_frame_count": len(metadata),
+            "yolo_event_count": len(yolo_events),
+            "attempts": attempts[:10],
         }
 
-    target_observations = _collect_target_observations(cache, post_events, matched_obs.object_id, shape)
-    stable, stable_info = _stable_observation_window(
-        target_observations,
-        minimum_count=max(1, settings.STABLE_UNIQUE_COUNT),
+    backup_dir = _save_sample_backup(task, selected_sample, output_dir, kind="baseline")
+    array_files = _save_baseline_arrays(output_dir, selected_obs, selected_sample)
+    tracking_region_reference = _build_tracking_search_region(
+        cache,
+        [selected_obs.event],
+        selected_sample.depth.shape[:2],
+        reference_region=None,
     )
-    if not stable:
-        return None, {
-            "reason": "baseline_yolo_not_stable",
-            "projection": projection_info,
-            "match": match_info,
-            "stable": stable_info,
-            "target_object_id": matched_obs.object_id,
-        }
-    baseline_obs = stable[0]
-    baseline_sample = cache.get_sample(baseline_obs.stamp, mode="nearest")
-    if baseline_sample is None:
-        return None, {"reason": "baseline_sample_unavailable", "target_object_id": matched_obs.object_id}
-
-    backup_dir = _save_sample_backup(task, baseline_sample, output_dir, kind="baseline")
-    array_files = _save_baseline_arrays(output_dir, baseline_obs, baseline_sample)
     baseline = {
         "status": "ready",
         "created_at": _utc_now(),
         "capture_seconds": float(capture_seconds),
-        "target_object_id": baseline_obs.object_id,
-        "reference_observation": baseline_obs.to_dict(),
-        "reference_signature": baseline_obs.signature,
-        "projection": projection_info,
-        "match": match_info,
-        "stable": stable_info,
+        "reference_observation": selected_obs.to_dict(),
+        "reference_signature": selected_obs.signature,
+        "projection": selected_projection_info or {},
+        "match": selected_match_info or {},
+        "baseline_visibility": {
+            "reason": "nearest_unoccluded_candidate",
+            "seconds_from_capture": float(selected_obs.seconds - capture_seconds),
+            "partial_initialization": False,
+            "valid_mask_pixels": int(selected_obs.mask_pixels),
+        },
+        "tracking_search_region_reference": tracking_region_reference,
         "baseline_backup_dir": str(backup_dir),
         **array_files,
     }
-    return baseline, {"reason": "baseline_ready", "baseline": baseline}
-
-
-def _best_signature_match(
-    cache: ShigureRgbdCache,
-    events: list[YoloEvent],
-    shape: tuple[int, int],
-    reference_signature: dict[str, Any],
-) -> tuple[YoloObjectObservation | None, dict[str, Any]]:
-    scored: list[dict[str, Any]] = []
-    for obs in _observations_for_events(cache, events, shape):
-        signature = _signature_score(obs.signature, reference_signature)
-        scored.append({"signature": signature, "observation": obs})
-    if not scored:
-        return None, {"reason": "no_signature_candidates"}
-    scored.sort(key=lambda item: float(item["signature"]["score"]))
-    best = scored[0]
-    best_obs: YoloObjectObservation = best["observation"]
-    accept = float(best["signature"]["score"]) <= settings.SIGNATURE_MAX_SCORE
-    return (best_obs if accept else None), {
-        "reason": "matched" if accept else "best_signature_rejected",
-        "best_signature": best["signature"],
-        "best_observation": best_obs.to_dict(),
-        "candidate_count": len(scored),
-        "top_candidates": [
-            {"signature": item["signature"], "observation": item["observation"].to_dict()}
-            for item in scored[:5]
-        ],
-    }
-
+    return baseline, {"reason": "baseline_ready", "baseline": baseline, "attempts": attempts[:10]}
 
 def _is_original_position(obs: YoloObjectObservation, baseline: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
     reference = baseline.get("reference_observation") if isinstance(baseline.get("reference_observation"), dict) else {}
@@ -936,7 +1077,7 @@ def _classify_depth_state(
         return STATUS_OCCLUDED_REUSE_LAST, info
     if deeper_ratio >= settings.MISSING_DEEPER_RATIO:
         return STATUS_MISSING, info
-    return STATUS_UNKNOWN, {**info, "reason": "target_id_missing_without_depth_change"}
+    return STATUS_UNKNOWN, {**info, "reason": "target_missing_without_depth_change"}
 
 
 def _pose_from_observation(task: dict[str, Any], obs: YoloObjectObservation | None) -> dict[str, Any] | None:
@@ -964,12 +1105,21 @@ def _polyhedron_pose(position: list[float] | None, task: dict[str, Any]) -> dict
     }
 
 
+def _polyhedron_payload(task: dict[str, Any], shape: str, position: list[float] | None, attach_to: str) -> dict[str, Any]:
+    return {
+        "enabled": True,
+        "shape": shape,
+        "edge_length_m": settings.POLYHEDRON_EDGE_LENGTH_M,
+        "pose_aruco": _polyhedron_pose(position, task),
+        "attach_to": attach_to,
+    }
+
+
 def _build_display_payload(
     task: dict[str, Any],
     *,
     status: str,
     current_pose_aruco: dict[str, Any] | None,
-    id_changed: bool = False,
 ) -> dict[str, Any]:
     original_pose = _original_pose_aruco(task)
     original_position = original_pose.get("position") if original_pose else None
@@ -979,7 +1129,8 @@ def _build_display_payload(
         "status": status,
         "original_pose_aruco": original_pose,
         "current_pose_aruco": current_pose_aruco,
-        "id_changed": bool(id_changed),
+        "show_model": False,
+        "model_pose": original_pose,
         "polyhedron": {
             "enabled": False,
             "shape": None,
@@ -993,42 +1144,34 @@ def _build_display_payload(
             "duration_seconds": settings.ANIMATION_DURATION_SECONDS,
         },
     }
-    if status == STATUS_MOVED and current_pose_aruco is not None:
-        display["mode"] = "current_polyhedron_to_original"
-        display["polyhedron"] = {
-            "enabled": True,
-            "shape": "cube",
-            "edge_length_m": settings.POLYHEDRON_EDGE_LENGTH_M,
-            "pose_aruco": _polyhedron_pose(current_position, task),
-            "attach_to": "current_object",
-        }
+    if status == STATUS_ORIGINAL:
+        display["mode"] = "original_tetrahedron"
+        display["polyhedron"] = _polyhedron_payload(
+            task,
+            "tetrahedron",
+            current_position or original_position,
+            "current_object" if current_position is not None else "original_model",
+        )
+    elif status == STATUS_MOVED and current_pose_aruco is not None:
+        display["mode"] = "moved_cube_to_original"
+        display["polyhedron"] = _polyhedron_payload(task, "cube", current_position, "current_object")
         display["animation"]["enabled"] = original_pose is not None
         display["animation"]["from_pose_aruco"] = current_pose_aruco
-    elif status == STATUS_UNKNOWN:
-        display["mode"] = "unknown_original_octahedron"
-        display["polyhedron"] = {
-            "enabled": True,
-            "shape": "octahedron",
-            "edge_length_m": settings.POLYHEDRON_EDGE_LENGTH_M,
-            "pose_aruco": _polyhedron_pose(original_position, task),
-            "attach_to": "original_model",
-        }
     elif status == STATUS_MISSING:
-        display["mode"] = "restore_original_only"
+        display["mode"] = "missing_original_octahedron"
+        display["show_model"] = True
+        display["polyhedron"] = _polyhedron_payload(task, "octahedron", original_position, "original_model")
     elif status == STATUS_OCCLUDED_REUSE_LAST:
-        display["mode"] = "occluded_reuse_last"
-        if current_pose_aruco is not None:
-            display["polyhedron"] = {
-                "enabled": True,
-                "shape": "cube",
-                "edge_length_m": settings.POLYHEDRON_EDGE_LENGTH_M,
-                "pose_aruco": _polyhedron_pose(current_position, task),
-                "attach_to": "last_known_object",
-            }
+        display["mode"] = "occluded_original_dodecahedron"
+        display["show_model"] = True
+        display["polyhedron"] = _polyhedron_payload(task, "dodecahedron", original_position, "original_model")
+    elif status == STATUS_UNKNOWN:
+        display["mode"] = "unknown_original_icosahedron"
+        display["show_model"] = True
+        display["polyhedron"] = _polyhedron_payload(task, "icosahedron", original_position, "original_model")
     else:
-        display["mode"] = "original_only"
+        display["mode"] = "skipped" if status == STATUS_SKIPPED else "original_only"
     return display
-
 
 def _save_visualization(
     output_dir: Path,
@@ -1075,43 +1218,47 @@ def _classify_current(
     cache: ShigureRgbdCache,
     baseline: dict[str, Any],
     current_sample: CachedRgbdSample,
-    recent_events: list[YoloEvent],
+    yolo_event: YoloEvent | None,
+    yolo_timing: dict[str, Any],
     shape: tuple[int, int],
 ) -> dict[str, Any]:
-    target_id = str(baseline.get("target_object_id") or "")
-    reference_signature = baseline.get("reference_signature") if isinstance(baseline.get("reference_signature"), dict) else {}
     baseline_mask, reference_depth = _load_baseline_arrays(baseline)
+    validation: dict[str, Any] = {"yolo_timing": yolo_timing}
+    tracking_region = _build_tracking_search_region(
+        cache,
+        [yolo_event] if yolo_event is not None else [],
+        shape,
+        reference_region=baseline.get("tracking_search_region_reference") if isinstance(baseline.get("tracking_search_region_reference"), dict) else None,
+    )
+    validation["tracking_search_region"] = tracking_region
 
-    target_observations = _collect_target_observations(cache, recent_events, target_id, shape) if target_id else []
-    selected_obs: YoloObjectObservation | None = target_observations[-1] if target_observations else None
-    id_changed = False
-    validation: dict[str, Any] = {}
+    if not tracking_region.get("valid", True) and settings.TRACKING_REGION_INVALID_POLICY != "unrestricted":
+        return {
+            "status": STATUS_UNKNOWN,
+            "reason": tracking_region.get("reason") or "tracking_region_invalid",
+            "selected_observation": None,
+            "validation": validation,
+            "tracking_search_region": tracking_region,
+            "current_pose_aruco": None,
+        }
+    if not tracking_region.get("valid", True):
+        tracking_region = {
+            "source": "unrestricted",
+            "configured_yolo_ids": tracking_region.get("configured_yolo_ids") or [],
+            "is_unrestricted": True,
+            "valid": True,
+            "reason": f"degraded_from_{tracking_region.get('reason') or 'invalid_tracking_region'}",
+        }
+        validation["tracking_search_region_degraded"] = tracking_region
 
-    if selected_obs is not None and reference_signature:
-        signature = _signature_score(selected_obs.signature, reference_signature)
-        validation["target_id_signature"] = signature
-        if float(signature["score"]) > settings.SIGNATURE_MAX_SCORE:
-            fallback, fallback_info = _best_signature_match(cache, recent_events, shape, reference_signature)
-            validation["fallback_signature_search"] = fallback_info
-            if fallback is not None and fallback.object_id != selected_obs.object_id:
-                selected_obs = fallback
-                id_changed = True
-            else:
-                return {
-                    "status": STATUS_UNKNOWN,
-                    "reason": "target_id_signature_conflict",
-                    "selected_observation": selected_obs.to_dict(),
-                    "validation": validation,
-                    "current_pose_aruco": None,
-                    "id_changed": False,
-                }
-
-    if selected_obs is None and reference_signature:
-        fallback, fallback_info = _best_signature_match(cache, recent_events, shape, reference_signature)
-        validation["fallback_signature_search"] = fallback_info
-        if fallback is not None:
-            selected_obs = fallback
-            id_changed = bool(target_id and fallback.object_id != target_id)
+    selected_obs: YoloObjectObservation | None = None
+    candidate_info: dict[str, Any] = {"reason": "no_yolo_event"}
+    yolo_stale = bool(yolo_timing.get("is_stale")) if isinstance(yolo_timing, dict) else False
+    if yolo_event is not None and not yolo_stale:
+        selected_obs, candidate_info = _search_current_candidate(cache, [yolo_event], shape, baseline, tracking_region)
+    elif yolo_event is not None:
+        candidate_info = {"reason": "yolo_payload_stale", "yolo_timing": yolo_timing}
+    validation["candidate_search"] = candidate_info
 
     if selected_obs is not None:
         is_original, position_check = _is_original_position(selected_obs, baseline)
@@ -1119,24 +1266,12 @@ def _classify_current(
         current_pose = _pose_from_observation(task, selected_obs)
         return {
             "status": status,
-            "reason": "same_yolo_id" if not id_changed else "signature_matched_id_changed",
+            "reason": "candidate_matched_original_position" if is_original else "candidate_matched_moved",
             "selected_observation": selected_obs.to_dict(),
             "position_check": position_check,
             "validation": validation,
+            "tracking_search_region": tracking_region,
             "current_pose_aruco": current_pose,
-            "id_changed": id_changed,
-        }
-
-    if len(recent_events) < max(1, settings.MISSING_UNIQUE_COUNT):
-        return {
-            "status": STATUS_UNKNOWN,
-            "reason": "not_enough_recent_yolo_for_missing_or_occlusion",
-            "recent_unique_yolo_count": len(recent_events),
-            "required_unique_yolo_count": max(1, settings.MISSING_UNIQUE_COUNT),
-            "selected_observation": None,
-            "validation": validation,
-            "current_pose_aruco": None,
-            "id_changed": False,
         }
 
     depth_status, depth_info = _classify_depth_state(current_sample, baseline_mask, reference_depth)
@@ -1146,10 +1281,9 @@ def _classify_current(
         "depth_check": depth_info,
         "selected_observation": None,
         "validation": validation,
+        "tracking_search_region": tracking_region,
         "current_pose_aruco": None,
-        "id_changed": False,
     }
-
 
 def _resolve_target_seconds(cache: ShigureRgbdCache, task: dict[str, Any], target_time: str | None) -> tuple[float | None, str]:
     parsed = _parse_iso_timestamp_seconds(target_time)
@@ -1188,24 +1322,19 @@ def run_history_placement_restoration(
         payload = _write_status(json_path, task, STATUS_UNKNOWN, reason="capture_time_missing", output_dir=str(output_dir))
         return {"status": STATUS_UNKNOWN, "payload": payload}
 
-    existing = task.get("HistoryPlacementRestoration") if isinstance(task.get("HistoryPlacementRestoration"), dict) else {}
-    baseline = existing.get("baseline") if isinstance(existing.get("baseline"), dict) and existing["baseline"].get("status") == "ready" else None
+    baseline, baseline_info = _establish_baseline(json_path, task, cache, output_dir, capture_seconds=capture_seconds)
     if baseline is None:
-        baseline, baseline_info = _establish_baseline(json_path, task, cache, output_dir, capture_seconds=capture_seconds)
-        if baseline is None:
-            payload = _write_status(
-                json_path,
-                task,
-                STATUS_UNKNOWN,
-                reason="baseline_failed",
-                baseline_attempt=baseline_info,
-                capture_time_source=capture_source,
-                output_dir=str(output_dir),
-            )
-            return {"status": STATUS_UNKNOWN, "payload": payload}
-        task = load_task_json(json_path)
-    else:
-        baseline_info = {"reason": "reuse_existing_baseline"}
+        payload = _write_status(
+            json_path,
+            task,
+            STATUS_UNKNOWN,
+            reason="baseline_failed",
+            baseline_attempt=baseline_info,
+            capture_time_source=capture_source,
+            output_dir=str(output_dir),
+        )
+        return {"status": STATUS_UNKNOWN, "payload": payload}
+    task = load_task_json(json_path)
 
     target_seconds, target_source = _resolve_target_seconds(cache, task, target_time)
     if target_seconds is None:
@@ -1232,23 +1361,33 @@ def run_history_placement_restoration(
         )
         return {"status": STATUS_UNKNOWN, "payload": payload}
 
-    shape = current_sample.depth.shape[:2]
-    current_start = _stamp_from_seconds(target_seconds - max(0.0, settings.CURRENT_LOOKBACK_SECONDS))
-    current_end = _stamp_from_seconds(target_seconds + max(0.0, settings.CURRENT_FORWARD_SECONDS))
-    metadata = list(cache.iter_sample_metadata(start=current_start, end=current_end))
-    events = _unique_yolo_events(metadata)
-    recent_events = events[-max(1, settings.RECENT_UNIQUE_COUNT) :]
+    yolo_search_seconds = max(0.0, settings.YOLO_NEAREST_SEARCH_SECONDS, settings.YOLO_MAX_DELTA_TO_TARGET_SECONDS)
+    yolo_start = _stamp_from_seconds(target_seconds - yolo_search_seconds)
+    yolo_end = _stamp_from_seconds(target_seconds + yolo_search_seconds)
+    metadata = list(cache.iter_sample_metadata(start=yolo_start, end=yolo_end))
+    yolo_event, yolo_timing = _nearest_yolo_event(metadata, target_seconds)
+    yolo_paired_sample = cache.get_sample(yolo_event.sample.stamp, mode="nearest") if yolo_event is not None else None
+    if yolo_event is not None and yolo_paired_sample is not None:
+        yolo_timing = {
+            **yolo_timing,
+            "target_rgbd_time": current_sample.stamp.to_dict(),
+            "yolo_paired_rgbd_time": yolo_paired_sample.stamp.to_dict(),
+            "yolo_pairing_delta_seconds": abs(float(yolo_paired_sample.stamp.seconds) - float(yolo_event.seconds)),
+        }
+    shape = yolo_paired_sample.depth.shape[:2] if yolo_paired_sample is not None else current_sample.depth.shape[:2]
     current_backup_dir = _save_sample_backup(task, current_sample, output_dir, kind="current")
-    classification = _classify_current(task, cache, baseline, current_sample, recent_events, shape)
+    paired_backup_dir = None
+    if yolo_paired_sample is not None and yolo_paired_sample.stamp != current_sample.stamp:
+        paired_backup_dir = _save_sample_backup(task, yolo_paired_sample, output_dir, kind="current_yolo_paired")
+    classification = _classify_current(task, cache, baseline, current_sample, yolo_event, yolo_timing, shape)
 
     selected_observation = classification.get("selected_observation")
     observation_obj = None
-    if selected_observation is not None:
-        # Re-resolve the observation object so the visualization can use its mask without serializing it.
+    if selected_observation is not None and yolo_event is not None:
         selected_id = str(selected_observation.get("object_id") or "")
         selected_stamp = RosStamp.from_dict(selected_observation.get("stamp") or {})
-        for obs in _collect_target_observations(cache, recent_events, selected_id, shape):
-            if obs.stamp == selected_stamp:
+        for obs in _observations_for_events(cache, [yolo_event], shape):
+            if obs.object_id == selected_id and obs.stamp == selected_stamp:
                 observation_obj = obs
                 break
 
@@ -1258,11 +1397,11 @@ def run_history_placement_restoration(
         task,
         status=status,
         current_pose_aruco=current_pose if isinstance(current_pose, dict) else None,
-        id_changed=bool(classification.get("id_changed")),
     )
+    visualization_sample = yolo_paired_sample if observation_obj is not None and yolo_paired_sample is not None else current_sample
     visualization_path = _save_visualization(
         output_dir,
-        current_sample,
+        visualization_sample,
         status=status,
         observation=observation_obj,
         projection=baseline.get("projection") if isinstance(baseline.get("projection"), dict) else None,
@@ -1277,15 +1416,15 @@ def run_history_placement_restoration(
         capture_time_source=capture_source,
         target_time_source=target_source,
         target_timestamp=current_sample.stamp.to_dict(),
-        target_object_id=baseline.get("target_object_id"),
         baseline=baseline,
         baseline_info=baseline_info,
         current={
             "sample": current_sample.to_dict(),
             "backup_shigurei_dir": str(current_backup_dir),
+            "yolo_paired_sample": yolo_paired_sample.to_dict() if yolo_paired_sample is not None else None,
+            "yolo_paired_backup_shigurei_dir": str(paired_backup_dir) if paired_backup_dir is not None else None,
             "metadata_frame_count": len(metadata),
-            "unique_yolo_count": len(events),
-            "recent_unique_yolo_count": len(recent_events),
+            "yolo_timing": yolo_timing,
         },
         classification=classification,
         display=display,
