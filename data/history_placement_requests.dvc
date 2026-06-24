@@ -1,6 +1,6 @@
 outs:
-- md5: d751713988987e9331980363e24189ce.dir
-  size: 0
-  nfiles: 0
+- md5: c49d8915cdbe97cff0fcb33ca459358e.dir
+  size: 287724019
+  nfiles: 891
   hash: md5
   path: history_placement_requests
