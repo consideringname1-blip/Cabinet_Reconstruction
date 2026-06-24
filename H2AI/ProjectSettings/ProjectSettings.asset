@@ -181,7 +181,7 @@ PlayerSettings:
   CreateWallpaper: 0
   APKExpansionFiles: 0
   keepLoadedShadersAlive: 0
-  StripUnusedMeshComponents: 1
+  StripUnusedMeshComponents: 0
   strictShaderVariantMatching: 0
   VertexChannelCompressionMask: 4054
   iPhoneSdkVersion: 988
@@ -669,9 +669,9 @@ PlayerSettings:
   metroPackageVersion: 1.0.0.0
   metroCertificatePath: Assets\WSATestCertificate.pfx
   metroCertificatePassword: 
-  metroCertificateSubject: "H2AI\u56FE\u7247"
-  metroCertificateIssuer: "H2AI\u56FE\u7247"
-  metroCertificateNotAfter: 80cfc434fdf8dc01
+  metroCertificateSubject: H2AIW
+  metroCertificateIssuer: H2AIW
+  metroCertificateNotAfter: 80a501e6ab9ee201
   metroApplicationDescription: H2AIW
   wsaImages: {}
   metroTileShortName: H2AI
