@@ -3,7 +3,9 @@
 import json
 import logging
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from threading import RLock
 
 import cv2
 import numpy as np
@@ -11,7 +13,6 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from console_output_log import install_console_output_log
 from artifact_layout import (
-    FOLDER_MAP,
     aruco_task_json_path,
     aruco_worker_frame_color,
     aruco_worker_frame_meta,
@@ -38,6 +39,7 @@ from depth_camera_config import (
     normalize_depth_sensor_name,
 )
 from task_worker import (
+    STAGE_ORDER,
     activate_uploaded_task,
     get_latest_completed_task_data,
     get_task,
@@ -62,7 +64,10 @@ from task_db import (
 from model_bounds import decode_model_bounds_row, latest_bounds_for_ray, range_bounds_for_ray
 from model_generation_common import resolve_model_generation_source, resolve_runtime_mesh_source
 from stages.history_placement_restoration import settings as history_placement_settings
-from stages.history_placement_restoration.run_history_placement_restoration_from_json import run_history_placement_restoration
+from stages.history_placement_restoration.run_history_placement_restoration_from_json import (
+    prepare_shared_current_context,
+    run_history_placement_restoration,
+)
 from task_json import resolve_task_json_path_from_record, save_task_json
 from coordinate_systems import convert_hololens_pv_pose_matrix_to_unity_pose_components
 
@@ -107,15 +112,15 @@ def _task_artifact_url(host: str, task_id: str, area: str, filename: str | None)
     return f"{host}/task-artifacts/{task_id}/{area}/{filename}"
 
 
-def _model_file_url(host: str, task_id: str, source, filename: str | None, *, default_folder: str | None = None) -> str | None:
+def _model_file_url(host: str, task_id: str, source, filename: str | None) -> str | None:
     if not filename:
         return None
-    if getattr(source, "folder", None) == "model_worker":
+    folder = getattr(source, "folder", None)
+    if folder == "model_worker":
         return _task_artifact_url(host, task_id, "worker", filename)
-    folder = default_folder or getattr(source, "folder", None)
-    if not folder:
-        return None
-    return f"{host}/files/{folder}/{filename}"
+    if folder == "model_result":
+        return _task_artifact_url(host, task_id, "result", filename)
+    return None
 
 
 def _is_truthy_query_value(value) -> bool:
@@ -161,6 +166,38 @@ def _build_model_key(task_id: str | None, fbx_url: str) -> str:
     return str(fbx_url or "").strip()
 
 
+def _stage_progress(status: str, purpose: str | None) -> dict:
+    status_text = str(status or "").strip() or "pending"
+    if purpose == PURPOSE_ARUCO_REFERENCE:
+        stage_order = ["aruco_detect"]
+    else:
+        stage_order = list(STAGE_ORDER)
+
+    stage_count = max(1, len(stage_order))
+    if status_text == "pending":
+        stage_index = 0
+        stage_name = stage_order[0] if stage_order else "pending"
+    elif status_text in stage_order:
+        stage_index = stage_order.index(status_text)
+        stage_name = status_text
+    elif status_text in {"completed", "aruco_completed"}:
+        stage_index = stage_count
+        stage_name = status_text
+    else:
+        stage_index = 0
+        stage_name = status_text
+
+    progress = max(0.0, min(1.0, float(stage_index) / float(stage_count)))
+    percent = int(round(progress * 100.0))
+    return {
+        "stage_name": stage_name,
+        "stage_index": stage_index,
+        "stage_count": stage_count,
+        "progress": progress,
+        "progress_text": f"{stage_name} {percent}%",
+    }
+
+
 def _display_identity_from_task_json(task_json: dict) -> dict:
     identity = task_json.get("DisplayIdentity")
     return identity if isinstance(identity, dict) else {}
@@ -195,6 +232,75 @@ def _dedupe_display_object_models(models: list[dict], *, limit: int | None = Non
     return deduped
 
 
+def _is_hololens_uploaded_model_task(task_json: dict) -> bool:
+    if not isinstance(task_json, dict):
+        return False
+    if str(task_json.get("purpose") or "").strip() != PURPOSE_OBJECT_RECONSTRUCTION:
+        return False
+    device = task_json.get("device") if isinstance(task_json.get("device"), dict) else {}
+    device_type = str((device or {}).get("type") or "").strip().lower()
+    if "hololens" not in device_type:
+        return False
+    return bool(task_json.get("PVCamera") or task_json.get("PVCameraFrames"))
+
+
+def _display_object_selection_key(task_data: dict, task_json: dict) -> tuple[str, str | None]:
+    identity = _display_identity_from_task_json(task_json)
+    display_object_id = str(identity.get("display_object_id") or task_json.get("display_object_id") or "").strip()
+    binding_status = str(identity.get("binding_status") or "").strip()
+    if display_object_id and binding_status != "unbound":
+        return f"display:{display_object_id}", display_object_id
+    task_id = str(task_data.get("task_id") or task_json.get("task_id") or task_data.get("id") or "").strip()
+    return f"task:{task_id}", None
+
+
+def _select_latest_hololens_uploaded_model_tasks(
+    rows: list[dict],
+    *,
+    limit: int | None = None,
+) -> tuple[list[dict], list[dict]]:
+    selected: list[dict] = []
+    skipped: list[dict] = []
+    seen_keys: set[str] = set()
+    for row in rows:
+        task_id = str(row.get("task_id") or "").strip()
+        task_data = get_task(task_id) if task_id else None
+        if not task_data:
+            skipped.append({"task_id": task_id, "reason": "task_not_found"})
+            continue
+
+        task_json = task_data.get("task_json") or {}
+        if not _is_hololens_uploaded_model_task(task_json):
+            skipped.append({"task_id": task_id, "reason": "not_hololens_uploaded_model"})
+            continue
+
+        selection_key, display_object_id = _display_object_selection_key(task_data, task_json)
+        if selection_key in seen_keys:
+            skipped.append(
+                {
+                    "task_id": task_id,
+                    "reason": "older_duplicate_display_object",
+                    "display_object_id": display_object_id,
+                    "selection_key": selection_key,
+                }
+            )
+            continue
+
+        seen_keys.add(selection_key)
+        task_data["selection_key"] = selection_key
+        task_data["selection_display_object_id"] = display_object_id
+        selected.append(task_data)
+        if limit is not None and len(selected) >= limit:
+            break
+    return selected, skipped
+
+
+def _history_model_selection_scan_limit(model_limit: int) -> int:
+    if int(model_limit or 0) <= 0:
+        return 0
+    return max(50, int(model_limit) * 10)
+
+
 def _include_duplicate_captures_requested() -> bool:
     return (
         _is_truthy_query_value(request.args.get("include_duplicate_captures"))
@@ -216,6 +322,34 @@ def _build_model_instance(task_data: dict, task_json: dict, fbx_url: str) -> dic
         instance["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
     _append_display_identity_fields(instance, task_json)
     return instance
+
+
+def _build_pending_task_response(task_data: dict, *, position: int | None = None) -> dict:
+    task_json = task_data.get("task_json") or {}
+    task_id = str(task_data.get("task_id") or "")
+    status = str(task_data.get("status") or "pending")
+    purpose = task_json.get("purpose")
+    progress = _stage_progress(status, purpose)
+
+    response = {
+        "task_id": task_id,
+        "status": status,
+        "purpose": purpose,
+        "terminal": False,
+        "stage_runs": task_data.get("stage_runs") or [],
+        "timing_events": task_data.get("timing_events") or [],
+        "ai_model_timings": task_data.get("ai_model_timings") or [],
+    }
+    response.update(progress)
+    if position is not None:
+        response["position"] = int(position)
+
+    spatial_box = task_json.get("Sam3SpatialBox") or None
+    if spatial_box:
+        response["sam3_spatial_box"] = spatial_box
+        response["model_instance"] = _build_model_instance(task_data, task_json, "")
+
+    return response
 
 
 def _resolve_placement_status(task_data: dict, task_json: dict) -> str:
@@ -467,7 +601,7 @@ def _build_completed_task_response(task_data: dict) -> dict:
         }
     )
     if generated_source.video and generated_source.video_path and generated_source.video_path.exists():
-        response["video_url"] = _task_artifact_url(host, task_id, "debug", generated_source.video) if generated_source.video_folder is None else f"{host}/files/{generated_source.video_folder}/{generated_source.video}"
+        response["video_url"] = _task_artifact_url(host, task_id, "debug", generated_source.video)
     taken_payload = response.get("taken_object_detection") if isinstance(response.get("taken_object_detection"), dict) else {}
     if (taken_payload or {}).get("artifact_root") == "model_result":
         taken_urls = {}
@@ -607,7 +741,6 @@ def index():
                 "/aruco/latest-reference?startup_session_id=<startup_session_id>",
                 "/aruco/markers",
                 "/aruco/markers/sync",
-                "/files/<folder>/<filename>",
             ],
         }
     )
@@ -894,11 +1027,7 @@ def check_task_queue():
                 }
             else:
                 pending.append(
-                    {
-                        "task_id": task_id,
-                        "status": status,
-                        "purpose": purpose,
-                    }
+                    _build_pending_task_response(task_data, position=len(pending) + 1)
                 )
                 continue
 
@@ -981,23 +1110,29 @@ def latest_completed_task_ids():
         require_aruco_coordinate_synced = _is_truthy_query_value(
             request.args.get("require_aruco_coordinate_synced")
         )
+        scan_limit = _history_model_selection_scan_limit(limit)
         rows = get_latest_completed_tasks(
             startup_session_id=startup_session_id,
             require_aruco_coordinate_synced=require_aruco_coordinate_synced,
-            limit=limit,
+            limit=scan_limit,
         )
+        selected_rows, skipped_rows = _select_latest_hololens_uploaded_model_tasks(rows, limit=limit)
         return jsonify(
             {
                 "success": True,
-                "count": len(rows),
+                "count": len(selected_rows),
+                "raw_count": len(rows),
+                "skipped_count": len(skipped_rows),
+                "deduped_by_display_object": True,
                 "task_ids": [
                     {
                         "task_id": row.get("task_id"),
                         "purpose": PURPOSE_OBJECT_RECONSTRUCTION,
                         "status": row.get("status"),
                         "aruco_coordinate_synced": bool(row.get("aruco_coordinate_synced")),
+                        "display_object_id": row.get("selection_display_object_id"),
                     }
-                    for row in rows
+                    for row in selected_rows
                     if row.get("task_id")
                 ],
             }
@@ -1160,17 +1295,26 @@ def history_placement_restoration_start():
             },
         )
 
+        selection_skipped: list[dict] = []
         if task_id:
             task_data = get_task(task_id)
             if not task_data:
                 update_history_placement_request(request_id, status="failed", error_message="task_id not found")
                 return jsonify({"success": False, "error": "task_id not found", "task_id": task_id}), 404
-            rows = [task_data]
+            rows, selection_skipped = _select_latest_hololens_uploaded_model_tasks([task_data], limit=1)
+            if not rows:
+                reason = (selection_skipped[0] or {}).get("reason") if selection_skipped else "not_trackable"
+                update_history_placement_request(request_id, status="failed", error_message=str(reason))
+                return jsonify({"success": False, "error": str(reason), "task_id": task_id}), 400
         else:
-            rows = get_latest_completed_tasks(
+            raw_rows = get_latest_completed_tasks(
                 startup_session_id=startup_session_id,
                 require_aruco_coordinate_synced=True,
-                limit=model_limit,
+                limit=_history_model_selection_scan_limit(model_limit),
+            )
+            rows, selection_skipped = _select_latest_hololens_uploaded_model_tasks(
+                raw_rows,
+                limit=None if model_limit <= 0 else model_limit,
             )
 
         selected_tasks = [
@@ -1179,19 +1323,43 @@ def history_placement_restoration_start():
                 "task_id": row.get("task_id"),
                 "task_timestamp": row.get("task_timestamp"),
                 "status": row.get("status"),
+                "display_object_id": row.get("selection_display_object_id"),
+                "selection_key": row.get("selection_key"),
+                "selection_reason": "latest_hololens_uploaded_for_display_object",
             }
             for index, row in enumerate(rows)
         ]
-        save_task_json(request_worker_dir / "01_selected_model_tasks.json", {"items": selected_tasks})
+        save_task_json(
+            request_worker_dir / "01_selected_model_tasks.json",
+            {
+                "items": selected_tasks,
+                "skipped": selection_skipped,
+                "selection_policy": "hololens_uploaded_latest_per_display_object",
+            },
+        )
 
-        results = []
-        for index, row in enumerate(rows):
+        shared_history_context = {"_current_lock": RLock(), "_cache_lock": RLock()}
+        configured_parallel_workers = max(1, int(getattr(history_placement_settings, "PARALLEL_WORKERS", 8) or 1))
+        max_workers = max(1, min(len(rows), configured_parallel_workers, 8))
+        save_task_json(
+            request_worker_dir / "02_parallel_execution.json",
+            {
+                "selected_count": len(rows),
+                "configured_parallel_workers": configured_parallel_workers,
+                "max_total_workers_cap": 8,
+                "max_workers": max_workers,
+                "schedule": "item_worker_threads_plus_main_thread_shared_current_prewarm",
+            },
+        )
+
+        def _run_history_item(index: int, row: dict) -> tuple[int, dict]:
             row_task_id = str(row.get("task_id") or "")
             try:
                 json_path = resolve_task_json_path_from_record(row)
             except Exception as exc:
-                results.append({"item_index": index, "task_id": row_task_id, "success": False, "error": str(exc)})
-                continue
+                error_payload = {"item_index": index, "task_id": row_task_id, "success": False, "error": str(exc)}
+                save_task_json(request_result_dir / f"02_result_{index:03d}_summary.json", error_payload)
+                return index, error_payload
             try:
                 item_work_dir = request_worker_dir / f"02_result_{index:03d}_working"
                 item_work_dir.mkdir(parents=True, exist_ok=True)
@@ -1200,6 +1368,7 @@ def history_placement_restoration_start():
                     target_time=target_time,
                     request_source="api_button",
                     artifact_output_dir=item_work_dir,
+                    shared_current_context=shared_history_context,
                 )
                 save_task_json(
                     request_worker_dir / f"02_result_{index:03d}_working_state.json",
@@ -1209,6 +1378,7 @@ def history_placement_restoration_start():
                         "task_timestamp": row.get("task_timestamp"),
                         "artifact_output_dir": str(item_work_dir),
                         "status": result.get("status"),
+                        "parallel_max_workers": max_workers,
                     },
                 )
                 result_payload = {
@@ -1234,12 +1404,50 @@ def history_placement_restoration_start():
                             result_payload[key] = model_payload.get(key)
                     if model_payload.get("error"):
                         result_payload["model_payload_error"] = model_payload.get("error")
-                results.append(result_payload)
                 save_task_json(request_result_dir / f"02_result_{index:03d}_summary.json", result_payload)
+                return index, result_payload
             except Exception as exc:
                 error_payload = {"item_index": index, "task_id": row_task_id, "success": False, "error": str(exc)}
-                results.append(error_payload)
                 save_task_json(request_result_dir / f"02_result_{index:03d}_summary.json", error_payload)
+                return index, error_payload
+
+        results_by_index = {}
+        prewarm_json_path = None
+        prewarm_error = None
+        for row in rows:
+            try:
+                prewarm_json_path = resolve_task_json_path_from_record(row)
+                break
+            except Exception as exc:
+                prewarm_error = str(exc)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_run_history_item, index, row): index for index, row in enumerate(rows)}
+            if prewarm_json_path is not None:
+                try:
+                    prewarm_payload = prepare_shared_current_context(
+                        prewarm_json_path,
+                        target_time=target_time,
+                        shared_current_context=shared_history_context,
+                    )
+                except Exception as exc:
+                    prewarm_payload = {"success": False, "error": str(exc)}
+            else:
+                prewarm_payload = {"success": False, "error": prewarm_error or "no_resolvable_task_json"}
+            save_task_json(request_worker_dir / "02_shared_current_prewarm.json", prewarm_payload)
+
+            for future in as_completed(futures):
+                index = futures[future]
+                try:
+                    result_index, result_payload = future.result()
+                except Exception as exc:
+                    row = rows[index]
+                    row_task_id = str(row.get("task_id") or "")
+                    result_index = index
+                    result_payload = {"item_index": index, "task_id": row_task_id, "success": False, "error": str(exc)}
+                    save_task_json(request_result_dir / f"02_result_{index:03d}_summary.json", result_payload)
+                results_by_index[result_index] = result_payload
+
+        results = [results_by_index[index] for index in range(len(rows)) if index in results_by_index]
 
         response_payload = {
             "success": True,
@@ -1282,17 +1490,6 @@ def history_placement_restoration_latest():
             return jsonify(json.load(file))
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
-
-
-@app.route("/files/<path:folder>/<filename>", strict_slashes=False)
-def serve_file(folder, filename):
-    file_dir = FOLDER_MAP.get(folder)
-    if file_dir is None:
-        return jsonify({"error": "Invalid folder"}), 400
-    file_path = file_dir / filename
-    if not file_path.exists():
-        return jsonify({"error": f"File not found: {filename}"}), 404
-    return send_from_directory(str(file_dir), filename)
 
 
 @app.errorhandler(404)

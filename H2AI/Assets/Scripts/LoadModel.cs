@@ -158,7 +158,7 @@ public class LoadModel : MonoBehaviour
         }
 
         manager.RegisterLoadedModel(_pendingInstance, _pendingLocalPath, game);
-        UpdateSpatialHint(_pendingInstance, "ready");
+        HideSpatialHint(_pendingInstance);
 
         ShowFrontMessageForSeconds("download_completed", 3f);
         ClearPendingModel();
@@ -223,6 +223,15 @@ public class LoadModel : MonoBehaviour
         if (display != null)
         {
             display.UpdateProgressForModel(instance, message);
+        }
+    }
+
+    private void HideSpatialHint(RuntimeModelInstance instance)
+    {
+        ModelEventDisplay display = ModelEventDisplay.Instance;
+        if (display != null)
+        {
+            display.CloseForModel(instance);
         }
     }
 

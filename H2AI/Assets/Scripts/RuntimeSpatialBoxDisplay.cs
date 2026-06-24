@@ -99,23 +99,17 @@ public class RuntimeSpatialBoxDisplay : MonoBehaviour
     {
         if (fillMaterial == null)
         {
-            Shader shader = Shader.Find("Standard");
-            fillMaterial = shader != null ? new Material(shader) : new Material(Shader.Find("Sprites/Default"));
-            fillMaterial.color = new Color(0.1f, 0.85f, 1.0f, 0.22f);
-            MakeTransparent(fillMaterial);
+            fillMaterial = CreateTransparentMaterial(new Color(0.05f, 0.62f, 1.0f, 0.18f));
         }
         if (lineMaterial == null)
         {
-            Shader shader = Shader.Find("Sprites/Default");
-            lineMaterial = shader != null ? new Material(shader) : new Material(Shader.Find("Standard"));
-            lineMaterial.color = new Color(0.05f, 1.0f, 0.95f, 0.95f);
+            Shader shader = FindFirstAvailableShader("Sprites/Default", "Standard", "Unlit/Color");
+            lineMaterial = new Material(shader);
+            SetMaterialColor(lineMaterial, new Color(0.05f, 1.0f, 0.95f, 0.95f));
         }
         if (panelMaterial == null)
         {
-            Shader shader = Shader.Find("Standard");
-            panelMaterial = shader != null ? new Material(shader) : new Material(Shader.Find("Sprites/Default"));
-            panelMaterial.color = new Color(0.02f, 0.03f, 0.04f, 0.68f);
-            MakeTransparent(panelMaterial);
+            panelMaterial = CreateTransparentMaterial(new Color(1.0f, 1.0f, 1.0f, 0.72f));
         }
     }
 
@@ -188,7 +182,7 @@ public class RuntimeSpatialBoxDisplay : MonoBehaviour
         panelText.alignment = TextAlignment.Center;
         panelText.characterSize = 0.025f;
         panelText.fontSize = 48;
-        panelText.color = Color.white;
+        panelText.color = new Color(0.02f, 0.03f, 0.04f, 1.0f);
     }
 
     private void UpdatePanelPlacement(bool force = false)
@@ -266,21 +260,65 @@ public class RuntimeSpatialBoxDisplay : MonoBehaviour
         return box.CenterWorld + offset;
     }
 
+    private static Material CreateTransparentMaterial(Color color)
+    {
+        Shader shader = FindFirstAvailableShader("Standard", "Unlit/Color", "Sprites/Default");
+        Material material = new Material(shader);
+        SetMaterialColor(material, color);
+        MakeTransparent(material);
+        return material;
+    }
+
+    private static Shader FindFirstAvailableShader(params string[] names)
+    {
+        foreach (string name in names)
+        {
+            Shader shader = Shader.Find(name);
+            if (shader != null)
+            {
+                return shader;
+            }
+        }
+        return Shader.Find("Hidden/InternalErrorShader");
+    }
+
+    private static void SetMaterialColor(Material material, Color color)
+    {
+        if (material == null)
+        {
+            return;
+        }
+
+        if (material.HasProperty("_Color"))
+        {
+            material.SetColor("_Color", color);
+        }
+        if (material.HasProperty("_BaseColor"))
+        {
+            material.SetColor("_BaseColor", color);
+        }
+    }
+
     private static void MakeTransparent(Material material)
     {
         if (material == null)
         {
             return;
         }
+
+        material.SetOverrideTag("RenderType", "Transparent");
         material.SetFloat("_Mode", 3f);
+        material.SetFloat("_Surface", 1f);
+        material.SetFloat("_AlphaClip", 0f);
         material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
         material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
         material.SetInt("_ZWrite", 0);
+        material.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
         material.DisableKeyword("_ALPHATEST_ON");
         material.EnableKeyword("_ALPHABLEND_ON");
         material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
-        material.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
-        material.renderQueue = 3000;
+        material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
+        material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
     }
 
     private static void DestroyMaterial(Material material)

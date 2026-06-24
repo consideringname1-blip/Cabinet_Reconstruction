@@ -18,7 +18,7 @@ python code/run_server.py
 
 - `config.py`：运行开关、阈值、worker 参数。
 - `path_config.py`：代码目录、stage 脚本、Python/Blender 可执行文件。
-- `artifact_layout.py`：`data/` 目录、任务目录、文件命名、HTTP `FOLDER_MAP`。
+- `artifact_layout.py`：`data/` 目录、任务目录、文件命名、task artifact helper。
 - `task_db.py`：SQLite schema 初始化和读写。
 
 服务启动时会调用 `ensure_artifact_roots()`、`initialize_task_table()` 和 `start_worker()`。
@@ -52,26 +52,19 @@ data/shigure_history_cache/
 data/aruco/reference/
 data/aruco/runtime/
 data/aruco/shigure_marker_history/
-data/output/                              # external scratch / compat folders
 ```
 
-`data/upload/` 不再使用。
+`data/upload/` 不再使用。全局兼容输出目录和 `/files/<folder>/<filename>` 接口也不再使用。
 
-`/files/<folder>/<filename>` 仍只暴露 `artifact_layout.FOLDER_MAP` 中的兼容目录：
+文件下载只通过 task-local endpoint：
 
 ```text
-meshes                       -> data/output/instant-mesh-large/meshes
-images                       -> data/output/instant-mesh-large/images
-videos                       -> data/output/instant-mesh-large/videos
-sam3d_object_meshes          -> data/output/sam3d-objects/meshes
-runtime_meshes               -> data/output/runtime_mesh
-fbx                          -> data/output/blender/fbx
-history_placement_restoration -> data/output/history_placement_restoration
-sam3d_body_meshes            -> data/output/sam3d_body/meshes
-sam3d_body_fbx               -> data/output/sam3d_body/fbx
+/task-artifacts/<task_id>/worker/<filename>
+/task-artifacts/<task_id>/result/<filename>
+/task-artifacts/<task_id>/debug/<filename>
 ```
 
-新流程的稳定结果优先在 `data/model/<task_timestamp>/result/` 中读取；兼容 URL 只用于仍需要旧 HTTP folder 的客户端路径。
+新流程的稳定结果在 `data/model/<task_timestamp>/worker/` 或 `result/` 中读取。InstantMesh 的后端临时目录是 task-local 的 `worker/03_instantmesh_backend/`。
 
 ## `/generate`: Object Reconstruction
 
@@ -243,7 +236,7 @@ aruco_completed
 | `sam3d_objects` | `worker/03_model_source.*`, `03_generation_sam3d_*` | `SAM3DObjects`, `ModelGeneration`; AI timing DB |
 | `depthpointcloud` | no stable large file | `depthpointcloud` stats |
 | `modelscale` | no stable large file | `model` scale fields |
-| `object_alignment` | optional scratch preview in `data/output/object_alignment/` | `object_alignment`, pose debug fields |
+| `object_alignment` | optional preview in `worker/04_object_alignment_preview/` | `object_alignment`, pose debug fields |
 | `runtime_mesh` | `worker/04_runtime_mesh.*` | `RuntimeMesh` |
 | `pose` | no stable large file | `object_world`, pose debug fields |
 | `aruco_sync` | no stable large file | `aruco_reference`, `object_aruco` |
@@ -304,4 +297,3 @@ History placement, taken detection and SAM3D body stages read this cache plus ma
 - Model task cleanup: remove `data/model/<task_timestamp>/` and update DB according to maintenance policy.
 - ArUco processing cleanup: remove `data/aruco_processing/<task_timestamp>/`.
 - History request cleanup: remove `data/history_placement_requests/<request_timestamp>/` and mark request cancelled/failed/completed in DB.
-- Do not treat `data/output/` as the source of truth for new task results; it is scratch/compat storage.

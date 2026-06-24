@@ -24,9 +24,9 @@ git commit -m "init dvc"
 
 按当前结构创建追踪：
 conda activate dvc
-dvc add -f data/aruco/runtime data/aruco/shigure_marker_history data/aruco_processing data/console_logs data/database data/history_placement_requests data/model data/output data/shigure_history_cache data/worker_sockets data_backup
+dvc add -f data/aruco/runtime data/aruco/shigure_marker_history data/aruco_processing data/console_logs data/database data/history_placement_requests data/model data/shigure_history_cache data/worker_sockets data_backup
 
-git add .gitignore data/.gitignore data/aruco/.gitignore data/aruco/runtime.dvc data/aruco/shigure_marker_history.dvc data/aruco_processing.dvc data/console_logs.dvc data/database.dvc data/history_placement_requests.dvc data/model.dvc data/output.dvc data/shigure_history_cache.dvc data/worker_sockets.dvc data_backup.dvc
+git add .gitignore data/.gitignore data/aruco/.gitignore data/aruco/runtime.dvc data/aruco/shigure_marker_history.dvc data/aruco_processing.dvc data/console_logs.dvc data/database.dvc data/history_placement_requests.dvc data/model.dvc data/shigure_history_cache.dvc data/worker_sockets.dvc data_backup.dvc
 git commit -m "track runtime data with dvc"
 dvc push
 git push
@@ -56,10 +56,10 @@ dvc pull
 日常流程：
 上传：
 conda activate dvc
-dvc add -f data/aruco/runtime data/aruco/shigure_marker_history data/aruco_processing data/console_logs data/database data/history_placement_requests data/model data/output data/shigure_history_cache data/worker_sockets data_backup
+dvc add -f data/aruco/runtime data/aruco/shigure_marker_history data/aruco_processing data/console_logs data/database data/history_placement_requests data/model data/shigure_history_cache data/worker_sockets data_backup
 dvc status
 git status
-git add .gitignore data/.gitignore data/aruco/.gitignore data/aruco/runtime.dvc data/aruco/shigure_marker_history.dvc data/aruco_processing.dvc data/console_logs.dvc data/database.dvc data/history_placement_requests.dvc data/model.dvc data/output.dvc data/shigure_history_cache.dvc data/worker_sockets.dvc data_backup.dvc
+git add .gitignore data/.gitignore data/aruco/.gitignore data/aruco/runtime.dvc data/aruco/shigure_marker_history.dvc data/aruco_processing.dvc data/console_logs.dvc data/database.dvc data/history_placement_requests.dvc data/model.dvc data/shigure_history_cache.dvc data/worker_sockets.dvc data_backup.dvc
 git commit -m "update dvc data"
 dvc push
 git push

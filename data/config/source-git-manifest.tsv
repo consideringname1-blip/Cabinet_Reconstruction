@@ -11629,7 +11629,6 @@ mode	type	object	stage	size	target	path
 100644	file	e69de29bb2d1d6434b8b29ae775ad8c2e48c5391	0	0		data/config/system/usr-bin-python3-pip-freeze.txt
 100644	file	f63b1255d96d4ef4fce183b1f6a573f5cf4edfca	0	15		data/config/system/usr-bin-python3-version.txt
 100644	file	173f80477d58e4029fc52532aa3084238581568a	0	106		data/database.dvc
-100644	file	cb7b4f51efdd109763fd1a02b6f31e48454c7451	0	111		data/output.dvc
 100644	file	2918f51fd684d8db553765a3e0d8d32f0d0f431e	0	108		data/upload.dvc
 100644	file	531b57ef6c594a9f9ab90e79e75855e1d30e1065	0	12681		docs/code-organization.md
 100644	file	aa22f8307e0c133872501494e358a03b20d52032	0	13381		docs/coordinate-systems.md

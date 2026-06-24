@@ -8,6 +8,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from threading import RLock
 from typing import Any, Iterable, Mapping
 
 import numpy as np
@@ -349,9 +350,23 @@ class ShigureRgbdCache:
         self.yolo_root = self.root / 'yolo_payloads'
         self.decoded_chunk_cache_max = max(0, int(decoded_chunk_cache_max))
         self._decoded_chunks: OrderedDict[str, tuple[np.ndarray, np.ndarray]] = OrderedDict()
+        self._decoded_depth_chunks: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._decoded_cache_lock = RLock()
+        self._chunk_decode_locks: dict[str, RLock] = {}
 
     def clear_decoded_cache(self) -> None:
-        self._decoded_chunks.clear()
+        with self._decoded_cache_lock:
+            self._decoded_chunks.clear()
+            self._decoded_depth_chunks.clear()
+            self._chunk_decode_locks.clear()
+
+    def _decode_lock_for_chunk(self, chunk_id: str) -> RLock:
+        with self._decoded_cache_lock:
+            lock = self._chunk_decode_locks.get(chunk_id)
+            if lock is None:
+                lock = RLock()
+                self._chunk_decode_locks[chunk_id] = lock
+            return lock
 
     def iter_sample_metadata(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedSampleMetadata]:
         start_seconds = start.seconds if start is not None else None
@@ -407,28 +422,79 @@ class ShigureRgbdCache:
                 continue
             yield sample
 
+    def iter_depth_samples(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedRgbdSample]:
+        start_seconds = start.seconds if start is not None else None
+        end_seconds = end.seconds if end is not None else None
+        empty_rgb = np.empty((0, 0, 3), dtype=np.uint8)
+        for chunk_dir, manifest in self._iter_chunk_manifests(start_seconds=start_seconds, end_seconds=end_seconds):
+            depth_frames = self._decode_depth_chunk(chunk_dir, manifest)
+            camera_info_path = chunk_dir / str(manifest.get('camera_info') or 'camera_info.json')
+            camera_info = load_json(camera_info_path) if camera_info_path.is_file() else None
+            for frame in manifest.get('frames') or []:
+                stamp = RosStamp.from_dict(frame.get('stamp') or {})
+                seconds = stamp.seconds
+                if start_seconds is not None and seconds < start_seconds:
+                    continue
+                if end_seconds is not None and seconds > end_seconds:
+                    continue
+                index = int(frame.get('frame_index', 0))
+                if index < 0 or index >= len(depth_frames):
+                    continue
+                yolo_hash = frame.get('yolo_hash')
+                yolo_path = self.yolo_root / f'{yolo_hash}.json' if yolo_hash else None
+                yield CachedRgbdSample(
+                    stamp=stamp,
+                    rgb_bgr=empty_rgb,
+                    depth=depth_frames[index],
+                    camera_info_path=camera_info_path if camera_info_path.is_file() else None,
+                    camera_info=camera_info,
+                    yolo_path=yolo_path if yolo_path and yolo_path.is_file() else None,
+                    yolo=None,
+                    yolo_hash=str(yolo_hash) if yolo_hash else None,
+                    chunk_id=str(manifest.get('chunk_id') or chunk_dir.name),
+                    frame_index=index,
+                )
+
+    def _sample_from_metadata(self, metadata: CachedSampleMetadata) -> CachedRgbdSample | None:
+        for sample in self.iter_samples(start=metadata.stamp, end=metadata.stamp):
+            if sample.stamp == metadata.stamp and sample.frame_index == metadata.frame_index:
+                return sample
+        for sample in self.iter_samples(start=metadata.stamp, end=metadata.stamp):
+            if sample.stamp == metadata.stamp:
+                return sample
+        return None
+
     def newest_sample(self) -> CachedRgbdSample | None:
         newest = None
-        for sample in self.iter_samples():
-            newest = sample
-        return newest
+        for metadata in self.iter_sample_metadata():
+            newest = metadata
+        return self._sample_from_metadata(newest) if newest is not None else None
 
     def get_sample(self, stamp: RosStamp, *, mode: str = 'nearest') -> CachedRgbdSample | None:
         target = stamp.seconds
-        if mode == 'nearest':
-            samples = list(self.iter_samples(start=stamp, end=stamp))
-            if samples:
-                return min(samples, key=lambda sample: abs(sample.stamp.seconds - target))
-        samples = list(self.iter_samples())
-        if not samples:
-            return None
         if mode == 'before':
-            candidates = [sample for sample in samples if sample.stamp.seconds <= target]
-            return candidates[-1] if candidates else None
+            selected = None
+            for metadata in self.iter_sample_metadata(end=stamp):
+                selected = metadata
+            return self._sample_from_metadata(selected) if selected is not None else None
         if mode == 'after':
-            candidates = [sample for sample in samples if sample.stamp.seconds >= target]
-            return candidates[0] if candidates else None
-        return min(samples, key=lambda sample: abs(sample.stamp.seconds - target))
+            for metadata in self.iter_sample_metadata(start=stamp):
+                return self._sample_from_metadata(metadata)
+            return None
+
+        exact = list(self.iter_sample_metadata(start=stamp, end=stamp))
+        if exact:
+            selected = min(exact, key=lambda metadata: abs(metadata.stamp.seconds - target))
+            return self._sample_from_metadata(selected)
+
+        selected = None
+        best_delta = float('inf')
+        for metadata in self.iter_sample_metadata():
+            delta = abs(metadata.stamp.seconds - target)
+            if delta < best_delta:
+                selected = metadata
+                best_delta = delta
+        return self._sample_from_metadata(selected) if selected is not None else None
 
     def prune(self, *, newest_stamp: RosStamp | None = None, retention_seconds: float | None = None) -> None:
         retention = float(retention_seconds if retention_seconds is not None else settings.SHIGURE_HISTORY_SECONDS)
@@ -481,26 +547,72 @@ class ShigureRgbdCache:
                 continue
             yield manifest_path.parent, manifest
 
+    def _remember_depth_chunk(self, chunk_id: str, depth: np.ndarray) -> np.ndarray:
+        with self._decoded_cache_lock:
+            if self.decoded_chunk_cache_max > 0:
+                self._decoded_depth_chunks[chunk_id] = depth
+                self._decoded_depth_chunks.move_to_end(chunk_id)
+                while len(self._decoded_depth_chunks) > self.decoded_chunk_cache_max:
+                    self._decoded_depth_chunks.popitem(last=False)
+            return depth
+
+    def _decode_depth_chunk(self, chunk_dir: Path, manifest: Mapping[str, Any]) -> np.ndarray:
+        chunk_id = str(manifest.get('chunk_id') or chunk_dir.name)
+        with self._decoded_cache_lock:
+            full_cached = self._decoded_chunks.get(chunk_id)
+            if full_cached is not None:
+                self._decoded_chunks.move_to_end(chunk_id)
+                return full_cached[1]
+            cached = self._decoded_depth_chunks.get(chunk_id)
+            if cached is not None:
+                self._decoded_depth_chunks.move_to_end(chunk_id)
+                return cached
+        with self._decode_lock_for_chunk(chunk_id):
+            with self._decoded_cache_lock:
+                full_cached = self._decoded_chunks.get(chunk_id)
+                if full_cached is not None:
+                    self._decoded_chunks.move_to_end(chunk_id)
+                    return full_cached[1]
+                cached = self._decoded_depth_chunks.get(chunk_id)
+                if cached is not None:
+                    self._decoded_depth_chunks.move_to_end(chunk_id)
+                    return cached
+            frame_count = int(manifest.get('frame_count') or len(manifest.get('frames') or []))
+            width = int(manifest['width'])
+            height = int(manifest['height'])
+            depth_path = chunk_dir / str(manifest.get('depth_video') or 'depth.mkv')
+            depth = self._decode_raw_video(depth_path, pix_fmt='gray16le', dtype=np.uint16, shape=(frame_count, height, width))
+            return self._remember_depth_chunk(chunk_id, depth)
+
     def _decode_chunk(self, chunk_dir: Path, manifest: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
         chunk_id = str(manifest.get('chunk_id') or chunk_dir.name)
-        cached = self._decoded_chunks.get(chunk_id)
-        if cached is not None:
-            self._decoded_chunks.move_to_end(chunk_id)
-            return cached
-        frame_count = int(manifest.get('frame_count') or len(manifest.get('frames') or []))
-        width = int(manifest['width'])
-        height = int(manifest['height'])
-        rgb_path = chunk_dir / str(manifest.get('rgb_video') or 'rgb.mp4')
-        depth_path = chunk_dir / str(manifest.get('depth_video') or 'depth.mkv')
-        rgb = self._decode_raw_video(rgb_path, pix_fmt='bgr24', dtype=np.uint8, shape=(frame_count, height, width, 3))
-        depth = self._decode_raw_video(depth_path, pix_fmt='gray16le', dtype=np.uint16, shape=(frame_count, height, width))
-        decoded = (rgb, depth)
-        if self.decoded_chunk_cache_max > 0:
-            self._decoded_chunks[chunk_id] = decoded
-            self._decoded_chunks.move_to_end(chunk_id)
-            while len(self._decoded_chunks) > self.decoded_chunk_cache_max:
-                self._decoded_chunks.popitem(last=False)
-        return decoded
+        with self._decoded_cache_lock:
+            cached = self._decoded_chunks.get(chunk_id)
+            if cached is not None:
+                self._decoded_chunks.move_to_end(chunk_id)
+                return cached
+        with self._decode_lock_for_chunk(chunk_id):
+            with self._decoded_cache_lock:
+                cached = self._decoded_chunks.get(chunk_id)
+                if cached is not None:
+                    self._decoded_chunks.move_to_end(chunk_id)
+                    return cached
+            frame_count = int(manifest.get('frame_count') or len(manifest.get('frames') or []))
+            width = int(manifest['width'])
+            height = int(manifest['height'])
+            rgb_path = chunk_dir / str(manifest.get('rgb_video') or 'rgb.mp4')
+            depth_path = chunk_dir / str(manifest.get('depth_video') or 'depth.mkv')
+            rgb = self._decode_raw_video(rgb_path, pix_fmt='bgr24', dtype=np.uint8, shape=(frame_count, height, width, 3))
+            depth = self._decode_raw_video(depth_path, pix_fmt='gray16le', dtype=np.uint16, shape=(frame_count, height, width))
+            decoded = (rgb, depth)
+            with self._decoded_cache_lock:
+                if self.decoded_chunk_cache_max > 0:
+                    self._decoded_chunks[chunk_id] = decoded
+                    self._decoded_chunks.move_to_end(chunk_id)
+                    self._decoded_depth_chunks.pop(chunk_id, None)
+                    while len(self._decoded_chunks) > self.decoded_chunk_cache_max:
+                        self._decoded_chunks.popitem(last=False)
+                return decoded
 
     @staticmethod
     def _decode_raw_video(path: Path, *, pix_fmt: str, dtype: Any, shape: tuple[int, ...]) -> np.ndarray:

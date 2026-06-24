@@ -220,9 +220,10 @@ public class RuntimeModelManager : MonoBehaviour
         _records.Add(record);
         AttachEventIdentity(record);
         ApplyResolvedPose(record);
-        if (record.SpatialBox != null && record.SpatialBox.IsReady && ModelEventDisplay.Instance != null)
+        ModelEventDisplay display = ModelEventDisplay.Instance;
+        if (display != null)
         {
-            ModelEventDisplay.Instance.ShowForModel(instance, "ready");
+            display.CloseForModel(instance);
         }
         EnforceCachedFileLimit();
     }

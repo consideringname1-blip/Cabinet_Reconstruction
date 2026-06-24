@@ -195,27 +195,18 @@ data/history_placement_requests/<request_timestamp>/
 
 `/history-placement-restoration/latest` 读取最新 completed request 的 `result/02_response.json`。Unity 默认使用最新 completed 结果；如果用户中止，服务端应通过 DB 状态区分，而不是靠 task 目录覆盖旧记录。
 
-## 外部 Scratch 目录
+## Task-local Scratch 目录
 
-`data/output/` 仍然存在，但定位已经变成外部工具 scratch 或兼容 HTTP 目录。稳定产物会复制到 task 的 `worker/` 或 `result/`。
+全局 `output` 目录已经移除。所有稳定产物写入 task 的 `worker/`、`result/` 或 `debug/`；外部后端必须使用临时目录时，也放在当前 task 的 `worker/<stage>_backend/` 下。
 
-保留目录包括：
+当前示例：
 
 ```text
-data/output/hololens2/
-data/output/sam3/
-data/output/instantmesh-input/
-data/output/instant-mesh-large/
-data/output/sam3d-objects/
-data/output/object_alignment/
-data/output/runtime_mesh/
-data/output/blender/
-data/output/history_placement_restoration/
-data/output/taken_object_detection/
-data/output/sam3d_body/
+data/model/<task_timestamp>/worker/03_instantmesh_backend/
+data/model/<task_timestamp>/worker/04_object_alignment_preview/
 ```
 
-这些目录不应作为新任务结果的权威入口。新代码应优先通过 `artifact_layout` 的 helper 推导 task 目录。
+新代码应通过 `artifact_layout` 的 helper 推导 task 目录，不再新增全局兼容输出根。
 
 ## Debug 与耗时记录
 
@@ -249,5 +240,3 @@ data/model/<task_timestamp>/task.json
 - 删除单个模型任务：`data/model/<task_timestamp>/`，同时保留或清理 DB 记录按维护策略决定。
 - 删除单次 ArUco 处理：`data/aruco_processing/<task_timestamp>/`。
 - 删除单次历史位置再现请求：`data/history_placement_requests/<request_timestamp>/`。
-
-不要把 `data/output/` 当作任务级权威目录清理；它可能包含外部工具 scratch，也可能被兼容 URL 使用。

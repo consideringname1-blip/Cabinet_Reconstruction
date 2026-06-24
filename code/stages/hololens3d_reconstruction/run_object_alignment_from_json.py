@@ -1272,6 +1272,9 @@ def main(argv: list[str]) -> int:
         valid_lengths=(2, 3),
     )
     icp_backend = resolve_icp_backend()
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise ValueError("task_timestamp is required for object_alignment artifacts")
 
     if "depthpointcloud" not in task:
         raise ValueError("depthpointcloud is missing. Run pointcloud stage first.")
@@ -1382,10 +1385,10 @@ def main(argv: list[str]) -> int:
     )
 
     confidence = compute_confidence(task, best)
-    overlay_preview_name = f"{prefix}_alignment_preview_pointcloud_model.png"
-    overlay_preview_path = object_alignment_output_path(overlay_preview_name)
-    unaligned_preview_name = f"{prefix}_alignment_preview_model_compare.png"
-    unaligned_preview_path = object_alignment_output_path(unaligned_preview_name)
+    overlay_preview_name = f"04_object_alignment_{prefix}_alignment_preview_pointcloud_model.png"
+    overlay_preview_path = object_alignment_output_path(task_timestamp, overlay_preview_name)
+    unaligned_preview_name = f"04_object_alignment_{prefix}_alignment_preview_model_compare.png"
+    unaligned_preview_path = object_alignment_output_path(task_timestamp, unaligned_preview_name)
     preview_image_name: str | None = overlay_preview_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
     preview_image_unaligned_name: str | None = unaligned_preview_name if ENABLE_ALIGNMENT_RENDER_OUTPUTS else None
 
@@ -1424,7 +1427,7 @@ def main(argv: list[str]) -> int:
     task["debug"] = debug_section
 
     if ENABLE_ALIGNMENT_RENDER_OUTPUTS:
-        preview_tmp_root = object_alignment_output_path("_tmp_preview_root").parent
+        preview_tmp_root = object_alignment_output_path(task_timestamp, "_tmp_preview_root").parent
         tmp_dir_path = preview_tmp_root / f"{prefix}_alignment_{uuid.uuid4().hex}"
         tmp_dir_path.mkdir(parents=False, exist_ok=False)
         try:

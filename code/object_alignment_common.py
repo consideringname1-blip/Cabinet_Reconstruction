@@ -8,8 +8,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from artifact_layout import model_worker_file
-from artifact_layout import OBJECT_ALIGNMENT_OUTPUT_ROOT
+from artifact_layout import model_debug_dir, model_worker_file
 from path_config import BLENDER_BIN
 from stages.hololens3d_reconstruction.settings import (
     ICP_DEPTH_BORDER_CROP_RATIO,
@@ -618,7 +617,9 @@ def resolve_blender_path(cli_arg: str | None = None) -> Path:
     )
 
 
-def object_alignment_output_path(name: str) -> Path:
-    path = (OBJECT_ALIGNMENT_OUTPUT_ROOT / name).resolve()
+def object_alignment_output_path(task_timestamp: str, name: str) -> Path:
+    if not str(task_timestamp or "").strip():
+        raise ValueError("task_timestamp is required for object alignment artifacts")
+    path = (model_debug_dir(str(task_timestamp)) / name).resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     return path

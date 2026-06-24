@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from artifact_layout import FOLDER_MAP, INSTANTMESH_OUTPUT_VIDEOS, model_debug_dir, model_worker_dir
+from artifact_layout import model_debug_dir, model_result_dir, model_worker_dir
 
 
 BACKEND_INSTANTMESH = "instantmesh"
@@ -14,16 +14,6 @@ MODEL_STAGE_INSTANTMESH = "InstantMesh"
 MODEL_STAGE_SAM3D_OBJECTS = "SAM3DObjects"
 MODEL_STAGE_RUNTIME_MESH = "RuntimeMesh"
 
-INSTANTMESH_MESH_FOLDER = "meshes"
-INSTANTMESH_VIDEO_FOLDER = "videos"
-SAM3D_OBJECTS_MESH_FOLDER = "sam3d_object_meshes"
-RUNTIME_MESH_FOLDER = "runtime_meshes"
-
-_DEFAULT_FOLDER_BY_STAGE = {
-    MODEL_STAGE_INSTANTMESH: INSTANTMESH_MESH_FOLDER,
-    MODEL_STAGE_SAM3D_OBJECTS: SAM3D_OBJECTS_MESH_FOLDER,
-    MODEL_STAGE_RUNTIME_MESH: RUNTIME_MESH_FOLDER,
-}
 _DEFAULT_BACKEND_BY_STAGE = {
     MODEL_STAGE_INSTANTMESH: BACKEND_INSTANTMESH,
     MODEL_STAGE_SAM3D_OBJECTS: BACKEND_SAM3D_OBJECTS,
@@ -59,10 +49,9 @@ class ModelFileSource:
 
     @property
     def video_path(self) -> Path | None:
-        if not self.video:
+        if not self.video or self.video_root is None:
             return None
-        video_root = self.video_root or INSTANTMESH_OUTPUT_VIDEOS
-        return video_root / self.video
+        return self.video_root / self.video
 
 
 def build_model_generation_payload(
@@ -110,10 +99,6 @@ def _infer_stage_from_model_generation(payload: dict[str, Any]) -> str:
     raise ValueError(f"Unsupported ModelGeneration.source_stage: {source_stage}")
 
 
-def _default_folder(source_stage: str) -> str:
-    return _DEFAULT_FOLDER_BY_STAGE.get(source_stage, INSTANTMESH_MESH_FOLDER)
-
-
 def _default_backend(source_stage: str, payload: dict[str, Any]) -> str:
     backend = str(payload.get("backend") or payload.get("generator") or "").strip()
     if backend:
@@ -132,16 +117,14 @@ def _resolve_folder_root(
         if not task_timestamp:
             raise ValueError(f"{source_stage}.artifact_root=model_worker requires task_timestamp")
         return artifact_root, model_worker_dir(task_timestamp)
-
-    folder = str(
-        payload.get("mesh_folder")
-        or payload.get("folder")
-        or _default_folder(source_stage)
+    if artifact_root == "model_result":
+        if not task_timestamp:
+            raise ValueError(f"{source_stage}.artifact_root=model_result requires task_timestamp")
+        return artifact_root, model_result_dir(task_timestamp)
+    raise ValueError(
+        f"{source_stage}.artifact_root must be model_worker or model_result; "
+        "global output folders are no longer supported"
     )
-    root = FOLDER_MAP.get(folder)
-    if root is None:
-        raise ValueError(f"No output folder is configured for {source_stage}: {folder}")
-    return folder, root
 
 
 def _source_from_payload(
@@ -160,14 +143,18 @@ def _source_from_payload(
     if require_mtl_image and (not mtl_name or not image_name):
         raise ValueError(f"{source_stage}.mesh / mtl / image is missing")
 
+    artifact_root = str(payload.get("artifact_root") or "").strip()
     folder, root = _resolve_folder_root(source_stage, payload, task_timestamp=task_timestamp)
 
     video_name = str(payload.get("video") or "").strip() or None
-    video_folder = str(payload.get("video_folder") or INSTANTMESH_VIDEO_FOLDER).strip() or None
-    video_root = FOLDER_MAP.get(video_folder) if video_folder else None
-    if artifact_root == "model_worker" and video_name and task_timestamp and not payload.get("video_folder"):
-        video_folder = None
+    video_folder = str(payload.get("video_folder") or "").strip() or None
+    video_root = None
+    if video_folder:
+        raise ValueError(f"{source_stage}.video_folder is no longer supported")
+    if artifact_root == "model_worker" and video_name and task_timestamp:
         video_root = model_debug_dir(task_timestamp)
+    elif artifact_root == "model_result" and video_name and task_timestamp:
+        video_root = model_result_dir(task_timestamp)
 
     return ModelFileSource(
         source_stage=source_stage,

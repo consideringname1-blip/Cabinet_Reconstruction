@@ -10,10 +10,8 @@ import _bootstrap
 from PIL import Image
 
 from artifact_layout import (
-    INSTANTMESH_OUTPUT_MESHES,
-    INSTANTMESH_OUTPUT_VIDEOS,
-    OUTPUT_ROOT,
     model_debug_file,
+    model_worker_dir,
     model_worker_file,
 )
 from config import TASK_DEBUG_OUTPUT_ENABLE
@@ -91,6 +89,9 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
         source_path=sam3_color_path,
         target_path=prepared_target_path,
     )
+    backend_output_root = model_worker_dir(task_timestamp) / "03_instantmesh_backend"
+    backend_mesh_root = backend_output_root / "instant-mesh-large" / "meshes"
+    backend_video_root = backend_output_root / "instant-mesh-large" / "videos"
     video_output_enabled = bool(ENABLE_INSTANTMESH_VIDEO_OUTPUT and TASK_DEBUG_OUTPUT_ENABLE)
 
     try:
@@ -108,7 +109,7 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
                 str(INSTANTMESH_CONFIG),
                 str(prepared_input_path),
                 "--output_path",
-                str(OUTPUT_ROOT),
+                str(backend_output_root),
                 "--export_texmap",
                 # "--no_rembg",
             ]
@@ -126,11 +127,11 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
     image_name = f"{output_stem}.png"
     video_name = f"{output_stem}.mp4" if video_output_enabled else None
 
-    mesh_path = ensure_file(INSTANTMESH_OUTPUT_MESHES / mesh_name, "InstantMesh obj")
-    ensure_file(INSTANTMESH_OUTPUT_MESHES / mtl_name, "InstantMesh mtl")
-    ensure_file(INSTANTMESH_OUTPUT_MESHES / image_name, "InstantMesh texture image")
+    mesh_path = ensure_file(backend_mesh_root / mesh_name, "InstantMesh obj")
+    ensure_file(backend_mesh_root / mtl_name, "InstantMesh mtl")
+    ensure_file(backend_mesh_root / image_name, "InstantMesh texture image")
     if video_name is not None:
-        ensure_file(INSTANTMESH_OUTPUT_VIDEOS / video_name, "InstantMesh video")
+        ensure_file(backend_video_root / video_name, "InstantMesh video")
 
     raw_mesh_name = mesh_name
     cleanup_info = None
@@ -138,7 +139,7 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
         clean_mesh_name = f"{Path(mesh_name).stem}_clean.obj"
         cleanup_info = clean_obj_connected_components(
             mesh_path,
-            INSTANTMESH_OUTPUT_MESHES / clean_mesh_name,
+            backend_mesh_root / clean_mesh_name,
             min_face_ratio=float(INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO),
             min_faces=int(INSTANTMESH_CLEAN_COMPONENT_MIN_FACES),
         )
@@ -156,10 +157,10 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
     for target in (raw_obj_path, model_obj_path, model_mtl_path, model_texture_path):
         target.parent.mkdir(parents=True, exist_ok=True)
 
-    shutil.copy2(INSTANTMESH_OUTPUT_MESHES / raw_mesh_name, raw_obj_path)
-    shutil.copy2(INSTANTMESH_OUTPUT_MESHES / mesh_name, model_obj_path)
-    shutil.copy2(INSTANTMESH_OUTPUT_MESHES / mtl_name, model_mtl_path)
-    shutil.copy2(INSTANTMESH_OUTPUT_MESHES / image_name, model_texture_path)
+    shutil.copy2(backend_mesh_root / raw_mesh_name, raw_obj_path)
+    shutil.copy2(backend_mesh_root / mesh_name, model_obj_path)
+    shutil.copy2(backend_mesh_root / mtl_name, model_mtl_path)
+    shutil.copy2(backend_mesh_root / image_name, model_texture_path)
     rewrite_obj_mtl_reference(raw_obj_path, model_mtl_path.name)
     rewrite_obj_mtl_reference(model_obj_path, model_mtl_path.name)
     rewrite_mtl_texture_reference(model_mtl_path, model_texture_path.name)
@@ -167,7 +168,7 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
     if video_name:
         video_target = model_debug_file(task_timestamp, "generation.instantmesh_video")
         video_target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(INSTANTMESH_OUTPUT_VIDEOS / video_name, video_target)
+        shutil.copy2(backend_video_root / video_name, video_target)
         model_video_name = video_target.name
 
     model_mesh_name = model_obj_path.name

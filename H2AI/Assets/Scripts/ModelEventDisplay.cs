@@ -124,6 +124,16 @@ public class ModelEventDisplay : MonoBehaviour
         }
     }
 
+    public void CloseForModel(RuntimeModelInstance instance)
+    {
+        if (instance == null)
+        {
+            return;
+        }
+
+        CloseHint(ResolveKey(instance.TaskId, instance.ModelKey));
+    }
+
     public void CloseAllAndClearLocalCache()
     {
         foreach (GameObject hint in new List<GameObject>(activeHints.Values))

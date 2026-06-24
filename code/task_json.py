@@ -11,6 +11,34 @@ from artifact_layout import model_task_json_path
 _PROJECT_PATH_HINTS = ("data/", "code/", "H2AI/", "models/")
 
 
+def _iter_candidate_paths(path_arg: str | Path, *, default_base: Path | None = None) -> list[Path]:
+    raw = str(path_arg or "").strip()
+    if not raw:
+        return []
+
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        return [path]
+
+    candidates: list[Path] = []
+
+    def add(candidate: Path) -> None:
+        if candidate not in candidates:
+            candidates.append(candidate)
+
+    if default_base is not None:
+        add(Path(default_base) / path)
+
+    add(PROJECT_ROOT / path)
+
+    if not raw.startswith(_PROJECT_PATH_HINTS):
+        for hint in _PROJECT_PATH_HINTS:
+            add(PROJECT_ROOT / hint / path)
+
+    add(path)
+    return candidates
+
+
 def resolve_project_path(
     path_arg: str | Path,
     *,

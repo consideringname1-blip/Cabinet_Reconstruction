@@ -81,7 +81,7 @@
 : 代码根目录、stage 脚本入口、第三方子仓库路径、Python runtime 和 Blender 路径。
 
 `code/artifact_layout.py`
-: `data/` 下的目录结构、任务目录、worker/result/debug 文件命名、数据库路径、HTTP `FOLDER_MAP` 和目录初始化 helper。新产物路径优先通过这里的函数推导。
+: `data/` 下的目录结构、任务目录、worker/result/debug 文件命名、数据库路径和目录初始化 helper。新产物路径优先通过这里的函数推导。
 
 `code/server_api.py`
 : Flask API。只做请求解析、任务创建、状态查询、文件服务和轻量接口组合，避免把重建算法塞进 API 层。
@@ -171,11 +171,11 @@ aruco_detect
 2. 用 `stage_common.load_stage_task()` 读取输入并打印 stage 标识。
 3. 用 `task_json.save_task_json()` 写回结果。
 4. 稳定输出写入 `data/model/<task_timestamp>/worker|result|debug`，路径通过 `artifact_layout.py` 推导。
-5. 外部工具必须使用 scratch 目录时，写入 `data/output/<tool-or-domain>/`，再把稳定产物复制回 task 目录。
+5. 外部工具必须使用 scratch 目录时，写入 task-local `worker/<stage>_backend/`，再把稳定产物复制回 task 目录。
 6. 运行路径、Python 环境、外部工具路径写入 `path_config.py`；运行开关写入 `config.py`；stage 局部参数写到对应 `settings.py`。
 7. 如果由 worker 调度，在 `task_worker.py` 增加 runner、`STAGE_RUNNERS` 和 stage 顺序。
 8. 如果 stage 名会进入任务状态，在 `task_db.py` 的 `ALLOWED_STATUSES` 中登记。
-9. 如果客户端需要旧 `/files/<folder>/<filename>` 下载路径，在 `artifact_layout.py` 的 `FOLDER_MAP` 增加兼容目录映射；新稳定结果优先走 task `result/`。
+9. 如果客户端需要下载文件，走 `/task-artifacts/<task_id>/<worker|result|debug>/<filename>`，不要新增全局文件目录映射。
 
 ## 共享代码放置规则
 
@@ -198,7 +198,7 @@ code/stages/hololens_aruco_reference/aruco_common.py
 ```text
 config.py          # 运行开关、阈值、worker 参数
 path_config.py     # 代码路径、stage 脚本、Python/Blender 可执行文件
-artifact_layout.py # data 目录、task artifact 文件名、FOLDER_MAP、数据库路径
+artifact_layout.py # data 目录、task artifact 文件名、数据库路径
 ```
 
 产物路径优先使用 `model_worker_file()`、`model_result_file()`、`model_debug_file()`、`aruco_*_file()` 等 helper，不要在 stage 内手写目录结构。
@@ -276,8 +276,8 @@ HoloLens depth/RGB 配准链路是设备输入边界，除非正在处理配准�
 3. 在 `path_config.py` 增加脚本/解释器/外部工具路径，在 `artifact_layout.py` 增加产物路径，在 `config.py` 增加服务级运行开关；stage 局部参数写到对应 `settings.py`。
 4. 如果是 stage，创建 `run_<stage>_from_json.py`，并使用 `stage_common`、`task_json`、`subprocess_stream` 等现有工具。
 5. 在 `task_worker.py` 和 `task_db.py` 注册 stage。
-6. 稳定输出写入 task `worker/result/debug` 目录，并把稳定字段写回 task JSON。外部工具 scratch 可以留在 `data/output/`，但不能作为新任务结果的权威入口。
-7. 如果结果要给旧客户端下载，更新 `artifact_layout.FOLDER_MAP`；新客户端优先读 task result。
+6. 稳定输出写入 task `worker/result/debug` 目录，并把稳定字段写回 task JSON。外部工具 scratch 放在 task-local `worker/` 下。
+7. 如果结果要给客户端下载，使用 task artifact endpoint；不要新增全局兼容输出根。
 8. 如果改变坐标、JSON schema、API 或文件位置，更新 `docs/`。
 9. 至少运行 `python3 -m py_compile` 覆盖被改动的 Python 文件；高风险 stage 再用一份已有 task JSON 做 smoke test。
 

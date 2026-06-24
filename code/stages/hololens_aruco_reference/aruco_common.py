@@ -175,7 +175,8 @@ def resolve_pv_camera_matrix(task_or_frame: dict[str, Any]) -> np.ndarray:
     if k.ndim == 2 and k.shape[0] >= 3 and k.shape[1] >= 3:
         return k[:3, :3].astype(np.float64)
 
-    flat = np.asarray((task.get("PVCamera") or {}).get("k"), dtype=np.float64).reshape(-1)
+    raw_k = pv_info.get("k")
+    flat = np.asarray([] if raw_k is None else raw_k, dtype=np.float64).reshape(-1)
     if flat.size == 9:
         return flat.reshape(3, 3).astype(np.float64)
 

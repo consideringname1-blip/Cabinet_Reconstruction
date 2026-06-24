@@ -153,7 +153,7 @@ stage 会把结果写回 task JSON 的三个位置：
 - 相机内参：`PVCamera.k`，如果没有则尝试 `PVCameraFrames[0].k`
 - depth 有效范围：`depth_camera_config.depth_sensor_limits_for_task(task)`
 
-旧 task JSON 中的 `sam3Name.*` 仍可作为语义字段理解，但当前文件读取不再依赖 `data/output/sam3` 或 `data/upload` 回退。
+旧 task JSON 中的 `sam3Name.*` 仍可作为语义字段理解，但当前文件读取不再依赖旧全局输出或上传目录回退。
 
 有效性要求：
 

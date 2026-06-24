@@ -64,6 +64,10 @@ def parse_float_array(value: Any, count: int, label: str) -> np.ndarray:
     return array
 
 
+def load_camera_info(path: Path) -> tuple[np.ndarray, np.ndarray, int, int]:
+    return load_camera_info_payload(load_json(path))
+
+
 def load_camera_info_payload(payload: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, int, int]:
     message = payload.get('message') if isinstance(payload.get('message'), dict) else payload
     camera_matrix = parse_float_array(

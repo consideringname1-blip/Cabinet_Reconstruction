@@ -318,16 +318,16 @@ shigurei没有正常记录，或许参考code/.test/save_latest_ros2_frame.py有
 基于以上问题，帮我再不动shigurei的数据的情况下，修正代码，重跑最近4个。
 
 260605-3
-1./workspace/data/output/model_events这里面的文件夹希望使用时间戳那种名字（类似20260224_052438_050181Z）
-2./workspace/data/output/model_events/5da084d5-29b3-4a92-b2e1-107b514118a2/sam3_video_runs/809b53bdcfba/frames/000088.jpg为什么是noevent，这一帧明显开始移动了
+1.旧全局模型事件目录这里面的文件夹希望使用时间戳那种名字（类似20260224_052438_050181Z）
+2.旧全局模型事件目录/5da084d5-29b3-4a92-b2e1-107b514118a2/sam3_video_runs/809b53bdcfba/frames/000088.jpg为什么是noevent，这一帧明显开始移动了
 3.我说的那个开头的mask不全的遮挡判定，应该以投影到shigurei的那个选框为准，如果选框内的深度图，在某个时间内都在物体应该在的位置前面（有一部分深度就可以），并且在一定时间内，这部分选框内挡在前面的出现变动，那么就继续往后找，直到挡在前面的不太变动，或者没有挡在前面的，再把图喂给sam3video。
-4./workspace/data/output/model_events/340bafa4-65df-4898-b100-8abe6a60db59/sam3_video_runs/48153e445d77和/workspace/data/output/model_events/340bafa4-65df-4898-b100-8abe6a60db59/sam3_video_runs/d9e934954150为什么会出现两个mask？data/output/model_events/340bafa4-65df-4898-b100-8abe6a60db59/sam3_video_runs/d9e934954150这个是对的（虽然有缺损）
+4.旧全局模型事件目录/340bafa4-65df-4898-b100-8abe6a60db59/sam3_video_runs/48153e445d77和旧全局模型事件目录/340bafa4-65df-4898-b100-8abe6a60db59/sam3_video_runs/d9e934954150为什么会出现两个mask？旧全局模型事件目录/340bafa4-65df-4898-b100-8abe6a60db59/sam3_video_runs/d9e934954150这个是对的（虽然有缺损）
 
 260605-4
-1.以/workspace/data/output/model_events/20260605_092623_759164Z/sam3_video_runs为例，似乎sam3video在物体丢失后会尝试找个新的替代？
+1.以旧全局模型事件目录/20260605_092623_759164Z/sam3_video_runs为例，似乎sam3video在物体丢失后会尝试找个新的替代？
 这导致后续出现各种严重错误。所以我认为，需要对每一帧应用起那面的box范围内是否有过多遮挡（这个可以把遮挡部分阈值搞得更高些）遮挡是否稳定无需考虑。
-2./workspace/data/output/model_events/20260605_092716_228601Z/sam3_video_runs/current/masks这个目录怎么这么复杂？去掉current这一层。并且这个后续的mask怎么突然开始错乱了，还被错误判断为被移动
-3./workspace/data/output/model_events/20260605_092639_399392Z为什么mask了外部而不是正中央的部分。对于这个问题，引入正点。在depth稳定后，计算模型在shigurei视角的遮挡关系（只需要计算选框内范围，精度低点也可以接受，速度优先，但不能出现离谱的错误）之后从这个遮挡关系出发，从内部均匀随机不太靠边的部分（别贴边就行），选取（3-5个）正点，辅助sam3video初始化的追踪
+2.旧全局模型事件目录/20260605_092716_228601Z/sam3_video_runs/current/masks这个目录怎么这么复杂？去掉current这一层。并且这个后续的mask怎么突然开始错乱了，还被错误判断为被移动
+3.旧全局模型事件目录/20260605_092639_399392Z为什么mask了外部而不是正中央的部分。对于这个问题，引入正点。在depth稳定后，计算模型在shigurei视角的遮挡关系（只需要计算选框内范围，精度低点也可以接受，速度优先，但不能出现离谱的错误）之后从这个遮挡关系出发，从内部均匀随机不太靠边的部分（别贴边就行），选取（3-5个）正点，辅助sam3video初始化的追踪
 4.由于专注于是否被拿走，所以从根上来讲，就不会出现mask突然瞬移这个问题，所以mask不能简单以最高的那个为主。并且前面说加入高遮挡的部分不给sam3，有一定可能在高遮挡时拿走，这种也好解决，拿走后物体就没了，mask也得变（至少原位置没了），图片就按前一个输入（进入高遮挡前）就行？。
 
 260605-5
@@ -354,7 +354,7 @@ shigurei没有正常记录，或许参考code/.test/save_latest_ros2_frame.py有
 
 260608
 1.在/workspace/code/reconstruction里面放sam3d-body子仓库，由你主导安装一个专门的conda环境，把模型放到huggingface的默认缓存目录下，建立软链接，并测试是否可运行
-2./workspace/code/.test内写一个测试用代码，调用/workspace/data/shigure_event_cache/frames内的原始图片，实际任务来源在/workspace/data/output/model_events内的四个。相机参数不用使用估计，使用实际有的。目标是检测所有人物，推测人体mesh模型，放回3d空间内，算手腕距离物体最近的（一个可信范围内），然后输出mesh的覆盖rgb图（使用blender）。距离的话，由于是rgb-d图，所以使用第一步分割结果内的深度简单计算就可以，可以假设sam3dbody的旋转是大致可信的
+2./workspace/code/.test内写一个测试用代码，调用/workspace/data/shigure_event_cache/frames内的原始图片，实际任务来源在旧全局模型事件目录内的四个。相机参数不用使用估计，使用实际有的。目标是检测所有人物，推测人体mesh模型，放回3d空间内，算手腕距离物体最近的（一个可信范围内），然后输出mesh的覆盖rgb图（使用blender）。距离的话，由于是rgb-d图，所以使用第一步分割结果内的深度简单计算就可以，可以假设sam3dbody的旋转是大致可信的
 3.已完成sam3dbody的导入生成验证，暂未实装到主逻辑链路
 
 260608-2

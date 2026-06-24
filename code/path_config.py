@@ -25,6 +25,7 @@ IMESH_PY = "/opt/miniconda/envs/imesh/bin/python"
 SERVER_PY = "/opt/miniconda/envs/server/bin/python"
 SAM3_PY = "/opt/miniconda/envs/sam3/bin/python"
 SAM3D_OBJECTS_PY = "/opt/miniconda/envs/sam3d-objects-cu118/bin/python"
+SAM3D_BODY_PY = "/opt/miniconda/envs/sam_3d_body/bin/python"
 HOLOLENS2_PY = SERVER_PY
 
 # App entrypoints
@@ -92,6 +93,6 @@ DISPLAY_IDENTITY_STAGE_PY = SERVER_PY
 SHIGURE_HISTORY_RECORDER_STAGE_PY = os.environ.get("SHIGURE_HISTORY_RECORDER_PY", "/usr/bin/python3")
 HISTORY_PLACEMENT_RESTORATION_STAGE_PY = SERVER_PY
 TAKEN_OBJECT_DETECTION_STAGE_PY = SERVER_PY
-SAM3D_BODY_MESH_STAGE_PY = os.environ.get("SAM3D_BODY_PY", SERVER_PY)
+SAM3D_BODY_MESH_STAGE_PY = os.environ.get("SAM3D_BODY_PY", SAM3D_BODY_PY)
 
 BLENDER_BIN = "/usr/local/bin/blender"

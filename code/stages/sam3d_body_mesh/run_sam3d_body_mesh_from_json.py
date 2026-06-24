@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13,13 +14,13 @@ from typing import Any
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 
 CODE_ROOT = Path(__file__).resolve().parents[2]
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
-from artifact_layout import model_result_file, model_worker_dir
+from artifact_layout import model_debug_dir, model_result_file, model_worker_dir
 from path_config import BLENDER_BIN, SAM3D_BODY_FBX_EXPORT_SCRIPT, SAM3D_BODY_ROOT
 from coordinate_systems import UNITY_TO_OPENCV_CAMERA_BASIS, quat_xyzw_to_rotation_matrix
 from task_json import load_task_json, resolve_task_json_path, save_task_json
@@ -57,8 +58,7 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
 
 
 def _write_status(json_path: Path, task: dict[str, Any], status: str, **fields: Any) -> None:
-    payload = dict(task.get('SAM3DBodyMesh') or {})
-    payload.update(fields)
+    payload = dict(fields)
     payload['status'] = status
     payload['updated_at'] = _utc_now()
     task['SAM3DBodyMesh'] = _jsonable(payload)
@@ -70,7 +70,11 @@ def _write_status(json_path: Path, task: dict[str, Any], status: str, **fields: 
 
 
 def _parse_float_array(value: Any, count: int, label: str) -> np.ndarray:
-    array = np.asarray(value, dtype=np.float64).reshape(-1)
+    if isinstance(value, str):
+        values = [float(v) for v in re.findall(r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?", value)]
+        array = np.asarray(values, dtype=np.float64).reshape(-1)
+    else:
+        array = np.asarray(value, dtype=np.float64).reshape(-1)
     if array.size != count:
         raise ValueError(f'{label} must contain {count} values')
     if not np.all(np.isfinite(array)):
@@ -245,6 +249,53 @@ def _rasterize_mesh_depth(vertices: np.ndarray, faces: np.ndarray, camera_matrix
     return zbuffer
 
 
+def _save_body_mesh_debug_overlay(
+    task_timestamp: str,
+    rgb_bgr: np.ndarray,
+    vertices_camera_m: np.ndarray,
+    faces: np.ndarray,
+    camera_matrix: np.ndarray,
+    bbox_xyxy: Any,
+    label: str,
+) -> tuple[Path, dict[str, Any]]:
+    debug_dir = model_debug_dir(task_timestamp)
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    overlay_path = debug_dir / '08_sam3d_body_mesh_on_taken_rgb.png'
+    rendered_depth = _rasterize_mesh_depth(vertices_camera_m, faces, camera_matrix, rgb_bgr.shape[:2])
+    mesh_mask = rendered_depth > 0.0
+    rgb = cv2.cvtColor(rgb_bgr, cv2.COLOR_BGR2RGB)
+    overlay = rgb.astype(np.float32).copy()
+    if np.any(mesh_mask):
+        mesh_color = np.asarray([0.0, 235.0, 185.0], dtype=np.float32)
+        overlay[mesh_mask] = overlay[mesh_mask] * 0.52 + mesh_color * 0.48
+    image = Image.fromarray(np.clip(overlay, 0, 255).astype(np.uint8))
+    draw = ImageDraw.Draw(image, 'RGBA')
+    if np.any(mesh_mask):
+        contours, _ = cv2.findContours(mesh_mask.astype(np.uint8) * 255, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        for contour in contours:
+            points = [(int(p[0][0]), int(p[0][1])) for p in contour]
+            if len(points) >= 2:
+                draw.line(points + [points[0]], fill=(255, 255, 255, 210), width=2)
+    bbox_values = None
+    try:
+        bbox_values = [float(v) for v in np.asarray(bbox_xyxy, dtype=np.float64).reshape(-1)[:4]]
+    except Exception:
+        bbox_values = None
+    if bbox_values and len(bbox_values) == 4:
+        x0, y0, x1, y1 = bbox_values
+        draw.rectangle([x0, y0, x1, y1], outline=(0, 235, 185, 255), width=4)
+        tag = label or 'sam3d body'
+        tag_box = [x0, max(0.0, y0 - 24.0), min(float(rgb.shape[1]), x0 + 12.0 + len(tag) * 8.0), y0]
+        draw.rectangle(tag_box, fill=(0, 0, 0, 150))
+        draw.text((x0 + 6.0, max(0.0, y0 - 21.0)), tag, fill=(255, 255, 255, 255))
+    image.save(overlay_path)
+    return overlay_path, {
+        'body_mesh_on_taken_rgb_path': str(overlay_path),
+        'mesh_overlay_pixels': int(np.count_nonzero(mesh_mask)),
+        'selected_person_bbox_xyxy': bbox_values,
+    }
+
+
 def _camera_ray(pixel_xy: np.ndarray, camera_matrix: np.ndarray) -> np.ndarray:
     fx, fy = float(camera_matrix[0, 0]), float(camera_matrix[1, 1])
     cx, cy = float(camera_matrix[0, 2]), float(camera_matrix[1, 2])
@@ -406,7 +457,7 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
     task_timestamp = str(task.get('task_timestamp') or '').strip()
     if not task_timestamp:
         raise ValueError('task_timestamp is required for SAM3D body artifacts')
-    output_root = model_worker_dir(task_timestamp) / '08_sam3d_body_working'
+    output_root = model_worker_dir(task_timestamp)
     output_root.mkdir(parents=True, exist_ok=True)
 
     if taken.get('status') != 'TAKEN':
@@ -469,12 +520,21 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
             vertices_aruco = _camera_to_armarker_points(aligned['vertices_camera_m'], marker_rotation, marker_translation)
             keypoints_aruco = _camera_to_armarker_points(aligned['keypoints_camera_m'], marker_rotation, marker_translation)
             nearest = _nearest_wrist(person_name, keypoints_aruco, object_center)
-            mesh_npz = output_root / f'{person_name}_armarker_mesh.npz'
+            mesh_npz = output_root / f'08_sam3d_body_{person_name}_armarker_mesh.npz'
+            camera_mesh_npz = output_root / f'08_sam3d_body_{person_name}_camera_mesh.npz'
             np.savez_compressed(mesh_npz, vertices=vertices_aruco.astype(np.float32), faces=faces.astype(np.int32), keypoints=keypoints_aruco.astype(np.float32))
+            np.savez_compressed(
+                camera_mesh_npz,
+                vertices=aligned['vertices_camera_m'].astype(np.float32),
+                faces=faces.astype(np.int32),
+                keypoints=aligned['keypoints_camera_m'].astype(np.float32),
+                bbox_xyxy=aligned['bbox_xyxy'].astype(np.float32),
+            )
             people.append({
                 'person_name': person_name,
                 'bbox_xyxy': aligned['bbox_xyxy'].astype(float).tolist(),
                 'mesh_npz_path': str(mesh_npz),
+                'camera_mesh_npz_path': str(camera_mesh_npz),
                 'vertex_count': int(vertices_aruco.shape[0]),
                 'face_count': int(faces.shape[0]),
                 'depth_offset_m': float(aligned['depth_offset_m']),
@@ -506,10 +566,27 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
     selected = min(valid_people, key=lambda p: float((p.get('nearest_wrist') or {}).get('distance_m', math.inf)))
     selected_name = str(selected['person_name'])
     selected_npz = np.load(str(selected['mesh_npz_path']))
-    work_obj_path = output_root / f'{task_name}_{selected_name}_armarker.obj'
+    work_obj_path = output_root / f'08_sam3d_body_{task_name}_{selected_name}_armarker.obj'
     obj_path = model_result_file(task_timestamp, 'body.selected_obj')
     fbx_path = model_result_file(task_timestamp, 'body.selected_fbx')
     _write_obj(work_obj_path, selected_npz['vertices'], selected_npz['faces'])
+    debug_files: dict[str, Any] = {}
+    camera_mesh_path = selected.get('camera_mesh_npz_path')
+    if camera_mesh_path:
+        try:
+            selected_camera_npz = np.load(str(camera_mesh_path))
+            _overlay_path, overlay_stats = _save_body_mesh_debug_overlay(
+                task_timestamp,
+                rgb_bgr,
+                selected_camera_npz['vertices'],
+                selected_camera_npz['faces'],
+                camera_matrix,
+                selected_camera_npz['bbox_xyxy'] if 'bbox_xyxy' in selected_camera_npz.files else selected.get('bbox_xyxy'),
+                f'sam3d body {selected_name}',
+            )
+            debug_files.update(overlay_stats)
+        except Exception as exc:
+            debug_files['body_mesh_on_taken_rgb_error'] = str(exc)
     if obj_path != work_obj_path:
         obj_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(work_obj_path, obj_path)
@@ -544,6 +621,7 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         'camera_to_armarker_source': str(marker_pose_path),
         'people_json_path': str(people_json_path),
         'people': people,
+        'debug_files': debug_files,
         'object_center_armarker': object_center.tolist() if object_center is not None else None,
     }
     _write_status(json_path, task, 'SUCCESS', **payload)

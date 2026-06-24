@@ -272,13 +272,13 @@ Unity display payload 需要支持：
 - baseline 局部初始化和模型可见面裁剪仍属于有限回退，不应当被解释为精确物体重识别。
 - 配置范围依赖 YOLO anchor 的 mask/depth 质量；anchor 缺失或过旧时结果会变成 `UNKNOWN` 或 unrestricted。
 - Unity 端必须真正支持五种 polyhedron mesh，否则服务端 payload 的 shape 语义会退化。
-- `data/output/history_placement_restoration/` 只应视作旧兼容/scratch；当前 API 请求结果以 `history_placement_requests/<request_timestamp>/result/` 为准。
+- 当前 API 请求结果以 `history_placement_requests/<request_timestamp>/result/` 为准。
 
 ## 审查修改内容
 
 本轮文档审查结论：
 
-- 文件组织已按当前代码改为 request 级目录，不再把 `data/output/history_placement_restoration/` 当权威输出目录。
+- 文件组织已按当前代码改为 request 级目录。
 - `HISTORY_PLACEMENT_*` 配置项已经和当前 `settings.py` 对齐。
 - 目标 YOLO id、recent unique YOLO 计数等旧同一性表达已从验收重点中移除。
 - 剩余风险集中在轻量 signature、YOLO mask 质量和 Unity polyhedron 支持，而不是服务器目录结构。

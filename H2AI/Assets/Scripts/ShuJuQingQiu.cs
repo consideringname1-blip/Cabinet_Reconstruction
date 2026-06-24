@@ -992,6 +992,7 @@ public class ShuJuQingQiu : MonoBehaviour
         bool ready = wrapper["ready"] != null && wrapper["ready"].Type == JTokenType.Boolean && wrapper["ready"].Value<bool>();
         if (!ready)
         {
+            HandlePendingTaskProgress(wrapper);
             EnsureAsyncTaskQueuePolling();
             return;
         }
@@ -1069,6 +1070,125 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         DownloadPendingRuntimeModel();
+    }
+
+    private void HandlePendingTaskProgress(JObject wrapper)
+    {
+        JArray pendingTasks = wrapper != null ? wrapper["pending"] as JArray : null;
+        if (pendingTasks == null || pendingTasks.Count == 0)
+        {
+            return;
+        }
+
+        foreach (JToken token in pendingTasks)
+        {
+            JObject pendingTask = token as JObject;
+            if (pendingTask == null)
+            {
+                continue;
+            }
+
+            string taskId = pendingTask["task_id"]?.ToString() ?? "";
+            string queuedPurpose = FindQueuedPurpose(taskId);
+            string purpose = ResolvePurposeForReadyTask(taskId, pendingTask["purpose"]?.ToString(), queuedPurpose);
+            if (purpose != TASK_PURPOSE_OBJECT_RECONSTRUCTION)
+            {
+                continue;
+            }
+
+            RuntimeModelInstance hintInstance;
+            if (!TryBuildPendingSpatialHintInstance(pendingTask, taskId, out hintInstance))
+            {
+                continue;
+            }
+
+            ModelEventDisplay display = ModelEventDisplay.Instance;
+            if (display != null)
+            {
+                display.UpdateProgressForModel(hintInstance, BuildPendingProgressMessage(pendingTask));
+            }
+        }
+    }
+
+    private string FindQueuedPurpose(string taskId)
+    {
+        if (string.IsNullOrEmpty(taskId))
+        {
+            return "";
+        }
+
+        foreach (PendingAsyncTask pendingTask in asyncTaskQueue)
+        {
+            if (pendingTask != null && pendingTask.taskId == taskId)
+            {
+                return pendingTask.purpose;
+            }
+        }
+        return "";
+    }
+
+    private string BuildPendingProgressMessage(JObject pendingTask)
+    {
+        string progressText = pendingTask != null ? pendingTask["progress_text"]?.ToString() : "";
+        if (!string.IsNullOrEmpty(progressText))
+        {
+            return progressText;
+        }
+
+        string status = pendingTask != null ? pendingTask["stage_name"]?.ToString() : "";
+        if (string.IsNullOrEmpty(status) && pendingTask != null)
+        {
+            status = pendingTask["status"]?.ToString();
+        }
+
+        JToken progressToken = pendingTask != null ? pendingTask["progress"] : null;
+        if (progressToken != null && progressToken.Type != JTokenType.Null)
+        {
+            int percent = Mathf.RoundToInt(Mathf.Clamp01(progressToken.Value<float>()) * 100f);
+            if (!string.IsNullOrEmpty(status))
+            {
+                return status + " " + percent.ToString(CultureInfo.InvariantCulture) + "%";
+            }
+            return percent.ToString(CultureInfo.InvariantCulture) + "%";
+        }
+
+        return string.IsNullOrEmpty(status) ? "processing" : status;
+    }
+
+    private bool TryBuildPendingSpatialHintInstance(JObject pendingTask, string fallbackTaskId, out RuntimeModelInstance instance)
+    {
+        instance = null;
+        if (pendingTask == null)
+        {
+            return false;
+        }
+
+        JObject modelJ = pendingTask["model_instance"] as JObject;
+        RuntimeSpatialBoxData spatialBox;
+        if (!TryParseSpatialBoxToken(
+            NonNullToken(modelJ?["sam3_spatial_box"]) ?? NonNullToken(pendingTask["sam3_spatial_box"]),
+            out spatialBox
+        ))
+        {
+            return false;
+        }
+
+        string taskId = modelJ?["task_id"]?.ToString() ?? pendingTask["task_id"]?.ToString() ?? fallbackTaskId ?? "";
+        string modelKey = modelJ?["model_key"]?.ToString() ?? taskId;
+        if (string.IsNullOrEmpty(modelKey))
+        {
+            return false;
+        }
+
+        instance = new RuntimeModelInstance
+        {
+            ModelKey = modelKey,
+            TaskId = taskId,
+            FbxUrl = "",
+            Pose = new RuntimeModelPoseData(),
+            SpatialBox = spatialBox,
+        };
+        return true;
     }
 
     private bool IsResponseArucoSynced(JObject jo)
