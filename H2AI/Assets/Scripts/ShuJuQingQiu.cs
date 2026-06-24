@@ -1472,6 +1472,16 @@ public class ShuJuQingQiu : MonoBehaviour
                 continue;
             }
 
+            if (!ShouldAutoDownloadHistoryPlacementModel(result))
+            {
+                HistoryPlacementRestorationDisplay evidenceDisplayOnly = HistoryPlacementRestorationDisplay.Instance;
+                if (evidenceDisplayOnly != null)
+                {
+                    evidenceDisplayOnly.RegisterEvidenceForModel(result);
+                }
+                continue;
+            }
+
             string taskId = modelInstance["task_id"]?.ToString() ?? result["task_id"]?.ToString() ?? "";
             string modelKey = modelInstance["model_key"]?.ToString() ?? "";
             bool alreadyLoaded = manager != null
@@ -1508,6 +1518,38 @@ public class ShuJuQingQiu : MonoBehaviour
             }
         }
         return queuedCount;
+    }
+
+
+    private bool ShouldAutoDownloadHistoryPlacementModel(JObject result)
+    {
+        if (result == null)
+        {
+            return false;
+        }
+
+        JObject history = result["history_placement_restoration"] as JObject;
+        JObject display = history != null ? history["display"] as JObject : result["display"] as JObject;
+        bool showModel = display != null && display["show_model"] != null && display["show_model"].Value<bool>();
+        if (!showModel)
+        {
+            return false;
+        }
+
+        string status = result["status"]?.ToString() ?? history?["status"]?.ToString() ?? "";
+        string normalizedStatus = status.ToUpperInvariant();
+        if (normalizedStatus == "MOVED" || normalizedStatus == "ORIGINAL" || normalizedStatus == "STABLE")
+        {
+            return false;
+        }
+
+        string takenStatus = result["taken_object_detection"]?["status"]?.ToString() ?? "";
+        if (normalizedStatus == "MISSING" && string.Equals(takenStatus, "NOT_TAKEN", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return true;
     }
 
     private void OnHistoryPlacementRestorationFinished(HTTPRequest request, HTTPResponse response)

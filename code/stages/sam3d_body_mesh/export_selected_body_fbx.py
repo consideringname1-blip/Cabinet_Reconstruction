@@ -7,6 +7,12 @@ from pathlib import Path
 import bpy
 
 
+BODY_OBJ_IMPORT_FORWARD_AXIS = "NEGATIVE_Z"
+BODY_OBJ_IMPORT_UP_AXIS = "Y"
+BODY_FBX_EXPORT_FORWARD_AXIS = "-Z"
+BODY_FBX_EXPORT_UP_AXIS = "Y"
+
+
 def clean_scene() -> None:
     bpy.ops.object.select_all(action='SELECT')
     bpy.ops.object.delete()
@@ -15,9 +21,17 @@ def clean_scene() -> None:
 def import_obj(path: str):
     before = {obj.name for obj in bpy.context.scene.objects}
     if hasattr(bpy.ops.wm, 'obj_import'):
-        bpy.ops.wm.obj_import(filepath=path)
+        bpy.ops.wm.obj_import(
+            filepath=path,
+            forward_axis=BODY_OBJ_IMPORT_FORWARD_AXIS,
+            up_axis=BODY_OBJ_IMPORT_UP_AXIS,
+        )
     else:
-        bpy.ops.import_scene.obj(filepath=path)
+        bpy.ops.import_scene.obj(
+            filepath=path,
+            axis_forward="-Z",
+            axis_up="Y",
+        )
     return [obj for obj in bpy.context.scene.objects if obj.name not in before]
 
 
@@ -81,6 +95,9 @@ def main(argv: list[str]) -> int:
         bake_anim=False,
         object_types={'MESH'},
         path_mode='AUTO',
+        axis_forward=BODY_FBX_EXPORT_FORWARD_AXIS,
+        axis_up=BODY_FBX_EXPORT_UP_AXIS,
+        bake_space_transform=True,
     )
     return 0
 

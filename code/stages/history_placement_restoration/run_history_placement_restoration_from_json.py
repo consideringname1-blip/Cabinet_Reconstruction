@@ -393,15 +393,46 @@ def _object_center_aruco(task: dict[str, Any]) -> tuple[np.ndarray | None, str]:
     return None, "missing_object_center_aruco"
 
 
-def _object_height_m(task: dict[str, Any]) -> float:
-    bounds = task.get("ModelBounds") if isinstance(task.get("ModelBounds"), dict) else None
-    if bounds and bounds.get("aabb_min_aruco") is not None and bounds.get("aabb_max_aruco") is not None:
+def _aruco_local_world_up(task: dict[str, Any]) -> np.ndarray:
+    reference = task.get("aruco_reference") if isinstance(task.get("aruco_reference"), dict) else None
+    if reference and reference.get("rotation_quaternion_xyzw") is not None:
         try:
-            a = _parse_float_array(bounds.get("aabb_min_aruco"), 3, "ModelBounds.aabb_min_aruco")
-            b = _parse_float_array(bounds.get("aabb_max_aruco"), 3, "ModelBounds.aabb_max_aruco")
-            return float(abs(b[1] - a[1]))
+            rotation = quat_xyzw_to_rotation_matrix(
+                _parse_float_array(reference.get("rotation_quaternion_xyzw"), 4, "aruco_reference.rotation_quaternion_xyzw")
+            )
+            local_up = rotation.T @ np.asarray([0.0, 1.0, 0.0], dtype=np.float64)
+            norm = float(np.linalg.norm(local_up))
+            if np.isfinite(norm) and norm > 1.0e-9:
+                return (local_up / norm).astype(np.float64)
         except Exception:
             pass
+    return np.asarray([0.0, 1.0, 0.0], dtype=np.float64)
+
+
+def _object_height_m(task: dict[str, Any], local_up: np.ndarray | None = None) -> float:
+    bounds = task.get("ModelBounds") if isinstance(task.get("ModelBounds"), dict) else None
+    if bounds:
+        up = np.asarray(local_up if local_up is not None else _aruco_local_world_up(task), dtype=np.float64).reshape(3)
+        norm = float(np.linalg.norm(up))
+        if np.isfinite(norm) and norm > 1.0e-9:
+            up = up / norm
+            corners = bounds.get("corners_aruco")
+            if isinstance(corners, list) and corners:
+                try:
+                    points = np.asarray(corners, dtype=np.float64).reshape(-1, 3)
+                    projected = points @ up
+                    height = float(np.nanmax(projected) - np.nanmin(projected))
+                    if np.isfinite(height) and height > 0.0:
+                        return height
+                except Exception:
+                    pass
+        if bounds.get("aabb_min_aruco") is not None and bounds.get("aabb_max_aruco") is not None:
+            try:
+                a = _parse_float_array(bounds.get("aabb_min_aruco"), 3, "ModelBounds.aabb_min_aruco")
+                b = _parse_float_array(bounds.get("aabb_max_aruco"), 3, "ModelBounds.aabb_max_aruco")
+                return float(abs(b[1] - a[1]))
+            except Exception:
+                pass
     return 0.10
 
 
@@ -752,7 +783,14 @@ def _signature_score(candidate: dict[str, Any], reference: dict[str, Any]) -> di
     shape_score = float(0.42 * hu_score + 0.24 * edge_score + 0.20 * extent_score + 0.14 * aspect_score)
 
     model_reference_dims = reference.get("model_bbox_sorted_dims_m") or reference.get("point_bbox_sorted_dims_m")
-    model_size_score = _sorted_dim_distance(candidate.get("point_bbox_sorted_dims_m"), model_reference_dims)
+    candidate_dims = sorted((float(v) for v in _as_float_array(candidate.get("point_bbox_sorted_dims_m")) if float(v) > 0.0), reverse=True)
+    reference_dims = sorted((float(v) for v in _as_float_array(model_reference_dims) if float(v) > 0.0), reverse=True)
+    model_size_score = _sorted_dim_distance(candidate_dims, reference_dims)
+    model_largest_dim_ratio = None
+    model_top2_area_ratio = None
+    if len(candidate_dims) >= 2 and len(reference_dims) >= 2:
+        model_largest_dim_ratio = float(candidate_dims[0] / max(reference_dims[0], 1.0e-9))
+        model_top2_area_ratio = float((candidate_dims[0] * candidate_dims[1]) / max(reference_dims[0] * reference_dims[1], 1.0e-9))
 
     depth_score = 0.0
     if candidate.get("median_depth_m") is not None and reference.get("median_depth_m") is not None:
@@ -776,6 +814,8 @@ def _signature_score(candidate: dict[str, Any], reference: dict[str, Any]) -> di
         "score": float(score),
         "visual_score": float(visual_score),
         "model_size_score": float(model_size_score),
+        "model_largest_dim_ratio": model_largest_dim_ratio,
+        "model_top2_area_ratio": model_top2_area_ratio,
         "shape_score": float(shape_score),
         "depth_score": float(depth_score),
         "change_score": float(change_score),
@@ -1322,6 +1362,8 @@ def _signature_hard_thresholds(signature: dict[str, Any]) -> tuple[bool, list[st
         ("score", settings.SIGNATURE_MAX_SCORE),
         ("visual_score", settings.SIGNATURE_MAX_VISUAL_SCORE),
         ("model_size_score", settings.SIGNATURE_MAX_MODEL_SIZE_SCORE),
+        ("model_largest_dim_ratio", settings.SIGNATURE_MAX_MODEL_LARGEST_DIM_RATIO),
+        ("model_top2_area_ratio", settings.SIGNATURE_MAX_MODEL_TOP2_AREA_RATIO),
         ("shape_score", settings.SIGNATURE_MAX_SHAPE_SCORE),
         ("depth_score", settings.SIGNATURE_MAX_DEPTH_SCORE),
         ("change_score", settings.SIGNATURE_MAX_CHANGE_SCORE),
@@ -1389,6 +1431,11 @@ def _search_current_candidate(
             near_reference_position = spatial_distance <= original_center_limit
         signature = _signature_score(candidate_signature, reference_signature)
         hard_thresholds_passed, hard_threshold_failures = _signature_hard_thresholds(signature)
+        if near_reference_position and "change_score_too_high" in hard_threshold_failures:
+            hard_threshold_failures = [
+                failure for failure in hard_threshold_failures if failure != "change_score_too_high"
+            ]
+            hard_thresholds_passed = not hard_threshold_failures
         change_overlap = candidate_signature.get("change_overlap_ratio")
         if (
             change_mask is not None
@@ -1918,13 +1965,16 @@ def _pose_from_observation(task: dict[str, Any], obs: YoloObjectObservation | No
 def _polyhedron_pose(position: list[float] | None, task: dict[str, Any]) -> dict[str, Any] | None:
     if not position or len(position) < 3:
         return None
-    height = _object_height_m(task)
-    y_offset = max(0.0, height * 0.5) + settings.POLYHEDRON_ABOVE_MARGIN_M + settings.POLYHEDRON_EDGE_LENGTH_M * 0.5
-    pos = [float(position[0]), float(position[1]) + y_offset, float(position[2])]
+    local_up = _aruco_local_world_up(task)
+    height = _object_height_m(task, local_up)
+    offset = max(0.0, height * 0.5) + settings.POLYHEDRON_ABOVE_MARGIN_M + settings.POLYHEDRON_EDGE_LENGTH_M * 0.5
+    base = np.asarray([float(position[0]), float(position[1]), float(position[2])], dtype=np.float64)
+    pos = base + local_up * offset
     return {
-        "position": pos,
+        "position": [float(v) for v in pos],
         "rotation_quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
-        "source": "object_top_hint",
+        "source": "object_world_up_hint",
+        "local_up_aruco": [float(v) for v in local_up],
     }
 
 

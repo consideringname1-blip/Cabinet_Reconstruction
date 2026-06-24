@@ -12,7 +12,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
     private const string RootName = "HistoryPlacementRestorationDisplayRoot";
     private const float PolyhedronTopClearanceMeters = 0.30f;
     private const float EvidenceImageVerticalOffsetMeters = 0.30f;
-    private const float EvidenceImageSideOffsetMeters = 0.24f;
+    private const float EvidenceImageSideOffsetMeters = 0.0f;
     private const float EvidenceImageLerpSpeed = 8.0f;
 
     private static HistoryPlacementRestorationDisplay _instance;
