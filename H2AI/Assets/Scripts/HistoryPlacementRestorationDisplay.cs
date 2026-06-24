@@ -246,6 +246,53 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         return true;
     }
 
+    public bool RegisterEvidenceForModel(JObject result)
+    {
+        if (result == null)
+        {
+            return false;
+        }
+
+        JObject modelInstance = result["model_instance"] as JObject;
+        string taskId = result["task_id"]?.ToString() ?? modelInstance?["task_id"]?.ToString() ?? "";
+        string modelKey = modelInstance?["model_key"]?.ToString() ?? "";
+        string itemKey = !string.IsNullOrEmpty(taskId) ? taskId : modelKey;
+        if (string.IsNullOrEmpty(itemKey))
+        {
+            return false;
+        }
+
+        HistoryPlacementRestorationItem item;
+        if (!activeItems.TryGetValue(itemKey, out item) || item == null)
+        {
+            item = new HistoryPlacementRestorationItem
+            {
+                Key = itemKey,
+                DurationSeconds = 1.2f,
+            };
+        }
+
+        item.TaskId = taskId;
+        item.ModelKey = modelKey;
+        item.Status = result["status"]?.ToString() ?? item.Status;
+        item.DownloadModel = BuildDownloadModel(taskId, result);
+        item.TakenRgbUrl = ReadNestedString(result, "taken_object_detection_urls", "result_rgb_url");
+        item.BodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url");
+        item.BodyModelKey = "body:" + itemKey;
+        item.ArucoReference = CloneOrNull(result["aruco_reference"]);
+
+        ResolveRuntimeModelManager();
+        if (TryGetArucoReference(out Vector3 arucoPosition, out Quaternion arucoRotation)
+            && TryReadFallbackPolyhedronPose(result, arucoPosition, arucoRotation, out Vector3 anchorPosition, out Quaternion anchorRotation))
+        {
+            item.ToPosition = anchorPosition;
+            item.ToRotation = anchorRotation;
+        }
+
+        activeItems[itemKey] = item;
+        return true;
+    }
+
     private HistoryPlacementRestorationItem FindEvidenceItem(string taskIdOrModelKey)
     {
         if (string.IsNullOrEmpty(taskIdOrModelKey))
@@ -267,6 +314,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             }
             if (candidate.TaskId == taskIdOrModelKey
                 || candidate.Key == taskIdOrModelKey
+                || candidate.ModelKey == taskIdOrModelKey
                 || candidate.BodyModelKey == taskIdOrModelKey)
             {
                 return candidate;
@@ -569,6 +617,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         }
 
         item.EvidenceVisibleRequested = true;
+        EnsureActiveRoot();
         bool handled = false;
         if (EnsureTakenImageForItem(item))
         {
@@ -604,6 +653,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         item.ImageRequestInFlight = true;
         var request = new HTTPRequest(new Uri(item.TakenRgbUrl), HTTPMethods.Get, OnTakenEvidenceImageDownloaded);
         request.Tag = item.Key;
+        Debug.Log("[HTTP][REQ] history-evidence-taken-rgb url=" + item.TakenRgbUrl);
         request.Send();
         ShowFrontMessage("history_placement_restoration_loading_taken_rgb");
         return true;
@@ -619,6 +669,9 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
 
         HistoryPlacementRestorationItem item = activeItems[itemKey];
         item.ImageRequestInFlight = false;
+        string statusCode = response != null ? response.StatusCode.ToString() : "no_response";
+        int byteCount = response != null && response.Data != null ? response.Data.Length : 0;
+        Debug.Log("[HTTP][RESP] history-evidence-taken-rgb status=" + statusCode + " success=" + (response != null && response.IsSuccess).ToString() + " bytes=" + byteCount.ToString());
         if (response == null || !response.IsSuccess || response.Data == null || response.Data.Length == 0)
         {
             ShowFrontMessage("history_placement_restoration_ERR_taken_rgb");
@@ -647,7 +700,12 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
 
     private GameObject CreateEvidenceImageQuad(HistoryPlacementRestorationItem item, Texture2D texture)
     {
-        if (item == null || texture == null || activeRoot == null)
+        if (item == null || texture == null)
+        {
+            return null;
+        }
+        EnsureActiveRoot();
+        if (activeRoot == null)
         {
             return null;
         }
@@ -1304,6 +1362,14 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         }
     }
 
+    private void EnsureActiveRoot()
+    {
+        if (activeRoot == null)
+        {
+            activeRoot = new GameObject(RootName);
+        }
+    }
+
     private void ShowFrontMessage(string message)
     {
         if (Game_M.initialize != null)
@@ -1316,6 +1382,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
     {
         public string Key = "";
         public string TaskId = "";
+        public string ModelKey = "";
         public string Status = "";
         public GameObject PolyhedronObject;
         public GameObject CloneObject;

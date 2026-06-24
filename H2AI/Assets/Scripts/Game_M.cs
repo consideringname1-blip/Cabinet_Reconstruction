@@ -15,6 +15,7 @@ public class Game_M : MonoBehaviour
 
     public void XianShi(string data)
     {
+        Debug.Log("[FRONT_MESSAGE] " + (data ?? ""));
         CancelInvoke(nameof(YanXhiGuanBi));
         if (!TryGetMessageRoot(out GameObject messageRoot))
         {
@@ -39,6 +40,7 @@ public class Game_M : MonoBehaviour
 
     public void GuanBi()
     {
+        Debug.Log("[FRONT_MESSAGE] close");
         CancelInvoke(nameof(YanXhiGuanBi));
         if (!TryGetMessageRoot(out GameObject messageRoot))
         {

@@ -2,6 +2,7 @@
 
 import json
 import logging
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -9,7 +10,7 @@ from threading import RLock
 
 import cv2
 import numpy as np
-from flask import Flask, jsonify, request, send_from_directory
+from flask import Flask, g, jsonify, request, send_from_directory
 
 from console_output_log import install_console_output_log
 from artifact_layout import (
@@ -74,6 +75,33 @@ from coordinate_systems import convert_hololens_pv_pose_matrix_to_unity_pose_com
 
 app = Flask(__name__)
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
+
+
+@app.before_request
+def _log_request_start():
+    g.request_started_at = time.perf_counter()
+    try:
+        form_keys = list(request.form.keys()) if request.form else []
+        file_keys = list(request.files.keys()) if request.files else []
+        json_payload = request.get_json(silent=True) if request.is_json else None
+        json_keys = list(json_payload.keys()) if isinstance(json_payload, dict) else []
+        print(
+            f"[HTTP][REQ] {request.method} {request.path} "
+            f"remote={request.remote_addr} args={dict(request.args)} "
+            f"form_keys={form_keys} file_keys={file_keys} json_keys={json_keys}"
+        )
+    except Exception as exc:
+        print(f"[HTTP][REQ_LOG_ERR] {request.method} {request.path}: {exc}")
+
+
+@app.after_request
+def _log_request_end(response):
+    try:
+        elapsed_ms = (time.perf_counter() - float(getattr(g, 'request_started_at', time.perf_counter()))) * 1000.0
+        print(f"[HTTP][RESP] {request.method} {request.path} status={response.status_code} elapsed_ms={elapsed_ms:.1f}")
+    except Exception as exc:
+        print(f"[HTTP][RESP_LOG_ERR] {request.method} {request.path}: {exc}")
+    return response
 
 
 ensure_artifact_roots()
@@ -536,7 +564,7 @@ def _sanitize_depth_png(depth_png_bytes: bytes, sensor_name: str) -> tuple[bytes
     return encoded_png.tobytes(), stats
 
 
-def _build_completed_task_response(task_data: dict) -> dict:
+def _build_completed_task_response(task_data: dict, *, host_override: str | None = None) -> dict:
     response = {
         "status": task_data["status"],
         "task_id": task_data.get("task_id"),
@@ -592,7 +620,7 @@ def _build_completed_task_response(task_data: dict) -> dict:
         response["error"] = f"{generated_source.source_stage} image not found on disk"
         return response
 
-    host = request.host_url.rstrip("/")
+    host = (host_override or request.host_url).rstrip("/")
     response.update(
         {
             "mesh_url": _model_file_url(host, task_id, generated_source, generated_source.mesh),
@@ -974,6 +1002,38 @@ def generate_model():
         return jsonify({"error": str(exc)}), 400
 
 
+def _model_is_ready_for_runtime_download(task_data: dict) -> bool:
+    task_json = task_data.get("task_json") or {}
+    if (task_json.get("purpose") or PURPOSE_OBJECT_RECONSTRUCTION) != PURPOSE_OBJECT_RECONSTRUCTION:
+        return False
+    status = str(task_data.get("status") or "")
+    if status in {"pending", "uploading", "upload_failed", "failed", "completed", "aruco_completed"}:
+        return False
+    try:
+        if STAGE_ORDER.index(status) < STAGE_ORDER.index("model_bounds"):
+            return False
+    except ValueError:
+        return False
+    blender_info = task_json.get("Blender") or {}
+    fbx_name = str(blender_info.get("fbx") or "").strip()
+    if not fbx_name or blender_info.get("artifact_root") != "model_result":
+        return False
+    task_timestamp = str(task_json.get("task_timestamp") or task_data.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        return False
+    if not (model_result_dir(task_timestamp) / fbx_name).exists():
+        return False
+    return bool(task_json.get("object_world") or task_json.get("object_aruco"))
+
+
+def _build_model_ready_task_response(task_data: dict) -> dict:
+    response = _build_completed_task_response(task_data)
+    response["status"] = "model_ready"
+    response["terminal"] = False
+    response["model_ready"] = True
+    return response
+
+
 @app.route("/check-queue", methods=["POST"], strict_slashes=False)
 def check_task_queue():
     try:
@@ -1027,6 +1087,18 @@ def check_task_queue():
                     "ai_model_timings": task_data.get("ai_model_timings") or [],
                 }
             else:
+                if _model_is_ready_for_runtime_download(task_data):
+                    response = _build_model_ready_task_response(task_data)
+                    return jsonify(
+                        {
+                            "ready": True,
+                            "task_id": task_id,
+                            "status": "model_ready",
+                            "purpose": purpose,
+                            "terminal": False,
+                            "task": response,
+                        }
+                    )
                 pending.append(
                     _build_pending_task_response(task_data, position=len(pending) + 1)
                 )
@@ -1367,6 +1439,8 @@ def history_placement_restoration_start():
             },
         )
 
+        request_host = request.host_url.rstrip("/")
+
         def _run_history_item(index: int, row: dict) -> tuple[int, dict]:
             row_task_id = str(row.get("task_id") or "")
             try:
@@ -1406,7 +1480,7 @@ def history_placement_restoration_start():
                 }
                 task_response = get_task(row_task_id) if row_task_id else None
                 if task_response:
-                    model_payload = _build_completed_task_response(task_response)
+                    model_payload = _build_completed_task_response(task_response, host_override=request_host)
                     for key in (
                         "fbx_url",
                         "model_instance",

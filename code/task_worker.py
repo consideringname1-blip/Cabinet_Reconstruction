@@ -928,6 +928,13 @@ def _run_sam3d_body_mesh(json_path: Path, context: StageWorkerContext | None = N
     )
 
 
+OPTIONAL_NON_BLOCKING_STAGES = {
+    "history_placement_restoration",
+    "taken_object_detection",
+    "sam3d_body_mesh",
+}
+
+
 STAGE_RUNNERS = {
     "hololens2depth": _run_hololens2depth,
     "aruco_detect": _run_aruco_detect,
@@ -1024,7 +1031,10 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
         else:
             error_message = str(exc)
         mark_task_stage_failed(task_id, stage_name, error_message=error_message)
-        raise
+        if stage_name in OPTIONAL_NON_BLOCKING_STAGES:
+            print(f"[worker] optional stage failed, continuing {stage_name}: {task_id}: {error_message}")
+        else:
+            raise
 
     if stage_name == "aruco_detect" and purpose == PURPOSE_ARUCO_REFERENCE:
         startup_session_id = str((task_json.get("device") or {}).get("startup_session_id") or "").strip() or None

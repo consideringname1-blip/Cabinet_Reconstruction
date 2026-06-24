@@ -84,6 +84,7 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         public string taskId;
         public string purpose;
+        public bool modelDownloadStarted;
     }
 
     private RuntimeModelInstance pendingModelInstance;
@@ -100,6 +101,7 @@ public class ShuJuQingQiu : MonoBehaviour
     private bool historyPlacementRestorationRequestInFlight = false;
     private bool historyPlacementRestorationActive = false;
     private HTTPRequest historyPlacementRestorationRequest;
+    private readonly Dictionary<HTTPRequest, float> httpRequestStartedAt = new Dictionary<HTTPRequest, float>();
 
     void Start()
     {
@@ -214,6 +216,42 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             Game_M.initialize.XianShi(message);
         }
+    }
+
+    private void LogHttpRequestStart(string label, HTTPRequest request)
+    {
+        if (request == null)
+        {
+            return;
+        }
+
+        httpRequestStartedAt[request] = Time.realtimeSinceStartup;
+        string url = request.Uri != null ? request.Uri.ToString() : "";
+        Debug.Log("[HTTP][REQ] " + label + " url=" + url);
+    }
+
+    private void LogHttpRequestEnd(string label, HTTPRequest request, HTTPResponse response)
+    {
+        float startedAt;
+        string elapsed = "unknown";
+        if (request != null && httpRequestStartedAt.TryGetValue(request, out startedAt))
+        {
+            elapsed = ((Time.realtimeSinceStartup - startedAt) * 1000f).ToString("F1", CultureInfo.InvariantCulture);
+            httpRequestStartedAt.Remove(request);
+        }
+
+        string url = request != null && request.Uri != null ? request.Uri.ToString() : "";
+        string statusCode = response != null ? response.StatusCode.ToString(CultureInfo.InvariantCulture) : "no_response";
+        int byteCount = response != null && response.Data != null ? response.Data.Length : 0;
+        bool success = response != null && response.IsSuccess;
+        Debug.Log(
+            "[HTTP][RESP] " + label
+            + " status=" + statusCode
+            + " success=" + success.ToString()
+            + " elapsed_ms=" + elapsed
+            + " bytes=" + byteCount.ToString(CultureInfo.InvariantCulture)
+            + " url=" + url
+        );
     }
 
     void PlaceArucoDebugMarkerWhenReady(Vector3 arucoPosition, Quaternion arucoRotation, string source)
@@ -481,6 +519,7 @@ public class ShuJuQingQiu : MonoBehaviour
         };
         request.AddField("deviceJ", deviceJ.ToString(Formatting.None));
 
+        LogHttpRequestStart("generate:" + TASK_PURPOSE_ARUCO_REFERENCE, request);
         request.Send();
         Game_M.initialize.XianShi("generate");
     }
@@ -561,6 +600,7 @@ public class ShuJuQingQiu : MonoBehaviour
             request.AddField("SelectionBoxJ", selectionBoxJ.ToString(Formatting.None));
         }
 
+        LogHttpRequestStart("generate:" + purpose, request);
         request.Send();
         Game_M.initialize.XianShi("generate");
     }
@@ -734,6 +774,7 @@ public class ShuJuQingQiu : MonoBehaviour
     private void OnRequestFinished(HTTPRequest request, HTTPResponse response)
     {
         string requestPurpose = GetRequestPurpose(request);
+        LogHttpRequestEnd("generate:" + requestPurpose, request, response);
         if (response != null && response.IsSuccess)
         {
             Debug.Log("Response: " + System.Text.Encoding.UTF8.GetString(response.Data));
@@ -925,6 +966,7 @@ public class ShuJuQingQiu : MonoBehaviour
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
         request.RawData = Encoding.UTF8.GetBytes(payload.ToString(Formatting.None));
         asyncTaskQueueCheckInFlight = true;
+        LogHttpRequestStart("check-queue", request);
         request.Send();
     }
 
@@ -976,6 +1018,7 @@ public class ShuJuQingQiu : MonoBehaviour
 
     private void OnAsyncTaskQueueCheckFinished(HTTPRequest request, HTTPResponse response)
     {
+        LogHttpRequestEnd("check-queue", request, response);
         asyncTaskQueueCheckInFlight = false;
 
         if (response == null || !response.IsSuccess)
@@ -1009,10 +1052,39 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
-        RemoveAsyncUpdateTask(completedTaskId, out string queuedPurpose);
+        PendingAsyncTask pendingEntry = FindPendingAsyncTask(completedTaskId);
+        string queuedPurpose = pendingEntry != null ? pendingEntry.purpose : "";
         string serverPurpose = wrapper["purpose"]?.ToString() ?? taskResponse["purpose"]?.ToString();
         string purpose = ResolvePurposeForReadyTask(completedTaskId, serverPurpose, queuedPurpose);
         string status = taskResponse["status"]?.ToString() ?? wrapper["status"]?.ToString();
+
+        if (status == "model_ready")
+        {
+            if (pendingEntry != null && pendingEntry.modelDownloadStarted)
+            {
+                EnsureAsyncTaskQueuePolling();
+                return;
+            }
+            asyncTaskQueuePaused = true;
+            asyncTaskQueueActiveTaskId = completedTaskId;
+            task_id = completedTaskId;
+            pendingModelShouldPlaceDebugMarkers = false;
+            if (!ApplyCompletedTaskResponse(taskResponse, "ASYNC_QUEUE_MODEL_READY", false, false))
+            {
+                Debug.LogWarning("[ASYNC_QUEUE] model_ready response missing runtime model outputs.");
+                ResumeAsyncTaskQueuePolling();
+                return;
+            }
+            if (pendingEntry != null)
+            {
+                pendingEntry.modelDownloadStarted = true;
+            }
+            DownloadPendingRuntimeModel();
+            return;
+        }
+
+        RemoveAsyncUpdateTask(completedTaskId, out queuedPurpose);
+        purpose = ResolvePurposeForReadyTask(completedTaskId, serverPurpose, queuedPurpose);
 
         asyncTaskQueuePaused = true;
         asyncTaskQueueActiveTaskId = completedTaskId;
@@ -1056,8 +1128,14 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
-        pendingModelShouldPlaceDebugMarkers = true;
-        if (!ApplyCompletedTaskResponse(taskResponse, "ASYNC_QUEUE", false, true))
+        HistoryPlacementRestorationDisplay evidenceDisplay = HistoryPlacementRestorationDisplay.Instance;
+        if (evidenceDisplay != null)
+        {
+            evidenceDisplay.RegisterEvidenceForModel(taskResponse);
+        }
+
+        pendingModelShouldPlaceDebugMarkers = false;
+        if (!ApplyCompletedTaskResponse(taskResponse, "ASYNC_QUEUE", false, false))
         {
             string completedError = taskResponse["error"]?.ToString();
             if (!string.IsNullOrEmpty(completedError))
@@ -1065,6 +1143,15 @@ public class ShuJuQingQiu : MonoBehaviour
                 Debug.LogError("[ASYNC_QUEUE] completed response missing required outputs: " + completedError);
                 ShowFrontMessage(completedError);
             }
+            ResumeAsyncTaskQueuePolling();
+            return;
+        }
+
+        RuntimeModelManager completedManager = RuntimeModelManager.Instance;
+        if (completedManager != null && completedManager.HasModel(completedTaskId))
+        {
+            bool refreshedExistingModel = TryRefreshExistingRuntimeModelPoseFromResponse(taskResponse, "ASYNC_QUEUE_COMPLETED");
+            Debug.Log("[ASYNC_QUEUE] completed model already local; refreshed=" + refreshedExistingModel.ToString());
             ResumeAsyncTaskQueuePolling();
             return;
         }
@@ -1102,12 +1189,25 @@ public class ShuJuQingQiu : MonoBehaviour
                 continue;
             }
 
-            ModelEventDisplay display = ModelEventDisplay.Instance;
-            if (display != null)
+            // Progress spatial hints are intentionally disabled; model download starts at model_ready.
+        }
+    }
+
+    private PendingAsyncTask FindPendingAsyncTask(string taskId)
+    {
+        if (string.IsNullOrEmpty(taskId))
+        {
+            return null;
+        }
+
+        foreach (PendingAsyncTask pendingTask in asyncTaskQueue)
+        {
+            if (pendingTask != null && pendingTask.taskId == taskId)
             {
-                display.UpdateProgressForModel(hintInstance, BuildPendingProgressMessage(pendingTask));
+                return pendingTask;
             }
         }
+        return null;
     }
 
     private string FindQueuedPurpose(string taskId)
@@ -1293,6 +1393,7 @@ public class ShuJuQingQiu : MonoBehaviour
             + Uri.EscapeDataString(session);
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRequestLatestArucoReference);
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
+        LogHttpRequestStart("latest-aruco-reference", request);
         request.Send();
         ShowFrontMessage("aruco_reference_refresh");
     }
@@ -1338,6 +1439,7 @@ public class ShuJuQingQiu : MonoBehaviour
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnHistoryPlacementRestorationFinished);
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
         request.RawData = Encoding.UTF8.GetBytes(payload.ToString(Formatting.None));
+        LogHttpRequestStart("history-placement-restoration/start", request);
         historyPlacementRestorationActive = true;
         historyPlacementRestorationRequestInFlight = true;
         historyPlacementRestorationRequest = request;
@@ -1393,6 +1495,12 @@ public class ShuJuQingQiu : MonoBehaviour
                 }
             }
 
+            HistoryPlacementRestorationDisplay evidenceDisplay = HistoryPlacementRestorationDisplay.Instance;
+            if (evidenceDisplay != null)
+            {
+                evidenceDisplay.RegisterEvidenceForModel(result);
+            }
+
             if (DownloadRuntimeModelFromSpatialQueryModel(downloadModel))
             {
                 queuedCount++;
@@ -1403,6 +1511,7 @@ public class ShuJuQingQiu : MonoBehaviour
 
     private void OnHistoryPlacementRestorationFinished(HTTPRequest request, HTTPResponse response)
     {
+        LogHttpRequestEnd("history-placement-restoration/start", request, response);
         historyPlacementRestorationRequestInFlight = false;
         if (request == historyPlacementRestorationRequest)
         {
@@ -1478,12 +1587,14 @@ public class ShuJuQingQiu : MonoBehaviour
             + COMPLETED_MODEL_HISTORY_LIMIT.ToString(CultureInfo.InvariantCulture);
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnLatestCompletedTaskIds);
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
+        LogHttpRequestStart("latest-completed-task-ids", request);
         request.Send();
         ShowFrontMessage("latest_completed_queue_loading");
     }
 
     private void OnLatestCompletedTaskIds(HTTPRequest request, HTTPResponse response)
     {
+        LogHttpRequestEnd("latest-completed-task-ids", request, response);
         if (response == null || !response.IsSuccess)
         {
             string statusCode = response != null ? response.StatusCode.ToString(CultureInfo.InvariantCulture) : "no_response";
@@ -2033,6 +2144,7 @@ public class ShuJuQingQiu : MonoBehaviour
 
     private void OnRequestLatestArucoReference(HTTPRequest request, HTTPResponse response)
     {
+        LogHttpRequestEnd("latest-aruco-reference", request, response);
         if (response == null || !response.IsSuccess)
         {
             string statusCode = response != null ? response.StatusCode.ToString(CultureInfo.InvariantCulture) : "no_response";
@@ -2102,20 +2214,17 @@ public class ShuJuQingQiu : MonoBehaviour
             pendingDownload.debugArucoRotation = pendingModelInstance.Pose.ResponseArucoReferenceRotation;
         }
 
-        if (ModelEventDisplay.Instance != null)
-        {
-            ModelEventDisplay.Instance.ShowForModel(pendingModelInstance, "download");
-        }
-
         var request = new HTTPRequest(new Uri(pendingModelInstance.FbxUrl), HTTPMethods.Get, OnRequestXiaZai);
         request.Tag = pendingDownload;
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
+        LogHttpRequestStart("download-runtime-model", request);
         request.Send();
         ShowFrontMessage("download");
     }
 
     private void OnRequestXiaZai(HTTPRequest request, HTTPResponse response)
     {
+        LogHttpRequestEnd("download-runtime-model", request, response);
         if (response != null && response.IsSuccess)
         {
             PendingModelDownload pendingDownload = request.Tag as PendingModelDownload;

@@ -75,15 +75,7 @@ public class ModelEventDisplay : MonoBehaviour
                 || (!string.IsNullOrEmpty(identity.ModelKey) && manager.TryGetLoadedRecord(identity.ModelKey, out record)));
         if (found)
         {
-            RuntimeModelInstance instance = new RuntimeModelInstance
-            {
-                ModelKey = record.ModelKey,
-                TaskId = record.TaskId,
-                FbxUrl = record.FbxUrl,
-                Pose = record.Pose,
-                SpatialBox = record.SpatialBox,
-            };
-            ShowForModel(instance, "local");
+            ShowFrontMessage("model_event_no_evidence");
             return;
         }
 

@@ -116,7 +116,6 @@ public class LoadModel : MonoBehaviour
         string progressText = progress.ToString("P0");
         Debug.Log("Loading Model. Progress: " + progress.ToString("P"));
         UpdateSpatialHint(_pendingInstance, progressText);
-        ShowFrontMessage(progressText);
     }
 
     private void OnMaterialsLoad(AssetLoaderContext assetLoaderContext)
@@ -219,20 +218,11 @@ public class LoadModel : MonoBehaviour
 
     private void UpdateSpatialHint(RuntimeModelInstance instance, string message)
     {
-        ModelEventDisplay display = ModelEventDisplay.Instance;
-        if (display != null)
-        {
-            display.UpdateProgressForModel(instance, message);
-        }
+        // Spatial progress boxes are disabled; front messages/logs carry progress now.
     }
 
     private void HideSpatialHint(RuntimeModelInstance instance)
     {
-        ModelEventDisplay display = ModelEventDisplay.Instance;
-        if (display != null)
-        {
-            display.CloseForModel(instance);
-        }
     }
 
     private void NotifyRuntimeModelLoadCompleted(RuntimeModelInstance instance, bool success)
