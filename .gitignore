@@ -51,6 +51,7 @@ __pycache__/
 /data/aruco/runtime/
 /data/aruco/shigure_marker_history/
 /data/shigure_history_cache/
+/data_backup/
 /.test/
 
 ########################################
