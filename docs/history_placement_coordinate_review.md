@@ -18,6 +18,8 @@ It then offsets either the original object pose or the matched current YOLO obje
 
 object_height_along_world_up * 0.5 + POLYHEDRON_ABOVE_MARGIN_M + POLYHEDRON_EDGE_LENGTH_M * 0.5
 
+POLYHEDRON_ABOVE_MARGIN_M is intentionally small enough that the marker sits near the object top rather than floating high above it.
+
 object_height_along_world_up is computed by projecting ModelBounds.corners_aruco onto local_up_aruco.
 
 For MOVED, _build_display_payload attaches the cube to current_object, not to the original model. For MISSING, it attaches the polyhedron to original_model and sets show_model = true.
@@ -44,10 +46,10 @@ The body mesh stage reconstructs vertices in Shigure/OpenCV camera coordinates, 
 
 marker_cv = R_marker.T * (point_camera - t_marker)
 
-vertex_aruco = UNITY_TO_OPENCV_CAMERA_BASIS.T * marker_cv
+vertex_aruco = UNITY_TO_OPENCV_CAMERA_BASIS * marker_cv
 
-Those vertices are written directly into the selected body OBJ. Unity loads the body as an evidence overlay with a root object_aruco pose chosen so the saved body object-center aligns with the reconstructed object center:
+Those vertices are written directly into the selected body OBJ. Unity loads the body as an evidence overlay whose root object_aruco pose is the ArUco origin:
 
-body_root_aruco = object_aruco.position - sam3d_body_mesh.object_center_armarker
+body_root_aruco = identity pose at [0, 0, 0]
 
-Because the body OBJ is already in ArUco/Unity axes, its FBX export must preserve OBJ local axes exactly. The body exporter now uses the same Blender import/export axis settings as the normal runtime model exporter.
+Because the body OBJ already contains absolute ArUco/Unity coordinates, Unity must not translate it again by the object center. Its FBX export must preserve OBJ local axes exactly. The body exporter uses the same Blender import/export axis settings as the normal runtime model exporter.

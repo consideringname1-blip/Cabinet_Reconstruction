@@ -180,16 +180,6 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             return;
         }
 
-        bool evidenceHandled = EnsureEvidenceForItem(item);
-        if (!item.HasAnimation)
-        {
-            if (!evidenceHandled)
-            {
-                ShowFrontMessage("history_placement_restoration_no_animation_model");
-            }
-            return;
-        }
-
         if (item.CloneObject != null && item.CloneObject.activeSelf)
         {
             if (item.AnimationCoroutine != null)
@@ -198,6 +188,17 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
                 item.AnimationCoroutine = null;
             }
             item.CloneObject.SetActive(false);
+            HideEvidenceForItem(item);
+            return;
+        }
+
+        bool evidenceHandled = EnsureEvidenceForItem(item);
+        if (!item.HasAnimation)
+        {
+            if (!evidenceHandled)
+            {
+                ShowFrontMessage("history_placement_restoration_no_animation_model");
+            }
             return;
         }
 
@@ -235,6 +236,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             StopCoroutine(item.AnimationCoroutine);
         }
+        RefreshAnimationTargetFromLoadedModel(item);
         item.CloneObject.SetActive(true);
         item.CloneObject.transform.SetPositionAndRotation(item.FromPosition, item.FromRotation);
         item.AnimationCoroutine = StartCoroutine(AnimateCloneToOriginal(item));
@@ -303,8 +305,9 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         if (TryGetArucoReference(out Vector3 arucoPosition, out Quaternion arucoRotation)
             && TryReadFallbackPolyhedronPose(result, arucoPosition, arucoRotation, out Vector3 anchorPosition, out Quaternion anchorRotation))
         {
-            item.ToPosition = anchorPosition;
-            item.ToRotation = anchorRotation;
+            item.HasEvidenceAnchor = true;
+            item.EvidenceAnchorPosition = anchorPosition;
+            item.EvidenceAnchorRotation = anchorRotation;
         }
 
         activeItems[itemKey] = item;
@@ -408,6 +411,8 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
 
         string shape = polyhedron != null && polyhedron["shape"] != null ? polyhedron["shape"].ToString() : FallbackShapeForStatus(status);
         float edgeLength = polyhedron != null && polyhedron["edge_length_m"] != null ? polyhedron["edge_length_m"].Value<float>() : 0.12f;
+        JObject modelInstance = result != null ? result["model_instance"] as JObject : null;
+        string modelKey = modelInstance != null ? modelInstance["model_key"]?.ToString() ?? "" : "";
         string itemKey = string.IsNullOrEmpty(taskId) ? System.Guid.NewGuid().ToString("N") : taskId;
         GameObject polyObject = CreatePolyhedron(shape, edgeLength, status);
         polyObject.name = "HistoryPlacement_" + shape + "_" + itemKey;
@@ -423,6 +428,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             Key = itemKey,
             TaskId = taskId,
+            ModelKey = modelKey,
             Status = status,
             PolyhedronObject = polyObject,
             DurationSeconds = ReadAnimationDuration(display),
@@ -431,6 +437,9 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             BodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url"),
             BodyModelKey = "body:" + itemKey,
             ArucoReference = CloneOrNull(result != null ? result["aruco_reference"] : null),
+            HasEvidenceAnchor = true,
+            EvidenceAnchorPosition = polyWorldPosition,
+            EvidenceAnchorRotation = polyWorldRotation,
         };
 
         JObject animation = display != null ? display["animation"] as JObject : null;
@@ -600,6 +609,35 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             return true;
         }
         return false;
+    }
+
+    private void RefreshAnimationTargetFromLoadedModel(HistoryPlacementRestorationItem item)
+    {
+        if (item == null)
+        {
+            return;
+        }
+        ResolveRuntimeModelManager();
+        RuntimeModelRecord record;
+        if (runtimeModelManager != null
+            && !string.IsNullOrEmpty(item.TaskId)
+            && runtimeModelManager.TryGetLoadedRecord(item.TaskId, out record)
+            && record != null
+            && record.RootGameObject != null)
+        {
+            item.ToPosition = record.RootGameObject.transform.position;
+            item.ToRotation = record.RootGameObject.transform.rotation;
+            return;
+        }
+        if (runtimeModelManager != null
+            && !string.IsNullOrEmpty(item.ModelKey)
+            && runtimeModelManager.TryGetLoadedRecord(item.ModelKey, out record)
+            && record != null
+            && record.RootGameObject != null)
+        {
+            item.ToPosition = record.RootGameObject.transform.position;
+            item.ToRotation = record.RootGameObject.transform.rotation;
+        }
     }
 
     private IEnumerator WaitForModelThenAnimate(HistoryPlacementRestorationItem item)
@@ -809,6 +847,10 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             return item.PolyhedronObject.transform.position;
         }
+        if (item.HasEvidenceAnchor)
+        {
+            return item.EvidenceAnchorPosition;
+        }
         return item.ToPosition;
     }
 
@@ -928,19 +970,12 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
 
     private JObject BuildBodyRootArucoPose(HistoryPlacementRestorationItem item)
     {
-        Vector3 rootPosition = Vector3.zero;
-        JObject objectAruco = item != null ? item.ObjectAruco as JObject : null;
-        if (item != null
-            && item.HasBodyObjectCenterAruco
-            && objectAruco != null
-            && TryReadVector3(objectAruco["position"], out Vector3 objectCenterAruco))
-        {
-            rootPosition = objectCenterAruco - item.BodyObjectCenterAruco;
-        }
-
+        // The selected SAM3D body OBJ stores vertices directly in ArUco/Unity axes,
+        // so the runtime root is the ArUco origin. Object-center alignment would
+        // incorrectly treat the absolute body mesh as a local object mesh.
         return new JObject
         {
-            ["position"] = new JArray(rootPosition.x, rootPosition.y, rootPosition.z),
+            ["position"] = new JArray(0.0f, 0.0f, 0.0f),
             ["rotation_quaternion_xyzw"] = new JArray(0.0f, 0.0f, 0.0f, 1.0f),
         };
     }
@@ -1301,7 +1336,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             if (tetrahedronMaterial == null)
             {
-                tetrahedronMaterial = BuildMaterial(new Color(0.2f, 0.85f, 0.35f, 0.82f));
+                tetrahedronMaterial = BuildMaterial(new Color(1.0f, 0.72f, 0.02f, 0.92f));
             }
             return tetrahedronMaterial;
         }
@@ -1309,7 +1344,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             if (octahedronMaterial == null)
             {
-                octahedronMaterial = BuildMaterial(new Color(0.4f, 0.55f, 1f, 0.82f));
+                octahedronMaterial = BuildMaterial(new Color(0.05f, 1.0f, 0.30f, 0.92f));
             }
             return octahedronMaterial;
         }
@@ -1317,7 +1352,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             if (dodecahedronMaterial == null)
             {
-                dodecahedronMaterial = BuildMaterial(new Color(1f, 0.72f, 0.2f, 0.82f));
+                dodecahedronMaterial = BuildMaterial(new Color(0.05f, 0.55f, 1.0f, 0.92f));
             }
             return dodecahedronMaterial;
         }
@@ -1325,14 +1360,14 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             if (icosahedronMaterial == null)
             {
-                icosahedronMaterial = BuildMaterial(new Color(0.9f, 0.35f, 1f, 0.82f));
+                icosahedronMaterial = BuildMaterial(new Color(1.0f, 0.0f, 0.95f, 0.92f));
             }
             return icosahedronMaterial;
         }
 
         if (cubeMaterial == null)
         {
-            cubeMaterial = BuildMaterial(new Color(0.0f, 0.35f, 1f, 0.82f));
+            cubeMaterial = BuildMaterial(new Color(0.0f, 0.95f, 1.0f, 0.92f));
         }
         return cubeMaterial;
     }
@@ -1352,6 +1387,11 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             material.EnableKeyword("_ALPHABLEND_ON");
             material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
             material.renderQueue = 3000;
+        }
+        if (material.HasProperty("_EmissionColor"))
+        {
+            material.EnableKeyword("_EMISSION");
+            material.SetColor("_EmissionColor", new Color(color.r, color.g, color.b, 1.0f) * 0.45f);
         }
         return material;
     }
@@ -1528,6 +1568,9 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         public JToken ObjectAruco;
         public bool HasBodyObjectCenterAruco;
         public Vector3 BodyObjectCenterAruco;
+        public bool HasEvidenceAnchor;
+        public Vector3 EvidenceAnchorPosition;
+        public Quaternion EvidenceAnchorRotation = Quaternion.identity;
         public bool ImageRequestInFlight;
         public bool BodyDownloadQueued;
         public bool EvidenceVisibleRequested;

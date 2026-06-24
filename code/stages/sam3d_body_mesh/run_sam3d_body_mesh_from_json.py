@@ -362,7 +362,7 @@ def _camera_to_armarker_points(points_camera_m: np.ndarray, marker_rotation_came
     points = np.asarray(points_camera_m, dtype=np.float64).reshape(-1, 3)
     marker_cv = (marker_rotation_camera_marker_cv.T @ (points - marker_translation_camera_marker_cv.reshape(1, 3)).T).T
     basis = np.asarray(UNITY_TO_OPENCV_CAMERA_BASIS, dtype=np.float64)
-    return (basis.T @ marker_cv.T).T
+    return (basis @ marker_cv.T).T
 
 
 def _object_center_aruco(task: Mapping[str, Any]) -> np.ndarray | None:
@@ -618,6 +618,7 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         'material_color': settings.MATERIAL_COLOR,
         'material_alpha': settings.MATERIAL_ALPHA,
         'coordinate_space': 'armarker',
+        'camera_to_armarker_basis': 'UNITY_TO_OPENCV_CAMERA_BASIS',
         'camera_to_armarker_source': str(marker_pose_path),
         'people_json_path': str(people_json_path),
         'people': people,
