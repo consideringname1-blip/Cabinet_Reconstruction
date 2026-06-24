@@ -47,9 +47,6 @@ The body mesh stage reconstructs vertices in Shigure/OpenCV camera coordinates, 
 marker_cv = R_marker.T * (point_camera - t_marker)
 
 vertex_aruco = UNITY_TO_OPENCV_CAMERA_BASIS * marker_cv
-vertex_aruco.z = -vertex_aruco.z
-
-The Z mirror is intentionally applied for the HoloLens evidence-body display path because the reconstructed body otherwise appears left/right mirrored in runtime. Triangle winding is reversed when the mirror is enabled so the exported FBX keeps visible faces.
 
 Those vertices are written directly into the selected body OBJ. Unity loads the body as an evidence overlay whose root object_aruco pose is the ArUco origin:
 

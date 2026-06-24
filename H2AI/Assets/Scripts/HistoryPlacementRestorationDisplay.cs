@@ -155,6 +155,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             }
             if (item != null)
             {
+                HideEvidenceForItem(item);
                 RestoreSourceModelForAnimation(item);
             }
             if (item != null && item.EvidenceTexture != null)

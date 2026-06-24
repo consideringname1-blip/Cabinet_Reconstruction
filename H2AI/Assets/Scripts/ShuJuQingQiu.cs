@@ -849,6 +849,20 @@ public class ShuJuQingQiu : MonoBehaviour
             modelLoadQueueRetryCoroutine = null;
         }
 
+        historyPlacementRestorationActive = false;
+        if (historyPlacementRestorationRequestInFlight && historyPlacementRestorationRequest != null)
+        {
+            historyPlacementRestorationRequest.Abort();
+        }
+        historyPlacementRestorationRequestInFlight = false;
+        historyPlacementRestorationRequest = null;
+
+        HistoryPlacementRestorationDisplay historyDisplay = HistoryPlacementRestorationDisplay.Instance;
+        if (historyDisplay != null)
+        {
+            historyDisplay.Clear();
+        }
+
         RuntimeModelManager manager = RuntimeModelManager.Instance;
         if (manager == null)
         {

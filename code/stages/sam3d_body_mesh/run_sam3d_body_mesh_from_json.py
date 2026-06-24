@@ -362,15 +362,7 @@ def _camera_to_armarker_points(points_camera_m: np.ndarray, marker_rotation_came
     points = np.asarray(points_camera_m, dtype=np.float64).reshape(-1, 3)
     marker_cv = (marker_rotation_camera_marker_cv.T @ (points - marker_translation_camera_marker_cv.reshape(1, 3)).T).T
     basis = np.asarray(UNITY_TO_OPENCV_CAMERA_BASIS, dtype=np.float64)
-    armarker = (basis @ marker_cv.T).T
-    if settings.ARMARKER_FLIP_Z:
-        armarker[:, 2] *= -1.0
-    return armarker
-
-
-def _armarker_faces(faces: np.ndarray) -> np.ndarray:
-    faces = np.asarray(faces, dtype=np.int64).reshape(-1, 3)
-    return faces[:, [0, 2, 1]] if settings.ARMARKER_FLIP_Z else faces
+    return (basis @ marker_cv.T).T
 
 
 def _object_center_aruco(task: Mapping[str, Any]) -> np.ndarray | None:
@@ -530,7 +522,7 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
             nearest = _nearest_wrist(person_name, keypoints_aruco, object_center)
             mesh_npz = output_root / f'08_sam3d_body_{person_name}_armarker_mesh.npz'
             camera_mesh_npz = output_root / f'08_sam3d_body_{person_name}_camera_mesh.npz'
-            np.savez_compressed(mesh_npz, vertices=vertices_aruco.astype(np.float32), faces=_armarker_faces(faces).astype(np.int32), keypoints=keypoints_aruco.astype(np.float32))
+            np.savez_compressed(mesh_npz, vertices=vertices_aruco.astype(np.float32), faces=faces.astype(np.int32), keypoints=keypoints_aruco.astype(np.float32))
             np.savez_compressed(
                 camera_mesh_npz,
                 vertices=aligned['vertices_camera_m'].astype(np.float32),
@@ -627,7 +619,6 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         'material_alpha': settings.MATERIAL_ALPHA,
         'coordinate_space': 'armarker',
         'camera_to_armarker_basis': 'UNITY_TO_OPENCV_CAMERA_BASIS',
-        'camera_to_armarker_z_mirrored': bool(settings.ARMARKER_FLIP_Z),
         'camera_to_armarker_source': str(marker_pose_path),
         'people_json_path': str(people_json_path),
         'people': people,
