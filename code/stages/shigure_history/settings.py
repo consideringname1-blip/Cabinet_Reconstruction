@@ -22,7 +22,7 @@ SHIGURE_HISTORY_CACHE_ROOT = Path(
 
 # Shigurei local RGB-D history target. These are stage-local capture settings;
 # only the cache root directory convention stays in config.py.
-SHIGURE_HISTORY_SECONDS = _float_env('SHIGURE_HISTORY_SECONDS', 600.0)
+SHIGURE_HISTORY_SECONDS = _float_env('SHIGURE_HISTORY_SECONDS', 1200.0)
 SHIGURE_HISTORY_HZ = _float_env('SHIGURE_HISTORY_HZ', 5.0)
 SHIGURE_HISTORY_RECORDER_LOG_INTERVAL = _float_env('SHIGURE_HISTORY_RECORDER_LOG_INTERVAL', 10.0)
 SHIGURE_HISTORY_CHUNK_SECONDS = _float_env('SHIGURE_HISTORY_CHUNK_SECONDS', 10.0)

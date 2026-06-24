@@ -602,8 +602,9 @@ def _build_completed_task_response(task_data: dict) -> dict:
     )
     if generated_source.video and generated_source.video_path and generated_source.video_path.exists():
         response["video_url"] = _task_artifact_url(host, task_id, "debug", generated_source.video)
+
     taken_payload = response.get("taken_object_detection") if isinstance(response.get("taken_object_detection"), dict) else {}
-    if (taken_payload or {}).get("artifact_root") == "model_result":
+    if (taken_payload or {}).get("artifact_root") == "model_result" and (taken_payload or {}).get("status") == "TAKEN":
         taken_urls = {}
         for payload_key, url_key in (
             ("result_rgb", "result_rgb_url"),
@@ -619,7 +620,7 @@ def _build_completed_task_response(task_data: dict) -> dict:
             response["taken_object_detection_urls"] = taken_urls
 
     body_payload = response.get("sam3d_body_mesh") if isinstance(response.get("sam3d_body_mesh"), dict) else {}
-    if (body_payload or {}).get("selected_person_fbx_folder") == "model_result":
+    if (body_payload or {}).get("selected_person_fbx_folder") == "model_result" and (body_payload or {}).get("status") == "SUCCESS":
         body_urls = {}
         for payload_key, url_key in (
             ("selected_person_fbx_path", "selected_person_fbx_url"),
@@ -1307,16 +1308,30 @@ def history_placement_restoration_start():
                 update_history_placement_request(request_id, status="failed", error_message=str(reason))
                 return jsonify({"success": False, "error": str(reason), "task_id": task_id}), 400
         else:
+            scan_limit = _history_model_selection_scan_limit(model_limit)
             raw_rows = get_latest_completed_tasks(
-                startup_session_id=startup_session_id,
+                startup_session_id=None,
                 require_aruco_coordinate_synced=True,
-                limit=_history_model_selection_scan_limit(model_limit),
+                limit=scan_limit,
             )
             rows, selection_skipped = _select_latest_hololens_uploaded_model_tasks(
                 raw_rows,
                 limit=None if model_limit <= 0 else model_limit,
             )
+            if startup_session_id:
+                selection_skipped = [
+                    {
+                        "reason": "startup_session_not_used_for_history_model_selection",
+                        "startup_session_id": startup_session_id,
+                        "selection_scope": "global_latest_completed_per_display_object",
+                    }
+                ] + selection_skipped
 
+        selection_policy = (
+            "specific_task"
+            if task_id
+            else "hololens_uploaded_latest_completed_per_display_object_global_across_startup_sessions"
+        )
         selected_tasks = [
             {
                 "item_index": index,
@@ -1325,7 +1340,7 @@ def history_placement_restoration_start():
                 "status": row.get("status"),
                 "display_object_id": row.get("selection_display_object_id"),
                 "selection_key": row.get("selection_key"),
-                "selection_reason": "latest_hololens_uploaded_for_display_object",
+                "selection_reason": selection_policy,
             }
             for index, row in enumerate(rows)
         ]
@@ -1334,7 +1349,7 @@ def history_placement_restoration_start():
             {
                 "items": selected_tasks,
                 "skipped": selection_skipped,
-                "selection_policy": "hololens_uploaded_latest_per_display_object",
+                "selection_policy": selection_policy,
             },
         )
 
@@ -1399,6 +1414,10 @@ def history_placement_restoration_start():
                         "object_aruco",
                         "aruco_reference",
                         "sam3_spatial_box",
+                        "taken_object_detection",
+                        "taken_object_detection_urls",
+                        "sam3d_body_mesh",
+                        "sam3d_body_mesh_urls",
                     ):
                         if model_payload.get(key) is not None:
                             result_payload[key] = model_payload.get(key)

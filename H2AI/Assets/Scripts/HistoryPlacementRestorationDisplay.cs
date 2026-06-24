@@ -1,5 +1,7 @@
+using BestHTTP;
 using Microsoft.MixedReality.Toolkit.Input;
 using Newtonsoft.Json.Linq;
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
@@ -108,7 +110,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
                 taskId = payload["task_id"] != null ? payload["task_id"].ToString() : "";
             }
 
-            if (CreateDisplayForPayload(taskId, payload, arucoPosition, arucoRotation))
+            if (CreateDisplayForPayload(taskId, result, payload, arucoPosition, arucoRotation))
             {
                 createdCount++;
             }
@@ -129,6 +131,15 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             {
                 StopCoroutine(item.AnimationCoroutine);
             }
+            if (item != null && item.BodyVisibilityCoroutine != null)
+            {
+                StopCoroutine(item.BodyVisibilityCoroutine);
+            }
+            if (item != null && item.EvidenceTexture != null)
+            {
+                Destroy(item.EvidenceTexture);
+                item.EvidenceTexture = null;
+            }
         }
         activeItems.Clear();
         if (activeRoot != null)
@@ -146,9 +157,18 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         }
 
         HistoryPlacementRestorationItem item = activeItems[itemKey];
-        if (item == null || !item.HasAnimation)
+        if (item == null)
         {
-            ShowFrontMessage("history_placement_restoration_no_animation_model");
+            return;
+        }
+
+        bool evidenceHandled = EnsureEvidenceForItem(item);
+        if (!item.HasAnimation)
+        {
+            if (!evidenceHandled)
+            {
+                ShowFrontMessage("history_placement_restoration_no_animation_model");
+            }
             return;
         }
 
@@ -170,21 +190,131 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
 
         if (item.CloneObject == null)
         {
+            if (QueueModelDownloadForItem(item))
+            {
+                if (item.AnimationCoroutine != null)
+                {
+                    StopCoroutine(item.AnimationCoroutine);
+                }
+                item.AnimationCoroutine = StartCoroutine(WaitForModelThenAnimate(item));
+                ShowFrontMessage("history_placement_restoration_downloading_model");
+                return;
+            }
             ShowFrontMessage("history_placement_restoration_no_animation_model");
             return;
         }
 
+        StartItemAnimation(item);
+    }
+
+    private void StartItemAnimation(HistoryPlacementRestorationItem item)
+    {
+        if (item == null || item.CloneObject == null)
+        {
+            return;
+        }
         if (item.AnimationCoroutine != null)
         {
             StopCoroutine(item.AnimationCoroutine);
         }
-
         item.CloneObject.SetActive(true);
         item.CloneObject.transform.SetPositionAndRotation(item.FromPosition, item.FromRotation);
         item.AnimationCoroutine = StartCoroutine(AnimateCloneToOriginal(item));
     }
 
-    private bool CreateDisplayForPayload(string taskId, JObject payload, Vector3 arucoPosition, Quaternion arucoRotation)
+    public bool ToggleEvidenceForModel(string taskIdOrModelKey)
+    {
+        HistoryPlacementRestorationItem item = FindEvidenceItem(taskIdOrModelKey);
+        if (item == null)
+        {
+            return false;
+        }
+
+        if (IsEvidenceVisibleOrPending(item))
+        {
+            HideEvidenceForItem(item);
+            return true;
+        }
+        return EnsureEvidenceForItem(item);
+    }
+
+    private HistoryPlacementRestorationItem FindEvidenceItem(string taskIdOrModelKey)
+    {
+        if (string.IsNullOrEmpty(taskIdOrModelKey))
+        {
+            return null;
+        }
+
+        HistoryPlacementRestorationItem item;
+        if (activeItems.TryGetValue(taskIdOrModelKey, out item) && item != null)
+        {
+            return item;
+        }
+
+        foreach (HistoryPlacementRestorationItem candidate in activeItems.Values)
+        {
+            if (candidate == null)
+            {
+                continue;
+            }
+            if (candidate.TaskId == taskIdOrModelKey
+                || candidate.Key == taskIdOrModelKey
+                || candidate.BodyModelKey == taskIdOrModelKey)
+            {
+                return candidate;
+            }
+        }
+        return null;
+    }
+
+    private bool IsEvidenceVisibleOrPending(HistoryPlacementRestorationItem item)
+    {
+        if (item == null)
+        {
+            return false;
+        }
+        if (item.ImageRequestInFlight || item.BodyDownloadQueued)
+        {
+            return true;
+        }
+        if (item.EvidenceImageObject != null && item.EvidenceImageObject.activeSelf)
+        {
+            return true;
+        }
+
+        ResolveRuntimeModelManager();
+        RuntimeModelRecord bodyRecord;
+        return runtimeModelManager != null
+            && runtimeModelManager.TryGetLoadedRecord(item.BodyModelKey, out bodyRecord)
+            && bodyRecord != null
+            && bodyRecord.RootGameObject != null
+            && bodyRecord.RootGameObject.activeSelf;
+    }
+
+    private void HideEvidenceForItem(HistoryPlacementRestorationItem item)
+    {
+        if (item == null)
+        {
+            return;
+        }
+        item.EvidenceVisibleRequested = false;
+        if (item.EvidenceImageObject != null)
+        {
+            item.EvidenceImageObject.SetActive(false);
+        }
+
+        ResolveRuntimeModelManager();
+        RuntimeModelRecord bodyRecord;
+        if (runtimeModelManager != null
+            && runtimeModelManager.TryGetLoadedRecord(item.BodyModelKey, out bodyRecord)
+            && bodyRecord != null
+            && bodyRecord.RootGameObject != null)
+        {
+            bodyRecord.RootGameObject.SetActive(false);
+        }
+    }
+
+    private bool CreateDisplayForPayload(string taskId, JObject result, JObject payload, Vector3 arucoPosition, Quaternion arucoRotation)
     {
         JObject display = payload["display"] as JObject;
         if (display == null)
@@ -226,6 +356,11 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             Status = status,
             PolyhedronObject = polyObject,
             DurationSeconds = ReadAnimationDuration(display),
+            DownloadModel = BuildDownloadModel(taskId, result),
+            TakenRgbUrl = ReadNestedString(result, "taken_object_detection_urls", "result_rgb_url"),
+            BodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url"),
+            BodyModelKey = "body:" + itemKey,
+            ArucoReference = CloneOrNull(result != null ? result["aruco_reference"] : null),
         };
 
         JObject animation = display["animation"] as JObject;
@@ -247,6 +382,314 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
 
         activeItems[itemKey] = item;
         return true;
+    }
+
+    private JObject BuildDownloadModel(string taskId, JObject result)
+    {
+        JObject modelInstance = result != null ? result["model_instance"] as JObject : null;
+        if (modelInstance == null)
+        {
+            return null;
+        }
+
+        JObject downloadModel = new JObject
+        {
+            ["task_id"] = string.IsNullOrEmpty(taskId) ? modelInstance["task_id"]?.ToString() ?? "" : taskId,
+            ["model_instance"] = modelInstance.DeepClone(),
+        };
+        foreach (string key in new[] { "object_world", "object_aruco", "aruco_reference", "sam3_spatial_box" })
+        {
+            JToken value = result[key];
+            if (value != null && value.Type != JTokenType.Null)
+            {
+                downloadModel[key] = value.DeepClone();
+            }
+        }
+        return downloadModel;
+    }
+
+    private bool QueueModelDownloadForItem(HistoryPlacementRestorationItem item)
+    {
+        if (item == null || item.DownloadQueued || item.DownloadModel == null)
+        {
+            return false;
+        }
+        ResolveRuntimeModelManager();
+        if (runtimeModelManager != null && runtimeModelManager.HasModel(item.TaskId))
+        {
+            return false;
+        }
+        if (ShuJuQingQiu.initialize == null)
+        {
+            return false;
+        }
+        if (ShuJuQingQiu.initialize.DownloadRuntimeModelFromSpatialQueryModel((JObject)item.DownloadModel.DeepClone()))
+        {
+            item.DownloadQueued = true;
+            return true;
+        }
+        return false;
+    }
+
+    private IEnumerator WaitForModelThenAnimate(HistoryPlacementRestorationItem item)
+    {
+        float timeoutAt = Time.time + 30f;
+        while (item != null && Time.time < timeoutAt)
+        {
+            if (item.CloneObject == null)
+            {
+                item.CloneObject = CreateAnimationClone(item.TaskId, item.FromPosition, item.FromRotation);
+            }
+            if (item.CloneObject != null)
+            {
+                item.DownloadQueued = false;
+                StartItemAnimation(item);
+                yield break;
+            }
+            yield return null;
+        }
+        if (item != null)
+        {
+            item.DownloadQueued = false;
+            item.AnimationCoroutine = null;
+        }
+        ShowFrontMessage("history_placement_restoration_no_animation_model");
+    }
+
+    private bool EnsureEvidenceForItem(HistoryPlacementRestorationItem item)
+    {
+        if (item == null)
+        {
+            return false;
+        }
+
+        item.EvidenceVisibleRequested = true;
+        bool handled = false;
+        if (EnsureTakenImageForItem(item))
+        {
+            handled = true;
+        }
+        if (EnsureBodyMeshForItem(item))
+        {
+            handled = true;
+        }
+        return handled;
+    }
+
+    private bool EnsureTakenImageForItem(HistoryPlacementRestorationItem item)
+    {
+        if (item == null)
+        {
+            return false;
+        }
+        if (item.EvidenceImageObject != null)
+        {
+            item.EvidenceImageObject.SetActive(item.EvidenceVisibleRequested);
+            return true;
+        }
+        if (item.ImageRequestInFlight)
+        {
+            return true;
+        }
+        if (string.IsNullOrEmpty(item.TakenRgbUrl))
+        {
+            return false;
+        }
+
+        item.ImageRequestInFlight = true;
+        var request = new HTTPRequest(new Uri(item.TakenRgbUrl), HTTPMethods.Get, OnTakenEvidenceImageDownloaded);
+        request.Tag = item.Key;
+        request.Send();
+        ShowFrontMessage("history_placement_restoration_loading_taken_rgb");
+        return true;
+    }
+
+    private void OnTakenEvidenceImageDownloaded(HTTPRequest request, HTTPResponse response)
+    {
+        string itemKey = request != null ? request.Tag as string : "";
+        if (string.IsNullOrEmpty(itemKey) || !activeItems.ContainsKey(itemKey))
+        {
+            return;
+        }
+
+        HistoryPlacementRestorationItem item = activeItems[itemKey];
+        item.ImageRequestInFlight = false;
+        if (response == null || !response.IsSuccess || response.Data == null || response.Data.Length == 0)
+        {
+            ShowFrontMessage("history_placement_restoration_ERR_taken_rgb");
+            return;
+        }
+
+        Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+        if (!texture.LoadImage(response.Data))
+        {
+            Destroy(texture);
+            ShowFrontMessage("history_placement_restoration_ERR_taken_rgb");
+            return;
+        }
+
+        if (item.EvidenceTexture != null)
+        {
+            Destroy(item.EvidenceTexture);
+        }
+        item.EvidenceTexture = texture;
+        item.EvidenceImageObject = CreateEvidenceImageQuad(item, texture);
+        if (item.EvidenceImageObject != null)
+        {
+            item.EvidenceImageObject.SetActive(item.EvidenceVisibleRequested);
+        }
+    }
+
+    private GameObject CreateEvidenceImageQuad(HistoryPlacementRestorationItem item, Texture2D texture)
+    {
+        if (item == null || texture == null || activeRoot == null)
+        {
+            return null;
+        }
+
+        GameObject quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        quad.name = "HistoryPlacementTakenRgb_" + item.Key;
+        quad.transform.SetParent(activeRoot.transform, false);
+
+        Camera camera = Camera.main;
+        Vector3 basePosition = item.PolyhedronObject != null ? item.PolyhedronObject.transform.position : item.ToPosition;
+        Vector3 right = camera != null ? camera.transform.right : Vector3.right;
+        Vector3 up = camera != null ? camera.transform.up : Vector3.up;
+        Vector3 forward = camera != null ? (quad.transform.position - camera.transform.position).normalized : Vector3.forward;
+        quad.transform.position = basePosition + right * 0.32f + up * 0.18f;
+        if (camera != null)
+        {
+            forward = (quad.transform.position - camera.transform.position).normalized;
+            quad.transform.rotation = Quaternion.LookRotation(forward, up);
+        }
+
+        float aspect = texture.height > 0 ? (float)texture.width / (float)texture.height : 1.0f;
+        float height = 0.24f;
+        quad.transform.localScale = new Vector3(height * aspect, height, 1.0f);
+
+        Renderer renderer = quad.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            Shader shader = Shader.Find("Unlit/Texture");
+            Material material = shader != null ? new Material(shader) : new Material(Shader.Find("Standard"));
+            material.mainTexture = texture;
+            if (material.HasProperty("_Cull"))
+            {
+                material.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
+            }
+            renderer.material = material;
+        }
+        return quad;
+    }
+
+    private bool EnsureBodyMeshForItem(HistoryPlacementRestorationItem item)
+    {
+        if (item == null || string.IsNullOrEmpty(item.BodyFbxUrl))
+        {
+            return false;
+        }
+        if (item.BodyDownloadQueued)
+        {
+            return true;
+        }
+
+        ResolveRuntimeModelManager();
+        RuntimeModelRecord bodyRecord;
+        if (runtimeModelManager != null && runtimeModelManager.TryGetLoadedRecord(item.BodyModelKey, out bodyRecord))
+        {
+            if (bodyRecord != null && bodyRecord.RootGameObject != null)
+            {
+                bodyRecord.RootGameObject.SetActive(item.EvidenceVisibleRequested);
+            }
+            return true;
+        }
+        if (ShuJuQingQiu.initialize == null)
+        {
+            return false;
+        }
+
+        JObject identityPose = IdentityArucoPose();
+        JObject modelInstance = new JObject
+        {
+            ["model_key"] = item.BodyModelKey,
+            ["task_id"] = item.BodyModelKey,
+            ["fbx_url"] = item.BodyFbxUrl,
+            ["object_aruco"] = identityPose.DeepClone(),
+        };
+        if (item.ArucoReference != null)
+        {
+            modelInstance["aruco_reference"] = item.ArucoReference.DeepClone();
+        }
+
+        JObject bodyModel = new JObject
+        {
+            ["task_id"] = item.BodyModelKey,
+            ["model_instance"] = modelInstance,
+            ["object_aruco"] = identityPose,
+        };
+        if (item.ArucoReference != null)
+        {
+            bodyModel["aruco_reference"] = item.ArucoReference.DeepClone();
+        }
+
+        if (ShuJuQingQiu.initialize.DownloadRuntimeModelFromSpatialQueryModel(bodyModel))
+        {
+            item.BodyDownloadQueued = true;
+            if (item.BodyVisibilityCoroutine != null)
+            {
+                StopCoroutine(item.BodyVisibilityCoroutine);
+            }
+            item.BodyVisibilityCoroutine = StartCoroutine(WaitForBodyMeshThenApplyVisibility(item));
+            ShowFrontMessage("history_placement_restoration_loading_body_mesh");
+            return true;
+        }
+        return false;
+    }
+
+    private IEnumerator WaitForBodyMeshThenApplyVisibility(HistoryPlacementRestorationItem item)
+    {
+        float timeoutAt = Time.time + 30f;
+        while (item != null && Time.time < timeoutAt)
+        {
+            ResolveRuntimeModelManager();
+            RuntimeModelRecord bodyRecord;
+            if (runtimeModelManager != null
+                && runtimeModelManager.TryGetLoadedRecord(item.BodyModelKey, out bodyRecord)
+                && bodyRecord != null
+                && bodyRecord.RootGameObject != null)
+            {
+                bodyRecord.RootGameObject.SetActive(item.EvidenceVisibleRequested);
+                item.BodyDownloadQueued = false;
+                item.BodyVisibilityCoroutine = null;
+                yield break;
+            }
+            yield return null;
+        }
+        if (item != null)
+        {
+            item.BodyDownloadQueued = false;
+            item.BodyVisibilityCoroutine = null;
+        }
+    }
+
+    private static JObject IdentityArucoPose()
+    {
+        return new JObject
+        {
+            ["position"] = new JArray(0.0f, 0.0f, 0.0f),
+            ["rotation_quaternion_xyzw"] = new JArray(0.0f, 0.0f, 0.0f, 1.0f),
+        };
+    }
+
+    private static string ReadNestedString(JObject payload, string objectKey, string valueKey)
+    {
+        JObject obj = payload != null ? payload[objectKey] as JObject : null;
+        return obj != null ? obj[valueKey]?.ToString() ?? "" : "";
+    }
+
+    private static JToken CloneOrNull(JToken token)
+    {
+        return token != null && token.Type != JTokenType.Null ? token.DeepClone() : null;
     }
 
     private GameObject CreatePolyhedron(string shape, float edgeLength, string status)
@@ -742,6 +1185,18 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         public Quaternion ToRotation = Quaternion.identity;
         public float DurationSeconds = 1.2f;
         public Coroutine AnimationCoroutine;
+        public JObject DownloadModel;
+        public bool DownloadQueued;
+        public string TakenRgbUrl = "";
+        public string BodyFbxUrl = "";
+        public string BodyModelKey = "";
+        public JToken ArucoReference;
+        public bool ImageRequestInFlight;
+        public bool BodyDownloadQueued;
+        public bool EvidenceVisibleRequested;
+        public Coroutine BodyVisibilityCoroutine;
+        public Texture2D EvidenceTexture;
+        public GameObject EvidenceImageObject;
     }
 }
 

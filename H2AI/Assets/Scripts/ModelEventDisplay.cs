@@ -58,10 +58,48 @@ public class ModelEventDisplay : MonoBehaviour
         if (activeHints.ContainsKey(key))
         {
             CloseHint(key);
+            ToggleHistoryEvidenceForIdentity(identity);
             return;
         }
 
-        ShowFrontMessage("model_event_no_local_hint");
+        bool historyEvidenceHandled = ToggleHistoryEvidenceForIdentity(identity);
+
+        RuntimeModelRecord record = null;
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
+        bool found = manager != null
+            && ((!string.IsNullOrEmpty(identity.TaskId) && manager.TryGetLoadedRecord(identity.TaskId, out record))
+                || (!string.IsNullOrEmpty(identity.ModelKey) && manager.TryGetLoadedRecord(identity.ModelKey, out record)));
+        if (found)
+        {
+            RuntimeModelInstance instance = new RuntimeModelInstance
+            {
+                ModelKey = record.ModelKey,
+                TaskId = record.TaskId,
+                FbxUrl = record.FbxUrl,
+                Pose = record.Pose,
+                SpatialBox = record.SpatialBox,
+            };
+            ShowForModel(instance, "local");
+            return;
+        }
+
+        if (!historyEvidenceHandled)
+        {
+            ShowFrontMessage("model_event_no_local_hint");
+        }
+    }
+
+    private bool ToggleHistoryEvidenceForIdentity(RuntimeModelEventIdentity identity)
+    {
+        if (identity == null)
+        {
+            return false;
+        }
+
+        HistoryPlacementRestorationDisplay historyDisplay = HistoryPlacementRestorationDisplay.Instance;
+        return historyDisplay != null
+            && ((!string.IsNullOrEmpty(identity.TaskId) && historyDisplay.ToggleEvidenceForModel(identity.TaskId))
+                || (!string.IsNullOrEmpty(identity.ModelKey) && historyDisplay.ToggleEvidenceForModel(identity.ModelKey)));
     }
 
     public void ShowForModel(RuntimeModelInstance instance, string message)
