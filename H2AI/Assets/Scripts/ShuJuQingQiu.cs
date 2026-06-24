@@ -1203,7 +1203,11 @@ public class ShuJuQingQiu : MonoBehaviour
                 continue;
             }
 
-            // Progress spatial hints are intentionally disabled; model download starts at model_ready.
+            ModelEventDisplay eventDisplay = ModelEventDisplay.Instance;
+            if (eventDisplay != null)
+            {
+                eventDisplay.ShowForModel(hintInstance, BuildPendingProgressMessage(pendingTask));
+            }
         }
     }
 

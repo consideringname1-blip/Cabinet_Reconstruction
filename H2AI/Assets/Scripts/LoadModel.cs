@@ -218,11 +218,20 @@ public class LoadModel : MonoBehaviour
 
     private void UpdateSpatialHint(RuntimeModelInstance instance, string message)
     {
-        // Spatial progress boxes are disabled; front messages/logs carry progress now.
+        ModelEventDisplay display = ModelEventDisplay.Instance;
+        if (display != null)
+        {
+            display.UpdateProgressForModel(instance, message);
+        }
     }
 
     private void HideSpatialHint(RuntimeModelInstance instance)
     {
+        ModelEventDisplay display = ModelEventDisplay.Instance;
+        if (display != null)
+        {
+            display.CloseForModel(instance);
+        }
     }
 
     private void NotifyRuntimeModelLoadCompleted(RuntimeModelInstance instance, bool success)
