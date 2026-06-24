@@ -153,6 +153,10 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             {
                 StopCoroutine(item.BodyVisibilityCoroutine);
             }
+            if (item != null)
+            {
+                RestoreSourceModelForAnimation(item);
+            }
             if (item != null && item.EvidenceTexture != null)
             {
                 Destroy(item.EvidenceTexture);
@@ -180,31 +184,21 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             return;
         }
 
-        if (item.CloneObject != null && item.CloneObject.activeSelf)
+        if (item.AnimationModelShown)
         {
-            if (item.AnimationCoroutine != null)
-            {
-                StopCoroutine(item.AnimationCoroutine);
-                item.AnimationCoroutine = null;
-            }
-            item.CloneObject.SetActive(false);
-            HideEvidenceForItem(item);
+            HideAnimationClone(item);
             return;
         }
 
-        bool evidenceHandled = EnsureEvidenceForItem(item);
         if (!item.HasAnimation)
         {
-            if (!evidenceHandled)
-            {
-                ShowFrontMessage("history_placement_restoration_no_animation_model");
-            }
+            ShowFrontMessage("history_placement_restoration_no_animation_model");
             return;
         }
 
         if (item.CloneObject == null)
         {
-            item.CloneObject = CreateAnimationClone(item.TaskId, item.FromPosition, item.FromRotation);
+            item.CloneObject = ResolveAnimationModelObject(item);
         }
 
         if (item.CloneObject == null)
@@ -237,9 +231,30 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             StopCoroutine(item.AnimationCoroutine);
         }
         RefreshAnimationTargetFromLoadedModel(item);
+        HideSourceModelForAnimation(item);
         item.CloneObject.SetActive(true);
+        item.AnimationModelShown = true;
         item.CloneObject.transform.SetPositionAndRotation(item.FromPosition, item.FromRotation);
         item.AnimationCoroutine = StartCoroutine(AnimateCloneToOriginal(item));
+    }
+
+    private void HideAnimationClone(HistoryPlacementRestorationItem item)
+    {
+        if (item == null)
+        {
+            return;
+        }
+        if (item.AnimationCoroutine != null)
+        {
+            StopCoroutine(item.AnimationCoroutine);
+            item.AnimationCoroutine = null;
+        }
+        if (item.CloneObject != null)
+        {
+            item.CloneObject.SetActive(false);
+        }
+        item.AnimationModelShown = false;
+        HideEvidenceForItem(item);
     }
 
     public bool ToggleEvidenceForModel(string taskIdOrModelKey)
@@ -455,7 +470,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
                 item.FromRotation = fromRotation;
                 item.ToPosition = toPosition;
                 item.ToRotation = toRotation;
-                item.CloneObject = CreateAnimationClone(taskId, fromPosition, fromRotation);
+                item.CloneObject = ResolveAnimationModelObject(item);
             }
         }
 
@@ -640,6 +655,62 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         }
     }
 
+    private bool TryGetSourceModelRecord(HistoryPlacementRestorationItem item, out RuntimeModelRecord record)
+    {
+        record = null;
+        if (item == null)
+        {
+            return false;
+        }
+        ResolveRuntimeModelManager();
+        if (runtimeModelManager == null)
+        {
+            return false;
+        }
+        if (!string.IsNullOrEmpty(item.TaskId) && runtimeModelManager.TryGetLoadedRecord(item.TaskId, out record))
+        {
+            return record != null && record.RootGameObject != null;
+        }
+        if (!string.IsNullOrEmpty(item.ModelKey) && runtimeModelManager.TryGetLoadedRecord(item.ModelKey, out record))
+        {
+            return record != null && record.RootGameObject != null;
+        }
+        return false;
+    }
+
+    private void HideSourceModelForAnimation(HistoryPlacementRestorationItem item)
+    {
+        RuntimeModelRecord record;
+        if (!TryGetSourceModelRecord(item, out record) || record.RootGameObject == null)
+        {
+            return;
+        }
+        if (!item.SourceModelHiddenForAnimation)
+        {
+            item.SourceModelWasActiveBeforeAnimation = record.RootGameObject.activeSelf;
+            item.SourceModelHiddenForAnimation = true;
+        }
+        if (record.RootGameObject != item.CloneObject)
+        {
+            record.RootGameObject.SetActive(false);
+        }
+    }
+
+    private void RestoreSourceModelForAnimation(HistoryPlacementRestorationItem item)
+    {
+        if (item == null || !item.SourceModelHiddenForAnimation)
+        {
+            return;
+        }
+        RuntimeModelRecord record;
+        if (TryGetSourceModelRecord(item, out record) && record.RootGameObject != null)
+        {
+            record.RootGameObject.SetActive(item.SourceModelWasActiveBeforeAnimation);
+        }
+        item.SourceModelHiddenForAnimation = false;
+        item.SourceModelWasActiveBeforeAnimation = false;
+    }
+
     private IEnumerator WaitForModelThenAnimate(HistoryPlacementRestorationItem item)
     {
         float timeoutAt = Time.time + 30f;
@@ -647,7 +718,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             if (item.CloneObject == null)
             {
-                item.CloneObject = CreateAnimationClone(item.TaskId, item.FromPosition, item.FromRotation);
+                item.CloneObject = ResolveAnimationModelObject(item);
             }
             if (item.CloneObject != null)
             {
@@ -823,6 +894,11 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
 
     private Vector3 ResolveEvidenceAnchorPosition(HistoryPlacementRestorationItem item)
     {
+        if (item.AnimationModelShown && item.CloneObject != null && item.CloneObject.activeSelf && TryGetRendererBounds(item.CloneObject, out Bounds cloneBounds))
+        {
+            return new Vector3(cloneBounds.center.x, cloneBounds.max.y, cloneBounds.center.z);
+        }
+
         ResolveRuntimeModelManager();
         RuntimeModelRecord record;
         if (runtimeModelManager != null)
@@ -1396,12 +1472,16 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         return material;
     }
 
-    private GameObject CreateAnimationClone(string taskId, Vector3 fromPosition, Quaternion fromRotation)
+    private GameObject ResolveAnimationModelObject(HistoryPlacementRestorationItem item)
     {
-        RuntimeModelRecord record;
-        if (runtimeModelManager == null || !runtimeModelManager.TryGetLoadedRecord(taskId, out record))
+        if (item == null)
         {
-            Debug.LogWarning("[HistoryPlacementRestoration] Model is not loaded; animation clone skipped for task " + taskId);
+            return null;
+        }
+        RuntimeModelRecord record;
+        if (!TryGetSourceModelRecord(item, out record))
+        {
+            Debug.LogWarning("[HistoryPlacementRestoration] Model is not loaded for animation task " + item.TaskId);
             return null;
         }
         if (record == null || record.RootGameObject == null)
@@ -1409,18 +1489,13 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             return null;
         }
 
-        GameObject clone = Instantiate(record.RootGameObject, fromPosition, fromRotation, activeRoot.transform);
-        clone.name = "HistoryPlacementAnimationClone_" + taskId;
-        foreach (RuntimeModelEventIdentity identity in clone.GetComponentsInChildren<RuntimeModelEventIdentity>(true))
+        RuntimeModelEventIdentity identity = record.RootGameObject.GetComponent<RuntimeModelEventIdentity>();
+        if (identity == null)
         {
-            Destroy(identity);
+            identity = record.RootGameObject.AddComponent<RuntimeModelEventIdentity>();
         }
-        foreach (HistoryPlacementRestorationInteractable interactable in clone.GetComponentsInChildren<HistoryPlacementRestorationInteractable>(true))
-        {
-            Destroy(interactable);
-        }
-        clone.SetActive(false);
-        return clone;
+        identity.Configure(record.ModelKey, record.TaskId, record.FbxUrl);
+        return record.RootGameObject;
     }
 
     private IEnumerator AnimateCloneToOriginal(HistoryPlacementRestorationItem item)
@@ -1440,6 +1515,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         }
         item.CloneObject.transform.SetPositionAndRotation(item.ToPosition, item.ToRotation);
         item.AnimationCoroutine = null;
+        EnsureEvidenceForItem(item);
     }
 
     private float ReadAnimationDuration(JObject display)
@@ -1552,6 +1628,9 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         public string Status = "";
         public GameObject PolyhedronObject;
         public GameObject CloneObject;
+        public bool AnimationModelShown;
+        public bool SourceModelHiddenForAnimation;
+        public bool SourceModelWasActiveBeforeAnimation;
         public bool HasAnimation;
         public Vector3 FromPosition;
         public Quaternion FromRotation = Quaternion.identity;

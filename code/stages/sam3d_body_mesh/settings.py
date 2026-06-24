@@ -2,6 +2,13 @@ from __future__ import annotations
 
 import os
 
+
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() not in {"0", "false", "no", "off", ""}
+
 SAM3D_BODY_DETECTOR_NAME = os.environ.get("SAM3D_BODY_DETECTOR_NAME", "vitdet")
 SAM3D_BODY_DEVICE = os.environ.get("SAM3D_BODY_DEVICE", "cuda")
 SAM3D_BODY_BBOX_THRESHOLD = float(os.environ.get("SAM3D_BODY_BBOX_THRESHOLD", "0.35"))
@@ -19,3 +26,6 @@ MAX_WRIST_DISTANCE_M = float(os.environ.get("SAM3D_BODY_MAX_WRIST_DISTANCE_M", "
 FBX_DECIMATE_RATIO = float(os.environ.get("SAM3D_BODY_FBX_DECIMATE_RATIO", "0.125"))
 MATERIAL_COLOR = [0.0, 0.0, 0.0]
 MATERIAL_ALPHA = float(os.environ.get("SAM3D_BODY_MATERIAL_ALPHA", "0.5"))
+
+# Historical HoloLens display expects SAM3D body evidence mirrored on ArUco Z.
+ARMARKER_FLIP_Z = _bool_env("SAM3D_BODY_ARMARKER_FLIP_Z", True)
