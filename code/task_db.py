@@ -24,11 +24,19 @@ ARUCO_MARKER_RELATION_TABLE = "aruco_marker_relations"
 MODEL_BOUNDS_TABLE = "model_bounds"
 TASK_TIMING_EVENT_TABLE = "task_timing_events"
 AI_MODEL_TIMING_TABLE = "ai_model_timings"
+DISPLAY_OBJECT_TABLE = "display_objects"
+CAPTURE_INSTANCE_TABLE = "capture_instances"
+CAPTURE_BINDING_LOG_TABLE = "capture_binding_logs"
 MODEL_BOUNDS_STATUSES = (
     "pending",
     "ready",
     "failed",
     "pending_reference",
+)
+CAPTURE_BINDING_STATUSES = (
+    "bound",
+    "unbound",
+    "rejected",
 )
 ALLOWED_STATUSES = (
     "pending",
@@ -44,6 +52,7 @@ ALLOWED_STATUSES = (
     "runtime_mesh",
     "blender",
     "model_bounds",
+    "display_identity",
     "history_placement_restoration",
     "taken_object_detection",
     "sam3d_body_mesh",
@@ -236,6 +245,64 @@ def _create_model_bounds_table_sql() -> str:
             error_message TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+
+
+def _capture_binding_status_list_sql() -> str:
+    return ", ".join(f"'{status}'" for status in CAPTURE_BINDING_STATUSES)
+
+
+def _create_display_object_table_sql() -> str:
+    return f"""
+        CREATE TABLE {DISPLAY_OBJECT_TABLE} (
+            display_object_id TEXT PRIMARY KEY,
+            canonical_capture_instance_id TEXT,
+            capture_count INTEGER NOT NULL DEFAULT 0,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+
+
+def _create_capture_instance_table_sql() -> str:
+    return f"""
+        CREATE TABLE {CAPTURE_INSTANCE_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            capture_instance_id TEXT NOT NULL UNIQUE,
+            display_object_id TEXT,
+            task_id TEXT NOT NULL UNIQUE,
+            source TEXT NOT NULL DEFAULT 'hololens',
+            timestamp TEXT,
+            yolo_object_id TEXT,
+            binding_status TEXT NOT NULL DEFAULT 'unbound'
+                CHECK (binding_status IN ({_capture_binding_status_list_sql()})),
+            binding_reason TEXT,
+            identity_distance REAL,
+            candidate_scores_json TEXT NOT NULL DEFAULT '[]',
+            feature_json TEXT NOT NULL DEFAULT '{{}}',
+            evidence_json TEXT NOT NULL DEFAULT '{{}}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+
+
+def _create_capture_binding_log_table_sql() -> str:
+    return f"""
+        CREATE TABLE {CAPTURE_BINDING_LOG_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            capture_instance_id TEXT NOT NULL,
+            task_id TEXT NOT NULL,
+            display_object_id TEXT,
+            decision TEXT NOT NULL,
+            binding_status TEXT NOT NULL
+                CHECK (binding_status IN ({_capture_binding_status_list_sql()})),
+            reason TEXT,
+            candidate_scores_json TEXT NOT NULL DEFAULT '[]',
+            detail_json TEXT NOT NULL DEFAULT '{{}}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """
 
@@ -567,6 +634,37 @@ def initialize_task_table() -> None:
                 ON {MODEL_BOUNDS_TABLE} (task_id)
                 """
             )
+
+        if _table_sql(conn, DISPLAY_OBJECT_TABLE) is None:
+            conn.execute(_create_display_object_table_sql())
+        if _table_sql(conn, CAPTURE_INSTANCE_TABLE) is None:
+            conn.execute(_create_capture_instance_table_sql())
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{CAPTURE_INSTANCE_TABLE}_display_object
+            ON {CAPTURE_INSTANCE_TABLE} (display_object_id, binding_status, updated_at)
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{CAPTURE_INSTANCE_TABLE}_task
+            ON {CAPTURE_INSTANCE_TABLE} (task_id)
+            """
+        )
+        if _table_sql(conn, CAPTURE_BINDING_LOG_TABLE) is None:
+            conn.execute(_create_capture_binding_log_table_sql())
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{CAPTURE_BINDING_LOG_TABLE}_capture
+            ON {CAPTURE_BINDING_LOG_TABLE} (capture_instance_id, created_at)
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{CAPTURE_BINDING_LOG_TABLE}_task
+            ON {CAPTURE_BINDING_LOG_TABLE} (task_id, created_at)
+            """
+        )
 
         if ARUCO_SYNC_MARKER_REGISTRY_ON_START:
             _sync_marker_registry_from_reference_folder(conn)
@@ -912,6 +1010,280 @@ def get_ai_model_timings_for_task(task_id: str) -> List[Dict[str, Any]]:
             ORDER BY started_at ASC, id ASC
             """,
             (str(task_id),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def create_display_object(
+    *,
+    display_object_id: str | None = None,
+    canonical_capture_instance_id: str | None = None,
+    notes: str | None = None,
+) -> Dict[str, Any]:
+    initialize_task_table()
+    display_object_id = str(display_object_id or "").strip() or None
+    if display_object_id is None:
+        import uuid
+
+        display_object_id = str(uuid.uuid4())
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {DISPLAY_OBJECT_TABLE} (
+                display_object_id,
+                canonical_capture_instance_id,
+                notes,
+                updated_at
+            )
+            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(display_object_id) DO UPDATE SET
+                canonical_capture_instance_id = COALESCE(
+                    {DISPLAY_OBJECT_TABLE}.canonical_capture_instance_id,
+                    excluded.canonical_capture_instance_id
+                ),
+                notes = COALESCE(excluded.notes, {DISPLAY_OBJECT_TABLE}.notes),
+                updated_at = CURRENT_TIMESTAMP
+            """,
+            (display_object_id, canonical_capture_instance_id, notes),
+        )
+        conn.commit()
+        row = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_TABLE} WHERE display_object_id = ?",
+            (display_object_id,),
+        ).fetchone()
+    return dict(row)
+
+
+def get_display_object(display_object_id: str) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_TABLE} WHERE display_object_id = ?",
+            (str(display_object_id),),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def get_capture_instance(capture_instance_id: str) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM {CAPTURE_INSTANCE_TABLE} WHERE capture_instance_id = ?",
+            (str(capture_instance_id),),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def get_capture_instance_by_task_id(task_id: str) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM {CAPTURE_INSTANCE_TABLE} WHERE task_id = ?",
+            (str(task_id),),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def _refresh_display_object_capture_count(
+    conn: sqlite3.Connection,
+    display_object_id: str,
+    *,
+    canonical_capture_instance_id: str | None = None,
+) -> None:
+    if not display_object_id:
+        return
+    conn.execute(
+        f"""
+        UPDATE {DISPLAY_OBJECT_TABLE}
+        SET
+            capture_count = (
+                SELECT COUNT(*)
+                FROM {CAPTURE_INSTANCE_TABLE}
+                WHERE display_object_id = ? AND binding_status = 'bound'
+            ),
+            canonical_capture_instance_id = COALESCE(canonical_capture_instance_id, ?),
+            updated_at = CURRENT_TIMESTAMP
+        WHERE display_object_id = ?
+        """,
+        (display_object_id, canonical_capture_instance_id, display_object_id),
+    )
+
+
+def upsert_capture_instance(
+    *,
+    capture_instance_id: str,
+    task_id: str,
+    display_object_id: str | None = None,
+    source: str = "hololens",
+    timestamp: str | None = None,
+    yolo_object_id: str | None = None,
+    binding_status: str = "unbound",
+    binding_reason: str | None = None,
+    identity_distance: float | None = None,
+    candidate_scores: Any | None = None,
+    feature: Any | None = None,
+    evidence: Any | None = None,
+) -> Dict[str, Any]:
+    if binding_status not in CAPTURE_BINDING_STATUSES:
+        raise ValueError(f"Invalid capture binding status: {binding_status}")
+    initialize_task_table()
+    capture_instance_id = str(capture_instance_id)
+    task_id = str(task_id)
+    display_object_id = str(display_object_id).strip() if display_object_id else None
+    now = _utc_now_text()
+    with _get_connection() as conn:
+        old_row = conn.execute(
+            f"SELECT display_object_id FROM {CAPTURE_INSTANCE_TABLE} WHERE capture_instance_id = ?",
+            (capture_instance_id,),
+        ).fetchone()
+        old_display_object_id = str(old_row["display_object_id"] or "") if old_row else ""
+        conn.execute(
+            f"""
+            INSERT INTO {CAPTURE_INSTANCE_TABLE} (
+                capture_instance_id,
+                display_object_id,
+                task_id,
+                source,
+                timestamp,
+                yolo_object_id,
+                binding_status,
+                binding_reason,
+                identity_distance,
+                candidate_scores_json,
+                feature_json,
+                evidence_json,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(capture_instance_id) DO UPDATE SET
+                display_object_id = excluded.display_object_id,
+                task_id = excluded.task_id,
+                source = excluded.source,
+                timestamp = excluded.timestamp,
+                yolo_object_id = excluded.yolo_object_id,
+                binding_status = excluded.binding_status,
+                binding_reason = excluded.binding_reason,
+                identity_distance = excluded.identity_distance,
+                candidate_scores_json = excluded.candidate_scores_json,
+                feature_json = excluded.feature_json,
+                evidence_json = excluded.evidence_json,
+                updated_at = excluded.updated_at
+            """,
+            (
+                capture_instance_id,
+                display_object_id,
+                task_id,
+                source,
+                timestamp,
+                yolo_object_id,
+                binding_status,
+                binding_reason,
+                identity_distance,
+                json.dumps(candidate_scores if candidate_scores is not None else [], ensure_ascii=False),
+                json.dumps(feature if feature is not None else {}, ensure_ascii=False),
+                json.dumps(evidence if evidence is not None else {}, ensure_ascii=False),
+                now,
+            ),
+        )
+        if old_display_object_id and old_display_object_id != (display_object_id or ""):
+            _refresh_display_object_capture_count(conn, old_display_object_id)
+        if display_object_id:
+            _refresh_display_object_capture_count(
+                conn,
+                display_object_id,
+                canonical_capture_instance_id=capture_instance_id,
+            )
+        conn.commit()
+        row = conn.execute(
+            f"SELECT * FROM {CAPTURE_INSTANCE_TABLE} WHERE capture_instance_id = ?",
+            (capture_instance_id,),
+        ).fetchone()
+    return dict(row)
+
+
+def list_identity_candidate_captures(
+    *,
+    limit: int = 500,
+    exclude_capture_instance_id: str | None = None,
+) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    limit = max(1, min(int(limit or 500), 5000))
+    where = ["display_object_id IS NOT NULL", "binding_status = 'bound'"]
+    params: List[Any] = []
+    if exclude_capture_instance_id:
+        where.append("capture_instance_id != ?")
+        params.append(str(exclude_capture_instance_id))
+    params.append(limit)
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {CAPTURE_INSTANCE_TABLE}
+            WHERE {' AND '.join(where)}
+            ORDER BY updated_at DESC, id DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def record_capture_binding_log(
+    *,
+    capture_instance_id: str,
+    task_id: str,
+    display_object_id: str | None,
+    decision: str,
+    binding_status: str,
+    reason: str | None = None,
+    candidate_scores: Any | None = None,
+    detail: Any | None = None,
+) -> None:
+    if binding_status not in CAPTURE_BINDING_STATUSES:
+        raise ValueError(f"Invalid capture binding status: {binding_status}")
+    initialize_task_table()
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {CAPTURE_BINDING_LOG_TABLE} (
+                capture_instance_id,
+                task_id,
+                display_object_id,
+                decision,
+                binding_status,
+                reason,
+                candidate_scores_json,
+                detail_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(capture_instance_id),
+                str(task_id),
+                str(display_object_id) if display_object_id else None,
+                str(decision),
+                binding_status,
+                reason,
+                json.dumps(candidate_scores if candidate_scores is not None else [], ensure_ascii=False),
+                json.dumps(detail if detail is not None else {}, ensure_ascii=False),
+            ),
+        )
+        conn.commit()
+
+
+def get_capture_binding_logs(capture_instance_id: str, *, limit: int = 50) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    limit = max(1, min(int(limit or 50), 500))
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {CAPTURE_BINDING_LOG_TABLE}
+            WHERE capture_instance_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (str(capture_instance_id), limit),
         ).fetchall()
     return [dict(row) for row in rows]
 

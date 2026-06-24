@@ -39,6 +39,8 @@ from config import (
     INSTANTMESH_STAGE_RUN,
     MODEL_BOUNDS_STAGE_PY,
     MODEL_BOUNDS_STAGE_RUN,
+    DISPLAY_IDENTITY_STAGE_PY,
+    DISPLAY_IDENTITY_STAGE_RUN,
     MODEL_GENERATION_BACKEND,
     MODELSCALE_STAGE_PY,
     MODELSCALE_STAGE_RUN,
@@ -111,6 +113,7 @@ STAGE_ORDER = [
     "aruco_sync",
     "blender",
     "model_bounds",
+    "display_identity",
     "history_placement_restoration",
     "taken_object_detection",
     "sam3d_body_mesh",
@@ -886,6 +889,15 @@ def _run_model_bounds(json_path: Path, context: StageWorkerContext | None = None
     )
 
 
+def _run_display_identity(json_path: Path, context: StageWorkerContext | None = None) -> None:
+    _run_python_script(
+        python_path=DISPLAY_IDENTITY_STAGE_PY,
+        script_path=DISPLAY_IDENTITY_STAGE_RUN,
+        json_path=json_path,
+        cwd=DISPLAY_IDENTITY_STAGE_RUN.parent,
+    )
+
+
 def _run_history_placement_restoration(json_path: Path, context: StageWorkerContext | None = None) -> None:
     _run_python_script(
         python_path=HISTORY_PLACEMENT_RESTORATION_STAGE_PY,
@@ -926,6 +938,7 @@ STAGE_RUNNERS = {
     "runtime_mesh": _run_runtime_mesh,
     "blender": _run_blender,
     "model_bounds": _run_model_bounds,
+    "display_identity": _run_display_identity,
     "history_placement_restoration": _run_history_placement_restoration,
     "taken_object_detection": _run_taken_object_detection,
     "sam3d_body_mesh": _run_sam3d_body_mesh,
@@ -1229,6 +1242,7 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
         "instantmesh": task_json.get("InstantMesh") or {},
         "runtime_mesh": task_json.get("RuntimeMesh") or {},
         "blender": task_json.get("Blender") or {},
+        "display_identity": task_json.get("DisplayIdentity") or {},
         "history_placement_restoration": task_json.get("HistoryPlacementRestoration") or {},
         "taken_object_detection": task_json.get("TakenObjectDetection") or {},
         "sam3d_body_mesh": task_json.get("SAM3DBodyMesh") or {},
@@ -1251,6 +1265,7 @@ def _sync_completed_tasks_for_startup(startup_session_id: str | None = None) -> 
             resolved_json_path = resolve_task_json_path(json_path)
             _run_aruco_sync(resolved_json_path)
             _run_model_bounds(resolved_json_path)
+            _run_display_identity(resolved_json_path)
             synced_count += 1
         except Exception as exc:
             print(
@@ -1306,6 +1321,7 @@ def get_latest_completed_task_data(
         "instantmesh": task_json.get("InstantMesh") or {},
         "runtime_mesh": task_json.get("RuntimeMesh") or {},
         "blender": task_json.get("Blender") or {},
+        "display_identity": task_json.get("DisplayIdentity") or {},
         "history_placement_restoration": task_json.get("HistoryPlacementRestoration") or {},
         "taken_object_detection": task_json.get("TakenObjectDetection") or {},
         "sam3d_body_mesh": task_json.get("SAM3DBodyMesh") or {},

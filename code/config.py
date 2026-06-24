@@ -10,7 +10,7 @@ IS_RUN_FLASK_SERVER = True
 MODEL_GENERATION_BACKEND = "instantmesh"
 MODEL_SERVICE_PREWARM_ENABLE = os.environ.get("MODEL_SERVICE_PREWARM_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
 SHIGURE_HISTORY_RECORDING_ENABLE = os.environ.get("SHIGURE_HISTORY_RECORDING_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
-CONSOLE_OUTPUT_LOG_ENABLE = os.environ.get("CONSOLE_OUTPUT_LOG_ENABLE", "0").strip().lower() not in {"0", "false", "no", "off", ""}
+CONSOLE_OUTPUT_LOG_ENABLE = os.environ.get("CONSOLE_OUTPUT_LOG_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
 
 # Depth camera and ArUco server defaults
 AHAT_SENSOR_NAME = "AHAT"
@@ -124,6 +124,7 @@ RUNTIME_MESH_BAKE_SCRIPT = HOLOLENS3D_RECON_STAGE_ROOT / "bake_runtime_mesh.py"
 SAM3D_OBJECTS_POSTPROCESS_SCRIPT = HOLOLENS3D_RECON_STAGE_ROOT / "postprocess_sam3d_glb.py"
 BLENDER_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_blender_from_json.py"
 MODEL_BOUNDS_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_model_bounds_from_json.py"
+DISPLAY_IDENTITY_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_display_identity_from_json.py"
 SHIGURE_HISTORY_RECORDER_RUN = SHIGURE_HISTORY_STAGE_ROOT / "run_shigure_history_recorder.py"
 HISTORY_PLACEMENT_RESTORATION_STAGE_RUN = HISTORY_PLACEMENT_STAGE_ROOT / "run_history_placement_restoration_from_json.py"
 TAKEN_OBJECT_DETECTION_STAGE_RUN = TAKEN_OBJECT_STAGE_ROOT / "run_taken_object_detection_from_json.py"
@@ -145,6 +146,7 @@ POSE_STAGE_PY = SERVER_PY
 RUNTIME_MESH_STAGE_PY = SERVER_PY
 BLENDER_STAGE_PY = SERVER_PY
 MODEL_BOUNDS_STAGE_PY = SERVER_PY
+DISPLAY_IDENTITY_STAGE_PY = SERVER_PY
 SHIGURE_HISTORY_RECORDER_STAGE_PY = os.environ.get("SHIGURE_HISTORY_RECORDER_PY", "/usr/bin/python3")
 HISTORY_PLACEMENT_RESTORATION_STAGE_PY = SERVER_PY
 TAKEN_OBJECT_DETECTION_STAGE_PY = SERVER_PY

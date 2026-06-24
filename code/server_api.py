@@ -99,6 +99,47 @@ def _build_model_key(task_id: str | None, fbx_url: str) -> str:
     return str(fbx_url or "").strip()
 
 
+def _display_identity_from_task_json(task_json: dict) -> dict:
+    identity = task_json.get("DisplayIdentity")
+    return identity if isinstance(identity, dict) else {}
+
+
+def _append_display_identity_fields(payload: dict, task_json: dict) -> None:
+    identity = _display_identity_from_task_json(task_json)
+    payload["display_identity"] = identity or None
+    if not identity:
+        return
+    payload["display_object_id"] = identity.get("display_object_id")
+    payload["capture_instance_id"] = identity.get("capture_instance_id")
+
+
+def _dedupe_display_object_models(models: list[dict], *, limit: int | None = None) -> list[dict]:
+    seen: set[str] = set()
+    deduped: list[dict] = []
+    for model in models:
+        identity = model.get("display_identity") if isinstance(model.get("display_identity"), dict) else {}
+        display_object_id = str((identity or {}).get("display_object_id") or model.get("display_object_id") or "").strip()
+        binding_status = str((identity or {}).get("binding_status") or "").strip()
+        if display_object_id and binding_status != "unbound":
+            key = f"display:{display_object_id}"
+        else:
+            key = f"task:{model.get('task_id') or model.get('id')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(model)
+        if limit is not None and len(deduped) >= limit:
+            break
+    return deduped
+
+
+def _include_duplicate_captures_requested() -> bool:
+    return (
+        _is_truthy_query_value(request.args.get("include_duplicate_captures"))
+        or _is_truthy_query_value(request.args.get("include_duplicate_display_captures"))
+    )
+
+
 def _build_model_instance(task_data: dict, task_json: dict, fbx_url: str) -> dict:
     task_id = task_data.get("task_id")
     instance = {
@@ -111,6 +152,7 @@ def _build_model_instance(task_data: dict, task_json: dict, fbx_url: str) -> dic
     }
     if task_json.get("Sam3SpatialBox"):
         instance["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
+    _append_display_identity_fields(instance, task_json)
     return instance
 
 
@@ -225,6 +267,7 @@ def _build_model_bounds_response(row: dict, hit_result: dict | None = None) -> d
         "error_message": decoded.get("error_message"),
         "download_urls": download_urls,
     }
+    _append_display_identity_fields(model, task_json)
     if fbx_url:
         model["fbx_url"] = fbx_url
         model["model_instance"] = {
@@ -235,6 +278,7 @@ def _build_model_bounds_response(row: dict, hit_result: dict | None = None) -> d
             "object_aruco": object_aruco,
             "aruco_reference": None,
         }
+        _append_display_identity_fields(model["model_instance"], task_json)
         if task_json.get("Sam3SpatialBox"):
             model["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
             model["model_instance"]["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
@@ -308,6 +352,10 @@ def _build_completed_task_response(task_data: dict) -> dict:
     response["placement_status"] = _resolve_placement_status(task_data, task_json)
     response["model_bounds"] = _build_task_model_bounds_status(task_id, task_json)
     response["model_generation"] = task_json.get("ModelGeneration") or None
+    response["display_identity"] = task_json.get("DisplayIdentity") or None
+    if response["display_identity"]:
+        response["display_object_id"] = response["display_identity"].get("display_object_id")
+        response["capture_instance_id"] = response["display_identity"].get("capture_instance_id")
     response["history_placement_restoration"] = task_json.get("HistoryPlacementRestoration") or None
     response["taken_object_detection"] = task_json.get("TakenObjectDetection") or None
     response["sam3d_body_mesh"] = task_json.get("SAM3DBodyMesh") or None
@@ -451,6 +499,7 @@ def index():
                 "/check-queue",
                 "/latest-completed-task-ids?limit=5",
                 "/model-bounds/latest?limit=5",
+                "/model-bounds/latest?limit=5&include_duplicate_captures=1",
                 "/model-bounds/range?start=<uploaded_at>&end=<uploaded_at>",
                 "/spatial-query/ray",
                 "/spatial-query/ray-range",
@@ -807,12 +856,18 @@ def latest_completed_task_ids():
 def model_bounds_latest():
     try:
         limit = max(1, request.args.get("limit", default=5, type=int) or 5)
-        rows = get_latest_ready_model_bounds(limit)
+        include_duplicates = _include_duplicate_captures_requested()
+        fetch_limit = limit if include_duplicates else min(max(limit * 4, limit), 50)
+        rows = get_latest_ready_model_bounds(fetch_limit)
+        models = [_build_model_bounds_response(row) for row in rows]
+        bounds = models if include_duplicates else _dedupe_display_object_models(models, limit=limit)
         return jsonify(
             {
                 "success": True,
-                "count": len(rows),
-                "bounds": [_build_model_bounds_response(row) for row in rows],
+                "count": len(bounds),
+                "raw_count": len(models),
+                "deduped_by_display_object": not include_duplicates,
+                "bounds": bounds,
             }
         )
     except Exception as exc:
@@ -826,14 +881,19 @@ def model_bounds_range():
         start = str(request.args.get("start") or "").strip()
         end = str(request.args.get("end") or "").strip()
         limit = max(1, request.args.get("limit", default=50, type=int) or 50)
+        include_duplicates = _include_duplicate_captures_requested()
         rows = get_ready_model_bounds_in_range(start, end, limit=limit)
+        models = [_build_model_bounds_response(row) for row in rows]
+        bounds = models if include_duplicates else _dedupe_display_object_models(models, limit=limit)
         return jsonify(
             {
                 "success": True,
-                "count": len(rows),
+                "count": len(bounds),
+                "raw_count": len(models),
+                "deduped_by_display_object": not include_duplicates,
                 "start": start,
                 "end": end,
-                "bounds": [_build_model_bounds_response(row) for row in rows],
+                "bounds": bounds,
             }
         )
     except ValueError as exc:
