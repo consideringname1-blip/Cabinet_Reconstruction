@@ -11,7 +11,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from config import ARUCO_TEMPLATE_PATH, SHIGURE_MARKER_HISTORY_PATH, SHIGURE_MARKER_HISTORY_ROOT
+from artifact_layout import ARUCO_TEMPLATE_PATH, SHIGURE_MARKER_HISTORY_PATH, SHIGURE_MARKER_HISTORY_ROOT
 from coordinate_systems import (
     convert_opencv_camera_pose_to_unity_camera_pose,
     orthonormalize_rotation,

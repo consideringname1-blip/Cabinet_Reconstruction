@@ -9,7 +9,7 @@ result_timestamp
 backup_shigurei_dir
 ```
 
-其中 `backup_shigurei_dir` 是拿取检出状态机在 `output` 文件夹下备份的 Shigurei 数据文件夹。
+其中 `backup_shigurei_dir` 是拿取检出状态机在 `data/model/<task_timestamp>/worker/07_taken_detection_working/` 下备份的 Shigurei 数据文件夹。该目录是工作备份；拿取检测的稳定结果会同时复制到 `data/model/<task_timestamp>/result/07_taken_detection_*`。
 
 该文件夹内必须包含 `result_timestamp` 对应帧的：
 
@@ -281,9 +281,18 @@ material_alpha = 0.5
 
 ---
 
-## 9. SAM3D Body 阶段输出 JSON
+## 9. SAM3D Body 阶段输出 JSON 和文件
 
-SAM3D Body 阶段输出一个 JSON，供 HoloLens 端点击后读取。
+SAM3D Body 阶段把工作文件写入 `data/model/<task_timestamp>/worker/08_sam3d_body_working/`，把稳定结果写入 `data/model/<task_timestamp>/result/`：
+
+```text
+08_sam3d_body_result.json
+08_sam3d_body_people.json
+08_sam3d_body_selected_person.obj
+08_sam3d_body_selected_person.fbx
+```
+
+其中 `08_sam3d_body_result.json` 对应 task JSON 中的 `SAM3DBodyMesh` payload，供 HoloLens/Unity 端读取。
 
 输出 JSON 至少包含：
 
@@ -333,25 +342,17 @@ HoloLens 显示时，应将 ArMarker 坐标系下的 FBX 通过 ArMarker 到 Hol
 
 SAM3D Body 阶段完成后，等待 HoloLens 端点击请求。
 
-HoloLens 端点击后，下发：
+HoloLens 端点击或查询时，应读取：
 
 ```text
-result_timestamp 对应的 Shigurei RGBD 图片
-选中人物的 ArMarker 坐标系 FBX
-SAM3D Body 阶段输出 JSON
+result_timestamp 对应的 Shigurei RGB-D 备份帧
+result/08_sam3d_body_selected_person.fbx
+result/08_sam3d_body_result.json
 ```
 
 HoloLens 端显示时，需要将 ArMarker 坐标系下的人体 FBX 变换到 HoloLens 显示坐标系。
 
-坐标系变换需要参考已有文档以及：
-
-```text
-/workspace/code/.test/sam3d_body_shigure_mesh_test.py
-```
-
-该文件用于保证人体 mesh 在 Shigurei 视角下显示正确。
-
-从 ArMarker / Shigurei 相关坐标系变换到 HoloLens 显示坐标系时，需要参考现有 HoloLens 显示到 Shigurei 显示的对应路径，并使用对应的变换链。
+坐标系变换以 `docs/coordinate-systems.md` 和 `code/coordinate_systems.py` 为准。`code/.test` 中的历史验证脚本只作为调试参考，不是正式显示链路的依赖。
 
 ---
 

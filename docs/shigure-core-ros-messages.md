@@ -133,33 +133,15 @@ object_id=39  bbox=[943, 0, 1252, 305]     mask_nonzero=42020
 
 Integration guidance:
 
-- For adding YOLO/segmentation data to Shigurei history, subscribe to
-  `/tracking/active_objects` first.
-- Store parsed sidecar data instead of embedding the whole JSON directly into
-  every frame meta file. A practical layout is `<stamp>_active_objects.json`
-  plus optional `<stamp>_object_<id>_mask.png` files; the RGB-D frame meta can
-  keep only relative paths, object count and source topic.
-- `mask_b64` is large, so use a script to parse/debug it. `ros2 topic echo`
-  prints a huge single string.
-
-Debug overlay utility:
-
-```bash
-cd /workspace_whs
-python3 code/scripts/render_shigure_active_objects_overlay.py --count 1
-```
-
-This subscribes to `/rs/color/compressed`,
-`/rs/aligned_depth_to_color/compressedDepth` and `/tracking/active_objects`,
-then writes one timestamped `*_active_objects_overlay.png` plus a matching
-JSON summary. By default it treats the largest bottom-center box as the table
-ROI, estimates the table depth range from that object's mask, and redraws only
-objects inside the table box whose median depth is closer than the far side of
-that table-depth band. The table ROI is used only for selection; selected
-objects keep their original full mask and bbox when drawn. Drawn masks are
-blended onto the RGB frame, each bbox is
-labeled with its `object_id`, and overlapping boxes are greedily assigned
-visually distinct colors.
+- The current `shigure_history` recorder subscribes to `/tracking/active_objects`
+  and stores deduplicated YOLO payloads under `data/shigure_history_cache/yolo_payloads/`.
+- RGB-D frames are stored as chunked video plus `chunk_manifest.json`; frame meta
+  references a YOLO payload hash instead of embedding the full JSON in every frame.
+- `mask_b64` is large, so debug tooling should parse it from the cached payload
+  or a local `ros2 topic echo` sample rather than treating terminal output as readable.
+- `code/scripts/` is now a local ignored helper directory, not a tracked pipeline
+  surface. If a local overlay utility exists there, it is for manual debugging
+  only and should not be referenced by production code.
 
 ### Other `/tracking/*` Topics
 

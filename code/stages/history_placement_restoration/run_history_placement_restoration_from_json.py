@@ -20,7 +20,7 @@ CODE_ROOT = Path(__file__).resolve().parents[2]
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
-from config import HISTORY_PLACEMENT_OUTPUT_ROOT, SHIGURE_HISTORY_CACHE_ROOT
+from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, model_worker_dir
 from coordinate_systems import UNITY_TO_OPENCV_CAMERA_BASIS, quat_xyzw_to_rotation_matrix
 from stages.history_placement_restoration import settings
 from stages.shigure_history.cache import CachedRgbdSample, CachedSampleMetadata, RosStamp, ShigureRgbdCache, load_json, sample_key
@@ -1424,12 +1424,19 @@ def run_history_placement_restoration(
     *,
     target_time: str | None = None,
     request_source: str = "stage",
+    artifact_output_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     json_path = resolve_task_json_path(json_path_arg)
     task = load_task_json(json_path)
     task_id = str(task.get("task_id") or task.get("task_name") or json_path.stem)
     timings = StageTimingCollector(task_id=task_id, stage_name="history_placement_restoration")
-    output_dir = HISTORY_PLACEMENT_OUTPUT_ROOT / task_id
+    if artifact_output_dir is not None:
+        output_dir = Path(artifact_output_dir)
+    else:
+        task_timestamp = str(task.get("task_timestamp") or "").strip()
+        if not task_timestamp:
+            raise ValueError("task_timestamp is required for history placement artifacts")
+        output_dir = model_worker_dir(task_timestamp) / "09_history_placement_working"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not settings.ENABLE:

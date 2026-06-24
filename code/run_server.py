@@ -2,10 +2,10 @@ import subprocess
 import signal
 import shlex
 import sys
-from config import (
+from config import IS_RUN_FLASK_SERVER
+from path_config import (
     CODE_ROOT,
     PROJECT_ROOT,
-    IS_RUN_FLASK_SERVER,
     HOLOLENS2_PY,
     SERVER_API_RUN,
     SERVER_PY,

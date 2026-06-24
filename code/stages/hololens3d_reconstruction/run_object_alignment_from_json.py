@@ -11,7 +11,7 @@ from pathlib import Path
 
 import _bootstrap
 from alignment_preview import render_model_compare_preview_image, render_overlay_preview_image
-from config import (
+from path_config import (
     FOUNDATIONPOSE_ALIGNMENT_PY,
     FOUNDATIONPOSE_ALIGNMENT_RUN,
 )

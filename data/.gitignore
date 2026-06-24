@@ -4,3 +4,7 @@
 /upload
 /shigure_history_cache
 /console_logs
+/model
+/aruco_processing
+/history_placement_requests
+/worker_sockets

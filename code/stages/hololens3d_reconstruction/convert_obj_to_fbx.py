@@ -14,6 +14,7 @@ for _bootstrap_root in _BOOTSTRAP_ROOTS:
 import _bootstrap
 import bpy
 
+from artifact_layout import model_result_file
 from blender_common import clean_scene, ensure_file
 from blender_mesh_postprocess import (
     apply_decimate_to_objects,
@@ -26,7 +27,6 @@ from blender_mesh_postprocess import (
     select_objects,
     smart_unwrap_objects,
 )
-from config import BLENDER_FBX_DIR
 from settings import (
     MODEL_FBX_CLEAN_COMPONENT_MIN_FACE_RATIO,
     MODEL_FBX_CLEAN_COMPONENT_MIN_FACES,
@@ -284,8 +284,11 @@ def export_fbx_from_json(json_path: Path) -> Path:
     task = load_task_json(json_path)
     source = _resolve_fbx_source(task)
 
-    fbx_path = BLENDER_FBX_DIR / f"{Path(source.mesh).stem}.fbx"
-    BLENDER_FBX_DIR.mkdir(parents=True, exist_ok=True)
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise ValueError("task_timestamp is required for FBX artifacts")
+    fbx_path = model_result_file(task_timestamp, "model.final_fbx")
+    fbx_path.parent.mkdir(parents=True, exist_ok=True)
 
     imported_objects, source_info = _import_source_objects(source)
     if source.source_stage == MODEL_STAGE_RUNTIME_MESH:
@@ -296,7 +299,7 @@ def export_fbx_from_json(json_path: Path) -> Path:
         postprocess_info["color_texture_bake"] = bake_vertex_color_sources_to_targets(
             bake_source_objects,
             processed_objects,
-            output_dir=BLENDER_FBX_DIR,
+            output_dir=fbx_path.parent,
             texture_stem=Path(source.mesh).stem,
             texture_size=int(SAM3D_OBJECTS_POSTPROCESS_TEXTURE_SIZE),
             margin_px=int(SAM3D_OBJECTS_POSTPROCESS_BAKE_MARGIN_PX),
@@ -312,6 +315,7 @@ def export_fbx_from_json(json_path: Path) -> Path:
 
     task["Blender"] = {
         "fbx": fbx_path.name,
+        "artifact_root": "model_result",
         "source_stage": source.source_stage,
         "source_mesh": source.mesh,
         "source_mesh_folder": source.folder,

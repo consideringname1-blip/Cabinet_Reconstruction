@@ -11,7 +11,7 @@ try:
 except ModuleNotFoundError:
     from . import _bootstrap  # type: ignore
 
-from config import ARUCO_RAW_ROOT, ARUCO_TEMPLATE_PATH, UPLOAD_FOLDER
+from artifact_layout import ARUCO_TEMPLATE_PATH, aruco_worker_frame_color
 from hololens3d_reconstruction.pose_math import (
     quat_xyzw_to_rotation_matrix,
     serialize_pose,
@@ -155,19 +155,16 @@ def resolve_pv_frames(task: dict[str, Any]) -> list[dict[str, Any]]:
 
 def resolve_pv_image_path(task_or_frame: dict[str, Any]) -> Path:
     pv_info = task_or_frame.get("PVCamera") or task_or_frame
-    name = str(pv_info.get("name") or "").strip()
-    if not name:
-        raise ValueError("PVCamera.name is required")
-
-    candidate = Path(name).expanduser()
-    if candidate.is_file():
-        return candidate.resolve()
-
-    upload_candidate = (UPLOAD_FOLDER / candidate).resolve()
-    if upload_candidate.is_file():
-        return upload_candidate
-
-    raise FileNotFoundError(f"PVCamera image not found: {name}")
+    if str(pv_info.get("artifact_root") or "").strip() != "aruco_worker":
+        raise ValueError("PVCamera frame must reference aruco_worker artifacts")
+    task_timestamp = str(pv_info.get("task_timestamp") or "").strip()
+    frame_timestamp = str(pv_info.get("artifact_timestamp") or "").strip()
+    if not task_timestamp or not frame_timestamp:
+        raise ValueError("aruco_worker frame requires task_timestamp and artifact_timestamp")
+    artifact_candidate = aruco_worker_frame_color(task_timestamp, frame_timestamp).resolve()
+    if artifact_candidate.is_file():
+        return artifact_candidate
+    raise FileNotFoundError(f"PVCamera image not found: {artifact_candidate}")
 
 
 def resolve_pv_camera_matrix(task_or_frame: dict[str, Any]) -> np.ndarray:
@@ -210,12 +207,6 @@ def resolve_selection_roi(task: dict[str, Any], image_width: int, image_height: 
     x1 = int(np.clip(x1, x0 + 1, image_width))
     y1 = int(np.clip(y1, y0 + 1, image_height))
     return x0, y0, x1, y1
-
-
-def ensure_raw_output_dir(task_name: str) -> Path:
-    target_dir = ARUCO_RAW_ROOT / task_name
-    target_dir.mkdir(parents=True, exist_ok=True)
-    return target_dir
 
 
 def orthonormalize_rotation(rotation: np.ndarray) -> np.ndarray:

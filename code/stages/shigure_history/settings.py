@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 try:
-    from config import SHIGURE_HISTORY_CACHE_ROOT as CONFIG_SHIGURE_HISTORY_CACHE_ROOT
+    from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT as CONFIG_SHIGURE_HISTORY_CACHE_ROOT
 except Exception:  # pragma: no cover - keeps this module usable in small tests.
     CONFIG_SHIGURE_HISTORY_CACHE_ROOT = Path(__file__).resolve().parents[3] / 'data' / 'shigure_history_cache'
 

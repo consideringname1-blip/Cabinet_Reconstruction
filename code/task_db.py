@@ -7,11 +7,13 @@ from typing import Any, Dict, List, Optional
 
 from config import (
     ARUCO_ANCHOR_MARKER_ID,
-    ARUCO_REFERENCE_ROOT,
     ARUCO_SYNC_MARKER_REGISTRY_ON_START,
+)
+from artifact_layout import (
+    ARUCO_REFERENCE_ROOT,
     ARUCO_TEMPLATE_PATH,
     DATABASE_PATH,
-    UPLOAD_FOLDER,
+    ensure_database_root,
 )
 from task_json import normalize_path_for_storage
 
@@ -27,6 +29,7 @@ AI_MODEL_TIMING_TABLE = "ai_model_timings"
 DISPLAY_OBJECT_TABLE = "display_objects"
 CAPTURE_INSTANCE_TABLE = "capture_instances"
 CAPTURE_BINDING_LOG_TABLE = "capture_binding_logs"
+HISTORY_PLACEMENT_REQUEST_TABLE = "history_placement_requests"
 MODEL_BOUNDS_STATUSES = (
     "pending",
     "ready",
@@ -39,6 +42,8 @@ CAPTURE_BINDING_STATUSES = (
     "rejected",
 )
 ALLOWED_STATUSES = (
+    "uploading",
+    "upload_failed",
     "pending",
     "hololens2depth",
     "aruco_detect",
@@ -60,11 +65,12 @@ ALLOWED_STATUSES = (
     "aruco_completed",
     "failed",
 )
-TERMINAL_STATUSES = ("completed", "aruco_completed", "failed")
+TERMINAL_STATUSES = ("completed", "aruco_completed", "failed", "upload_failed")
 _SCHEMA_INITIALIZED = False
 
 
 def _get_connection() -> sqlite3.Connection:
+    ensure_database_root()
     conn = sqlite3.connect(DATABASE_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 5000")
@@ -102,8 +108,12 @@ def _create_task_table_sql() -> str:
             status TEXT NOT NULL DEFAULT 'pending'
                 CHECK (status IN ({_status_list_sql()})),
             json_path TEXT NOT NULL,
+            task_timestamp TEXT,
             startup_session_id TEXT,
             aruco_coordinate_synced INTEGER NOT NULL DEFAULT 0,
+            artifact_schema_version INTEGER NOT NULL DEFAULT 1,
+            debug_enabled INTEGER NOT NULL DEFAULT 1,
+            logs_enabled INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             started_at TEXT,
             completed_at TEXT,
@@ -307,6 +317,27 @@ def _create_capture_binding_log_table_sql() -> str:
     """
 
 
+def _create_history_placement_request_table_sql() -> str:
+    return f"""
+        CREATE TABLE {HISTORY_PLACEMENT_REQUEST_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id TEXT NOT NULL UNIQUE,
+            request_timestamp TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'running'
+                CHECK (status IN ('running', 'completed', 'cancelled', 'failed', 'cleanup_pending')),
+            startup_session_id TEXT,
+            target_time TEXT,
+            model_limit INTEGER,
+            selected_task_count INTEGER NOT NULL DEFAULT 0,
+            result_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            completed_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            error_message TEXT
+        )
+    """
+
+
 def _table_sql(conn: sqlite3.Connection, table_name: str) -> Optional[str]:
     row = conn.execute(
         """
@@ -329,7 +360,14 @@ def _task_table_needs_migration(conn: sqlite3.Connection) -> bool:
     if not sql:
         return False
 
-    required_columns = {"startup_session_id", "aruco_coordinate_synced"}
+    required_columns = {
+        "startup_session_id",
+        "aruco_coordinate_synced",
+        "task_timestamp",
+        "artifact_schema_version",
+        "debug_enabled",
+        "logs_enabled",
+    }
     existing_columns = _get_table_columns(conn, TABLE_NAME)
     return (
         any(f"'{status}'" not in sql for status in ALLOWED_STATUSES)
@@ -346,9 +384,17 @@ def _migrate_task_table(conn: sqlite3.Connection) -> None:
     legacy_columns = _get_table_columns(conn, legacy_table)
     has_startup_session_id = "startup_session_id" in legacy_columns
     has_aruco_coordinate_synced = "aruco_coordinate_synced" in legacy_columns
+    has_task_timestamp = "task_timestamp" in legacy_columns
+    has_artifact_schema_version = "artifact_schema_version" in legacy_columns
+    has_debug_enabled = "debug_enabled" in legacy_columns
+    has_logs_enabled = "logs_enabled" in legacy_columns
 
     startup_select = "startup_session_id" if has_startup_session_id else "NULL"
     synced_select = "aruco_coordinate_synced" if has_aruco_coordinate_synced else "0"
+    timestamp_select = "task_timestamp" if has_task_timestamp else "NULL"
+    schema_version_select = "artifact_schema_version" if has_artifact_schema_version else "1"
+    debug_enabled_select = "debug_enabled" if has_debug_enabled else "1"
+    logs_enabled_select = "logs_enabled" if has_logs_enabled else "1"
 
     conn.execute(
         f"""
@@ -357,8 +403,12 @@ def _migrate_task_table(conn: sqlite3.Connection) -> None:
             task_id,
             status,
             json_path,
+            task_timestamp,
             startup_session_id,
             aruco_coordinate_synced,
+            artifact_schema_version,
+            debug_enabled,
+            logs_enabled,
             created_at,
             started_at,
             completed_at,
@@ -370,8 +420,12 @@ def _migrate_task_table(conn: sqlite3.Connection) -> None:
             task_id,
             status,
             json_path,
+            {timestamp_select},
             {startup_select},
             {synced_select},
+            {schema_version_select},
+            {debug_enabled_select},
+            {logs_enabled_select},
             created_at,
             started_at,
             completed_at,
@@ -663,6 +717,15 @@ def initialize_task_table() -> None:
             f"""
             CREATE INDEX IF NOT EXISTS idx_{CAPTURE_BINDING_LOG_TABLE}_task
             ON {CAPTURE_BINDING_LOG_TABLE} (task_id, created_at)
+            """
+        )
+
+        if _table_sql(conn, HISTORY_PLACEMENT_REQUEST_TABLE) is None:
+            conn.execute(_create_history_placement_request_table_sql())
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{HISTORY_PLACEMENT_REQUEST_TABLE}_status_created
+            ON {HISTORY_PLACEMENT_REQUEST_TABLE} (status, created_at)
             """
         )
 
@@ -1288,6 +1351,84 @@ def get_capture_binding_logs(capture_instance_id: str, *, limit: int = 50) -> Li
     return [dict(row) for row in rows]
 
 
+def create_history_placement_request(
+    *,
+    request_id: str,
+    request_timestamp: str,
+    startup_session_id: str | None = None,
+    target_time: str | None = None,
+    model_limit: int | None = None,
+) -> Dict[str, Any]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {HISTORY_PLACEMENT_REQUEST_TABLE} (
+                request_id, request_timestamp, status, startup_session_id, target_time, model_limit
+            )
+            VALUES (?, ?, 'running', ?, ?, ?)
+            """,
+            (request_id, request_timestamp, startup_session_id, target_time, model_limit),
+        )
+        conn.commit()
+        row = conn.execute(
+            f"SELECT * FROM {HISTORY_PLACEMENT_REQUEST_TABLE} WHERE request_id = ?",
+            (request_id,),
+        ).fetchone()
+    return dict(row)
+
+
+def update_history_placement_request(
+    request_id: str,
+    *,
+    status: str,
+    selected_task_count: int | None = None,
+    result_count: int | None = None,
+    error_message: str | None = None,
+) -> bool:
+    if status not in {'running', 'completed', 'cancelled', 'failed', 'cleanup_pending'}:
+        raise ValueError(f"Invalid history placement request status: {status}")
+    initialize_task_table()
+    set_parts = ["status = ?", "updated_at = CURRENT_TIMESTAMP", "error_message = ?"]
+    params: List[Any] = [status, error_message]
+    if selected_task_count is not None:
+        set_parts.append("selected_task_count = ?")
+        params.append(int(selected_task_count))
+    if result_count is not None:
+        set_parts.append("result_count = ?")
+        params.append(int(result_count))
+    if status in {"completed", "cancelled", "failed", "cleanup_pending"}:
+        set_parts.append("completed_at = CURRENT_TIMESTAMP")
+    params.append(request_id)
+    with _get_connection() as conn:
+        cursor = conn.execute(
+            f"""
+            UPDATE {HISTORY_PLACEMENT_REQUEST_TABLE}
+            SET {', '.join(set_parts)}
+            WHERE request_id = ?
+            """,
+            tuple(params),
+        )
+        conn.commit()
+    return cursor.rowcount > 0
+
+
+def get_latest_history_placement_request(status: str = "completed") -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"""
+            SELECT *
+            FROM {HISTORY_PLACEMENT_REQUEST_TABLE}
+            WHERE status = ?
+            ORDER BY request_timestamp DESC, id DESC
+            LIMIT 1
+            """,
+            (status,),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
 def get_status_by_task_id(task_id: str) -> Optional[str]:
     initialize_task_table()
     with _get_connection() as conn:
@@ -1313,10 +1454,18 @@ def create_task(
     json_path: Path | str,
     *,
     startup_session_id: str | None = None,
+    task_timestamp: str | None = None,
+    status: str = "pending",
+    artifact_schema_version: int = 1,
+    debug_enabled: bool = True,
+    logs_enabled: bool = True,
 ) -> Dict[str, Any]:
     initialize_task_table()
-    json_path_str = normalize_path_for_storage(json_path, default_base=UPLOAD_FOLDER)
+    if status not in ALLOWED_STATUSES:
+        raise ValueError(f"Invalid status: {status}")
+    json_path_str = normalize_path_for_storage(json_path)
     startup_session_id = str(startup_session_id or "").strip() or None
+    task_timestamp = str(task_timestamp or "").strip() or None
     with _get_connection() as conn:
         conn.execute(
             f"""
@@ -1324,12 +1473,25 @@ def create_task(
                 task_id,
                 status,
                 json_path,
+                task_timestamp,
                 startup_session_id,
-                aruco_coordinate_synced
+                aruco_coordinate_synced,
+                artifact_schema_version,
+                debug_enabled,
+                logs_enabled
             )
-            VALUES (?, 'pending', ?, ?, 0)
+            VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
             """,
-            (task_id, json_path_str, startup_session_id),
+            (
+                task_id,
+                status,
+                json_path_str,
+                task_timestamp,
+                startup_session_id,
+                int(artifact_schema_version),
+                1 if debug_enabled else 0,
+                1 if logs_enabled else 0,
+            ),
         )
         conn.commit()
         row = conn.execute(
@@ -1348,6 +1510,7 @@ def get_latest_unfinished_task() -> Optional[Dict[str, Any]]:
             SELECT task_id, json_path, status
             FROM {TABLE_NAME}
             WHERE status NOT IN ({terminal_list})
+              AND status != 'uploading'
             ORDER BY id DESC
             LIMIT 1
             """
@@ -1472,6 +1635,7 @@ def get_unfinished_tasks() -> List[Dict[str, Any]]:
             SELECT *
             FROM {TABLE_NAME}
             WHERE status NOT IN ({terminal_list})
+              AND status != 'uploading'
             ORDER BY id ASC
             """
         ).fetchall()
@@ -1495,7 +1659,7 @@ def update_task_status(
     ]
     params: List[Any] = [status, error_message]
 
-    if status != "pending":
+    if status not in {"pending", "uploading", "upload_failed"}:
         set_parts.append(
             "started_at = CASE WHEN started_at IS NULL THEN CURRENT_TIMESTAMP ELSE started_at END"
         )

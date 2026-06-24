@@ -48,6 +48,11 @@ __pycache__/
 /data/output/
 /data/RecordPhotoAndVideo/
 /data/upload/
+/data/model/
+/data/aruco_processing/
+/data/history_placement_requests/
+/data/worker_sockets/
+/data/console_logs/
 /data/aruco/runtime/
 /data/aruco/shigure_marker_history/
 /data/shigure_history_cache/
@@ -58,6 +63,7 @@ __pycache__/
 # ========== Code ==========
 ########################################
 
+/code/scripts/
 /code/.test/
 
 ########################################

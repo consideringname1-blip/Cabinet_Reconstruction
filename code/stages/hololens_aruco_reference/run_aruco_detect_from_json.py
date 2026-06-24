@@ -14,7 +14,15 @@ except ModuleNotFoundError:
 
 from config import (
     ARUCO_ANCHOR_MARKER_ID,
+    TASK_DEBUG_OUTPUT_ENABLE,
+)
+from artifact_layout import (
     ARUCO_TEMPLATE_PATH,
+    aruco_debug_overlay_file,
+    aruco_result_marker_detect_file,
+    aruco_result_summary_file,
+    ensure_aruco_task_dirs,
+    sanitize_artifact_token,
 )
 from hololens3d_reconstruction.pose_math import quat_xyzw_to_rotation_matrix
 from task_db import (
@@ -34,7 +42,6 @@ try:
     from aruco_common import (
         compose_world_pose,
         convert_cv_pose_to_unity_pose,
-        ensure_raw_output_dir,
         invert_pose,
         load_aruco_template,
         load_json_payload,
@@ -52,7 +59,6 @@ except ModuleNotFoundError:
     from .aruco_common import (
         compose_world_pose,
         convert_cv_pose_to_unity_pose,
-        ensure_raw_output_dir,
         invert_pose,
         load_aruco_template,
         load_json_payload,
@@ -286,6 +292,19 @@ def _write_debug(task: dict, aruco_stage: dict) -> None:
     task["debug"] = debug_section
 
 
+def _write_json(path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _frame_timestamp(task_name: str, frame_index: int, frame: dict[str, Any]) -> str:
+    fallback = f"{task_name}_{frame_index:03d}"
+    return sanitize_artifact_token(
+        str(frame.get("artifact_timestamp") or frame.get("time") or ""),
+        fallback=fallback,
+    )
+
+
 def _write_no_detection(
     *,
     json_path,
@@ -299,7 +318,7 @@ def _write_no_detection(
     _write_debug(task, aruco_stage)
     save_task_json(json_path, task)
     record["aruco_stage"] = aruco_stage
-    record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _write_json(record_path, record)
     print(f"[INFO] aruco_detect : {reason}")
     print("[OK] aruco_detect")
     return 0
@@ -319,9 +338,12 @@ def main(argv: list[str]) -> int:
     task_id = str(task.get("task_id") or "")
     startup_session_id = str((task.get("device") or {}).get("startup_session_id") or "").strip()
 
-    raw_dir = ensure_raw_output_dir(task_name)
-    record_path = raw_dir / "record.json"
-    annotated_path = raw_dir / "annotated.png"
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise ValueError("task_timestamp is required for ArUco artifacts")
+    ensure_aruco_task_dirs(task_timestamp)
+    record_path = aruco_result_summary_file(task_timestamp)
+    annotated_path = None
 
     template = load_aruco_template()
     db_markers = get_enabled_aruco_markers()
@@ -344,7 +366,7 @@ def main(argv: list[str]) -> int:
         "frame_count": 0,
         "detections": [],
         "raw_record_path": normalize_path_for_storage(record_path),
-        "annotated_image_path": normalize_path_for_storage(annotated_path),
+        "annotated_image_path": normalize_path_for_storage(annotated_path) if annotated_path is not None else None,
     }
     record = {
         "task_id": task_id,
@@ -450,16 +472,37 @@ def main(argv: list[str]) -> int:
                             axis_length,
                         )
 
-            annotated_path = raw_dir / f"annotated_{frame_index:03d}.png"
-            cv2.imwrite(str(annotated_path), annotated)
-            if frame_index == 0:
-                cv2.imwrite(str(annotated_path), annotated)
+            frame_timestamp = _frame_timestamp(task_name, frame_index, frame)
+            frame_record_path = aruco_result_marker_detect_file(task_timestamp, frame_timestamp)
+            frame_overlay_path = aruco_debug_overlay_file(task_timestamp, frame_timestamp)
+
+            frame_record = {
+                "task_id": task_id,
+                "task_name": task_name,
+                "task_timestamp": task_timestamp or None,
+                "frame_index": frame_index,
+                "frame_timestamp": frame_timestamp,
+                "image_name": frame.get("name"),
+                "detected_ids": sorted(set(frame_detected_ids)),
+                "detections": [
+                    _build_detection_record(detection)
+                    for detection in detections_by_frame.get(frame_index, [])
+                ],
+            }
+            _write_json(frame_record_path, frame_record)
+
+            annotated_path_for_stage = None
+            if TASK_DEBUG_OUTPUT_ENABLE:
+                cv2.imwrite(str(frame_overlay_path), annotated)
+                annotated_path_for_stage = frame_overlay_path
             aruco_stage.setdefault("frames", []).append(
                 {
                     "frame_index": frame_index,
+                    "frame_timestamp": frame_timestamp,
                     "image_name": frame.get("name"),
                     "detected_ids": sorted(set(frame_detected_ids)),
-                    "annotated_image_path": normalize_path_for_storage(annotated_path),
+                    "marker_detect_path": normalize_path_for_storage(frame_record_path),
+                    "annotated_image_path": normalize_path_for_storage(annotated_path_for_stage) if annotated_path_for_stage else None,
                 }
             )
     except Exception as exc:
@@ -604,7 +647,7 @@ def main(argv: list[str]) -> int:
     save_task_json(json_path, task)
 
     record["aruco_stage"] = aruco_stage
-    record_path.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    _write_json(record_path, record)
 
     if aruco_stage["short_circuit"]:
         print(

@@ -8,7 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TextIO
 
-from config import CONSOLE_OUTPUT_LOG_ENABLE, CONSOLE_OUTPUT_LOG_ROOT
+from config import CONSOLE_OUTPUT_LOG_ENABLE
+from artifact_layout import CONSOLE_OUTPUT_LOG_ROOT
 
 
 _INSTALLED = False

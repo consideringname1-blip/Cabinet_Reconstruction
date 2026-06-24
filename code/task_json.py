@@ -4,75 +4,11 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
-from config import PROJECT_ROOT, UPLOAD_FOLDER
+from path_config import PROJECT_ROOT
+from artifact_layout import model_task_json_path
 
 
 _PROJECT_PATH_HINTS = ("data/", "code/", "H2AI/", "models/")
-
-
-def _rewrite_legacy_storage_path(normalized: str) -> str:
-    return (
-        normalized.replace("data/aruco/raw/", "data/aruco/runtime/")
-        .replace("data/aruco/aruco_template.json", "data/aruco/reference/aruco.json")
-    )
-
-
-def _iter_candidate_paths(
-    path_arg: str | Path,
-    *,
-    default_base: Path | None = None,
-):
-    raw = str(path_arg or "").strip()
-    if not raw:
-        return
-
-    normalized = raw.replace("\\", "/")
-    seen: set[str] = set()
-
-    def emit(candidate: Path):
-        key = str(candidate)
-        if key in seen:
-            return
-        seen.add(key)
-        yield candidate
-
-    candidate = Path(raw).expanduser()
-    yield from emit(candidate)
-
-    if default_base is not None and not candidate.is_absolute():
-        yield from emit(default_base / candidate)
-
-    if normalized.startswith("/workspace/"):
-        yield from emit(PROJECT_ROOT / Path(normalized.removeprefix("/workspace/")))
-    elif normalized.startswith("workspace/"):
-        yield from emit(PROJECT_ROOT / Path(normalized.removeprefix("workspace/")))
-
-    normalized_lstrip = normalized.lstrip("./")
-    for hint in _PROJECT_PATH_HINTS:
-        marker_index = normalized_lstrip.lower().find(hint.lower())
-        if marker_index == -1:
-            continue
-        yield from emit(PROJECT_ROOT / Path(normalized_lstrip[marker_index:]))
-        break
-
-    rewritten = _rewrite_legacy_storage_path(normalized)
-    if rewritten == normalized:
-        return
-
-    if rewritten.startswith("/workspace/"):
-        yield from emit(PROJECT_ROOT / Path(rewritten.removeprefix("/workspace/")))
-        return
-    if rewritten.startswith("workspace/"):
-        yield from emit(PROJECT_ROOT / Path(rewritten.removeprefix("workspace/")))
-        return
-
-    rewritten_lstrip = rewritten.lstrip("./")
-    for hint in _PROJECT_PATH_HINTS:
-        marker_index = rewritten_lstrip.lower().find(hint.lower())
-        if marker_index == -1:
-            continue
-        yield from emit(PROJECT_ROOT / Path(rewritten_lstrip[marker_index:]))
-        break
 
 
 def resolve_project_path(
@@ -119,7 +55,20 @@ def normalize_path_for_storage(
 
 
 def resolve_task_json_path(json_arg: str | Path) -> Path:
-    return resolve_project_path(json_arg, default_base=UPLOAD_FOLDER, require_exists=True)
+    return resolve_project_path(json_arg, require_exists=True)
+
+
+def resolve_task_json_path_from_record(task_record: Mapping[str, Any]) -> Path:
+    json_path = str(task_record.get("json_path") or "").strip()
+    if json_path:
+        return resolve_task_json_path(json_path)
+
+    task_timestamp = str(task_record.get("task_timestamp") or "").strip()
+    if task_timestamp:
+        candidate = model_task_json_path(task_timestamp).resolve()
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(f"Task JSON not found for task_timestamp={task_timestamp!r}")
 
 
 def load_task_json(json_path: str | Path) -> dict[str, Any]:
@@ -129,7 +78,7 @@ def load_task_json(json_path: str | Path) -> dict[str, Any]:
 
 
 def save_task_json(json_path: str | Path, data: Mapping[str, Any]) -> None:
-    resolved_path = resolve_project_path(json_path, default_base=UPLOAD_FOLDER, require_exists=False)
+    resolved_path = resolve_project_path(json_path, require_exists=False)
     resolved_path.parent.mkdir(parents=True, exist_ok=True)
     with resolved_path.open("w", encoding="utf-8") as file:
         json.dump(dict(data), file, ensure_ascii=False, indent=2)

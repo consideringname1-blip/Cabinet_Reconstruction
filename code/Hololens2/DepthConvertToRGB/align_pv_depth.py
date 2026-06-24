@@ -7,11 +7,9 @@ import cv2
 import sys
 from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[2]))
-from config import (
-    CALIBRATION_DIR,
-    UPLOAD_FOLDER,
-    HOLOLENS2_OUTPUT_DEPTH_IMAGES,
-)
+from config import TASK_DEBUG_OUTPUT_ENABLE
+from path_config import CALIBRATION_DIR
+from artifact_layout import model_debug_file, model_worker_file
 from depth_camera_config import (
     DEPTH_SENSOR_AHAT,
     DEPTH_SENSOR_LONGTHROW,
@@ -45,7 +43,7 @@ def block_to_list(points):
 
 #------------------------------------------------------------------------------
 
-def DepthConvertToRGB(json_path,calibration_base_path = CALIBRATION_DIR,data_base_path = UPLOAD_FOLDER):
+def DepthConvertToRGB(json_path, calibration_base_path=CALIBRATION_DIR):
     # Get RM Depth Long Throw calibration -------------------------------------
     # Calibration data will be downloaded if it's not in the calibration folder
     with open(json_path, "r", encoding="utf-8") as f:
@@ -71,7 +69,10 @@ def DepthConvertToRGB(json_path,calibration_base_path = CALIBRATION_DIR,data_bas
     pv_extrinsics = np.eye(4, 4, dtype=np.float32)
 
     # Main Loop ---------------------------------------------------------------
-    depth_path = data_base_path / depth_camera_info["name"]
+    task_timestamp = str(data.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise ValueError("task_timestamp is required for depth alignment artifacts")
+    depth_path = model_worker_file(task_timestamp, "input.depth")
 
     # Preprocess frames ---------------------------------------------------
     depth = cv2.imread(depth_path, cv2.IMREAD_UNCHANGED)
@@ -147,7 +148,10 @@ def DepthConvertToRGB(json_path,calibration_base_path = CALIBRATION_DIR,data_bas
         & (align_depth <= depth_limits.max_reliable_depth_mm)
     )
     align_depth = np.where(valid_align_mask, align_depth, 0).astype(np.uint16)
-    align_depth_name = f"{data['task_name']}_align_depth.png"
+    align_depth_path = model_worker_file(task_timestamp, "input.align_depth")
+    align_depth_path.parent.mkdir(parents=True, exist_ok=True)
+
+    align_depth_name = align_depth_path.name
     data["DepthCamera"]["align_depth_name"] = align_depth_name
     data["DepthCamera"]["align_depth_stats"] = {
         "sensor": depth_sensor,
@@ -155,13 +159,15 @@ def DepthConvertToRGB(json_path,calibration_base_path = CALIBRATION_DIR,data_bas
         "max_reliable_depth_mm": int(depth_limits.max_reliable_depth_mm),
         "valid_depth_pixels": int(valid_align_mask.sum()),
     }
-    cv2.imwrite(os.path.join(HOLOLENS2_OUTPUT_DEPTH_IMAGES, align_depth_name), align_depth)
+    cv2.imwrite(str(align_depth_path), align_depth)
 
-    align_depth_turbo = (pv_z * 256).astype(np.uint8)
-    align_depth_turbo = cv2.applyColorMap(align_depth_turbo, cv2.COLORMAP_TURBO)
-    align_depth_turbo_name = f"{data['task_name']}_align_depth_turbo.png"
-    data["DepthCamera"]["align_depth_turbo_name"] = align_depth_turbo_name
-    cv2.imwrite(os.path.join(HOLOLENS2_OUTPUT_DEPTH_IMAGES, align_depth_turbo_name), align_depth_turbo)
+    if TASK_DEBUG_OUTPUT_ENABLE:
+        align_depth_turbo = (pv_z * 256).astype(np.uint8)
+        align_depth_turbo = cv2.applyColorMap(align_depth_turbo, cv2.COLORMAP_TURBO)
+        align_depth_turbo_path = model_debug_file(task_timestamp, "depth.align_turbo")
+        align_depth_turbo_path.parent.mkdir(parents=True, exist_ok=True)
+        data["DepthCamera"]["align_depth_turbo_name"] = align_depth_turbo_path.name
+        cv2.imwrite(str(align_depth_turbo_path), align_depth_turbo)
 
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)

@@ -15,8 +15,8 @@ for _bootstrap_root in _BOOTSTRAP_ROOTS:
 import _bootstrap
 import bpy
 
+from artifact_layout import model_worker_file
 from blender_common import clean_scene, ensure_file
-from config import RUNTIME_MESH_OUTPUT_ROOT
 from settings import (
     RUNTIME_MESH_BAKE_MARGIN_PX,
     RUNTIME_MESH_DECIMATE_RATIO,
@@ -177,10 +177,13 @@ def _reuse_runtime_ready_sam3d_mesh(
     source_mtl = ensure_file(source.mtl_path, f"{source.source_stage} processed mtl")
     source_texture = ensure_file(source.image_path, f"{source.source_stage} processed texture")
 
-    RUNTIME_MESH_OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-    output_obj = RUNTIME_MESH_OUTPUT_ROOT / source.mesh
-    output_mtl = RUNTIME_MESH_OUTPUT_ROOT / source.mtl
-    output_texture = RUNTIME_MESH_OUTPUT_ROOT / source.image
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise ValueError("task_timestamp is required for runtime mesh artifacts")
+    output_obj = model_worker_file(task_timestamp, "model.runtime_obj")
+    output_mtl = model_worker_file(task_timestamp, "model.runtime_mtl")
+    output_texture = model_worker_file(task_timestamp, "model.runtime_texture")
+    output_obj.parent.mkdir(parents=True, exist_ok=True)
 
     shutil.copy2(source_mesh, output_obj)
     shutil.copy2(source_mtl, output_mtl)
@@ -191,6 +194,7 @@ def _reuse_runtime_ready_sam3d_mesh(
         "mesh": output_obj.name,
         "mtl": output_mtl.name,
         "image": output_texture.name,
+        "artifact_root": "model_worker",
         "source_stage": source.source_stage,
         "source_backend": source.backend,
         "source_mesh_folder": source.folder,
@@ -234,10 +238,13 @@ def build_runtime_mesh_from_json(json_path: Path) -> dict:
     texture_size = int(RUNTIME_MESH_TEXTURE_SIZE)
     ratio_label = _ratio_label(ratio)
     output_stem = f"{source_mesh.stem}_runtime_{ratio_label}_{texture_size}"
-    output_obj = RUNTIME_MESH_OUTPUT_ROOT / f"{output_stem}.obj"
-    output_mtl = RUNTIME_MESH_OUTPUT_ROOT / f"{output_stem}.mtl"
-    output_texture = RUNTIME_MESH_OUTPUT_ROOT / f"{output_stem}.png"
-    RUNTIME_MESH_OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise ValueError("task_timestamp is required for runtime mesh artifacts")
+    output_obj = model_worker_file(task_timestamp, "model.runtime_obj")
+    output_mtl = model_worker_file(task_timestamp, "model.runtime_mtl")
+    output_texture = model_worker_file(task_timestamp, "model.runtime_texture")
+    output_obj.parent.mkdir(parents=True, exist_ok=True)
 
     high = _import_obj(source_mesh)
     original_vertices, original_faces = _count_mesh(high)
@@ -260,6 +267,7 @@ def build_runtime_mesh_from_json(json_path: Path) -> dict:
         "mesh": output_obj.name,
         "mtl": output_mtl.name,
         "image": output_texture.name,
+        "artifact_root": "model_worker",
         "source_stage": source.source_stage,
         "source_backend": source.backend,
         "source_mesh_folder": source.folder,

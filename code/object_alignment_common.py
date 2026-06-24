@@ -8,12 +8,9 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from config import (
-    BLENDER_BIN,
-    OBJECT_ALIGNMENT_OUTPUT_ROOT,
-    SAM3_OUTPUT_ROOT,
-    UPLOAD_FOLDER,
-)
+from artifact_layout import model_worker_file
+from artifact_layout import OBJECT_ALIGNMENT_OUTPUT_ROOT
+from path_config import BLENDER_BIN
 from stages.hololens3d_reconstruction.settings import (
     ICP_DEPTH_BORDER_CROP_RATIO,
     ICP_IGNORE_OCCLUDED_MODEL_POINTS,
@@ -104,16 +101,17 @@ def resolve_task_paths(task: dict) -> dict[str, Path]:
     if not color_name:
         raise ValueError("sam3Name.color and PVCamera.name are both missing")
 
-    color_candidate = (SAM3_OUTPUT_ROOT / color_name).resolve()
-    color_path = color_candidate if color_candidate.is_file() else ensure_file(
-        (UPLOAD_FOLDER / color_name).resolve(),
-        "PVCamera color",
-    )
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise ValueError("task_timestamp is required for SAM3 artifacts")
+    mask_path = model_worker_file(task_timestamp, "sam3.mask")
+    depth_path = model_worker_file(task_timestamp, "sam3.depth")
+    color_path = model_worker_file(task_timestamp, "sam3.color")
 
     return {
-        "mask_path": ensure_file((SAM3_OUTPUT_ROOT / mask_name).resolve(), "SAM3 mask"),
-        "depth_path": ensure_file((SAM3_OUTPUT_ROOT / depth_name).resolve(), "SAM3 depth"),
-        "color_path": color_path,
+        "mask_path": ensure_file(mask_path.resolve(), "SAM3 mask"),
+        "depth_path": ensure_file(depth_path.resolve(), "SAM3 depth"),
+        "color_path": ensure_file(color_path.resolve(), "SAM3/PVCamera color"),
         "mesh_path": ensure_file(model_source.mesh_path.resolve(), f"{model_source.source_stage} mesh"),
     }
 

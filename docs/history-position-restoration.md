@@ -252,40 +252,36 @@ Unity display payload 需要支持：
 - `display.polyhedron.rotation_speed_deg_s`
 - `display.reason`
 
-## 与现有实现不同的部分
+## 当前实现审查与剩余风险
 
-以下是本设计和当前 `7aed80b` 落地实现的主要差异，后续修改代码时应逐项对齐。
+当前代码位于 `code/stages/history_placement_restoration/run_history_placement_restoration_from_json.py`，配置位于 `settings.py`。与本文档的主要逻辑已经基本对齐：
 
-- baseline 搜索窗口不同：现有实现向拍摄前看 `120s`、向拍摄后看 `60s`；新方案只从拍摄时间向后查找最多 `60s`。
-- baseline 取帧策略不同：现有实现偏向拍摄后第一帧和稳定 YOLO 窗口；新方案要求优先取最接近拍摄时间的未遮挡可信帧，必要时允许局部初始化。
-- baseline YOLO 稳定要求不同：现有实现要求同一 YOLO `object_id` 至少 `3` 个唯一 payload 稳定；新方案不要求目标 YOLO id 稳定，也不保存目标 YOLO id 作为同一性线索。
-- YOLO/RGB-D 配对不同：现有实现倾向直接把最近 YOLO payload 用到 current；新方案要求使用 YOLO 记录时间最近的 Shigurei RGB-D 帧来裁 mask 和读候选 depth，并记录配对时间差。
-- current 时间策略不同：现有实现使用 `12s` lookback、`0s` forward，并保留最近 `5` 个唯一 YOLO events；新方案直接使用 current RGB-D 帧作为状态时间，YOLO 只提供候选 masks。
-- 搜索范围不同：现有实现没有服务器配置的范围 YOLO id；新方案允许用配置 id 指定桌面/承载平面范围，默认空表示不限制。
-- 承载平面约束不同：新方案要求配置范围的承载平面基本静止，明显移动时不能静默沿用。
-- 当前物体选择标准不同：现有实现优先按旧 YOLO id 找，再做 signature fallback；新方案完全抛弃目标 YOLO id，只用 mask、box、depth、原始 masked crop 相似度和空间顺序。
-- missing 判断证据不同：现有实现会要求最近唯一 YOLO 数量达到阈值后再判断 missing；新方案以 current depth 和候选搜索结果为准。
-- 模型使用边界不同：现有实现中模型可参与 display 和部分几何判断；新方案只允许模型作为历史位置、显示和 baseline 局部初始化的几何参考，不作为 current 候选选择标准。
-- Unity 多面体不同：现有 Unity display 只特殊支持 `octahedron`，其他 shape 退化为 cube；新方案需要 `tetrahedron`、`cube`、`octahedron`、`dodecahedron`、`icosahedron` 五种语义形状。
-- 状态显示不同：现有实现 `ORIGINAL` 通常没有 polyhedron，`MOVED` 用 cube，`UNKNOWN` 用 octahedron，`MISSING` 显示原模型但没有专门多面体；新方案要求 `ORIGINAL` 正四面体、`MOVED` 正六面体、`MISSING` 正八面体、`OCCLUDED_REUSE_LAST` 正十二面体、`UNKNOWN` 正二十面体。
-- Unity 挂载约定不同：新方案要求新增脚本统一挂载在 SampleScene 的 `Scripts` 对象下。
+- baseline 从拍摄时间向后查找，窗口由 `HISTORY_PLACEMENT_BASELINE_POST_CAPTURE_SECONDS` 控制，默认 `60s`。
+- current 使用最新 Shigurei RGB-D sample 或 API 传入的 `target_time` 对齐 sample。
+- YOLO payload 取状态时间附近最近项，候选 mask/depth 通过对应 sample 读取，并记录 `yolo_delta_to_target_seconds`。
+- 目标 YOLO id 不再作为同一性入口；当前候选通过投影中心、mask/bbox、depth、signature 分数和空间距离选择。
+- 支持 `HISTORY_PLACEMENT_TRACKING_REGION_YOLO_IDS` 作为范围锚点；为空时 `tracking_search_region.source=unrestricted`。
+- 支持承载范围静止检查：depth 和中心变化超过阈值时，按 `HISTORY_PLACEMENT_TRACKING_REGION_INVALID_POLICY` 输出 `UNKNOWN` 或降级。
+- `ORIGINAL`、`MOVED`、`MISSING`、`OCCLUDED_REUSE_LAST`、`UNKNOWN` 都会生成对应 display payload。
+- 多面体 shape 当前为：`tetrahedron`、`cube`、`octahedron`、`dodecahedron`、`icosahedron`。
+- API `/history-placement-restoration/start` 使用 request 目录：`data/history_placement_requests/<request_timestamp>/worker|result|debug`。
+
+当前仍需注意的限制：
+
+- `reference_masked_crop` 目前不是独立图片产物；signature 使用 mean RGB、area、aspect、median depth 等轻量特征，不是 embedding/局部特征模型。
+- baseline 局部初始化和模型可见面裁剪仍属于有限回退，不应当被解释为精确物体重识别。
+- 配置范围依赖 YOLO anchor 的 mask/depth 质量；anchor 缺失或过旧时结果会变成 `UNKNOWN` 或 unrestricted。
+- Unity 端必须真正支持五种 polyhedron mesh，否则服务端 payload 的 shape 语义会退化。
+- `data/output/history_placement_restoration/` 只应视作旧兼容/scratch；当前 API 请求结果以 `history_placement_requests/<request_timestamp>/result/` 为准。
 
 ## 审查修改内容
 
-本轮修改后的审查结论：
+本轮文档审查结论：
 
-- baseline 已改为优先取最接近拍摄时间的未遮挡可信帧，避免“最新帧”误吸收已经移动后的状态。
-- 使用 YOLO mask 时必须与 YOLO 记录时间最近的 Shigurei RGB-D 帧配对，解决旧 YOLO mask 裁当前图造成错位的问题。
-- current 状态时间仍由 current RGB-D 决定；YOLO 配对帧只用于候选 mask crop 和候选 depth。
-- 目标 YOLO id 已从同一性判断中删除。YOLO id 只可用于配置再现范围，例如桌面或承载区域。
-- 配置范围的承载平面必须基本静止；明显移动时不能继续当作范围锚点。
-- 配置范围为空时允许不限制全局搜索，但候选必须通过外观、尺度、depth 的最低阈值，距离只用于排序和平局处理。
-- baseline 可在连续遮挡时退化为局部初始化，但模型只用于 baseline 几何裁剪，且必须记录有效像素比例；有效像素太少时不能硬判。
-- 原始拍照图已经存在，应作为 baseline masked crop 的来源；仍需要保存或缓存对应 mask/depth crop，方便复现和 debug。
-- `UNKNOWN` 已有独立显示语义：原位模型上方正二十面体，不能复用 `MISSING` 的正八面体。
-- Unity 现有 `HistoryPlacementRestorationDisplay.cs` 需要新增正四面体、正十二面体、正二十面体 mesh；否则 payload 写了 shape 也会显示成 cube。
-- 服务端 `display.mode` 和 `polyhedron.shape` 枚举需要扩展，至少区分 `MISSING`、`OCCLUDED_REUSE_LAST` 和 `UNKNOWN`。
-- recent unique YOLO 备份不是本设计的核心，不再作为验收点。
+- 文件组织已按当前代码改为 request 级目录，不再把 `data/output/history_placement_restoration/` 当权威输出目录。
+- `HISTORY_PLACEMENT_*` 配置项已经和当前 `settings.py` 对齐。
+- 目标 YOLO id、recent unique YOLO 计数等旧同一性表达已从验收重点中移除。
+- 剩余风险集中在轻量 signature、YOLO mask 质量和 Unity polyhedron 支持，而不是服务器目录结构。
 
 ## 验收标准
 

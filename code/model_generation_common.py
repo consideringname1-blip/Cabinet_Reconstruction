@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from config import FOLDER_MAP, INSTANTMESH_OUTPUT_VIDEOS
+from artifact_layout import FOLDER_MAP, INSTANTMESH_OUTPUT_VIDEOS, model_debug_dir, model_worker_dir
 
 
 BACKEND_INSTANTMESH = "instantmesh"
@@ -121,7 +121,18 @@ def _default_backend(source_stage: str, payload: dict[str, Any]) -> str:
     return _DEFAULT_BACKEND_BY_STAGE.get(source_stage, BACKEND_INSTANTMESH)
 
 
-def _resolve_folder_root(source_stage: str, payload: dict[str, Any]) -> tuple[str, Path]:
+def _resolve_folder_root(
+    source_stage: str,
+    payload: dict[str, Any],
+    *,
+    task_timestamp: str | None = None,
+) -> tuple[str, Path]:
+    artifact_root = str(payload.get("artifact_root") or "").strip()
+    if artifact_root == "model_worker":
+        if not task_timestamp:
+            raise ValueError(f"{source_stage}.artifact_root=model_worker requires task_timestamp")
+        return artifact_root, model_worker_dir(task_timestamp)
+
     folder = str(
         payload.get("mesh_folder")
         or payload.get("folder")
@@ -138,6 +149,7 @@ def _source_from_payload(
     payload: dict[str, Any],
     *,
     require_mtl_image: bool,
+    task_timestamp: str | None = None,
 ) -> ModelFileSource:
     mesh_name = str(payload.get("mesh") or "").strip()
     if not mesh_name:
@@ -148,11 +160,14 @@ def _source_from_payload(
     if require_mtl_image and (not mtl_name or not image_name):
         raise ValueError(f"{source_stage}.mesh / mtl / image is missing")
 
-    folder, root = _resolve_folder_root(source_stage, payload)
+    folder, root = _resolve_folder_root(source_stage, payload, task_timestamp=task_timestamp)
 
     video_name = str(payload.get("video") or "").strip() or None
     video_folder = str(payload.get("video_folder") or INSTANTMESH_VIDEO_FOLDER).strip() or None
     video_root = FOLDER_MAP.get(video_folder) if video_folder else None
+    if artifact_root == "model_worker" and video_name and task_timestamp and not payload.get("video_folder"):
+        video_folder = None
+        video_root = model_debug_dir(task_timestamp)
 
     return ModelFileSource(
         source_stage=source_stage,
@@ -181,6 +196,7 @@ def resolve_model_generation_source(
         _infer_stage_from_model_generation(model_generation),
         model_generation,
         require_mtl_image=require_mtl_image,
+        task_timestamp=str(task.get("task_timestamp") or "").strip() or None,
     )
 
 
@@ -196,6 +212,7 @@ def resolve_runtime_mesh_source(
         MODEL_STAGE_RUNTIME_MESH,
         runtime_mesh,
         require_mtl_image=require_mtl_image,
+        task_timestamp=str(task.get("task_timestamp") or "").strip() or None,
     )
 
 
@@ -231,4 +248,9 @@ def resolve_model_source_from_stage(
 
     if source_mesh:
         payload["mesh"] = source_mesh
-    return _source_from_payload(source_stage, payload, require_mtl_image=require_mtl_image)
+    return _source_from_payload(
+        source_stage,
+        payload,
+        require_mtl_image=require_mtl_image,
+        task_timestamp=str(task.get("task_timestamp") or "").strip() or None,
+    )

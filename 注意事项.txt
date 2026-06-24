@@ -541,6 +541,16 @@ shigurei没有正常记录，或许参考code/.test/save_latest_ros2_frame.py有
 分组20红背椅子：20260603_100957_473210Z_color，
 分组21绿椅子：20260603_101033_308238Z_color，20260605_092716_228601Z_color
 
+260624
+-1.检查config里所有目录相关和数据库相关有没有拆分到新文件
+/workspace_whs/code/database_bootstrap.py没啥用吧？
+/workspace_whs/data/worker_sockets这个要用的话放到git忽略里
+清理data里的无用文件夹，并初始化文件夹结构。
+
+0.删除pending并依据现有结构修改docs
+1.修改总结并同步到远端
+2.unity绑定的那个比对现在时间点和过去拍照记录的那个函数在那里
+
 
 输入输出整理：
 1.

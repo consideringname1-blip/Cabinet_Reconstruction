@@ -7,7 +7,6 @@ from typing import Any
 
 import numpy as np
 
-from config import BLENDER_FBX_DIR
 from model_generation_common import resolve_model_source_from_stage, resolve_runtime_or_generated_source
 from coordinate_systems import MODEL_INPUT_TO_FBX_RUNTIME_LOCAL, quat_xyzw_to_rotation_matrix
 from object_alignment_common import read_obj_vertices

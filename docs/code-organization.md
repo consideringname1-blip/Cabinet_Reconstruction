@@ -49,13 +49,13 @@
 : 外部模型、研究代码和上游设备 SDK 集成，例如 `InstantMesh`、`sam3`、`sam-3d-objects`、`FoundationPose`、`shigure_core`、`hl2ss`。新功能的业务封装不要直接散落到这些目录里，优先在 `code/stages/` 或 `code/Hololens2/` 写 adapter/wrapper。
 
 `code/scripts/`
-: 开发、验证、导出、手动检查脚本。可以依赖项目代码，但不作为正式 worker stage。
+: 本地开发、验证、导出、手动检查脚本。可以依赖项目代码，但不作为正式 worker stage；该目录已加入 `.gitignore`，仓库不再跟踪内部文件。
 
 `setup_env.sh`
 : 根目录运行环境入口。日常手动调试可以 `source ./setup_env.sh`，它会把项目根目录和 `code/` 放进 `PYTHONPATH`，并加载 ROS2 Humble 与本项目 Shigurei receive workspace 的 setup 文件。该脚本会清理重复项目路径，重复 source 不会让 `PYTHONPATH` 套娃增长。
 
 `code/.test/` 和 `.test/`
-: 临时实验、诊断和一次性跑数脚本。不要把生产逻辑放到这里；一旦需要长期保留，移动到 `code/scripts/` 或正式 stage 目录。
+: 临时实验、诊断和一次性跑数脚本。不要把生产逻辑放到这里；如果只是个人本地工具，可以整理到已忽略的 `code/scripts/`；如果需要团队复现或进入正式链路，就改造成受跟踪的工具或正式 stage。
 
 `docs/`
 : 设计说明和约定文档。坐标系说明见 `docs/coordinate-systems.md`；服务器处理流程、JSON 输出和目录契约见 `docs/server-processing-output-contract.md`；Shigurei ROS2 topic 和消息格式见 `docs/shigure-core-ros-messages.md`。
@@ -72,10 +72,16 @@
 ## 核心模块职责
 
 `code/run_server.py`
-: 服务端默认启动入口。它从 `config.py` 读取 `SERVER_PY`、`SERVER_API_RUN`、`HOLOLENS2_PY` 等路径，并在启动真正子进程前自动 `source` 根目录 `setup_env.sh`，再用 `exec` 进入目标 Python 进程。直接运行 `python code/run_server.py` 即可；如果外层 shell 已经手动 source 过也没有冲突。这个自动 source 只影响 server 子进程，不会反向修改父 shell。
+: 服务端默认启动入口。它从 `path_config.py` 读取 server Python 和入口脚本路径，并在启动真正子进程前自动 `source` 根目录 `setup_env.sh`，再用 `exec` 进入目标 Python 进程。直接运行 `python code/run_server.py` 即可；如果外层 shell 已经手动 source 过也没有冲突。这个自动 source 只影响 server 子进程，不会反向修改父 shell。
 
 `code/config.py`
-: 全局路径、Python 环境、stage 脚本入口、输出目录、服务级运行开关和 HTTP 文件目录映射的集中入口。stage 内部算法阈值、后处理比例、采样频率等局部设定不要继续塞进这里，应放到对应 stage 目录的 `settings.py`。
+: 服务级运行开关、阈值和 worker 参数。不要把目录、数据库路径、stage 脚本路径、Python/Blender 可执行文件或 HTTP 文件目录映射继续塞进这里。
+
+`code/path_config.py`
+: 代码根目录、stage 脚本入口、第三方子仓库路径、Python runtime 和 Blender 路径。
+
+`code/artifact_layout.py`
+: `data/` 下的目录结构、任务目录、worker/result/debug 文件命名、数据库路径、HTTP `FOLDER_MAP` 和目录初始化 helper。新产物路径优先通过这里的函数推导。
 
 `code/server_api.py`
 : Flask API。只做请求解析、任务创建、状态查询、文件服务和轻量接口组合，避免把重建算法塞进 API 层。
@@ -164,11 +170,12 @@ aruco_detect
 1. 入口脚本接受 task JSON 路径作为参数。
 2. 用 `stage_common.load_stage_task()` 读取输入并打印 stage 标识。
 3. 用 `task_json.save_task_json()` 写回结果。
-4. 输出文件写入 `data/output/<stage-or-domain>/` 下的专用目录。
-5. 运行路径、Python 环境、外部工具路径写入 `config.py`。
-6. 如果由 worker 调度，在 `task_worker.py` 增加 runner、`STAGE_RUNNERS` 和 stage 顺序。
-7. 如果 stage 名会进入任务状态，在 `task_db.py` 的 `ALLOWED_STATUSES` 中登记。
-8. 如果客户端需要下载新产物，在 `config.py` 的 `FOLDER_MAP` 增加目录映射。
+4. 稳定输出写入 `data/model/<task_timestamp>/worker|result|debug`，路径通过 `artifact_layout.py` 推导。
+5. 外部工具必须使用 scratch 目录时，写入 `data/output/<tool-or-domain>/`，再把稳定产物复制回 task 目录。
+6. 运行路径、Python 环境、外部工具路径写入 `path_config.py`；运行开关写入 `config.py`；stage 局部参数写到对应 `settings.py`。
+7. 如果由 worker 调度，在 `task_worker.py` 增加 runner、`STAGE_RUNNERS` 和 stage 顺序。
+8. 如果 stage 名会进入任务状态，在 `task_db.py` 的 `ALLOWED_STATUSES` 中登记。
+9. 如果客户端需要旧 `/files/<folder>/<filename>` 下载路径，在 `artifact_layout.py` 的 `FOLDER_MAP` 增加兼容目录映射；新稳定结果优先走 task `result/`。
 
 ## 共享代码放置规则
 
@@ -186,12 +193,15 @@ code/stages/hololens_aruco_reference/aruco_common.py
 
 ## 配置和路径规则
 
-不要在业务代码里直接写死 `/workspace`、输出目录、模型目录、Python 解释器或下载 URL。全局路径和服务级运行开关优先进入 `config.py`，并用 `Path` 组合：
+不要在业务代码里直接写死 `/workspace`、输出目录、模型目录、Python 解释器或下载 URL。按职责拆分：
 
-```python
-OUTPUT_ROOT / "object_alignment"
-HOLOLENS3D_RECON_STAGE_ROOT / "run_pose_from_json.py"
+```text
+config.py          # 运行开关、阈值、worker 参数
+path_config.py     # 代码路径、stage 脚本、Python/Blender 可执行文件
+artifact_layout.py # data 目录、task artifact 文件名、FOLDER_MAP、数据库路径
 ```
+
+产物路径优先使用 `model_worker_file()`、`model_result_file()`、`model_debug_file()`、`aruco_*_file()` 等 helper，不要在 stage 内手写目录结构。
 
 stage 内部设定优先放在对应目录的 `settings.py`，例如：
 
@@ -200,7 +210,7 @@ code/stages/hololens3d_reconstruction/settings.py
 code/stages/shigure_history/settings.py
 ```
 
-目录约定、外部工具路径、Python runtime、worker socket、数据库、上传/输出根目录仍属于 `config.py`。只有临时测试脚本可以少量硬编码本地样例路径；一旦脚本进入 `code/scripts/` 或 `code/stages/`，就应切换为 `config.py`、stage `settings.py` 或命令行参数。
+只有临时测试脚本可以少量硬编码本地样例路径；正式 stage 应切换为 `artifact_layout.py`、`path_config.py`、stage `settings.py` 或命令行参数。
 
 ## Shigurei 缓存约定
 
@@ -263,11 +273,11 @@ HoloLens depth/RGB 配准链路是设备输入边界，除非正在处理配准�
 
 1. 判断功能属于服务/API、worker stage、HoloLens 接入、第三方模型 adapter、开发脚本还是文档。
 2. 选择对应目录，不把生产代码放进 `.test`。
-3. 在 `config.py` 增加全局路径、输出目录、服务级运行开关和 Python 环境配置；stage 局部参数写到对应 `settings.py`。
+3. 在 `path_config.py` 增加脚本/解释器/外部工具路径，在 `artifact_layout.py` 增加产物路径，在 `config.py` 增加服务级运行开关；stage 局部参数写到对应 `settings.py`。
 4. 如果是 stage，创建 `run_<stage>_from_json.py`，并使用 `stage_common`、`task_json`、`subprocess_stream` 等现有工具。
 5. 在 `task_worker.py` 和 `task_db.py` 注册 stage。
-6. 输出写入 `data/output/` 下的专用目录，并把稳定字段写回 task JSON。
-7. 如果结果要给客户端下载，更新 `FOLDER_MAP`。
+6. 稳定输出写入 task `worker/result/debug` 目录，并把稳定字段写回 task JSON。外部工具 scratch 可以留在 `data/output/`，但不能作为新任务结果的权威入口。
+7. 如果结果要给旧客户端下载，更新 `artifact_layout.FOLDER_MAP`；新客户端优先读 task result。
 8. 如果改变坐标、JSON schema、API 或文件位置，更新 `docs/`。
 9. 至少运行 `python3 -m py_compile` 覆盖被改动的 Python 文件；高风险 stage 再用一份已有 task JSON 做 smoke test。
 
@@ -277,4 +287,4 @@ HoloLens depth/RGB 配准链路是设备输入边界，除非正在处理配准�
 
 清理无用代码时，先确认它不是 `config.py`、`task_worker.py`、`task_db.py`、Unity 客户端或旧 task JSON 仍在引用的入口。删除第三方网络/远程调用时，保留当前本地生成逻辑和 JSON 输出契约。
 
-如果一个临时脚本被连续用于验证当前链路，优先把它整理到 `code/scripts/`；如果它已经成为正式 pipeline 的一部分，就改造成 stage。
+如果一个临时脚本被连续用于验证当前链路，先判断它是否只是个人本地工具。是的话放到已忽略的 `code/scripts/`；需要团队复现时应纳入受跟踪位置；已经成为正式 pipeline 的一部分时改造成 stage。

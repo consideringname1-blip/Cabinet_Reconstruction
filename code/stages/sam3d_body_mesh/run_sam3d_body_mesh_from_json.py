@@ -19,13 +19,8 @@ CODE_ROOT = Path(__file__).resolve().parents[2]
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
-from config import (
-    BLENDER_BIN,
-    SAM3D_BODY_FBX_EXPORT_SCRIPT,
-    SAM3D_BODY_OUTPUT_FBX,
-    SAM3D_BODY_OUTPUT_MESHES,
-    SAM3D_BODY_ROOT,
-)
+from artifact_layout import model_result_file, model_worker_dir
+from path_config import BLENDER_BIN, SAM3D_BODY_FBX_EXPORT_SCRIPT, SAM3D_BODY_ROOT
 from coordinate_systems import UNITY_TO_OPENCV_CAMERA_BASIS, quat_xyzw_to_rotation_matrix
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 from stages.shigure_history.marker_history import latest_marker_pose_path
@@ -67,6 +62,10 @@ def _write_status(json_path: Path, task: dict[str, Any], status: str, **fields: 
     payload['status'] = status
     payload['updated_at'] = _utc_now()
     task['SAM3DBodyMesh'] = _jsonable(payload)
+    task_timestamp = str(task.get('task_timestamp') or '').strip()
+    if not task_timestamp:
+        raise ValueError('task_timestamp is required for SAM3D body status artifacts')
+    _write_json(model_result_file(task_timestamp, 'body.result'), payload)
     save_task_json(json_path, task)
 
 
@@ -365,6 +364,7 @@ def _write_obj(path: Path, vertices: np.ndarray, faces: np.ndarray) -> None:
 
 
 def _export_fbx(obj_path: Path, fbx_path: Path) -> None:
+    fbx_path.parent.mkdir(parents=True, exist_ok=True)
     blender = Path(BLENDER_BIN)
     if not blender.is_file():
         found = shutil.which('blender')
@@ -403,7 +403,10 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
     task = load_task_json(json_path)
     taken = task.get('TakenObjectDetection') if isinstance(task.get('TakenObjectDetection'), Mapping) else {}
     task_name = str(task.get('task_name') or task.get('task_id') or json_path.stem)
-    output_root = SAM3D_BODY_OUTPUT_MESHES / task_name
+    task_timestamp = str(task.get('task_timestamp') or '').strip()
+    if not task_timestamp:
+        raise ValueError('task_timestamp is required for SAM3D body artifacts')
+    output_root = model_worker_dir(task_timestamp) / '08_sam3d_body_working'
     output_root.mkdir(parents=True, exist_ok=True)
 
     if taken.get('status') != 'TAKEN':
@@ -484,7 +487,8 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         except Exception as exc:
             people.append({'person_name': person_name, 'error_message': str(exc)})
 
-    _write_json(output_root / 'people.json', {'people': people, 'object_center_armarker': object_center.tolist() if object_center is not None else None})
+    people_json_path = model_result_file(task_timestamp, 'body.people')
+    _write_json(people_json_path, {'people': people, 'object_center_armarker': object_center.tolist() if object_center is not None else None})
     valid_people = [p for p in people if isinstance(p.get('nearest_wrist'), Mapping)]
     if not valid_people:
         _write_status(
@@ -502,11 +506,15 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
     selected = min(valid_people, key=lambda p: float((p.get('nearest_wrist') or {}).get('distance_m', math.inf)))
     selected_name = str(selected['person_name'])
     selected_npz = np.load(str(selected['mesh_npz_path']))
-    obj_path = output_root / f'{task_name}_{selected_name}_armarker.obj'
-    fbx_path = SAM3D_BODY_OUTPUT_FBX / f'{task_name}_{selected_name}_body.fbx'
-    _write_obj(obj_path, selected_npz['vertices'], selected_npz['faces'])
+    work_obj_path = output_root / f'{task_name}_{selected_name}_armarker.obj'
+    obj_path = model_result_file(task_timestamp, 'body.selected_obj')
+    fbx_path = model_result_file(task_timestamp, 'body.selected_fbx')
+    _write_obj(work_obj_path, selected_npz['vertices'], selected_npz['faces'])
+    if obj_path != work_obj_path:
+        obj_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(work_obj_path, obj_path)
     try:
-        _export_fbx(obj_path, fbx_path)
+        _export_fbx(work_obj_path, fbx_path)
     except Exception as exc:
         _write_status(
             json_path,
@@ -527,14 +535,14 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         'backup_shigurei_dir': backup_dir,
         'selected_person_name': selected_name,
         'selected_person_fbx_path': str(fbx_path),
-        'selected_person_fbx_folder': 'sam3d_body_fbx',
+        'selected_person_fbx_folder': 'model_result',
         'selected_person_pose_armarker': np.eye(4, dtype=float).tolist(),
         'selected_person_obj_path': str(obj_path),
         'material_color': settings.MATERIAL_COLOR,
         'material_alpha': settings.MATERIAL_ALPHA,
         'coordinate_space': 'armarker',
         'camera_to_armarker_source': str(marker_pose_path),
-        'people_json_path': str(output_root / 'people.json'),
+        'people_json_path': str(people_json_path),
         'people': people,
         'object_center_armarker': object_center.tolist() if object_center is not None else None,
     }

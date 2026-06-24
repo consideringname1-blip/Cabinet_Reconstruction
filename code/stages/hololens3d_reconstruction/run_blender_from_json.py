@@ -3,7 +3,8 @@ import sys
 from pathlib import Path
 
 import _bootstrap
-from config import BLENDER_FBX_DIR, CONVERT_SCRIPT
+from artifact_layout import model_result_file
+from path_config import CONVERT_SCRIPT
 from object_alignment_common import resolve_blender_path
 from stage_common import ensure_file, load_stage_task
 from task_json import load_task_json
@@ -43,7 +44,11 @@ def run_blender(json_path: Path) -> None:
             "Check Blender Python imports/export logs from convert_obj_to_fbx.py."
         )
 
-    ensure_file(BLENDER_FBX_DIR / fbx_name, "Blender fbx")
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise RuntimeError("task_timestamp is required for Blender artifacts")
+    fbx_path = model_result_file(task_timestamp, "model.final_fbx")
+    ensure_file(fbx_path, "Blender fbx")
 
 
 def main() -> int:

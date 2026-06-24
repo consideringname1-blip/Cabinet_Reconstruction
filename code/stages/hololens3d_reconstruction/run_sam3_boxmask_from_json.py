@@ -15,19 +15,13 @@ from scipy import ndimage as ndi
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import _bootstrap
-import config
+from config import TASK_DEBUG_OUTPUT_ENABLE
+from artifact_layout import model_debug_file, model_worker_dir, model_worker_file
+from path_config import SAM3_BEP, SAM3_ROOT
 import numpy as np
 from PIL import Image, ImageDraw
 from stage_common import ensure_file, load_stage_task
 from task_json import load_task_json, resolve_task_json_path, save_task_json
-
-
-def require_attr(module: Any, *names: str) -> Any:
-    for name in names:
-        if hasattr(module, name):
-            return getattr(module, name)
-    joined = " / ".join(names)
-    raise AttributeError(f"config.py is missing required attribute: {joined}")
 
 
 def safe_name(text: str) -> str:
@@ -330,21 +324,11 @@ def save_array_png(arr: np.ndarray, path: Path) -> None:
 
 
 def resolve_bpe_path() -> Path:
-    if hasattr(config, "SAM3_BEP") or hasattr(config, "SAM3_BPE"):
-        return ensure_file(
-            Path(require_attr(config, "SAM3_BEP", "SAM3_BPE")).expanduser().resolve(),
-            "SAM3_BEP/SAM3_BPE",
-        )
-
-    import sam3
-
-    sam3_root = Path(sam3.__file__).resolve().parent.parent
-    auto_bpe = sam3_root / "sam3" / "assets" / "bpe_simple_vocab_16e6.txt.gz"
-    return ensure_file(auto_bpe, "SAM3 package BPE")
+    return ensure_file(SAM3_BEP.expanduser().resolve(), "SAM3 BPE")
 
 
 def resolve_device(torch_module: Any) -> Any:
-    device_name = str(getattr(config, "SAM3_DEVICE", "auto")).strip().lower()
+    device_name = os.environ.get("SAM3_DEVICE", "auto").strip().lower()
 
     if device_name == "auto":
         if torch_module.cuda.is_available():
@@ -396,7 +380,7 @@ class Sam3MaskRunner:
         except Exception as e:
             raise RuntimeError(f"Failed to import torch: {e}") from e
 
-        sam3_root = Path(require_attr(config, "SAM3_ROOT")).expanduser().resolve()
+        sam3_root = SAM3_ROOT.expanduser().resolve()
         if str(sam3_root) not in sys.path:
             sys.path.insert(0, str(sam3_root))
 
@@ -437,10 +421,10 @@ class Sam3MaskRunner:
         task_start = time.perf_counter()
         timings: dict[str, Any] = {}
         setup_start = time.perf_counter()
-        upload_folder = Path(require_attr(config, "UPLOAD_FOLDER")).expanduser().resolve()
-        depth_root = Path(require_attr(config, "HOLOLENS2_OUTPUT_DEPTH_IMAGES")).expanduser().resolve()
-        output_root = Path(require_attr(config, "SAM3_OUTPUT_ROOT")).expanduser().resolve()
-        output_root.mkdir(parents=True, exist_ok=True)
+        task_timestamp = str(task.get("task_timestamp") or "").strip()
+        if not task_timestamp:
+            raise ValueError("task_timestamp is required for SAM3 artifacts")
+        output_root = model_worker_dir(task_timestamp)
 
         pv_info = task.get("PVCamera") or {}
         depth_info = task.get("DepthCamera") or {}
@@ -458,8 +442,8 @@ class Sam3MaskRunner:
         if "top_left" not in selection or "bottom_right" not in selection:
             raise ValueError("SelectionBox.top_left / bottom_right is missing")
 
-        color_path = ensure_file(upload_folder / pv_name, "PVCamera image")
-        depth_path = ensure_file(depth_root / align_depth_name, "Aligned depth image")
+        color_path = ensure_file(model_worker_file(task_timestamp, "input.color"), "PVCamera image")
+        depth_path = ensure_file(model_worker_file(task_timestamp, "input.align_depth"), "Aligned depth image")
         timings["prepare_inputs_ms"] = (time.perf_counter() - setup_start) * 1000.0
 
         timings["model_load"] = self._load_model()
@@ -531,28 +515,27 @@ class Sam3MaskRunner:
         task_name = str(task.get("task_name") or "task")
         prefix = safe_name(task_name)
 
-        mask_name = f"{prefix}_sam3_mask.png"
-        color_name = f"{prefix}_sam3_color.png"
-        depth_name = f"{prefix}_sam3_depth.png"
-        overlay_name = f"{prefix}_sam3_overlay.png"
-
-        mask_out = output_root / mask_name
-        color_out = output_root / color_name
-        depth_out = output_root / depth_name
-        overlay_out = output_root / overlay_name
+        mask_out = model_worker_file(task_timestamp, "sam3.mask")
+        color_out = model_worker_file(task_timestamp, "sam3.color")
+        depth_out = model_worker_file(task_timestamp, "sam3.depth")
+        overlay_out = model_debug_file(task_timestamp, "sam3.overlay")
         timings["postprocess_ms"] = (time.perf_counter() - post_start) * 1000.0
 
         write_start = time.perf_counter()
+        for output_path in (mask_out, color_out, depth_out):
+            output_path.parent.mkdir(parents=True, exist_ok=True)
         save_array_png(mask_png, mask_out)
         save_array_png(masked_color_rgba, color_out)
         save_array_png(masked_depth, depth_out)
-        save_array_png(overlay_rgb, overlay_out)
+        if TASK_DEBUG_OUTPUT_ENABLE:
+            overlay_out.parent.mkdir(parents=True, exist_ok=True)
+            save_array_png(overlay_rgb, overlay_out)
 
         task["sam3Name"] = {
-            "mask": mask_name,
-            "color": color_name,
-            "depth": depth_name,
-            "overlay": overlay_name,
+            "mask": mask_out.name,
+            "color": color_out.name,
+            "depth": depth_out.name,
+            "overlay": overlay_out.name if TASK_DEBUG_OUTPUT_ENABLE else None,
         }
         task["Sam3SpatialBox"] = spatial_box
         save_task_json(json_path, task)

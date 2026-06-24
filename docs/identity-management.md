@@ -20,29 +20,30 @@
 - `code/task_db.py`：SQLite 表结构和读写函数，包括 `display_objects`、`capture_instances`、`capture_binding_logs`。
 - `code/task_worker.py`：主流程 stage 顺序和 runner 注册。
 - `code/server_api.py`：API 响应里追加 identity 字段，并让 model-bounds 默认按 `display_object_id` 去重。
-- `code/config.py`：`DISPLAY_IDENTITY_STAGE_RUN` 和 `DISPLAY_IDENTITY_STAGE_PY` 配置。
+- `code/path_config.py`：`DISPLAY_IDENTITY_STAGE_RUN` 和 `DISPLAY_IDENTITY_STAGE_PY` 路径配置。
 
 ## 主流程位置
 
-`display_identity` 已经是正式 stage。当前 `task_worker.py` 中的顺序为：
+`display_identity` 已经是正式 stage。当前 object reconstruction 的 `task_worker.STAGE_ORDER` 顺序为：
 
 1. `hololens2depth`
-2. `aruco_detect`
-3. `sam3mask`
-4. `instantmesh` 或 `sam3d`
-5. `depthpointcloud`
-6. `modelscale`
-7. `object_alignment`
+2. `sam3mask`
+3. `instantmesh`，这是共享模型生成槽，后端可由 InstantMesh 或 SAM3D Objects 执行
+4. `depthpointcloud`
+5. `modelscale`
+6. `object_alignment`
+7. `runtime_mesh`
 8. `pose`
-9. `runtime_mesh`
-10. `aruco_sync`
-11. `blender`
-12. `model_bounds`
-13. `display_identity`
-14. `history_placement_restoration`
-15. `taken_object_detection`
-16. `sam3d_body_mesh`
-17. `completed`
+9. `aruco_sync`
+10. `blender`
+11. `model_bounds`
+12. `display_identity`
+13. `history_placement_restoration`
+14. `taken_object_detection`
+15. `sam3d_body_mesh`
+16. `completed`
+
+ArUco reference 使用独立顺序：`aruco_detect -> aruco_completed`。
 
 也就是说，显示去重发生在模型 bounds 生成之后、历史位置再现和拿取检测之前。
 
@@ -144,13 +145,15 @@ stage 会把结果写回 task JSON 的三个位置：
 
 当前实现只使用 HoloLens/SAM3 证据，不使用 Shigure，也不使用 YOLO id。
 
-输入文件来自 task JSON：
+输入文件来自 task JSON 和 `artifact_layout` 推导出的 task 目录：
 
-- mask：`sam3Name.mask`
-- color：优先 `sam3Name.color`，不存在时回退 `PVCamera.name`
-- depth：`sam3Name.depth`
+- mask：`data/model/<task_timestamp>/worker/02_sam3_mask.png`
+- color：`data/model/<task_timestamp>/worker/02_sam3_color.png`
+- depth：`data/model/<task_timestamp>/worker/02_sam3_depth.png`
 - 相机内参：`PVCamera.k`，如果没有则尝试 `PVCameraFrames[0].k`
 - depth 有效范围：`depth_camera_config.depth_sensor_limits_for_task(task)`
+
+旧 task JSON 中的 `sam3Name.*` 仍可作为语义字段理解，但当前文件读取不再依赖 `data/output/sam3` 或 `data/upload` 回退。
 
 有效性要求：
 
@@ -301,7 +304,7 @@ stage 会把结果写回 task JSON 的三个位置：
 当前实现已经可用，但边界很清楚：
 
 - 还没有接入 DINOv2、CLIP/SigLIP、ALIKED、SuperPoint、LightGlue、LoFTR 等 embedding 或局部特征模型。
-- 还没有生成新旧 masked crop 的对比拼图；当前保存的是源路径、特征摘要、候选评分和日志 JSON。
+- 还没有生成新旧 masked crop 的对比拼图；当前保存的是 task worker/result 路径、特征摘要、候选评分和日志 JSON。
 - `yolo_object_id` 是数据库预留字段，当前 `display_identity` stage 不使用也不写入。
 - `display_object_id` 只用于 Unity 默认显示去重，不维护 `MOVED`、`MISSING`、`OCCLUDED`、`last_seen_at` 等追踪状态。
 - 当前不处理模型版本选择，不维护 active model，不决定新模型是否替换旧模型。

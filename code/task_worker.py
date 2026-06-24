@@ -16,6 +16,16 @@ from typing import Any, Callable, Dict, Mapping, Optional
 from subprocess_stream import stream_command
 
 from config import (
+    FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
+    MODEL_SERVICE_PREWARM_ENABLE,
+    INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
+    INSTANTMESH_GPU_IDS,
+    MODEL_GENERATION_BACKEND,
+    SHIGURE_HISTORY_RECORDING_ENABLE,
+    SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
+)
+from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, WORKER_SOCKET_ROOT
+from path_config import (
     ARUCO_DETECT_STAGE_PY,
     ARUCO_DETECT_STAGE_RUN,
     ARUCO_SYNC_STAGE_PY,
@@ -26,22 +36,17 @@ from config import (
     DEPTHPOINTCLOUD_STAGE_RUN,
     FOUNDATIONPOSE_ALIGNMENT_PY,
     FOUNDATIONPOSE_ALIGNMENT_RUN,
-    FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
-    MODEL_SERVICE_PREWARM_ENABLE,
-    INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
     HOLOLENS2_CONVERT_DIR,
     HOLOLENS2_CONVERT_RUN,
     HOLOLENS2_PY,
     HISTORY_PLACEMENT_RESTORATION_STAGE_PY,
     HISTORY_PLACEMENT_RESTORATION_STAGE_RUN,
-    INSTANTMESH_GPU_IDS,
     INSTANTMESH_STAGE_PY,
     INSTANTMESH_STAGE_RUN,
     MODEL_BOUNDS_STAGE_PY,
     MODEL_BOUNDS_STAGE_RUN,
     DISPLAY_IDENTITY_STAGE_PY,
     DISPLAY_IDENTITY_STAGE_RUN,
-    MODEL_GENERATION_BACKEND,
     MODELSCALE_STAGE_PY,
     MODELSCALE_STAGE_RUN,
     OBJECT_ALIGNMENT_STAGE_PY,
@@ -58,14 +63,10 @@ from config import (
     SAM3D_OBJECTS_STAGE_RUN,
     SAM3D_BODY_MESH_STAGE_PY,
     SAM3D_BODY_MESH_STAGE_RUN,
-    SHIGURE_HISTORY_CACHE_ROOT,
     SHIGURE_HISTORY_RECORDER_RUN,
     SHIGURE_HISTORY_RECORDER_STAGE_PY,
-    SHIGURE_HISTORY_RECORDING_ENABLE,
     TAKEN_OBJECT_DETECTION_STAGE_PY,
     TAKEN_OBJECT_DETECTION_STAGE_RUN,
-    SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
-    WORKER_SOCKET_ROOT,
 )
 from stages.hololens3d_reconstruction.settings import OBJECT_ALIGNMENT_MODE
 from task_db import (
@@ -89,9 +90,11 @@ from task_json import (
     ensure_task_id_in_json,
     load_task_json,
     resolve_task_json_path,
+    resolve_task_json_path_from_record,
     save_task_json,
 )
 from console_output_log import install_console_output_log
+from artifact_layout import make_timestamp, model_task_json_path
 
 install_console_output_log()
 
@@ -593,7 +596,7 @@ def _restore_unfinished_tasks() -> None:
             if task_id in _queued_task_ids or task_id in _running_task_ids:
                 continue
         try:
-            task_json = load_task_json(resolve_task_json_path(task["json_path"]))
+            task_json = load_task_json(resolve_task_json_path_from_record(task))
             purpose = _resolve_task_purpose(task_json)
         except Exception:
             task_json = {}
@@ -980,7 +983,7 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
     if task_record is None:
         raise ValueError(f"Task not found in database: {task_id}")
 
-    json_path = resolve_task_json_path(task_record["json_path"])
+    json_path = resolve_task_json_path_from_record(task_record)
     if not json_path.is_file():
         raise FileNotFoundError(f"JSON file not found: {json_path}")
 
@@ -1193,6 +1196,42 @@ def start_worker() -> threading.Thread:
     return _worker_thread
 
 
+def _startup_session_id_from_task_json(data: Mapping[str, Any]) -> str | None:
+    return str((data.get("device") or {}).get("startup_session_id") or "").strip() or None
+
+
+def reserve_uploading_task(
+    *,
+    task_id: str | None = None,
+    task_timestamp: str | None = None,
+    startup_session_id: str | None = None,
+    json_path: Path | str | None = None,
+) -> dict[str, Any]:
+    resolved_task_id = str(task_id or uuid.uuid4())
+    resolved_timestamp = str(task_timestamp or make_timestamp())
+    resolved_json_path = Path(json_path) if json_path is not None else model_task_json_path(resolved_timestamp)
+    resolved_json_path.parent.mkdir(parents=True, exist_ok=True)
+    return create_task_record(
+        task_id=resolved_task_id,
+        json_path=resolved_json_path,
+        startup_session_id=startup_session_id,
+        task_timestamp=resolved_timestamp,
+        status="uploading",
+    )
+
+
+def activate_uploaded_task(task_id: str, *, task_json: dict | None = None, front: bool = False) -> None:
+    task_record = get_task_by_task_id(task_id)
+    if task_record is None:
+        raise ValueError(f"Task not found in database: {task_id}")
+    task_json = task_json or load_task_json(resolve_task_json_path_from_record(task_record))
+    update_task_status(task_id, "pending")
+    if _resolve_task_purpose(task_json) == PURPOSE_OBJECT_RECONSTRUCTION:
+        _prewarm_model_pipeline_services("new 3D model task")
+    with _task_lock:
+        _enqueue_task_no_lock(task_id, _resolve_task_purpose(task_json), front=front, task_json=task_json)
+
+
 def create_task(json_path: Path | str) -> str:
     task_json_path = resolve_task_json_path(json_path)
     if not task_json_path.is_file():
@@ -1200,23 +1239,21 @@ def create_task(json_path: Path | str) -> str:
 
     data = load_task_json(task_json_path)
     task_id = str(data.get("task_id") or uuid.uuid4())
-    startup_session_id = str((data.get("device") or {}).get("startup_session_id") or "").strip() or None
+    task_timestamp = str(data.get("task_timestamp") or data.get("task_name") or task_json_path.stem.removesuffix("_meta"))
+    startup_session_id = _startup_session_id_from_task_json(data)
 
     data["task_id"] = task_id
+    data["task_timestamp"] = task_timestamp
     save_task_json(task_json_path, data)
 
     create_task_record(
         task_id=task_id,
         json_path=task_json_path,
         startup_session_id=startup_session_id,
+        task_timestamp=task_timestamp,
     )
 
-    if _resolve_task_purpose(data) == PURPOSE_OBJECT_RECONSTRUCTION:
-        _prewarm_model_pipeline_services("new 3D model task")
-
-    with _task_lock:
-        _enqueue_task_no_lock(task_id, _resolve_task_purpose(data), task_json=data)
-
+    activate_uploaded_task(task_id, task_json=data)
     return task_id
 
 
@@ -1226,7 +1263,7 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
         return None
 
     try:
-        json_path = resolve_task_json_path(task_record["json_path"])
+        json_path = resolve_task_json_path_from_record(task_record)
         task_json = load_task_json(json_path)
     except FileNotFoundError:
         task_json = {}
@@ -1258,11 +1295,8 @@ def _sync_completed_tasks_for_startup(startup_session_id: str | None = None) -> 
         else get_unsynced_completed_tasks()
     )
     for task_row in task_rows:
-        json_path = task_row.get("json_path")
-        if not json_path:
-            continue
         try:
-            resolved_json_path = resolve_task_json_path(json_path)
+            resolved_json_path = resolve_task_json_path_from_record(task_row)
             _run_aruco_sync(resolved_json_path)
             _run_model_bounds(resolved_json_path)
             _run_display_identity(resolved_json_path)
@@ -1304,7 +1338,7 @@ def get_latest_completed_task_data(
         return None
 
     try:
-        json_path = resolve_task_json_path(task_record["json_path"])
+        json_path = resolve_task_json_path_from_record(task_record)
         task_json = load_task_json(json_path)
     except FileNotFoundError:
         task_json = {}

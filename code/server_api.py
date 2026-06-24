@@ -2,18 +2,33 @@
 
 import json
 import logging
+import uuid
 from datetime import datetime, timezone
 
 import cv2
 import numpy as np
 from flask import Flask, jsonify, request, send_from_directory
 
-from config import (
-    BLENDER_FBX_DIR,
-    FOLDER_MAP,
-    UPLOAD_FOLDER,
-)
 from console_output_log import install_console_output_log
+from artifact_layout import (
+    FOLDER_MAP,
+    aruco_task_json_path,
+    aruco_worker_frame_color,
+    aruco_worker_frame_meta,
+    ensure_aruco_task_dirs,
+    ensure_artifact_roots,
+    ensure_history_request_dirs,
+    ensure_model_task_dirs,
+    make_timestamp,
+    model_debug_dir,
+    model_result_dir,
+    model_task_json_path,
+    model_worker_dir,
+    model_worker_file,
+    sanitize_artifact_token,
+    history_request_result_dir,
+    history_request_worker_dir,
+)
 
 install_console_output_log()
 
@@ -23,25 +38,32 @@ from depth_camera_config import (
     normalize_depth_sensor_name,
 )
 from task_worker import (
-    create_task,
+    activate_uploaded_task,
     get_latest_completed_task_data,
     get_task,
+    reserve_uploading_task,
     start_worker,
 )
 from task_db import (
+    create_history_placement_request,
     get_enabled_aruco_markers,
     get_latest_completed_tasks,
+    get_latest_history_placement_request,
     get_latest_aruco_reference,
     get_latest_ready_model_bounds,
     get_model_bounds_by_task_id,
     get_ready_model_bounds_in_range,
+    get_task_by_task_id,
     sync_marker_registry_from_reference_folder,
+    update_history_placement_request,
+    update_task_status,
+    initialize_task_table,
 )
 from model_bounds import decode_model_bounds_row, latest_bounds_for_ray, range_bounds_for_ray
 from model_generation_common import resolve_model_generation_source, resolve_runtime_mesh_source
 from stages.history_placement_restoration import settings as history_placement_settings
 from stages.history_placement_restoration.run_history_placement_restoration_from_json import run_history_placement_restoration
-from task_json import save_task_json
+from task_json import resolve_task_json_path_from_record, save_task_json
 from coordinate_systems import convert_hololens_pv_pose_matrix_to_unity_pose_components
 
 
@@ -49,11 +71,51 @@ app = Flask(__name__)
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 
+ensure_artifact_roots()
+initialize_task_table()
 start_worker()
 
 
 PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction"
 PURPOSE_ARUCO_REFERENCE = "aruco_reference"
+
+
+def _write_atomic_bytes(path, data: bytes) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f"{path.name}.tmp")
+    with tmp_path.open("wb") as file:
+        file.write(data)
+    tmp_path.replace(path)
+
+
+def _write_atomic_json(path, payload: dict) -> None:
+    _write_atomic_bytes(
+        path,
+        (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8"),
+    )
+
+
+def _frame_artifact_timestamp(task_timestamp: str, index: int, frame: dict) -> str:
+    raw = frame.get("time") or frame.get("timestamp") or frame.get("frame_timestamp")
+    fallback = f"{task_timestamp}_{index:03d}"
+    return sanitize_artifact_token(str(raw or ""), fallback=fallback)
+
+
+def _task_artifact_url(host: str, task_id: str, area: str, filename: str | None) -> str | None:
+    if not filename:
+        return None
+    return f"{host}/task-artifacts/{task_id}/{area}/{filename}"
+
+
+def _model_file_url(host: str, task_id: str, source, filename: str | None, *, default_folder: str | None = None) -> str | None:
+    if not filename:
+        return None
+    if getattr(source, "folder", None) == "model_worker":
+        return _task_artifact_url(host, task_id, "worker", filename)
+    folder = default_folder or getattr(source, "folder", None)
+    if not folder:
+        return None
+    return f"{host}/files/{folder}/{filename}"
 
 
 def _is_truthy_query_value(value) -> bool:
@@ -193,16 +255,15 @@ def _build_task_model_bounds_status(task_id: str, task_json: dict) -> dict:
     return {"status": "missing", "coordinate_space": "aruco"}
 
 
-def _url_for_file_if_present(folder: str, filename: str | None, file_path) -> str | None:
+def _source_url_if_present(host: str, task_id: str, source, filename: str | None, file_path) -> str | None:
     if not filename or not file_path or not file_path.exists():
         return None
-    host = request.host_url.rstrip("/")
-    return f"{host}/files/{folder}/{filename}"
+    return _model_file_url(host, task_id, source, filename)
 
 
-
-def _build_bounds_download_urls(task_json: dict, fbx_name: str | None) -> dict:
+def _build_bounds_download_urls(task_id: str, task_json: dict, fbx_name: str | None) -> dict:
     urls = {}
+    host = request.host_url.rstrip("/")
 
     try:
         generated_source = resolve_model_generation_source(task_json, require_mtl_image=False)
@@ -217,28 +278,33 @@ def _build_bounds_download_urls(task_json: dict, fbx_name: str | None) -> dict:
     if generated_source is not None:
         entries.extend(
             [
-                ("mesh", generated_source.folder, generated_source.mesh, generated_source.mesh_path),
-                ("mtl", generated_source.folder, generated_source.mtl, generated_source.mtl_path),
-                ("image", generated_source.folder, generated_source.image, generated_source.image_path),
+                ("mesh", generated_source, generated_source.mesh, generated_source.mesh_path),
+                ("mtl", generated_source, generated_source.mtl, generated_source.mtl_path),
+                ("image", generated_source, generated_source.image, generated_source.image_path),
             ]
         )
     if runtime_source is not None:
         entries.extend(
             [
-                ("runtime_mesh", runtime_source.folder, runtime_source.mesh, runtime_source.mesh_path),
-                ("runtime_mtl", runtime_source.folder, runtime_source.mtl, runtime_source.mtl_path),
-                ("runtime_image", runtime_source.folder, runtime_source.image, runtime_source.image_path),
+                ("runtime_mesh", runtime_source, runtime_source.mesh, runtime_source.mesh_path),
+                ("runtime_mtl", runtime_source, runtime_source.mtl, runtime_source.mtl_path),
+                ("runtime_image", runtime_source, runtime_source.image, runtime_source.image_path),
             ]
         )
-    entries.append(("fbx", "fbx", fbx_name, BLENDER_FBX_DIR / fbx_name if fbx_name else None))
 
-    for key, folder, filename, path in entries:
-        url = _url_for_file_if_present(folder, filename, path)
+    for key, source, filename, file_path in entries:
+        url = _source_url_if_present(host, task_id, source, filename, file_path)
         if url:
             urls[key] = url
 
-    return urls
+    blender_info = task_json.get("Blender") or {}
+    task_timestamp = str(task_json.get("task_timestamp") or "").strip()
+    if fbx_name and blender_info.get("artifact_root") == "model_result" and task_timestamp:
+        fbx_path = model_result_dir(task_timestamp) / fbx_name
+        if fbx_path.exists():
+            urls["fbx"] = _task_artifact_url(host, task_id, "result", fbx_name)
 
+    return urls
 
 def _build_model_bounds_response(row: dict, hit_result: dict | None = None) -> dict:
     decoded = decode_model_bounds_row(row)
@@ -247,7 +313,7 @@ def _build_model_bounds_response(row: dict, hit_result: dict | None = None) -> d
     task_json = (task_data or {}).get("task_json") or {}
     fbx_name = decoded.get("fbx_name") or (task_json.get("Blender") or {}).get("fbx")
     object_aruco = decoded.get("object_aruco") or task_json.get("object_aruco") or None
-    download_urls = _build_bounds_download_urls(task_json, fbx_name)
+    download_urls = _build_bounds_download_urls(task_id, task_json, fbx_name)
     fbx_url = download_urls.get("fbx")
 
     model = {
@@ -373,7 +439,10 @@ def _build_completed_task_response(task_data: dict) -> dict:
         runtime_source = None
     blender_info = task_json.get("Blender") or {}
     fbx_name = blender_info.get("fbx")
-    fbx_path = BLENDER_FBX_DIR / fbx_name if fbx_name else None
+    if fbx_name and blender_info.get("artifact_root") == "model_result" and task_json.get("task_timestamp"):
+        fbx_path = model_result_dir(str(task_json.get("task_timestamp"))) / fbx_name
+    else:
+        fbx_path = None
 
     _append_pose_fields(response, task_json)
 
@@ -392,13 +461,44 @@ def _build_completed_task_response(task_data: dict) -> dict:
     host = request.host_url.rstrip("/")
     response.update(
         {
-            "mesh_url": f"{host}/files/{generated_source.folder}/{generated_source.mesh}",
-            "mtl_url": f"{host}/files/{generated_source.folder}/{generated_source.mtl}",
-            "image_url": f"{host}/files/{generated_source.folder}/{generated_source.image}",
+            "mesh_url": _model_file_url(host, task_id, generated_source, generated_source.mesh),
+            "mtl_url": _model_file_url(host, task_id, generated_source, generated_source.mtl),
+            "image_url": _model_file_url(host, task_id, generated_source, generated_source.image),
         }
     )
     if generated_source.video and generated_source.video_path and generated_source.video_path.exists():
-        response["video_url"] = f"{host}/files/{generated_source.video_folder}/{generated_source.video}"
+        response["video_url"] = _task_artifact_url(host, task_id, "debug", generated_source.video) if generated_source.video_folder is None else f"{host}/files/{generated_source.video_folder}/{generated_source.video}"
+    taken_payload = response.get("taken_object_detection") if isinstance(response.get("taken_object_detection"), dict) else {}
+    if (taken_payload or {}).get("artifact_root") == "model_result":
+        taken_urls = {}
+        for payload_key, url_key in (
+            ("result_rgb", "result_rgb_url"),
+            ("result_depth", "result_depth_url"),
+            ("camera_info", "camera_info_url"),
+            ("active_objects", "active_objects_url"),
+            ("marker_pose", "marker_pose_url"),
+        ):
+            url = _task_artifact_url(host, task_id, "result", taken_payload.get(payload_key))
+            if url:
+                taken_urls[url_key] = url
+        if taken_urls:
+            response["taken_object_detection_urls"] = taken_urls
+
+    body_payload = response.get("sam3d_body_mesh") if isinstance(response.get("sam3d_body_mesh"), dict) else {}
+    if (body_payload or {}).get("selected_person_fbx_folder") == "model_result":
+        body_urls = {}
+        for payload_key, url_key in (
+            ("selected_person_fbx_path", "selected_person_fbx_url"),
+            ("selected_person_obj_path", "selected_person_obj_url"),
+            ("people_json_path", "people_url"),
+        ):
+            value = str(body_payload.get(payload_key) or "").strip()
+            if value:
+                url = _task_artifact_url(host, task_id, "result", value.rsplit("/", 1)[-1])
+                if url:
+                    body_urls[url_key] = url
+        if body_urls:
+            response["sam3d_body_mesh_urls"] = body_urls
     if (
         runtime_source is not None
         and runtime_source.mtl_path is not None
@@ -409,14 +509,14 @@ def _build_completed_task_response(task_data: dict) -> dict:
     ):
         response.update(
             {
-                "runtime_mesh_url": f"{host}/files/{runtime_source.folder}/{runtime_source.mesh}",
-                "runtime_mtl_url": f"{host}/files/{runtime_source.folder}/{runtime_source.mtl}",
-                "runtime_image_url": f"{host}/files/{runtime_source.folder}/{runtime_source.image}",
+                "runtime_mesh_url": _model_file_url(host, task_id, runtime_source, runtime_source.mesh),
+                "runtime_mtl_url": _model_file_url(host, task_id, runtime_source, runtime_source.mtl),
+                "runtime_image_url": _model_file_url(host, task_id, runtime_source, runtime_source.image),
                 "runtime_mesh": runtime_source.payload,
             }
         )
     if fbx_path and fbx_path.exists():
-        fbx_url = f"{host}/files/fbx/{fbx_name}"
+        fbx_url = _task_artifact_url(host, task_id, "result", fbx_name)
         response["fbx_url"] = fbx_url
         response["model_instance"] = _build_model_instance(task_data, task_json, fbx_url)
 
@@ -511,6 +611,25 @@ def index():
             ],
         }
     )
+
+
+@app.route("/task-artifacts/<task_id>/<area>/<path:filename>", methods=["GET"], strict_slashes=False)
+def serve_task_artifact(task_id: str, area: str, filename: str):
+    task_record = get_task_by_task_id(task_id)
+    if task_record is None:
+        return jsonify({"error": "task_not_found"}), 404
+    task_timestamp = str(task_record.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        return jsonify({"error": "task_timestamp_missing"}), 404
+    area_roots = {
+        "worker": model_worker_dir(task_timestamp),
+        "result": model_result_dir(task_timestamp),
+        "debug": model_debug_dir(task_timestamp),
+    }
+    root = area_roots.get(str(area or "").strip())
+    if root is None:
+        return jsonify({"error": "invalid_artifact_area"}), 400
+    return send_from_directory(root, filename)
 
 
 @app.route("/generate", methods=["POST"], strict_slashes=False)
@@ -610,9 +729,27 @@ def generate_model():
 
         now_utc = datetime.now(timezone.utc)
         server_received_utc = now_utc.isoformat().replace("+00:00", "Z")
-        base = now_utc.strftime("%Y%m%d_%H%M%S_%fZ")
+        base = make_timestamp(now_utc)
+        reserved_task_id = None
 
-        UPLOAD_FOLDER.mkdir(parents=True, exist_ok=True)
+        startup_session_id = str(devj.get("startup_session_id") or "").strip() or None
+        if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
+            task_record = reserve_uploading_task(
+                task_timestamp=base,
+                startup_session_id=startup_session_id,
+            )
+            reserved_task_id = str(task_record["task_id"])
+            ensure_model_task_dirs(base)
+            meta_path = model_task_json_path(base)
+        else:
+            meta_path = aruco_task_json_path(base)
+            task_record = reserve_uploading_task(
+                task_timestamp=base,
+                startup_session_id=startup_session_id,
+                json_path=meta_path,
+            )
+            reserved_task_id = str(task_record["task_id"])
+            ensure_aruco_task_dirs(base)
 
         color_path = None
         for index, frame in enumerate(normalized_pv_frames):
@@ -620,13 +757,23 @@ def generate_model():
             if field_name not in request.files and index == 0:
                 field_name = "pv_image"
             pv_png_bytes = _read_upload_file(field_name)
-            suffix = "color" if purpose == PURPOSE_OBJECT_RECONSTRUCTION else f"color_{index:03d}"
-            frame_color_path = UPLOAD_FOLDER / f"{base}_{suffix}.png"
-            with open(frame_color_path, "wb") as f:
-                f.write(pv_png_bytes)
+            if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
+                frame_color_path = model_worker_file(base, "input.color")
+                frame["artifact_root"] = "model_worker"
+            else:
+                frame_timestamp = _frame_artifact_timestamp(base, index, frame)
+                frame["artifact_root"] = "aruco_worker"
+                frame["task_timestamp"] = base
+                frame["artifact_timestamp"] = frame_timestamp
+                frame_color_path = aruco_worker_frame_color(base, frame_timestamp)
+            _write_atomic_bytes(frame_color_path, pv_png_bytes)
             frame["name"] = str(frame_color_path.name)
             frame["upload_field"] = field_name
             frame["png_bytes"] = int(len(pv_png_bytes))
+            if purpose == PURPOSE_ARUCO_REFERENCE:
+                frame_meta_path = aruco_worker_frame_meta(base, frame["artifact_timestamp"])
+                _write_atomic_json(frame_meta_path, frame)
+                frame["meta_name"] = str(frame_meta_path.name)
             if index == 0:
                 color_path = frame_color_path
 
@@ -635,13 +782,15 @@ def generate_model():
         if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
             depth_png_bytes = _read_upload_file("depth_image")
             depth_png_bytes, depth_stats = _sanitize_depth_png(depth_png_bytes, requested_sensor)
-            depth_path = UPLOAD_FOLDER / f"{base}_depth.png"
-            with open(depth_path, "wb") as f:
-                f.write(depth_png_bytes)
+            depth_path = model_worker_file(base, "input.depth")
+            _write_atomic_bytes(depth_path, depth_png_bytes)
 
         out_json = {
             "server_received_utc": server_received_utc,
             "task_name": base,
+            "task_timestamp": base,
+            "task_id": reserved_task_id,
+            "artifact_schema_version": 1,
             "purpose": purpose,
             "device": {
                 "type": devj.get("type", ""),
@@ -673,14 +822,20 @@ def generate_model():
                 "bottom_right": bottom_right,
             }
 
-        meta_path = UPLOAD_FOLDER / f"{base}_meta.json"
         save_task_json(meta_path, out_json)
 
-        task_id = create_task(meta_path)
+        task_id = reserved_task_id
+        activate_uploaded_task(task_id, task_json=out_json)
 
         return jsonify({"task_id": task_id})
 
     except Exception as exc:
+        reserved_task_id = locals().get("reserved_task_id")
+        if reserved_task_id:
+            try:
+                update_task_status(str(reserved_task_id), "upload_failed", error_message=str(exc))
+            except Exception:
+                pass
         print("[ERROR] /generate exception:", exc)
         return jsonify({"error": str(exc)}), 400
 
@@ -966,6 +1121,8 @@ def spatial_query_ray_range():
 
 @app.route("/history-placement-restoration/start", methods=["POST"], strict_slashes=False)
 def history_placement_restoration_start():
+    request_id = str(uuid.uuid4())
+    request_timestamp = make_timestamp()
     try:
         payload = request.get_json(silent=True) or {}
         task_id = str(payload.get("task_id") or "").strip()
@@ -978,9 +1135,35 @@ def history_placement_restoration_start():
             model_limit = history_placement_settings.DEFAULT_MODEL_LIMIT
         model_limit = max(0, model_limit)
 
+        create_history_placement_request(
+            request_id=request_id,
+            request_timestamp=request_timestamp,
+            startup_session_id=startup_session_id,
+            target_time=target_time,
+            model_limit=model_limit,
+        )
+        ensure_history_request_dirs(request_timestamp)
+        request_worker_dir = history_request_worker_dir(request_timestamp)
+        request_result_dir = history_request_result_dir(request_timestamp)
+        request_worker_dir.mkdir(parents=True, exist_ok=True)
+        request_result_dir.mkdir(parents=True, exist_ok=True)
+        save_task_json(
+            request_worker_dir / "01_request.json",
+            {
+                "request_id": request_id,
+                "request_timestamp": request_timestamp,
+                "task_id": task_id or None,
+                "startup_session_id": startup_session_id,
+                "target_time": target_time,
+                "model_limit": model_limit,
+                "source": "api_button",
+            },
+        )
+
         if task_id:
             task_data = get_task(task_id)
             if not task_data:
+                update_history_placement_request(request_id, status="failed", error_message="task_id not found")
                 return jsonify({"success": False, "error": "task_id not found", "task_id": task_id}), 404
             rows = [task_data]
         else:
@@ -990,21 +1173,48 @@ def history_placement_restoration_start():
                 limit=model_limit,
             )
 
+        selected_tasks = [
+            {
+                "item_index": index,
+                "task_id": row.get("task_id"),
+                "task_timestamp": row.get("task_timestamp"),
+                "status": row.get("status"),
+            }
+            for index, row in enumerate(rows)
+        ]
+        save_task_json(request_worker_dir / "01_selected_model_tasks.json", {"items": selected_tasks})
+
         results = []
-        for row in rows:
+        for index, row in enumerate(rows):
             row_task_id = str(row.get("task_id") or "")
-            json_path = row.get("json_path")
-            if not json_path:
-                results.append({"task_id": row_task_id, "success": False, "error": "json_path_missing"})
+            try:
+                json_path = resolve_task_json_path_from_record(row)
+            except Exception as exc:
+                results.append({"item_index": index, "task_id": row_task_id, "success": False, "error": str(exc)})
                 continue
             try:
+                item_work_dir = request_worker_dir / f"02_result_{index:03d}_working"
+                item_work_dir.mkdir(parents=True, exist_ok=True)
                 result = run_history_placement_restoration(
                     json_path,
                     target_time=target_time,
                     request_source="api_button",
+                    artifact_output_dir=item_work_dir,
+                )
+                save_task_json(
+                    request_worker_dir / f"02_result_{index:03d}_working_state.json",
+                    {
+                        "item_index": index,
+                        "task_id": row_task_id,
+                        "task_timestamp": row.get("task_timestamp"),
+                        "artifact_output_dir": str(item_work_dir),
+                        "status": result.get("status"),
+                    },
                 )
                 result_payload = {
+                    "item_index": index,
                     "task_id": row_task_id,
+                    "task_timestamp": row.get("task_timestamp"),
                     "success": True,
                     "status": result.get("status"),
                     "history_placement_restoration": result.get("payload"),
@@ -1025,20 +1235,52 @@ def history_placement_restoration_start():
                     if model_payload.get("error"):
                         result_payload["model_payload_error"] = model_payload.get("error")
                 results.append(result_payload)
+                save_task_json(request_result_dir / f"02_result_{index:03d}_summary.json", result_payload)
             except Exception as exc:
-                results.append({"task_id": row_task_id, "success": False, "error": str(exc)})
+                error_payload = {"item_index": index, "task_id": row_task_id, "success": False, "error": str(exc)}
+                results.append(error_payload)
+                save_task_json(request_result_dir / f"02_result_{index:03d}_summary.json", error_payload)
 
-        return jsonify(
-            {
-                "success": True,
-                "count": len(results),
-                "model_limit": model_limit,
-                "unlimited": model_limit == 0,
-                "results": results,
-            }
+        response_payload = {
+            "success": True,
+            "request_id": request_id,
+            "request_timestamp": request_timestamp,
+            "count": len(results),
+            "model_limit": model_limit,
+            "unlimited": model_limit == 0,
+            "results": results,
+        }
+        save_task_json(request_result_dir / "02_response.json", response_payload)
+        save_task_json(request_result_dir / "02_unity_display.json", response_payload)
+        update_history_placement_request(
+            request_id,
+            status="completed",
+            selected_task_count=len(rows),
+            result_count=len(results),
         )
+        return jsonify(response_payload)
     except Exception as exc:
+        try:
+            update_history_placement_request(request_id, status="failed", error_message=str(exc))
+        except Exception:
+            pass
         print(f"Error in history_placement_restoration_start: {exc}")
+        return jsonify({"success": False, "request_id": request_id, "error": str(exc)}), 500
+
+
+@app.route("/history-placement-restoration/latest", methods=["GET"], strict_slashes=False)
+def history_placement_restoration_latest():
+    try:
+        latest = get_latest_history_placement_request("completed")
+        if not latest:
+            return jsonify({"success": False, "error": "history_placement_request_not_found"}), 404
+        request_timestamp = str(latest.get("request_timestamp") or "").strip()
+        response_path = history_request_result_dir(request_timestamp) / "02_response.json"
+        if not response_path.is_file():
+            return jsonify({"success": False, "error": "history_placement_response_missing"}), 404
+        with response_path.open("r", encoding="utf-8") as file:
+            return jsonify(json.load(file))
+    except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
 
 

@@ -10,7 +10,7 @@ from typing import Any
 import cv2
 import numpy as np
 
-from config import SAM3_OUTPUT_ROOT, UPLOAD_FOLDER
+from artifact_layout import model_worker_file
 from depth_camera_config import depth_sensor_limits_for_task
 from task_db import (
     create_display_object,
@@ -118,7 +118,13 @@ def _resolve_sam3_path(task: dict[str, Any], key: str, label: str) -> Path:
     name = str(sam3.get(key) or "").strip()
     if not name:
         raise IdentityFeatureError(f"sam3Name.{key} is missing")
-    path = (SAM3_OUTPUT_ROOT / name).resolve()
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise IdentityFeatureError("task_timestamp is required for SAM3 artifacts")
+    artifact_key = {"mask": "sam3.mask", "color": "sam3.color", "depth": "sam3.depth"}.get(key)
+    if not artifact_key:
+        raise IdentityFeatureError(f"unsupported SAM3 artifact key: {key}")
+    path = model_worker_file(task_timestamp, artifact_key).resolve()
     if not path.is_file():
         raise IdentityFeatureError(f"{label} not found: {path}")
     return path
@@ -127,14 +133,17 @@ def _resolve_sam3_path(task: dict[str, Any], key: str, label: str) -> Path:
 def _resolve_color_path(task: dict[str, Any]) -> Path:
     sam3 = task.get("sam3Name") if isinstance(task.get("sam3Name"), dict) else {}
     color_name = str(sam3.get("color") or "").strip()
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise IdentityFeatureError("task_timestamp is required for color artifacts")
     if color_name:
-        path = (SAM3_OUTPUT_ROOT / color_name).resolve()
+        path = model_worker_file(task_timestamp, "sam3.color").resolve()
         if path.is_file():
             return path
     pv_name = str((task.get("PVCamera") or {}).get("name") or "").strip()
     if not pv_name:
         raise IdentityFeatureError("sam3Name.color and PVCamera.name are missing")
-    path = (UPLOAD_FOLDER / pv_name).resolve()
+    path = model_worker_file(task_timestamp, "input.color").resolve()
     if not path.is_file():
         raise IdentityFeatureError(f"color image not found: {path}")
     return path

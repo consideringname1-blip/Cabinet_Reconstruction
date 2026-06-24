@@ -252,23 +252,25 @@ Notes for this verification path:
 The current taken-object path lives in
 `code/stages/taken_object_detection/run_taken_object_detection_from_json.py`. It
 uses Shigurei RGB-D history as the OpenCV camera boundary (`+X` right, `+Y`
-down, `+Z` forward) and relies on the same ArUco/OpenCV/Blender transform
-chain documented above when a projected model mask is supplied.
+down, `+Z` forward). The default mode is `TAKEN_OBJECT_TRACKING_MODE=yolo_primary`:
+ArUco/marker history projects the modeled object center into the Shigurei image,
+YOLO `/tracking/active_objects` provides a candidate mask/id, and Shigurei depth
+confirms occlusion or removal.
 
-The stage operates on a fixed projected object mask and Shigurei aligned depth
-frames. At initialization it looks for a stable depth window after the HoloLens
-photo timestamp, rejects background pixels beyond the projected front-surface
-range, and builds a trusted mask. Permanent mesh holes and background pixels do
-not become trusted object pixels.
+The legacy projected-mask path still exists behind explicit settings
+(`TAKEN_OBJECT_TRACKING_MODE=legacy_projected_mask` and
+`TAKEN_OBJECT_ENABLE_LEGACY_PROJECTED_MASK=true`) or as a fallback when
+`TAKEN_OBJECT_ENABLE_LEGACY_FALLBACK=true`, but it is not the default coordinate
+boundary.
 
-For each aligned depth frame, the current implementation compares observed depth
-against the initialized trusted depth mean:
+After YOLO-first initialization, the trusted YOLO mask and its valid depth become
+the reference. For each aligned depth frame, the implementation compares observed
+depth against the cached trusted depth:
 
 ```text
-delta = observed_depth_m - trusted_depth_mean_m
+delta[p] = current_depth[p] - cached_depth[p]
 occluded = valid_depth AND delta <= TAKEN_OBJECT_OCCLUSION_DELTA_M
-unoccluded = trusted_mask AND valid_depth AND NOT occluded
-taken = unoccluded AND delta >= TAKEN_OBJECT_TAKEN_DELTA_M
+taken = valid_depth AND delta >= TAKEN_OBJECT_TAKEN_DELTA_M
 ```
 
 A result is confirmed only after `TAKEN_OBJECT_TAKEN_RATIO` is satisfied for
@@ -279,6 +281,7 @@ a better result/display frame, while depth remains the confirmation signal.
 
 Current tuning lives in `code/stages/taken_object_detection/settings.py` and uses
 `TAKEN_OBJECT_*` environment variables. The selected result frame is backed up
+under the model task worker directory and copied into `result/07_taken_detection_*`
 for `sam3d_body_mesh`, which then uses real Shigurei CameraInfo rather than
 re-estimating camera intrinsics.
 
@@ -302,8 +305,7 @@ re-estimating camera intrinsics.
 - `code/model_bounds.py`: reads runtime-local mesh vertices and stores bounds in
   ArUco/Unity-style pose space.
 - `code/stages/taken_object_detection/run_taken_object_detection_from_json.py`:
-  uses Shigurei OpenCV-camera RGB-D frames, the projected object mask, and
-  current `TAKEN_OBJECT_*` thresholds for taken-object detection.
+  uses Shigurei OpenCV-camera RGB-D frames, YOLO-first object association, cached trusted depth, and current `TAKEN_OBJECT_*` thresholds for taken-object detection.
 - `code/stages/sam3d_body_mesh/run_sam3d_body_mesh_from_json.py`: consumes the
   backed-up Shigurei result frame and CameraInfo produced by taken-object
   detection.

@@ -1,4 +1,5 @@
 import json
+import shutil
 import socket
 import sys
 import traceback
@@ -8,17 +9,15 @@ from typing import Any
 import _bootstrap
 from PIL import Image
 
-from config import (
-    IMESH_PY,
-    INSTANTMESH_CONFIG,
-    INSTANTMESH_DIR,
-    INSTANTMESH_INPUT_ROOT,
+from artifact_layout import (
     INSTANTMESH_OUTPUT_MESHES,
     INSTANTMESH_OUTPUT_VIDEOS,
-    INSTANTMESH_RUN_PY,
     OUTPUT_ROOT,
-    SAM3_OUTPUT_ROOT,
+    model_debug_file,
+    model_worker_file,
 )
+from config import TASK_DEBUG_OUTPUT_ENABLE
+from path_config import IMESH_PY, INSTANTMESH_CONFIG, INSTANTMESH_DIR, INSTANTMESH_RUN_PY
 from settings import (
     ENABLE_INSTANTMESH_VIDEO_OUTPUT,
     INSTANTMESH_CLEAN_COMPONENT_MIN_FACE_RATIO,
@@ -28,8 +27,6 @@ from settings import (
 from mesh_obj_utils import clean_obj_connected_components
 from model_generation_common import (
     BACKEND_INSTANTMESH,
-    INSTANTMESH_MESH_FOLDER,
-    INSTANTMESH_VIDEO_FOLDER,
     MODEL_STAGE_INSTANTMESH,
     build_model_generation_payload,
 )
@@ -48,6 +45,36 @@ def create_white_background_image(source_path: Path, target_path: Path) -> Path:
     return target_path
 
 
+def rewrite_obj_mtl_reference(obj_path: Path, mtl_name: str) -> None:
+    lines = obj_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    rewritten = []
+    replaced = False
+    for line in lines:
+        if line.startswith("mtllib "):
+            rewritten.append(f"mtllib {mtl_name}")
+            replaced = True
+        else:
+            rewritten.append(line)
+    if not replaced:
+        rewritten.insert(0, f"mtllib {mtl_name}")
+    obj_path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+
+def rewrite_mtl_texture_reference(mtl_path: Path, texture_name: str) -> None:
+    lines = mtl_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    rewritten = []
+    replaced = False
+    for line in lines:
+        if line.strip().startswith("map_Kd "):
+            rewritten.append(f"map_Kd {texture_name}")
+            replaced = True
+        else:
+            rewritten.append(line)
+    if not replaced:
+        rewritten.append(f"map_Kd {texture_name}")
+    mtl_path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+
+
 def run_instantmesh(json_path: Path, task: dict) -> None:
     sam3_name = task.get("sam3Name") or {}
 
@@ -55,11 +82,16 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
     if not sam3_color_name:
         raise ValueError("sam3Name.color is missing")
 
-    sam3_color_path = ensure_file(SAM3_OUTPUT_ROOT / sam3_color_name, "SAM3 color image")
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise ValueError("task_timestamp is required for InstantMesh artifacts")
+    sam3_color_path = ensure_file(model_worker_file(task_timestamp, "sam3.color"), "SAM3 color image")
+    prepared_target_path = model_worker_file(task_timestamp, "generation.instantmesh_input")
     prepared_input_path = create_white_background_image(
         source_path=sam3_color_path,
-        target_path=INSTANTMESH_INPUT_ROOT / sam3_color_name,
+        target_path=prepared_target_path,
     )
+    video_output_enabled = bool(ENABLE_INSTANTMESH_VIDEO_OUTPUT and TASK_DEBUG_OUTPUT_ENABLE)
 
     try:
         import os
@@ -80,7 +112,7 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
                 "--export_texmap",
                 # "--no_rembg",
             ]
-            + (["--save_video"] if ENABLE_INSTANTMESH_VIDEO_OUTPUT else []),
+            + (["--save_video"] if video_output_enabled else []),
             cwd=INSTANTMESH_DIR,
             env=env,
             check=True,
@@ -92,7 +124,7 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
     mesh_name = f"{output_stem}.obj"
     mtl_name = f"{output_stem}.mtl"
     image_name = f"{output_stem}.png"
-    video_name = f"{output_stem}.mp4" if ENABLE_INSTANTMESH_VIDEO_OUTPUT else None
+    video_name = f"{output_stem}.mp4" if video_output_enabled else None
 
     mesh_path = ensure_file(INSTANTMESH_OUTPUT_MESHES / mesh_name, "InstantMesh obj")
     ensure_file(INSTANTMESH_OUTPUT_MESHES / mtl_name, "InstantMesh mtl")
@@ -113,13 +145,44 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
         if int(cleanup_info.get("removed_faces") or 0) > 0:
             mesh_name = clean_mesh_name
 
+    artifact_root = "model_worker"
+    mesh_folder = artifact_root
+    model_video_name = video_name
+
+    raw_obj_path = model_worker_file(task_timestamp, "generation.instantmesh_raw_obj")
+    model_obj_path = model_worker_file(task_timestamp, "model.source_obj")
+    model_mtl_path = model_worker_file(task_timestamp, "model.source_mtl")
+    model_texture_path = model_worker_file(task_timestamp, "model.source_texture")
+    for target in (raw_obj_path, model_obj_path, model_mtl_path, model_texture_path):
+        target.parent.mkdir(parents=True, exist_ok=True)
+
+    shutil.copy2(INSTANTMESH_OUTPUT_MESHES / raw_mesh_name, raw_obj_path)
+    shutil.copy2(INSTANTMESH_OUTPUT_MESHES / mesh_name, model_obj_path)
+    shutil.copy2(INSTANTMESH_OUTPUT_MESHES / mtl_name, model_mtl_path)
+    shutil.copy2(INSTANTMESH_OUTPUT_MESHES / image_name, model_texture_path)
+    rewrite_obj_mtl_reference(raw_obj_path, model_mtl_path.name)
+    rewrite_obj_mtl_reference(model_obj_path, model_mtl_path.name)
+    rewrite_mtl_texture_reference(model_mtl_path, model_texture_path.name)
+
+    if video_name:
+        video_target = model_debug_file(task_timestamp, "generation.instantmesh_video")
+        video_target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(INSTANTMESH_OUTPUT_VIDEOS / video_name, video_target)
+        model_video_name = video_target.name
+
+    model_mesh_name = model_obj_path.name
+    model_mtl_name = model_mtl_path.name
+    model_image_name = model_texture_path.name
+    raw_mesh_name = raw_obj_path.name
+
     instantmesh_payload = {
-        "mesh": mesh_name,
-        "mtl": mtl_name,
-        "image": image_name,
-        "video": video_name,
-        "video_render_enabled": bool(ENABLE_INSTANTMESH_VIDEO_OUTPUT),
+        "mesh": model_mesh_name,
+        "mtl": model_mtl_name,
+        "image": model_image_name,
+        "video": model_video_name,
+        "video_render_enabled": bool(video_output_enabled),
     }
+    instantmesh_payload["artifact_root"] = artifact_root
     if cleanup_info is not None:
         instantmesh_payload["raw_mesh"] = raw_mesh_name
         instantmesh_payload["cleanup"] = cleanup_info
@@ -127,12 +190,12 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
     task["ModelGeneration"] = build_model_generation_payload(
         backend=BACKEND_INSTANTMESH,
         source_stage=MODEL_STAGE_INSTANTMESH,
-        mesh=mesh_name,
-        mtl=mtl_name,
-        image=image_name,
-        mesh_folder=INSTANTMESH_MESH_FOLDER,
-        video=video_name,
-        video_folder=INSTANTMESH_VIDEO_FOLDER if video_name else None,
+        mesh=model_mesh_name,
+        mtl=model_mtl_name,
+        image=model_image_name,
+        mesh_folder=mesh_folder,
+        video=model_video_name,
+        video_folder=None,
         runtime_ready=False,
         extra={
             key: value

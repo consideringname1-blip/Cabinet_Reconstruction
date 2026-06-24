@@ -9,9 +9,8 @@ from typing import Any
 
 import _bootstrap
 
-from config import (
-    SAM3_OUTPUT_ROOT,
-    SAM3D_OBJECTS_OUTPUT_MESHES,
+from artifact_layout import model_worker_file
+from path_config import (
     SAM3D_OBJECTS_CONFIG,
     SAM3D_OBJECTS_POSTPROCESS_SCRIPT,
     SAM3D_OBJECTS_PY,
@@ -24,7 +23,6 @@ from settings import (
 from model_generation_common import (
     BACKEND_SAM3D_OBJECTS,
     MODEL_STAGE_SAM3D_OBJECTS,
-    SAM3D_OBJECTS_MESH_FOLDER,
     build_model_generation_payload,
 )
 from object_alignment_common import resolve_blender_path
@@ -48,8 +46,11 @@ def require_sam3_artifacts(task: dict[str, Any]) -> tuple[Path, Path, str]:
     if not mask_name:
         raise ValueError("sam3Name.mask is missing")
 
-    color_path = ensure_file(SAM3_OUTPUT_ROOT / str(color_name), "SAM3 color image")
-    mask_path = ensure_file(SAM3_OUTPUT_ROOT / str(mask_name), "SAM3 mask image")
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise ValueError("task_timestamp is required for SAM3D Objects artifacts")
+    color_path = ensure_file(model_worker_file(task_timestamp, "sam3.color"), "SAM3 color image")
+    mask_path = ensure_file(model_worker_file(task_timestamp, "sam3.mask"), "SAM3 mask image")
     return color_path, mask_path, safe_name(Path(str(color_name)).stem)
 
 
@@ -194,12 +195,15 @@ def run_sam3d_objects(json_path: Path, task: dict[str, Any]) -> None:
     color_path, mask_path, stem = require_sam3_artifacts(task)
     config_path = ensure_file(SAM3D_OBJECTS_CONFIG, "SAM3D Objects config")
 
-    output_stem = f"{stem}_sam3d_processed"
-    raw_glb_path = SAM3D_OBJECTS_OUTPUT_MESHES / f"{stem}_sam3d_raw.glb"
-    obj_path = SAM3D_OBJECTS_OUTPUT_MESHES / f"{output_stem}.obj"
-    mtl_path = SAM3D_OBJECTS_OUTPUT_MESHES / f"{output_stem}.mtl"
-    texture_path = SAM3D_OBJECTS_OUTPUT_MESHES / f"{output_stem}.png"
-    stats_path = SAM3D_OBJECTS_OUTPUT_MESHES / f"{output_stem}_postprocess.json"
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        raise ValueError("task_timestamp is required for SAM3D Objects artifacts")
+
+    raw_glb_path = model_worker_file(task_timestamp, "generation.sam3d_raw_glb")
+    obj_path = model_worker_file(task_timestamp, "model.source_obj")
+    mtl_path = model_worker_file(task_timestamp, "model.source_mtl")
+    texture_path = model_worker_file(task_timestamp, "model.source_texture")
+    stats_path = model_worker_file(task_timestamp, "generation.sam3d_postprocess")
 
     run_sam3d_generation(
         color_path=color_path,
@@ -224,15 +228,17 @@ def run_sam3d_objects(json_path: Path, task: dict[str, Any]) -> None:
     ):
         ensure_file(output_path, label)
 
+    artifact_root = "model_worker"
     sam3d_payload = build_model_generation_payload(
         backend=BACKEND_SAM3D_OBJECTS,
         source_stage=MODEL_STAGE_SAM3D_OBJECTS,
         mesh=obj_path.name,
         mtl=mtl_path.name,
         image=texture_path.name,
-        mesh_folder=SAM3D_OBJECTS_MESH_FOLDER,
+        mesh_folder=artifact_root,
         runtime_ready=False,
         extra={
+            "artifact_root": artifact_root,
             "raw_glb": raw_glb_path.name,
             "source_color": color_path.name,
             "source_mask": mask_path.name,

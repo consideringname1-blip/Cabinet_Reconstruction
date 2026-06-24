@@ -20,7 +20,7 @@ CODE_ROOT = Path(__file__).resolve().parents[2]
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
-from config import SHIGURE_HISTORY_CACHE_ROOT, TAKEN_OBJECT_OUTPUT_ROOT, UPLOAD_FOLDER
+from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, model_result_file, model_worker_dir, model_worker_file
 from coordinate_systems import UNITY_TO_OPENCV_CAMERA_BASIS, quat_xyzw_to_rotation_matrix
 from stages.shigure_history.cache import CachedRgbdSample, CachedSampleMetadata, RosStamp, ShigureRgbdCache, load_json, sample_key
 from stages.shigure_history.marker_history import latest_marker_pose_path
@@ -156,12 +156,37 @@ def _write_json(path: Path, payload: Mapping[str, Any]) -> None:
         f.write('\n')
 
 
+def _publish_taken_result_artifacts(task: Mapping[str, Any], backup_dir: Path) -> dict[str, Any]:
+    task_timestamp = str(task.get('task_timestamp') or '').strip()
+    if not task_timestamp:
+        raise ValueError('task_timestamp is required for taken object result artifacts')
+    mappings = {
+        'rgb.png': ('result_rgb', model_result_file(task_timestamp, 'taken.result_rgb')),
+        'depth.png': ('result_depth', model_result_file(task_timestamp, 'taken.result_depth')),
+        'camera_info.json': ('camera_info', model_result_file(task_timestamp, 'taken.camera_info')),
+        'active_objects.json': ('active_objects', model_result_file(task_timestamp, 'taken.active_objects')),
+        'marker_6d_pose.json': ('marker_pose', model_result_file(task_timestamp, 'taken.marker_pose')),
+    }
+    published: dict[str, Any] = {'artifact_root': 'model_result'}
+    for source_name, (payload_key, target_path) in mappings.items():
+        source_path = backup_dir / source_name
+        if source_path.is_file():
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, target_path)
+            published[payload_key] = target_path.name
+    return published
+
+
 def _write_status(json_path: Path, task: dict[str, Any], status: str, **fields: Any) -> None:
     payload = dict(task.get('TakenObjectDetection') or {})
     payload.update(fields)
     payload['status'] = status
     payload['updated_at'] = _utc_now()
     task['TakenObjectDetection'] = _jsonable(payload)
+    task_timestamp = str(task.get('task_timestamp') or '').strip()
+    if not task_timestamp:
+        raise ValueError('task_timestamp is required for taken object status artifacts')
+    _write_json(model_result_file(task_timestamp, 'taken.result'), payload)
     save_task_json(json_path, task)
 
 
@@ -228,14 +253,11 @@ def _sample_rgb(sample: CachedRgbdSample) -> np.ndarray:
     return np.asarray(sample.rgb_bgr[:, :, ::-1], dtype=np.float32)
 
 
-def _resolve_upload_file(name: str | None) -> Path | None:
+def _resolve_existing_path(name: str | None) -> Path | None:
     if not name:
         return None
-    path = Path(str(name))
-    if path.is_file():
-        return path
-    candidate = UPLOAD_FOLDER / path.name
-    return candidate if candidate.is_file() else None
+    path = Path(str(name)).expanduser()
+    return path if path.is_file() else None
 
 
 def _resize_mask(mask: np.ndarray, shape: tuple[int, int]) -> np.ndarray:
@@ -792,17 +814,13 @@ def _resolve_projected_mask(task: Mapping[str, Any], first_depth: np.ndarray) ->
     projection = task.get('TakenObjectProjection') if isinstance(task.get('TakenObjectProjection'), Mapping) else {}
     if projection.get('mask_path'):
         candidates.append(('task_projected_mask', Path(str(projection.get('mask_path')))))
-    old = task.get('ModelEventTracking') if isinstance(task.get('ModelEventTracking'), Mapping) else {}
-    if old.get('current_support_mask_path'):
-        candidates.append(('legacy_support_mask', Path(str(old.get('current_support_mask_path')))))
-    sam3 = task.get('sam3Name') if isinstance(task.get('sam3Name'), Mapping) else {}
-    if sam3.get('mask'):
-        resolved = _resolve_upload_file(str(sam3.get('mask')))
-        if resolved:
-            candidates.append(('sam3_mask_resized_fallback', resolved))
+    task_timestamp = str(task.get('task_timestamp') or '').strip()
+    if not task_timestamp:
+        raise ValueError('task_timestamp is required for taken object projected mask')
+    candidates.append(('sam3_mask', model_worker_file(task_timestamp, 'sam3.mask')))
 
     for source, raw_path in candidates:
-        path = raw_path if raw_path.is_file() else _resolve_upload_file(str(raw_path))
+        path = raw_path if raw_path.is_file() else _resolve_existing_path(str(raw_path))
         if not path or not path.is_file():
             continue
         mask = _mask_from_image(path, shape)
@@ -1080,6 +1098,7 @@ def _write_taken(json_path: Path, task: dict[str, Any], *, frames: list[CachedRg
     }
     if extra:
         payload.update(dict(extra))
+    payload.update(_publish_taken_result_artifacts(task, backup_dir))
     _write_status(json_path, task, 'TAKEN', **payload)
     return {'status': 'TAKEN', 'result_timestamp': result_timestamp, 'backup_shigurei_dir': str(backup_dir)}
 
@@ -1176,6 +1195,7 @@ def _run_legacy_projected_mask_detection(json_path: Path, task: dict[str, Any], 
             'debug_files': debug_files,
             'output_dir': str(output_dir),
         }
+        payload.update(_publish_taken_result_artifacts(task, backup_dir))
         _write_status(json_path, task, 'TAKEN', **payload)
         return {'status': 'TAKEN', 'result_timestamp': result_timestamp, 'backup_shigurei_dir': str(backup_dir)}
 
@@ -1200,7 +1220,10 @@ def run_taken_object_detection(json_path_arg: str | Path) -> dict[str, Any]:
     json_path = resolve_task_json_path(json_path_arg)
     task = load_task_json(json_path)
     task_id = str(task.get('task_id') or task.get('task_name') or json_path.stem)
-    output_dir = TAKEN_OBJECT_OUTPUT_ROOT / task_id
+    task_timestamp = str(task.get('task_timestamp') or '').strip()
+    if not task_timestamp:
+        raise ValueError('task_timestamp is required for taken object artifacts')
+    output_dir = model_worker_dir(task_timestamp) / '07_taken_detection_working'
     output_dir.mkdir(parents=True, exist_ok=True)
 
     cache = ShigureRgbdCache(SHIGURE_HISTORY_CACHE_ROOT)
