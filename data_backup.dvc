@@ -1,0 +1,6 @@
+outs:
+- md5: 8ec362dd7f0473520048cc0f3620750a.dir
+  size: 2698497161
+  nfiles: 3819
+  hash: md5
+  path: data_backup

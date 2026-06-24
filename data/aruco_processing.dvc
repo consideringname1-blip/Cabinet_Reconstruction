@@ -3,4 +3,4 @@ outs:
   size: 0
   nfiles: 0
   hash: md5
-  path: runtime
+  path: aruco_processing

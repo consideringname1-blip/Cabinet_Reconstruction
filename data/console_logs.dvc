@@ -1,0 +1,6 @@
+outs:
+- md5: 58fa20d78c52bb0c91c6ced7ef16d374.dir
+  size: 520
+  nfiles: 6
+  hash: md5
+  path: console_logs
