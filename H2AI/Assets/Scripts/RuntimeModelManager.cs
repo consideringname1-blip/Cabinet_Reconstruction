@@ -47,6 +47,7 @@ public class RuntimeModelInstance
     public string ModelKey = "";
     public string TaskId = "";
     public string FbxUrl = "";
+    public bool IsEvidenceOverlay;
     public RuntimeModelPoseData Pose = new RuntimeModelPoseData();
     public RuntimeSpatialBoxData SpatialBox;
 }
@@ -57,6 +58,7 @@ public class RuntimeModelRecord
     public string TaskId = "";
     public string FbxUrl = "";
     public string LocalPath = "";
+    public bool IsEvidenceOverlay;
     public GameObject RootGameObject;
     public DateTime CreatedAtUtc;
     public DateTime LastTouchedAtUtc;
@@ -182,9 +184,15 @@ public class RuntimeModelManager : MonoBehaviour
         EnsureInitialized();
         RemoveModel(instance.ModelKey);
 
-        while (_records.Count >= MaxVisibleModels)
+        if (!instance.IsEvidenceOverlay)
         {
-            RemoveOldestModel();
+            while (CountVisibleDisplayModels() >= MaxVisibleModels)
+            {
+                if (!RemoveOldestVisibleModel())
+                {
+                    break;
+                }
+            }
         }
     }
 
@@ -211,6 +219,7 @@ public class RuntimeModelManager : MonoBehaviour
             TaskId = instance.TaskId,
             FbxUrl = instance.FbxUrl,
             LocalPath = localPath ?? "",
+            IsEvidenceOverlay = instance.IsEvidenceOverlay,
             RootGameObject = rootGameObject,
             CreatedAtUtc = DateTime.UtcNow,
             LastTouchedAtUtc = DateTime.UtcNow,
@@ -218,7 +227,10 @@ public class RuntimeModelManager : MonoBehaviour
             SpatialBox = instance.SpatialBox,
         };
         _records.Add(record);
-        AttachEventIdentity(record);
+        if (!record.IsEvidenceOverlay)
+        {
+            AttachEventIdentity(record);
+        }
         ApplyResolvedPose(record);
         ModelEventDisplay display = ModelEventDisplay.Instance;
         if (display != null)
@@ -281,7 +293,7 @@ public class RuntimeModelManager : MonoBehaviour
         List<string> taskIds = new List<string>();
         foreach (RuntimeModelRecord record in _records)
         {
-            if (record == null || string.IsNullOrEmpty(record.TaskId))
+            if (record == null || record.IsEvidenceOverlay || string.IsNullOrEmpty(record.TaskId))
             {
                 continue;
             }
@@ -463,28 +475,47 @@ public class RuntimeModelManager : MonoBehaviour
         }
     }
 
-    private void RemoveOldestModel()
+    private int CountVisibleDisplayModels()
     {
-        if (_records.Count == 0)
+        int count = 0;
+        foreach (RuntimeModelRecord record in _records)
         {
-            return;
-        }
-
-        int oldestIndex = 0;
-        DateTime oldestTime = _records[0].CreatedAtUtc;
-        for (int i = 1; i < _records.Count; i++)
-        {
-            if (_records[i].CreatedAtUtc < oldestTime)
+            if (record != null && !record.IsEvidenceOverlay)
             {
-                oldestTime = _records[i].CreatedAtUtc;
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private bool RemoveOldestVisibleModel()
+    {
+        int oldestIndex = -1;
+        DateTime oldestTime = DateTime.MaxValue;
+        for (int i = 0; i < _records.Count; i++)
+        {
+            RuntimeModelRecord record = _records[i];
+            if (record == null || record.IsEvidenceOverlay)
+            {
+                continue;
+            }
+            if (oldestIndex < 0 || record.CreatedAtUtc < oldestTime)
+            {
+                oldestTime = record.CreatedAtUtc;
                 oldestIndex = i;
             }
+        }
+
+        if (oldestIndex < 0)
+        {
+            return false;
         }
 
         RuntimeModelRecord oldest = _records[oldestIndex];
         _records.RemoveAt(oldestIndex);
         DestroyRecordObject(oldest);
         DeleteCachedFile(oldest.LocalPath);
+        return true;
     }
 
     private void DestroyRecordObject(RuntimeModelRecord record)

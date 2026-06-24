@@ -1285,6 +1285,7 @@ public class ShuJuQingQiu : MonoBehaviour
             ModelKey = modelKey,
             TaskId = taskId,
             FbxUrl = "",
+            IsEvidenceOverlay = pendingTask["is_evidence_overlay"] != null && pendingTask["is_evidence_overlay"].Value<bool>(),
             Pose = new RuntimeModelPoseData(),
             SpatialBox = spatialBox,
         };
@@ -1555,7 +1556,7 @@ public class ShuJuQingQiu : MonoBehaviour
 
         HistoryPlacementRestorationDisplay display = HistoryPlacementRestorationDisplay.Instance;
         int displayCount = display != null ? display.ShowFromServerResponse(jo) : 0;
-        int queuedDownloadCount = displayCount > 0 ? 0 : QueueHistoryPlacementRestorationModelsForDownload(jo);
+        int queuedDownloadCount = QueueHistoryPlacementRestorationModelsForDownload(jo);
         if (displayCount <= 0 && queuedDownloadCount <= 0)
         {
             historyPlacementRestorationActive = false;
@@ -1958,6 +1959,7 @@ public class ShuJuQingQiu : MonoBehaviour
             ModelKey = modelKey,
             TaskId = modelJ["task_id"]?.ToString() ?? jo["task_id"]?.ToString() ?? "",
             FbxUrl = fbxUrl,
+            IsEvidenceOverlay = modelJ["is_evidence_overlay"] != null && modelJ["is_evidence_overlay"].Value<bool>(),
             Pose = poseData,
             SpatialBox = spatialBox,
         };
@@ -2057,6 +2059,10 @@ public class ShuJuQingQiu : MonoBehaviour
             ["task_id"] = taskId,
             ["fbx_url"] = fbxUrl,
         };
+        if (modelJ["is_evidence_overlay"] != null)
+        {
+            modelInstance["is_evidence_overlay"] = modelJ["is_evidence_overlay"].DeepClone();
+        }
 
         JToken objectWorld = NonNullToken(modelJ["object_world"]);
         JToken objectAruco = NonNullToken(modelJ["object_aruco"]);

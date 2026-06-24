@@ -10,6 +10,10 @@ using UnityEngine;
 public class HistoryPlacementRestorationDisplay : MonoBehaviour
 {
     private const string RootName = "HistoryPlacementRestorationDisplayRoot";
+    private const float PolyhedronTopClearanceMeters = 0.30f;
+    private const float EvidenceImageVerticalOffsetMeters = 0.30f;
+    private const float EvidenceImageSideOffsetMeters = 0.24f;
+    private const float EvidenceImageLerpSpeed = 8.0f;
 
     private static HistoryPlacementRestorationDisplay _instance;
     private readonly Dictionary<string, HistoryPlacementRestorationItem> activeItems = new Dictionary<string, HistoryPlacementRestorationItem>();
@@ -55,6 +59,17 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         }
 
         _instance = this;
+    }
+
+    private void Update()
+    {
+        foreach (HistoryPlacementRestorationItem item in activeItems.Values)
+        {
+            if (item != null && item.EvidenceImageObject != null && item.EvidenceImageObject.activeSelf)
+            {
+                UpdateEvidenceImagePlacement(item, false);
+            }
+        }
     }
 
     private void OnDestroy()
@@ -280,6 +295,9 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         item.BodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url");
         item.BodyModelKey = "body:" + itemKey;
         item.ArucoReference = CloneOrNull(result["aruco_reference"]);
+        item.ObjectAruco = CloneOrNull(result["object_aruco"]);
+        JObject bodyPayload = result["sam3d_body_mesh"] as JObject;
+        item.HasBodyObjectCenterAruco = bodyPayload != null && TryReadVector3(bodyPayload["object_center_armarker"], out item.BodyObjectCenterAruco);
 
         ResolveRuntimeModelManager();
         if (TryGetArucoReference(out Vector3 arucoPosition, out Quaternion arucoRotation)
@@ -482,7 +500,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         }
         if (TryReadArucoPose(objectAruco, arucoPosition, arucoRotation, out worldPosition, out worldRotation))
         {
-            worldPosition += Vector3.up * 0.18f;
+            worldPosition += Vector3.up * PolyhedronTopClearanceMeters;
             return true;
         }
 
@@ -493,7 +511,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         }
         if (TryReadWorldPose(objectWorld, out worldPosition, out worldRotation))
         {
-            worldPosition += Vector3.up * 0.18f;
+            worldPosition += Vector3.up * PolyhedronTopClearanceMeters;
             return true;
         }
         return false;
@@ -511,7 +529,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             worldPosition = new Vector3(
                 (minWorld.x + maxWorld.x) * 0.5f,
-                Mathf.Max(minWorld.y, maxWorld.y) + 0.14f,
+                Mathf.Max(minWorld.y, maxWorld.y) + PolyhedronTopClearanceMeters,
                 (minWorld.z + maxWorld.z) * 0.5f
             );
             return true;
@@ -519,7 +537,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         if (TryReadVector3(spatialBox["center_world"], out Vector3 centerWorld)
             && TryReadVector3(spatialBox["size_world"], out Vector3 sizeWorld))
         {
-            worldPosition = centerWorld + Vector3.up * (Mathf.Abs(sizeWorld.y) * 0.5f + 0.14f);
+            worldPosition = centerWorld + Vector3.up * (Mathf.Abs(sizeWorld.y) * 0.5f + PolyhedronTopClearanceMeters);
             return true;
         }
         return false;
@@ -695,6 +713,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         if (item.EvidenceImageObject != null)
         {
             item.EvidenceImageObject.SetActive(item.EvidenceVisibleRequested);
+            UpdateEvidenceImagePlacement(item, true);
         }
     }
 
@@ -713,17 +732,10 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         GameObject quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
         quad.name = "HistoryPlacementTakenRgb_" + item.Key;
         quad.transform.SetParent(activeRoot.transform, false);
-
-        Camera camera = Camera.main;
-        Vector3 basePosition = item.PolyhedronObject != null ? item.PolyhedronObject.transform.position : item.ToPosition;
-        Vector3 right = camera != null ? camera.transform.right : Vector3.right;
-        Vector3 up = camera != null ? camera.transform.up : Vector3.up;
-        Vector3 forward = camera != null ? (quad.transform.position - camera.transform.position).normalized : Vector3.forward;
-        quad.transform.position = basePosition + right * 0.32f + up * 0.18f;
-        if (camera != null)
+        Collider collider = quad.GetComponent<Collider>();
+        if (collider != null)
         {
-            forward = (quad.transform.position - camera.transform.position).normalized;
-            quad.transform.rotation = Quaternion.LookRotation(forward, up);
+            Destroy(collider);
         }
 
         float aspect = texture.height > 0 ? (float)texture.width / (float)texture.height : 1.0f;
@@ -742,7 +754,109 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             }
             renderer.material = material;
         }
+        UpdateEvidenceImagePlacement(item, true);
         return quad;
+    }
+
+    private void UpdateEvidenceImagePlacement(HistoryPlacementRestorationItem item, bool force)
+    {
+        if (item == null || item.EvidenceImageObject == null)
+        {
+            return;
+        }
+
+        Vector3 anchor = ResolveEvidenceAnchorPosition(item);
+        Camera camera = Camera.main;
+        Vector3 right = camera != null ? camera.transform.right : Vector3.right;
+        Vector3 targetPosition = anchor + Vector3.up * EvidenceImageVerticalOffsetMeters + right * EvidenceImageSideOffsetMeters;
+        item.EvidenceImageObject.transform.position = force
+            ? targetPosition
+            : Vector3.Lerp(item.EvidenceImageObject.transform.position, targetPosition, Time.deltaTime * EvidenceImageLerpSpeed);
+
+        if (camera != null)
+        {
+            Vector3 toCamera = item.EvidenceImageObject.transform.position - camera.transform.position;
+            if (toCamera.sqrMagnitude > 0.0001f)
+            {
+                item.EvidenceImageObject.transform.rotation = Quaternion.LookRotation(toCamera.normalized, Vector3.up);
+            }
+        }
+    }
+
+    private Vector3 ResolveEvidenceAnchorPosition(HistoryPlacementRestorationItem item)
+    {
+        ResolveRuntimeModelManager();
+        RuntimeModelRecord record;
+        if (runtimeModelManager != null)
+        {
+            if (!string.IsNullOrEmpty(item.TaskId) && runtimeModelManager.TryGetLoadedRecord(item.TaskId, out record))
+            {
+                if (TryGetRecordTopCenter(record, out Vector3 topCenter))
+                {
+                    return topCenter;
+                }
+            }
+            if (!string.IsNullOrEmpty(item.ModelKey) && runtimeModelManager.TryGetLoadedRecord(item.ModelKey, out record))
+            {
+                if (TryGetRecordTopCenter(record, out Vector3 topCenter))
+                {
+                    return topCenter;
+                }
+            }
+        }
+
+        if (item.PolyhedronObject != null)
+        {
+            return item.PolyhedronObject.transform.position;
+        }
+        return item.ToPosition;
+    }
+
+    private bool TryGetRecordTopCenter(RuntimeModelRecord record, out Vector3 topCenter)
+    {
+        topCenter = Vector3.zero;
+        if (record == null)
+        {
+            return false;
+        }
+        if (record.RootGameObject != null && TryGetRendererBounds(record.RootGameObject, out Bounds bounds))
+        {
+            topCenter = new Vector3(bounds.center.x, bounds.max.y, bounds.center.z);
+            return true;
+        }
+        if (record.SpatialBox != null && record.SpatialBox.IsReady)
+        {
+            topCenter = new Vector3(record.SpatialBox.CenterWorld.x, record.SpatialBox.AabbMaxWorld.y, record.SpatialBox.CenterWorld.z);
+            return true;
+        }
+        return false;
+    }
+
+    private bool TryGetRendererBounds(GameObject root, out Bounds bounds)
+    {
+        bounds = new Bounds(Vector3.zero, Vector3.zero);
+        if (root == null)
+        {
+            return false;
+        }
+        bool initialized = false;
+        foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer == null)
+            {
+                continue;
+            }
+            if (!initialized)
+            {
+                bounds = renderer.bounds;
+                initialized = true;
+            }
+            else
+            {
+                bounds.Encapsulate(renderer.bounds);
+            }
+        }
+        return initialized;
     }
 
     private bool EnsureBodyMeshForItem(HistoryPlacementRestorationItem item)
@@ -772,13 +886,14 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             return false;
         }
 
-        JObject identityPose = IdentityArucoPose();
+        JObject bodyRootPose = BuildBodyRootArucoPose(item);
         JObject modelInstance = new JObject
         {
             ["model_key"] = item.BodyModelKey,
             ["task_id"] = item.BodyModelKey,
             ["fbx_url"] = item.BodyFbxUrl,
-            ["object_aruco"] = identityPose.DeepClone(),
+            ["is_evidence_overlay"] = true,
+            ["object_aruco"] = bodyRootPose.DeepClone(),
         };
         if (item.ArucoReference != null)
         {
@@ -788,8 +903,9 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         JObject bodyModel = new JObject
         {
             ["task_id"] = item.BodyModelKey,
+            ["is_evidence_overlay"] = true,
             ["model_instance"] = modelInstance,
-            ["object_aruco"] = identityPose,
+            ["object_aruco"] = bodyRootPose,
         };
         if (item.ArucoReference != null)
         {
@@ -808,6 +924,25 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             return true;
         }
         return false;
+    }
+
+    private JObject BuildBodyRootArucoPose(HistoryPlacementRestorationItem item)
+    {
+        Vector3 rootPosition = Vector3.zero;
+        JObject objectAruco = item != null ? item.ObjectAruco as JObject : null;
+        if (item != null
+            && item.HasBodyObjectCenterAruco
+            && objectAruco != null
+            && TryReadVector3(objectAruco["position"], out Vector3 objectCenterAruco))
+        {
+            rootPosition = objectCenterAruco - item.BodyObjectCenterAruco;
+        }
+
+        return new JObject
+        {
+            ["position"] = new JArray(rootPosition.x, rootPosition.y, rootPosition.z),
+            ["rotation_quaternion_xyzw"] = new JArray(0.0f, 0.0f, 0.0f, 1.0f),
+        };
     }
 
     private IEnumerator WaitForBodyMeshThenApplyVisibility(HistoryPlacementRestorationItem item)
@@ -869,15 +1004,6 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             Destroy(material);
         }
-    }
-
-    private static JObject IdentityArucoPose()
-    {
-        return new JObject
-        {
-            ["position"] = new JArray(0.0f, 0.0f, 0.0f),
-            ["rotation_quaternion_xyzw"] = new JArray(0.0f, 0.0f, 0.0f, 1.0f),
-        };
     }
 
     private static string ReadNestedString(JObject payload, string objectKey, string valueKey)
@@ -1399,6 +1525,9 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         public string BodyFbxUrl = "";
         public string BodyModelKey = "";
         public JToken ArucoReference;
+        public JToken ObjectAruco;
+        public bool HasBodyObjectCenterAruco;
+        public Vector3 BodyObjectCenterAruco;
         public bool ImageRequestInFlight;
         public bool BodyDownloadQueued;
         public bool EvidenceVisibleRequested;
