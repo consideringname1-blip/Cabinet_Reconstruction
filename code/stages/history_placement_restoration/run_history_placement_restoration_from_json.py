@@ -6,6 +6,8 @@ import math
 import re
 import shutil
 import sys
+import time
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +25,7 @@ from coordinate_systems import UNITY_TO_OPENCV_CAMERA_BASIS, quat_xyzw_to_rotati
 from stages.history_placement_restoration import settings
 from stages.shigure_history.cache import CachedRgbdSample, CachedSampleMetadata, RosStamp, ShigureRgbdCache, load_json, sample_key
 from stages.shigure_history.marker_history import latest_marker_pose_path
+from task_db import record_task_timing_event
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
@@ -124,6 +127,59 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     with path.open("w", encoding="utf-8") as file:
         json.dump(_jsonable(payload), file, ensure_ascii=False, indent=2)
         file.write("\n")
+
+
+class StageTimingCollector:
+    def __init__(self, *, task_id: str, stage_name: str) -> None:
+        self.task_id = str(task_id)
+        self.stage_name = str(stage_name)
+        self.events: list[dict[str, Any]] = []
+
+    @contextmanager
+    def span(self, event_name: str, detail: dict[str, Any] | None = None):
+        payload: dict[str, Any] = dict(detail or {})
+        start_wall = time.time()
+        start_perf = time.perf_counter()
+        status = "completed"
+        error_message = None
+        try:
+            yield payload
+        except Exception as exc:
+            status = "failed"
+            error_message = str(exc)
+            raise
+        finally:
+            completed_wall = time.time()
+            duration_ms = (time.perf_counter() - start_perf) * 1000.0
+            event = {
+                "event_name": str(event_name),
+                "status": status,
+                "duration_ms": int(round(duration_ms)),
+                "detail": _jsonable(payload),
+            }
+            if error_message:
+                event["error_message"] = error_message
+            self.events.append(event)
+            try:
+                record_task_timing_event(
+                    task_id=self.task_id,
+                    stage_name=self.stage_name,
+                    event_name=str(event_name),
+                    status=status,
+                    duration_ms=duration_ms,
+                    started_at_unix=start_wall,
+                    completed_at_unix=completed_wall,
+                    detail=_jsonable(payload),
+                    error_message=error_message,
+                )
+            except Exception as db_exc:
+                print(f"[history-placement] failed to record timing {event_name}: {db_exc}", file=sys.stderr)
+
+
+def _timing_span(timings: StageTimingCollector | None, event_name: str, detail: dict[str, Any] | None = None):
+    if timings is None:
+        return nullcontext(detail if detail is not None else {})
+    return timings.span(event_name, detail)
 
 
 def _write_status(json_path: Path, task: dict[str, Any], status: str, **fields: Any) -> dict[str, Any]:
@@ -927,18 +983,29 @@ def _establish_baseline(
     output_dir: Path,
     *,
     capture_seconds: float,
+    timings: StageTimingCollector | None = None,
 ) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     start = _stamp_from_seconds(capture_seconds)
     end = _stamp_from_seconds(capture_seconds + max(0.0, settings.BASELINE_POST_CAPTURE_SECONDS))
-    metadata = list(cache.iter_sample_metadata(start=start, end=end))
+    with _timing_span(
+        timings,
+        "baseline_metadata_scan",
+        {"start_stamp": start.to_dict(), "end_stamp": end.to_dict()},
+    ) as timing:
+        metadata = list(cache.iter_sample_metadata(start=start, end=end))
+        timing["metadata_frame_count"] = len(metadata)
     if not metadata:
         return None, {"reason": "no_shigure_frames_for_baseline", "metadata_frame_count": 0}
 
-    first_sample = cache.get_sample(metadata[0].stamp, mode="nearest")
+    with _timing_span(timings, "baseline_first_sample_load", {"stamp": metadata[0].stamp.to_dict()}) as timing:
+        first_sample = cache.get_sample(metadata[0].stamp, mode="nearest")
+        timing["sample_available"] = first_sample is not None
     if first_sample is None:
         return None, {"reason": "baseline_first_sample_unavailable"}
 
-    yolo_events = _yolo_events_from_metadata(metadata)
+    with _timing_span(timings, "baseline_yolo_payload_load", {"metadata_frame_count": len(metadata)}) as timing:
+        yolo_events = _yolo_events_from_metadata(metadata)
+        timing["yolo_event_count"] = len(yolo_events)
     if not yolo_events:
         return None, {"reason": "no_yolo_payload_for_baseline", "metadata_frame_count": len(metadata)}
 
@@ -948,31 +1015,37 @@ def _establish_baseline(
     selected_match_info: dict[str, Any] | None = None
     selected_sample: CachedRgbdSample | None = None
 
-    for event in sorted(yolo_events, key=lambda item: abs(float(item.seconds) - float(capture_seconds))):
-        paired_sample = cache.get_sample(event.sample.stamp, mode="nearest")
-        if paired_sample is None:
-            attempts.append({"event_stamp": event.sample.stamp.to_dict(), "reason": "paired_sample_unavailable"})
-            continue
-        shape = paired_sample.depth.shape[:2]
-        projection, projection_info = _project_object_center_to_shigure(task, paired_sample.camera_info or event.sample.camera_info, shape)
-        if projection is None:
-            attempts.append({"event_stamp": event.sample.stamp.to_dict(), "reason": "projection_failed", "projection": projection_info})
-            continue
-        matched_obs, match_info = _find_yolo_target(cache, [event], projection, shape)
-        attempts.append(
-            {
-                "event_stamp": event.sample.stamp.to_dict(),
-                "seconds_from_capture": float(event.seconds - capture_seconds),
-                "match": match_info,
-            }
-        )
-        if matched_obs is None:
-            continue
-        selected_obs = matched_obs
-        selected_projection_info = projection_info
-        selected_match_info = match_info
-        selected_sample = paired_sample
-        break
+    with _timing_span(timings, "baseline_yolo_target_search", {"yolo_event_count": len(yolo_events)}) as timing:
+        for event in sorted(yolo_events, key=lambda item: abs(float(item.seconds) - float(capture_seconds))):
+            paired_sample = cache.get_sample(event.sample.stamp, mode="nearest")
+            if paired_sample is None:
+                attempts.append({"event_stamp": event.sample.stamp.to_dict(), "reason": "paired_sample_unavailable"})
+                continue
+            shape = paired_sample.depth.shape[:2]
+            projection, projection_info = _project_object_center_to_shigure(task, paired_sample.camera_info or event.sample.camera_info, shape)
+            if projection is None:
+                attempts.append({"event_stamp": event.sample.stamp.to_dict(), "reason": "projection_failed", "projection": projection_info})
+                continue
+            matched_obs, match_info = _find_yolo_target(cache, [event], projection, shape)
+            attempts.append(
+                {
+                    "event_stamp": event.sample.stamp.to_dict(),
+                    "seconds_from_capture": float(event.seconds - capture_seconds),
+                    "match": match_info,
+                }
+            )
+            if matched_obs is None:
+                continue
+            selected_obs = matched_obs
+            selected_projection_info = projection_info
+            selected_match_info = match_info
+            selected_sample = paired_sample
+            break
+        timing["attempt_count"] = len(attempts)
+        timing["selected"] = selected_obs is not None
+        if selected_obs is not None:
+            timing["selected_object_id"] = selected_obs.object_id
+            timing["selected_stamp"] = selected_obs.stamp.to_dict()
 
     if selected_obs is None or selected_sample is None:
         return None, {
@@ -982,14 +1055,23 @@ def _establish_baseline(
             "attempts": attempts[:10],
         }
 
-    backup_dir = _save_sample_backup(task, selected_sample, output_dir, kind="baseline")
-    array_files = _save_baseline_arrays(output_dir, selected_obs, selected_sample)
-    tracking_region_reference = _build_tracking_search_region(
-        cache,
-        [selected_obs.event],
-        selected_sample.depth.shape[:2],
-        reference_region=None,
-    )
+    with _timing_span(timings, "baseline_backup_write", {"stamp": selected_sample.stamp.to_dict()}) as timing:
+        backup_dir = _save_sample_backup(task, selected_sample, output_dir, kind="baseline")
+        timing["backup_dir"] = str(backup_dir)
+    with _timing_span(timings, "baseline_array_write", {"object_id": selected_obs.object_id}) as timing:
+        array_files = _save_baseline_arrays(output_dir, selected_obs, selected_sample)
+        timing.update(array_files)
+    with _timing_span(timings, "baseline_tracking_region_build", {"object_id": selected_obs.object_id}) as timing:
+        tracking_region_reference = _build_tracking_search_region(
+            cache,
+            [selected_obs.event],
+            selected_sample.depth.shape[:2],
+            reference_region=None,
+        )
+        timing["source"] = tracking_region_reference.get("source")
+        timing["is_unrestricted"] = bool(tracking_region_reference.get("is_unrestricted"))
+        timing["valid"] = bool(tracking_region_reference.get("valid", True))
+        timing["reason"] = tracking_region_reference.get("reason")
     baseline = {
         "status": "ready",
         "created_at": _utc_now(),
@@ -1221,15 +1303,29 @@ def _classify_current(
     yolo_event: YoloEvent | None,
     yolo_timing: dict[str, Any],
     shape: tuple[int, int],
+    timings: StageTimingCollector | None = None,
 ) -> dict[str, Any]:
-    baseline_mask, reference_depth = _load_baseline_arrays(baseline)
+    with _timing_span(timings, "baseline_arrays_load") as timing:
+        baseline_mask, reference_depth = _load_baseline_arrays(baseline)
+        timing["mask_available"] = baseline_mask is not None
+        timing["reference_depth_available"] = reference_depth is not None
     validation: dict[str, Any] = {"yolo_timing": yolo_timing}
-    tracking_region = _build_tracking_search_region(
-        cache,
-        [yolo_event] if yolo_event is not None else [],
-        shape,
-        reference_region=baseline.get("tracking_search_region_reference") if isinstance(baseline.get("tracking_search_region_reference"), dict) else None,
-    )
+    with _timing_span(
+        timings,
+        "current_tracking_region_build",
+        {"has_yolo_event": yolo_event is not None},
+    ) as timing:
+        tracking_region = _build_tracking_search_region(
+            cache,
+            [yolo_event] if yolo_event is not None else [],
+            shape,
+            reference_region=baseline.get("tracking_search_region_reference") if isinstance(baseline.get("tracking_search_region_reference"), dict) else None,
+        )
+        timing["source"] = tracking_region.get("source")
+        timing["is_unrestricted"] = bool(tracking_region.get("is_unrestricted"))
+        timing["valid"] = bool(tracking_region.get("valid", True))
+        timing["reason"] = tracking_region.get("reason")
+        timing["matched_yolo_ids"] = tracking_region.get("matched_yolo_ids")
     validation["tracking_search_region"] = tracking_region
 
     if not tracking_region.get("valid", True) and settings.TRACKING_REGION_INVALID_POLICY != "unrestricted":
@@ -1255,13 +1351,30 @@ def _classify_current(
     candidate_info: dict[str, Any] = {"reason": "no_yolo_event"}
     yolo_stale = bool(yolo_timing.get("is_stale")) if isinstance(yolo_timing, dict) else False
     if yolo_event is not None and not yolo_stale:
-        selected_obs, candidate_info = _search_current_candidate(cache, [yolo_event], shape, baseline, tracking_region)
+        with _timing_span(
+            timings,
+            "current_candidate_search",
+            {
+                "tracking_region_source": tracking_region.get("source"),
+                "tracking_region_unrestricted": bool(tracking_region.get("is_unrestricted")),
+            },
+        ) as timing:
+            selected_obs, candidate_info = _search_current_candidate(cache, [yolo_event], shape, baseline, tracking_region)
+            timing["reason"] = candidate_info.get("reason")
+            timing["candidate_count"] = candidate_info.get("candidate_count")
+            timing["viable_candidate_count"] = candidate_info.get("viable_candidate_count")
+            timing["selected"] = selected_obs is not None
+            if selected_obs is not None:
+                timing["selected_object_id"] = selected_obs.object_id
     elif yolo_event is not None:
         candidate_info = {"reason": "yolo_payload_stale", "yolo_timing": yolo_timing}
     validation["candidate_search"] = candidate_info
 
     if selected_obs is not None:
-        is_original, position_check = _is_original_position(selected_obs, baseline)
+        with _timing_span(timings, "current_original_position_check", {"object_id": selected_obs.object_id}) as timing:
+            is_original, position_check = _is_original_position(selected_obs, baseline)
+            timing["is_original"] = bool(is_original)
+            timing.update({k: v for k, v in position_check.items() if k != "checks"})
         status = STATUS_ORIGINAL if is_original else STATUS_MOVED
         current_pose = _pose_from_observation(task, selected_obs)
         return {
@@ -1274,7 +1387,13 @@ def _classify_current(
             "current_pose_aruco": current_pose,
         }
 
-    depth_status, depth_info = _classify_depth_state(current_sample, baseline_mask, reference_depth)
+    with _timing_span(timings, "current_depth_state_classification") as timing:
+        depth_status, depth_info = _classify_depth_state(current_sample, baseline_mask, reference_depth)
+        timing["status"] = depth_status
+        timing["reason"] = depth_info.get("reason")
+        for key in ("valid_pixels", "closer_ratio", "deeper_ratio"):
+            if key in depth_info:
+                timing[key] = depth_info[key]
     return {
         "status": depth_status,
         "reason": depth_info.get("reason"),
@@ -1309,20 +1428,49 @@ def run_history_placement_restoration(
     json_path = resolve_task_json_path(json_path_arg)
     task = load_task_json(json_path)
     task_id = str(task.get("task_id") or task.get("task_name") or json_path.stem)
+    timings = StageTimingCollector(task_id=task_id, stage_name="history_placement_restoration")
     output_dir = HISTORY_PLACEMENT_OUTPUT_ROOT / task_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not settings.ENABLE:
-        payload = _write_status(json_path, task, STATUS_SKIPPED, reason="disabled", output_dir=str(output_dir))
+        payload = _write_status(
+            json_path,
+            task,
+            STATUS_SKIPPED,
+            reason="disabled",
+            output_dir=str(output_dir),
+            timings=timings.events,
+        )
         return {"status": STATUS_SKIPPED, "payload": payload}
 
-    cache = ShigureRgbdCache(SHIGURE_HISTORY_CACHE_ROOT)
-    capture_seconds, capture_source = _task_capture_time_seconds(task)
+    with timings.span("cache_initialize", {"cache_root": str(SHIGURE_HISTORY_CACHE_ROOT)}):
+        cache = ShigureRgbdCache(SHIGURE_HISTORY_CACHE_ROOT)
+    with timings.span("capture_time_resolve") as timing:
+        capture_seconds, capture_source = _task_capture_time_seconds(task)
+        timing["capture_time_source"] = capture_source
+        timing["capture_seconds_available"] = capture_seconds is not None
     if capture_seconds is None:
-        payload = _write_status(json_path, task, STATUS_UNKNOWN, reason="capture_time_missing", output_dir=str(output_dir))
+        payload = _write_status(
+            json_path,
+            task,
+            STATUS_UNKNOWN,
+            reason="capture_time_missing",
+            output_dir=str(output_dir),
+            timings=timings.events,
+        )
         return {"status": STATUS_UNKNOWN, "payload": payload}
 
-    baseline, baseline_info = _establish_baseline(json_path, task, cache, output_dir, capture_seconds=capture_seconds)
+    with timings.span("baseline_establish_total") as timing:
+        baseline, baseline_info = _establish_baseline(
+            json_path,
+            task,
+            cache,
+            output_dir,
+            capture_seconds=capture_seconds,
+            timings=timings,
+        )
+        timing["reason"] = baseline_info.get("reason")
+        timing["baseline_ready"] = baseline is not None
     if baseline is None:
         payload = _write_status(
             json_path,
@@ -1332,11 +1480,16 @@ def run_history_placement_restoration(
             baseline_attempt=baseline_info,
             capture_time_source=capture_source,
             output_dir=str(output_dir),
+            timings=timings.events,
         )
         return {"status": STATUS_UNKNOWN, "payload": payload}
-    task = load_task_json(json_path)
+    with timings.span("reload_task_json_after_baseline"):
+        task = load_task_json(json_path)
 
-    target_seconds, target_source = _resolve_target_seconds(cache, task, target_time)
+    with timings.span("target_time_resolve") as timing:
+        target_seconds, target_source = _resolve_target_seconds(cache, task, target_time)
+        timing["target_time_source"] = target_source
+        timing["target_seconds_available"] = target_seconds is not None
     if target_seconds is None:
         payload = _write_status(
             json_path,
@@ -1345,11 +1498,16 @@ def run_history_placement_restoration(
             reason="target_time_missing",
             baseline=baseline,
             output_dir=str(output_dir),
+            timings=timings.events,
         )
         return {"status": STATUS_UNKNOWN, "payload": payload}
 
     target_stamp = _stamp_from_seconds(target_seconds)
-    current_sample = cache.get_sample(target_stamp, mode="before") or cache.get_sample(target_stamp, mode="nearest")
+    with timings.span("current_sample_load", {"target_stamp": target_stamp.to_dict()}) as timing:
+        current_sample = cache.get_sample(target_stamp, mode="before") or cache.get_sample(target_stamp, mode="nearest")
+        timing["sample_available"] = current_sample is not None
+        if current_sample is not None:
+            timing["sample_stamp"] = current_sample.stamp.to_dict()
     if current_sample is None:
         payload = _write_status(
             json_path,
@@ -1358,15 +1516,28 @@ def run_history_placement_restoration(
             reason="no_shigure_history",
             baseline=baseline,
             output_dir=str(output_dir),
+            timings=timings.events,
         )
         return {"status": STATUS_UNKNOWN, "payload": payload}
 
     yolo_search_seconds = max(0.0, settings.YOLO_NEAREST_SEARCH_SECONDS, settings.YOLO_MAX_DELTA_TO_TARGET_SECONDS)
     yolo_start = _stamp_from_seconds(target_seconds - yolo_search_seconds)
     yolo_end = _stamp_from_seconds(target_seconds + yolo_search_seconds)
-    metadata = list(cache.iter_sample_metadata(start=yolo_start, end=yolo_end))
-    yolo_event, yolo_timing = _nearest_yolo_event(metadata, target_seconds)
-    yolo_paired_sample = cache.get_sample(yolo_event.sample.stamp, mode="nearest") if yolo_event is not None else None
+    with timings.span(
+        "current_yolo_metadata_scan",
+        {"start_stamp": yolo_start.to_dict(), "end_stamp": yolo_end.to_dict()},
+    ) as timing:
+        metadata = list(cache.iter_sample_metadata(start=yolo_start, end=yolo_end))
+        timing["metadata_frame_count"] = len(metadata)
+    with timings.span("current_nearest_yolo_event_select", {"metadata_frame_count": len(metadata)}) as timing:
+        yolo_event, yolo_timing = _nearest_yolo_event(metadata, target_seconds)
+        timing.update({k: v for k, v in yolo_timing.items() if k in {"reason", "candidate_event_count", "yolo_delta_to_target_seconds", "is_stale"}})
+        timing["has_yolo_event"] = yolo_event is not None
+    with timings.span("current_yolo_paired_sample_load", {"has_yolo_event": yolo_event is not None}) as timing:
+        yolo_paired_sample = cache.get_sample(yolo_event.sample.stamp, mode="nearest") if yolo_event is not None else None
+        timing["sample_available"] = yolo_paired_sample is not None
+        if yolo_paired_sample is not None:
+            timing["sample_stamp"] = yolo_paired_sample.stamp.to_dict()
     if yolo_event is not None and yolo_paired_sample is not None:
         yolo_timing = {
             **yolo_timing,
@@ -1375,21 +1546,31 @@ def run_history_placement_restoration(
             "yolo_pairing_delta_seconds": abs(float(yolo_paired_sample.stamp.seconds) - float(yolo_event.seconds)),
         }
     shape = yolo_paired_sample.depth.shape[:2] if yolo_paired_sample is not None else current_sample.depth.shape[:2]
-    current_backup_dir = _save_sample_backup(task, current_sample, output_dir, kind="current")
+    with timings.span("current_backup_write", {"stamp": current_sample.stamp.to_dict()}) as timing:
+        current_backup_dir = _save_sample_backup(task, current_sample, output_dir, kind="current")
+        timing["backup_dir"] = str(current_backup_dir)
     paired_backup_dir = None
     if yolo_paired_sample is not None and yolo_paired_sample.stamp != current_sample.stamp:
-        paired_backup_dir = _save_sample_backup(task, yolo_paired_sample, output_dir, kind="current_yolo_paired")
-    classification = _classify_current(task, cache, baseline, current_sample, yolo_event, yolo_timing, shape)
+        with timings.span("current_yolo_paired_backup_write", {"stamp": yolo_paired_sample.stamp.to_dict()}) as timing:
+            paired_backup_dir = _save_sample_backup(task, yolo_paired_sample, output_dir, kind="current_yolo_paired")
+            timing["backup_dir"] = str(paired_backup_dir)
+    with timings.span("current_classify_total") as timing:
+        classification = _classify_current(task, cache, baseline, current_sample, yolo_event, yolo_timing, shape, timings=timings)
+        timing["status"] = classification.get("status")
+        timing["reason"] = classification.get("reason")
 
     selected_observation = classification.get("selected_observation")
     observation_obj = None
     if selected_observation is not None and yolo_event is not None:
-        selected_id = str(selected_observation.get("object_id") or "")
-        selected_stamp = RosStamp.from_dict(selected_observation.get("stamp") or {})
-        for obs in _observations_for_events(cache, [yolo_event], shape):
-            if obs.object_id == selected_id and obs.stamp == selected_stamp:
-                observation_obj = obs
-                break
+        with timings.span("selected_observation_hydrate") as timing:
+            selected_id = str(selected_observation.get("object_id") or "")
+            selected_stamp = RosStamp.from_dict(selected_observation.get("stamp") or {})
+            timing["selected_object_id"] = selected_id
+            for obs in _observations_for_events(cache, [yolo_event], shape):
+                if obs.object_id == selected_id and obs.stamp == selected_stamp:
+                    observation_obj = obs
+                    break
+            timing["hydrated"] = observation_obj is not None
 
     status = str(classification["status"])
     current_pose = classification.get("current_pose_aruco")
@@ -1399,13 +1580,15 @@ def run_history_placement_restoration(
         current_pose_aruco=current_pose if isinstance(current_pose, dict) else None,
     )
     visualization_sample = yolo_paired_sample if observation_obj is not None and yolo_paired_sample is not None else current_sample
-    visualization_path = _save_visualization(
-        output_dir,
-        visualization_sample,
-        status=status,
-        observation=observation_obj,
-        projection=baseline.get("projection") if isinstance(baseline.get("projection"), dict) else None,
-    )
+    with timings.span("visualization_write", {"status": status}) as timing:
+        visualization_path = _save_visualization(
+            output_dir,
+            visualization_sample,
+            status=status,
+            observation=observation_obj,
+            projection=baseline.get("projection") if isinstance(baseline.get("projection"), dict) else None,
+        )
+        timing["visualization_path"] = visualization_path
 
     payload = _write_status(
         json_path,
@@ -1430,8 +1613,10 @@ def run_history_placement_restoration(
         display=display,
         state_visualization_path=visualization_path,
         output_dir=str(output_dir),
+        timings=timings.events,
     )
-    _write_json(output_dir / "summary.json", payload)
+    with timings.span("summary_json_write", {"summary_path": str(output_dir / "summary.json")}):
+        _write_json(output_dir / "summary.json", payload)
     return {"status": status, "payload": payload}
 
 

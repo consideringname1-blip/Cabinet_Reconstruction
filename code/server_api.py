@@ -299,6 +299,8 @@ def _build_completed_task_response(task_data: dict) -> dict:
         "purpose": (task_data.get("task_json") or {}).get("purpose"),
         "terminal": True,
         "stage_runs": task_data.get("stage_runs") or [],
+        "timing_events": task_data.get("timing_events") or [],
+        "ai_model_timings": task_data.get("ai_model_timings") or [],
         "aruco_coordinate_synced": bool(task_data.get("aruco_coordinate_synced")),
     }
     task_json = task_data.get("task_json") or {}
@@ -386,6 +388,8 @@ def _build_aruco_completed_task_response(task_data: dict) -> dict:
         "purpose": task_json.get("purpose"),
         "terminal": True,
         "stage_runs": task_data.get("stage_runs") or [],
+        "timing_events": task_data.get("timing_events") or [],
+        "ai_model_timings": task_data.get("ai_model_timings") or [],
     }
     _append_pose_fields(response, task_json)
 
@@ -681,6 +685,8 @@ def check_task_queue():
                     "terminal": True,
                     "error": task_data.get("error_message") or "Unknown error",
                     "stage_runs": task_data.get("stage_runs") or [],
+                    "timing_events": task_data.get("timing_events") or [],
+                    "ai_model_timings": task_data.get("ai_model_timings") or [],
                 }
             else:
                 pending.append(

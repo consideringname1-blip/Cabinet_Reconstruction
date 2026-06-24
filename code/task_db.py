@@ -22,6 +22,8 @@ ARUCO_REFERENCE_TABLE = "aruco_references"
 ARUCO_MARKER_TABLE = "aruco_markers"
 ARUCO_MARKER_RELATION_TABLE = "aruco_marker_relations"
 MODEL_BOUNDS_TABLE = "model_bounds"
+TASK_TIMING_EVENT_TABLE = "task_timing_events"
+AI_MODEL_TIMING_TABLE = "ai_model_timings"
 MODEL_BOUNDS_STATUSES = (
     "pending",
     "ready",
@@ -50,6 +52,7 @@ ALLOWED_STATUSES = (
     "failed",
 )
 TERMINAL_STATUSES = ("completed", "aruco_completed", "failed")
+_SCHEMA_INITIALIZED = False
 
 
 def _get_connection() -> sqlite3.Connection:
@@ -67,6 +70,15 @@ def _row_to_dict(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
 
 def _utc_now_text() -> str:
     return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="milliseconds")
+
+
+def _utc_text_from_timestamp(timestamp: float) -> str:
+    return datetime.fromtimestamp(float(timestamp), timezone.utc).replace(tzinfo=None).isoformat(timespec="milliseconds")
+
+
+def _ensure_schema_initialized() -> None:
+    if not _SCHEMA_INITIALIZED:
+        initialize_task_table()
 
 
 def _status_list_sql() -> str:
@@ -121,6 +133,48 @@ def _create_stage_run_table_sql() -> str:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(task_id, stage_name)
+        )
+    """
+
+
+def _create_task_timing_event_table_sql() -> str:
+    return f"""
+        CREATE TABLE {TASK_TIMING_EVENT_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id TEXT NOT NULL,
+            stage_name TEXT NOT NULL,
+            event_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'completed'
+                CHECK (status IN ('completed', 'failed')),
+            started_at TEXT NOT NULL,
+            completed_at TEXT NOT NULL,
+            duration_ms INTEGER NOT NULL,
+            detail_json TEXT NOT NULL DEFAULT '{{}}',
+            error_message TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+
+
+def _create_ai_model_timing_table_sql() -> str:
+    return f"""
+        CREATE TABLE {AI_MODEL_TIMING_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            service_name TEXT NOT NULL,
+            timing_kind TEXT NOT NULL
+                CHECK (timing_kind IN ('initialization', 'task')),
+            stage_name TEXT,
+            task_id TEXT,
+            status TEXT NOT NULL DEFAULT 'completed'
+                CHECK (status IN ('completed', 'failed')),
+            started_at TEXT NOT NULL,
+            completed_at TEXT NOT NULL,
+            duration_ms INTEGER NOT NULL,
+            detail_json TEXT NOT NULL DEFAULT '{{}}',
+            error_message TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """
 
@@ -437,6 +491,7 @@ def _sync_marker_registry_from_reference_folder(conn: sqlite3.Connection) -> int
 
 
 def initialize_task_table() -> None:
+    global _SCHEMA_INITIALIZED
     with _get_connection() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
 
@@ -456,12 +511,36 @@ def initialize_task_table() -> None:
 
         if _table_sql(conn, STAGE_RUN_TABLE) is None:
             conn.execute(_create_stage_run_table_sql())
-            conn.execute(
-                f"""
-                CREATE INDEX IF NOT EXISTS idx_{STAGE_RUN_TABLE}_task
-                ON {STAGE_RUN_TABLE} (task_id)
-                """
-            )
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{STAGE_RUN_TABLE}_task
+            ON {STAGE_RUN_TABLE} (task_id)
+            """
+        )
+
+        if _table_sql(conn, TASK_TIMING_EVENT_TABLE) is None:
+            conn.execute(_create_task_timing_event_table_sql())
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{TASK_TIMING_EVENT_TABLE}_task_stage
+            ON {TASK_TIMING_EVENT_TABLE} (task_id, stage_name, event_name)
+            """
+        )
+
+        if _table_sql(conn, AI_MODEL_TIMING_TABLE) is None:
+            conn.execute(_create_ai_model_timing_table_sql())
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{AI_MODEL_TIMING_TABLE}_task
+            ON {AI_MODEL_TIMING_TABLE} (task_id, service_name, timing_kind)
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{AI_MODEL_TIMING_TABLE}_service
+            ON {AI_MODEL_TIMING_TABLE} (service_name, timing_kind, started_at)
+            """
+        )
 
         if _table_sql(conn, ARUCO_MARKER_TABLE) is None:
             conn.execute(_create_aruco_marker_table_sql())
@@ -494,6 +573,7 @@ def initialize_task_table() -> None:
 
         _normalize_stored_paths(conn)
         conn.commit()
+        _SCHEMA_INITIALIZED = True
 
 
 def get_latest_10_records() -> List[Dict[str, Any]]:
@@ -702,6 +782,132 @@ def get_task_stage_runs(task_id: str) -> List[Dict[str, Any]]:
             f"""
             SELECT *
             FROM {STAGE_RUN_TABLE}
+            WHERE task_id = ?
+            ORDER BY started_at ASC, id ASC
+            """,
+            (str(task_id),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def record_task_timing_event(
+    *,
+    task_id: str,
+    stage_name: str,
+    event_name: str,
+    duration_ms: int | float,
+    started_at: str | None = None,
+    completed_at: str | None = None,
+    started_at_unix: float | None = None,
+    completed_at_unix: float | None = None,
+    status: str = "completed",
+    detail: Any | None = None,
+    error_message: str | None = None,
+) -> None:
+    _ensure_schema_initialized()
+    if status not in {"completed", "failed"}:
+        status = "failed" if error_message else "completed"
+    if completed_at is None:
+        completed_at = _utc_text_from_timestamp(completed_at_unix) if completed_at_unix is not None else _utc_now_text()
+    if started_at is None:
+        started_at = _utc_text_from_timestamp(started_at_unix) if started_at_unix is not None else completed_at
+    detail_json = json.dumps(detail if detail is not None else {}, ensure_ascii=False)
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {TASK_TIMING_EVENT_TABLE} (
+                task_id, stage_name, event_name, status, started_at, completed_at,
+                duration_ms, detail_json, error_message, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                str(task_id),
+                str(stage_name),
+                str(event_name),
+                status,
+                started_at,
+                completed_at,
+                int(round(float(duration_ms))),
+                detail_json,
+                error_message,
+            ),
+        )
+        conn.commit()
+
+
+def get_task_timing_events(task_id: str) -> List[Dict[str, Any]]:
+    _ensure_schema_initialized()
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {TASK_TIMING_EVENT_TABLE}
+            WHERE task_id = ?
+            ORDER BY started_at ASC, id ASC
+            """,
+            (str(task_id),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def record_ai_model_timing(
+    *,
+    service_name: str,
+    timing_kind: str,
+    duration_ms: int | float,
+    stage_name: str | None = None,
+    task_id: str | None = None,
+    started_at: str | None = None,
+    completed_at: str | None = None,
+    started_at_unix: float | None = None,
+    completed_at_unix: float | None = None,
+    status: str = "completed",
+    detail: Any | None = None,
+    error_message: str | None = None,
+) -> None:
+    _ensure_schema_initialized()
+    if timing_kind not in {"initialization", "task"}:
+        raise ValueError(f"unsupported AI model timing kind: {timing_kind}")
+    if status not in {"completed", "failed"}:
+        status = "failed" if error_message else "completed"
+    if completed_at is None:
+        completed_at = _utc_text_from_timestamp(completed_at_unix) if completed_at_unix is not None else _utc_now_text()
+    if started_at is None:
+        started_at = _utc_text_from_timestamp(started_at_unix) if started_at_unix is not None else completed_at
+    detail_json = json.dumps(detail if detail is not None else {}, ensure_ascii=False)
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {AI_MODEL_TIMING_TABLE} (
+                service_name, timing_kind, stage_name, task_id, status, started_at,
+                completed_at, duration_ms, detail_json, error_message, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            """,
+            (
+                str(service_name),
+                timing_kind,
+                str(stage_name) if stage_name is not None else None,
+                str(task_id) if task_id is not None else None,
+                status,
+                started_at,
+                completed_at,
+                int(round(float(duration_ms))),
+                detail_json,
+                error_message,
+            ),
+        )
+        conn.commit()
+
+
+def get_ai_model_timings_for_task(task_id: str) -> List[Dict[str, Any]]:
+    _ensure_schema_initialized()
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {AI_MODEL_TIMING_TABLE}
             WHERE task_id = ?
             ORDER BY started_at ASC, id ASC
             """,

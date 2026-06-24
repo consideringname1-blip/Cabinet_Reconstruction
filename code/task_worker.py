@@ -71,6 +71,8 @@ from task_db import (
     get_completed_tasks_for_startup,
     get_latest_completed_task,
     get_task_stage_runs,
+    get_task_timing_events,
+    get_ai_model_timings_for_task,
     get_task_by_task_id,
     get_unfinished_tasks,
     get_unsynced_completed_tasks,
@@ -78,6 +80,7 @@ from task_db import (
     mark_task_stage_completed,
     mark_task_stage_failed,
     mark_task_stage_started,
+    record_ai_model_timing,
     update_task_status,
 )
 from task_json import (
@@ -152,45 +155,88 @@ class SocketStageService:
         self._active_requests = 0
         self._last_used_at = 0.0
 
-    def ensure_started(self) -> None:
-        with self._lock:
-            if self._is_running_locked() and self.socket_path.exists():
-                return
-            self._stop_locked()
-            WORKER_SOCKET_ROOT.mkdir(parents=True, exist_ok=True)
-            try:
-                self.socket_path.unlink()
-            except FileNotFoundError:
-                pass
+    def ensure_started(
+        self,
+        *,
+        task_id: str | None = None,
+        stage_name: str | None = None,
+        reason: str | None = None,
+    ) -> None:
+        started = False
+        start_wall = time.time()
+        start_perf = time.perf_counter()
+        status = "completed"
+        error_message = None
+        detail: dict[str, Any] = {
+            "socket_path": str(self.socket_path),
+            "script_path": str(self.script_path),
+            "cwd": str(self.cwd),
+        }
+        if reason:
+            detail["reason"] = reason
+        try:
+            with self._lock:
+                if self._is_running_locked() and self.socket_path.exists():
+                    return
+                started = True
+                self._stop_locked()
+                WORKER_SOCKET_ROOT.mkdir(parents=True, exist_ok=True)
+                try:
+                    self.socket_path.unlink()
+                except FileNotFoundError:
+                    pass
 
-            env = os.environ.copy()
-            env.update(self._resolve_env_overrides())
-            env.setdefault("PYTHONUNBUFFERED", "1")
-            command = [
-                _resolve_python(self.python_path),
-                str(self.script_path),
-                "--socket-server",
-                str(self.socket_path),
-            ]
-            self._process = subprocess.Popen(
-                command,
-                cwd=str(self.cwd),
-                env=env,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-            self._reader_thread = threading.Thread(
-                target=self._consume_output,
-                args=(self._process,),
-                daemon=True,
-                name=f"{self.name}-log-reader",
-            )
-            self._reader_thread.start()
-            self._last_used_at = time.monotonic()
+                env = os.environ.copy()
+                env.update(self._resolve_env_overrides())
+                env.setdefault("PYTHONUNBUFFERED", "1")
+                command = [
+                    _resolve_python(self.python_path),
+                    str(self.script_path),
+                    "--socket-server",
+                    str(self.socket_path),
+                ]
+                detail["command"] = command
+                self._process = subprocess.Popen(
+                    command,
+                    cwd=str(self.cwd),
+                    env=env,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+                detail["pid"] = self._process.pid
+                self._reader_thread = threading.Thread(
+                    target=self._consume_output,
+                    args=(self._process,),
+                    daemon=True,
+                    name=f"{self.name}-log-reader",
+                )
+                self._reader_thread.start()
+                self._last_used_at = time.monotonic()
 
-        self._wait_for_socket_ready()
+            self._wait_for_socket_ready()
+        except Exception as exc:
+            status = "failed"
+            error_message = str(exc)
+            raise
+        finally:
+            if started:
+                try:
+                    record_ai_model_timing(
+                        service_name=self.name,
+                        timing_kind="initialization",
+                        stage_name=stage_name,
+                        task_id=task_id,
+                        status=status,
+                        duration_ms=(time.perf_counter() - start_perf) * 1000.0,
+                        started_at_unix=start_wall,
+                        completed_at_unix=time.time(),
+                        detail=detail,
+                        error_message=error_message,
+                    )
+                except Exception as db_exc:
+                    print(f"[worker] failed to record {self.name} initialization timing: {db_exc}")
 
     def _resolve_env_overrides(self) -> dict[str, str]:
         if self.env_overrides is None:
@@ -203,8 +249,19 @@ class SocketStageService:
                 return {}
         return dict(self.env_overrides)
 
-    def request(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self.ensure_started()
+    def request(
+        self,
+        payload: dict[str, Any],
+        *,
+        task_id: str | None = None,
+        stage_name: str | None = None,
+    ) -> dict[str, Any]:
+        self.ensure_started(task_id=task_id, stage_name=stage_name, reason="request")
+        start_wall = time.time()
+        start_perf = time.perf_counter()
+        status = "completed"
+        error_message = None
+        response: dict[str, Any] | None = None
         with self._lock:
             self._active_requests += 1
             self._last_used_at = time.monotonic()
@@ -213,7 +270,35 @@ class SocketStageService:
             if not response.get("ok"):
                 raise RuntimeError(str(response.get("error") or f"{self.name} worker failed"))
             return response
+        except Exception as exc:
+            status = "failed"
+            error_message = str(exc)
+            raise
         finally:
+            duration_ms = (time.perf_counter() - start_perf) * 1000.0
+            detail: dict[str, Any] = {
+                "socket_path": str(self.socket_path),
+                "payload_keys": sorted(str(key) for key in payload.keys()),
+            }
+            if "action" in payload:
+                detail["action"] = payload.get("action")
+            if response is not None and isinstance(response.get("timings"), dict):
+                detail["worker_timings"] = response.get("timings")
+            try:
+                record_ai_model_timing(
+                    service_name=self.name,
+                    timing_kind="task",
+                    stage_name=stage_name,
+                    task_id=task_id,
+                    status=status,
+                    duration_ms=duration_ms,
+                    started_at_unix=start_wall,
+                    completed_at_unix=time.time(),
+                    detail=detail,
+                    error_message=error_message,
+                )
+            except Exception as db_exc:
+                print(f"[worker] failed to record {self.name} task timing: {db_exc}")
             with self._lock:
                 self._active_requests = max(0, self._active_requests - 1)
                 self._last_used_at = time.monotonic()
@@ -529,7 +614,7 @@ def _prewarm_model_pipeline_services(reason: str) -> None:
             return
         try:
             print(f"[worker] prewarming {service.name} after {reason}")
-            service.ensure_started()
+            service.ensure_started(reason=f"prewarm:{reason}")
         except Exception as exc:
             print(f"[worker] failed to prewarm {service.name}: {exc}")
 
@@ -561,6 +646,46 @@ def _prewarm_model_pipeline_services(reason: str) -> None:
             name="model-pipeline-service-prewarm",
         )
         _service_prewarm_thread.start()
+
+
+def _task_id_from_json_path(json_path: Path) -> str:
+    try:
+        task_json = load_task_json(json_path)
+        raw = task_json.get("task_id") or task_json.get("task_name")
+        if raw:
+            return str(raw)
+    except Exception:
+        pass
+    return json_path.stem
+
+
+def _record_worker_internal_model_init(
+    *,
+    service_name: str,
+    stage_name: str,
+    task_id: str,
+    response: dict[str, Any],
+) -> None:
+    timings = response.get("timings") if isinstance(response, dict) else None
+    if not isinstance(timings, dict):
+        return
+    model_load = timings.get("model_load")
+    if not isinstance(model_load, dict) or not model_load.get("loaded_now"):
+        return
+    duration_ms = model_load.get("duration_ms")
+    if duration_ms is None:
+        return
+    try:
+        record_ai_model_timing(
+            service_name=service_name,
+            timing_kind="initialization",
+            stage_name=stage_name,
+            task_id=task_id,
+            duration_ms=float(duration_ms),
+            detail={"source": "worker_internal_model_load", **model_load},
+        )
+    except Exception as exc:
+        print(f"[worker] failed to record {service_name} internal model init timing: {exc}")
 
 
 def _run_python_script(
@@ -598,7 +723,18 @@ def _run_aruco_detect(json_path: Path, context: StageWorkerContext | None = None
 
 
 def _run_sam3mask(json_path: Path, context: StageWorkerContext | None = None) -> None:
-    _sam3mask_service.request({"json_path": str(json_path)})
+    task_id = _task_id_from_json_path(json_path)
+    response = _sam3mask_service.request(
+        {"json_path": str(json_path)},
+        task_id=task_id,
+        stage_name="sam3mask",
+    )
+    _record_worker_internal_model_init(
+        service_name="sam3mask",
+        stage_name="sam3mask",
+        task_id=task_id,
+        response=response,
+    )
 
 
 def _instantmesh_env(context: StageWorkerContext | None) -> dict[str, str] | None:
@@ -617,19 +753,49 @@ def _instantmesh_env(context: StageWorkerContext | None) -> dict[str, str] | Non
 
 def _run_model_generation(json_path: Path, context: StageWorkerContext | None = None) -> None:
     env = _instantmesh_env(context)
+    task_id = _task_id_from_json_path(json_path)
     if MODEL_GENERATION_BACKEND == "sam3d_objects":
-        _run_python_script(
-            python_path=SAM3D_OBJECTS_STAGE_PY,
-            script_path=SAM3D_OBJECTS_STAGE_RUN,
-            json_path=json_path,
-            cwd=SAM3D_OBJECTS_ROOT,
-            env=env,
-        )
+        start_wall = time.time()
+        start_perf = time.perf_counter()
+        status = "completed"
+        error_message = None
+        try:
+            _run_python_script(
+                python_path=SAM3D_OBJECTS_STAGE_PY,
+                script_path=SAM3D_OBJECTS_STAGE_RUN,
+                json_path=json_path,
+                cwd=SAM3D_OBJECTS_ROOT,
+                env=env,
+            )
+        except Exception as exc:
+            status = "failed"
+            error_message = str(exc)
+            raise
+        finally:
+            try:
+                record_ai_model_timing(
+                    service_name="sam3d_objects",
+                    timing_kind="task",
+                    stage_name="instantmesh",
+                    task_id=task_id,
+                    status=status,
+                    duration_ms=(time.perf_counter() - start_perf) * 1000.0,
+                    started_at_unix=start_wall,
+                    completed_at_unix=time.time(),
+                    detail={"backend": "sam3d_objects", "script_path": str(SAM3D_OBJECTS_STAGE_RUN)},
+                    error_message=error_message,
+                )
+            except Exception as db_exc:
+                print(f"[worker] failed to record sam3d_objects task timing: {db_exc}")
         return
 
-    _instantmesh_service.ensure_started()
+    _instantmesh_service.ensure_started(task_id=task_id, stage_name="instantmesh", reason="instantmesh stage")
     _prewarm_model_pipeline_services("instantmesh start")
-    _instantmesh_service.request({"json_path": str(json_path)})
+    _instantmesh_service.request(
+        {"json_path": str(json_path)},
+        task_id=task_id,
+        stage_name="instantmesh",
+    )
 
 
 def _run_instantmesh(json_path: Path, context: StageWorkerContext | None = None) -> None:
@@ -657,7 +823,12 @@ def _run_modelscale(json_path: Path, context: StageWorkerContext | None = None) 
 def _run_object_alignment(json_path: Path, context: StageWorkerContext | None = None) -> None:
     env = None
     if OBJECT_ALIGNMENT_MODE == "foundationpose":
-        _foundationpose_service.ensure_started()
+        task_id = _task_id_from_json_path(json_path)
+        _foundationpose_service.ensure_started(
+            task_id=task_id,
+            stage_name="object_alignment",
+            reason="foundationpose object alignment",
+        )
         env = os.environ.copy()
         env["FOUNDATIONPOSE_WORKER_SOCKET"] = str(_foundationpose_service.socket_path)
     _run_python_script(
@@ -1050,6 +1221,8 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     task_record["task_json"] = task_json
     task_record["error"] = task_record.get("error_message")
     task_record["stage_runs"] = get_task_stage_runs(task_id)
+    task_record["timing_events"] = get_task_timing_events(task_id)
+    task_record["ai_model_timings"] = get_ai_model_timings_for_task(task_id)
     task_record["outputs"] = {
         "model_generation": task_json.get("ModelGeneration") or {},
         "sam3d_objects": task_json.get("SAM3DObjects") or {},
@@ -1123,7 +1296,10 @@ def get_latest_completed_task_data(
 
     task_record["task_json"] = task_json
     task_record["error"] = task_record.get("error_message")
-    task_record["stage_runs"] = get_task_stage_runs(str(task_record.get("task_id") or ""))
+    task_id_str = str(task_record.get("task_id") or "")
+    task_record["stage_runs"] = get_task_stage_runs(task_id_str)
+    task_record["timing_events"] = get_task_timing_events(task_id_str)
+    task_record["ai_model_timings"] = get_ai_model_timings_for_task(task_id_str)
     task_record["outputs"] = {
         "model_generation": task_json.get("ModelGeneration") or {},
         "sam3d_objects": task_json.get("SAM3DObjects") or {},

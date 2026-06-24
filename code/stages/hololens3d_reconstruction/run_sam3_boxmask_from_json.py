@@ -5,6 +5,7 @@ import os
 import re
 import socket
 import sys
+import time
 import traceback
 from pathlib import Path
 from typing import Any
@@ -380,10 +381,16 @@ class Sam3MaskRunner:
         self.processor_cls = None
         self.bpe_path: Path | None = None
 
-    def _load_model(self) -> None:
+    def _load_model(self) -> dict[str, Any]:
         if self._loaded:
-            return
+            return {
+                "loaded_now": False,
+                "duration_ms": 0.0,
+                "device": str(self.device) if self.device is not None else None,
+                "bpe_path": str(self.bpe_path) if self.bpe_path is not None else None,
+            }
 
+        start = time.perf_counter()
         try:
             import torch
         except Exception as e:
@@ -417,9 +424,19 @@ class Sam3MaskRunner:
         self.processor_cls = Sam3Processor
         self.bpe_path = bpe_path
         self._loaded = True
-        print("[SAM3 worker] model ready", flush=True)
+        duration_ms = (time.perf_counter() - start) * 1000.0
+        print(f"[SAM3 worker] model ready in {duration_ms:.1f} ms", flush=True)
+        return {
+            "loaded_now": True,
+            "duration_ms": duration_ms,
+            "device": str(device),
+            "bpe_path": str(bpe_path),
+        }
 
-    def run_task(self, json_path: Path, task: dict[str, Any]) -> None:
+    def run_task(self, json_path: Path, task: dict[str, Any]) -> dict[str, Any]:
+        task_start = time.perf_counter()
+        timings: dict[str, Any] = {}
+        setup_start = time.perf_counter()
         upload_folder = Path(require_attr(config, "UPLOAD_FOLDER")).expanduser().resolve()
         depth_root = Path(require_attr(config, "HOLOLENS2_OUTPUT_DEPTH_IMAGES")).expanduser().resolve()
         output_root = Path(require_attr(config, "SAM3_OUTPUT_ROOT")).expanduser().resolve()
@@ -443,17 +460,20 @@ class Sam3MaskRunner:
 
         color_path = ensure_file(upload_folder / pv_name, "PVCamera image")
         depth_path = ensure_file(depth_root / align_depth_name, "Aligned depth image")
+        timings["prepare_inputs_ms"] = (time.perf_counter() - setup_start) * 1000.0
 
-        self._load_model()
+        timings["model_load"] = self._load_model()
         assert self.torch is not None
         assert self.device is not None
         assert self.model is not None
         assert self.processor_cls is not None
         assert self.bpe_path is not None
 
+        read_start = time.perf_counter()
         color_pil = read_image_rgb(color_path)
         color_np = np.array(color_pil)
         depth_np = read_image_array_preserve(depth_path)
+        timings["read_inputs_ms"] = (time.perf_counter() - read_start) * 1000.0
 
         input_box = build_box_from_selection(
             selection_box=selection,
@@ -469,6 +489,7 @@ class Sam3MaskRunner:
         print(f"[INFO] SAM3 BPE     : {self.bpe_path}")
         print(f"[INFO] Box (xyxy)   : {input_box.tolist()}")
 
+        inference_start = time.perf_counter()
         processor = self.processor_cls(self.model)
         inference_state = processor.set_image(color_pil)
 
@@ -491,9 +512,12 @@ class Sam3MaskRunner:
                     multimask_output=False,
                 )
 
+        timings["sam3_inference_ms"] = (time.perf_counter() - inference_start) * 1000.0
+
         if len(masks) < 1:
             raise RuntimeError("SAM3 returned no masks")
 
+        post_start = time.perf_counter()
         mask_bool = squeeze_mask(np.asarray(masks[0]))
         mask_bool = clip_mask_to_box(mask_bool, input_box)
         mask_bool = refine_mask(mask_bool)
@@ -516,7 +540,9 @@ class Sam3MaskRunner:
         color_out = output_root / color_name
         depth_out = output_root / depth_name
         overlay_out = output_root / overlay_name
+        timings["postprocess_ms"] = (time.perf_counter() - post_start) * 1000.0
 
+        write_start = time.perf_counter()
         save_array_png(mask_png, mask_out)
         save_array_png(masked_color_rgba, color_out)
         save_array_png(masked_depth, depth_out)
@@ -530,6 +556,7 @@ class Sam3MaskRunner:
         }
         task["Sam3SpatialBox"] = spatial_box
         save_task_json(json_path, task)
+        timings["write_outputs_ms"] = (time.perf_counter() - write_start) * 1000.0
 
         best_score = None
         try:
@@ -544,8 +571,11 @@ class Sam3MaskRunner:
         print(f"[OK] overlay -> {overlay_out}")
         if best_score is not None:
             print(f"[INFO] score -> {best_score:.6f}")
+        timings["total_ms"] = (time.perf_counter() - task_start) * 1000.0
         print(f"[INFO] spatial box -> {spatial_box.get('status')}")
+        print(f"[INFO] timing total -> {timings['total_ms']:.1f} ms")
         print(f"[OK] JSON updated -> {json_path}")
+        return {"timings": timings}
 
 
 def _read_socket_json(conn: socket.socket) -> dict[str, Any]:
@@ -590,8 +620,8 @@ def run_socket_server(socket_path: Path) -> None:
                         break
                     json_path = ensure_file(resolve_task_json_path(request["json_path"]), "JSON file")
                     task = load_task_json(json_path)
-                    runner.run_task(json_path, task)
-                    _send_socket_json(conn, {"ok": True})
+                    result = runner.run_task(json_path, task)
+                    _send_socket_json(conn, {"ok": True, **result})
                 except Exception as exc:
                     traceback.print_exc(file=sys.stderr)
                     _send_socket_json(conn, {"ok": False, "error": str(exc)})
