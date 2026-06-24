@@ -6,6 +6,7 @@ using UnityEngine;
 public class RuntimeSpatialBoxDisplay : MonoBehaviour
 {
     private const float PanelOffsetMeters = 0.20f;
+    private const float PanelDownOffsetMeters = 0.10f;
     private const float FaceSwitchHoldSeconds = 1.0f;
     private const float PanelLerpSpeed = 8.0f;
 
@@ -22,7 +23,6 @@ public class RuntimeSpatialBoxDisplay : MonoBehaviour
     private TextMesh panelText;
     private Material fillMaterial;
     private Material lineMaterial;
-    private Material panelMaterial;
     private Vector3[] corners = new Vector3[8];
     private Vector3 activeFaceNormal = Vector3.forward;
     private Vector3 pendingFaceNormal = Vector3.forward;
@@ -58,7 +58,6 @@ public class RuntimeSpatialBoxDisplay : MonoBehaviour
     {
         DestroyMaterial(fillMaterial);
         DestroyMaterial(lineMaterial);
-        DestroyMaterial(panelMaterial);
     }
 
     private void Rebuild()
@@ -99,17 +98,13 @@ public class RuntimeSpatialBoxDisplay : MonoBehaviour
     {
         if (fillMaterial == null)
         {
-            fillMaterial = CreateTransparentMaterial(new Color(0.05f, 0.62f, 1.0f, 0.18f));
+            fillMaterial = CreateTransparentMaterial(new Color(0.05f, 0.62f, 1.0f, 0.20f));
         }
         if (lineMaterial == null)
         {
             Shader shader = FindFirstAvailableShader("Sprites/Default", "Standard", "Unlit/Color");
             lineMaterial = new Material(shader);
             SetMaterialColor(lineMaterial, new Color(0.05f, 1.0f, 0.95f, 0.95f));
-        }
-        if (panelMaterial == null)
-        {
-            panelMaterial = CreateTransparentMaterial(new Color(1.0f, 1.0f, 1.0f, 0.72f));
         }
     }
 
@@ -158,31 +153,16 @@ public class RuntimeSpatialBoxDisplay : MonoBehaviour
         panelObject.transform.SetParent(transform, false);
         panelRoot = panelObject.transform;
 
-        GameObject background = GameObject.CreatePrimitive(PrimitiveType.Quad);
-        background.name = "background";
-        background.transform.SetParent(panelRoot, false);
-        background.transform.localScale = new Vector3(0.36f, 0.12f, 1.0f);
-        Collider collider = background.GetComponent<Collider>();
-        if (collider != null)
-        {
-            Destroy(collider);
-        }
-        Renderer renderer = background.GetComponent<Renderer>();
-        if (renderer != null)
-        {
-            renderer.sharedMaterial = panelMaterial;
-        }
-
         GameObject textObject = new GameObject("text");
         textObject.transform.SetParent(panelRoot, false);
-        textObject.transform.localPosition = new Vector3(0f, 0f, 0.006f);
+        textObject.transform.localPosition = Vector3.zero;
         panelText = textObject.AddComponent<TextMesh>();
         panelText.text = "processing";
         panelText.anchor = TextAnchor.MiddleCenter;
         panelText.alignment = TextAlignment.Center;
         panelText.characterSize = 0.025f;
         panelText.fontSize = 48;
-        panelText.color = new Color(0.02f, 0.03f, 0.04f, 1.0f);
+        panelText.color = new Color(0.0f, 0.18f, 1.0f, 1.0f);
     }
 
     private void UpdatePanelPlacement(bool force = false)
@@ -213,7 +193,7 @@ public class RuntimeSpatialBoxDisplay : MonoBehaviour
             }
         }
 
-        Vector3 targetPosition = FaceCenter(activeFaceNormal) + activeFaceNormal * PanelOffsetMeters;
+        Vector3 targetPosition = FaceCenter(activeFaceNormal) + activeFaceNormal * PanelOffsetMeters + Vector3.down * PanelDownOffsetMeters;
         panelRoot.position = force
             ? targetPosition
             : Vector3.Lerp(panelRoot.position, targetPosition, Time.deltaTime * PanelLerpSpeed);

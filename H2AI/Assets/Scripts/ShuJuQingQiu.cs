@@ -1444,10 +1444,10 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
-        int queuedDownloadCount = QueueHistoryPlacementRestorationModelsForDownload(jo);
         HistoryPlacementRestorationDisplay display = HistoryPlacementRestorationDisplay.Instance;
         int displayCount = display != null ? display.ShowFromServerResponse(jo) : 0;
-        if (displayCount <= 0)
+        int queuedDownloadCount = displayCount > 0 ? 0 : QueueHistoryPlacementRestorationModelsForDownload(jo);
+        if (displayCount <= 0 && queuedDownloadCount <= 0)
         {
             historyPlacementRestorationActive = false;
         }
@@ -1456,7 +1456,18 @@ public class ShuJuQingQiu : MonoBehaviour
             + " model(s), displayed " + displayCount.ToString(CultureInfo.InvariantCulture)
             + ", queued downloads " + queuedDownloadCount.ToString(CultureInfo.InvariantCulture)
             + ": " + response.DataAsText);
-        ShowFrontMessage("history_placement_restoration_ready_" + displayCount.ToString(CultureInfo.InvariantCulture));
+        if (displayCount > 0)
+        {
+            ShowFrontMessage("history_placement_restoration_ready_" + displayCount.ToString(CultureInfo.InvariantCulture));
+        }
+        else if (queuedDownloadCount > 0)
+        {
+            ShowFrontMessage("history_placement_restoration_downloading_model");
+        }
+        else
+        {
+            ShowFrontMessage("history_placement_restoration_no_result");
+        }
     }
 
     private void QueueLatestCompletedModelsForDownload()

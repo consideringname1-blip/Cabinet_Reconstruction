@@ -63,6 +63,10 @@ public class ModelEventDisplay : MonoBehaviour
         }
 
         bool historyEvidenceHandled = ToggleHistoryEvidenceForIdentity(identity);
+        if (historyEvidenceHandled)
+        {
+            return;
+        }
 
         RuntimeModelRecord record = null;
         RuntimeModelManager manager = RuntimeModelManager.Instance;

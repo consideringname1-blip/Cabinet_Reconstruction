@@ -19,6 +19,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
     private Material octahedronMaterial;
     private Material dodecahedronMaterial;
     private Material icosahedronMaterial;
+    private Material evidenceBodyMaterial;
     private RuntimeModelManager runtimeModelManager;
 
     public static HistoryPlacementRestorationDisplay Instance
@@ -63,6 +64,8 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             _instance = null;
         }
         Clear();
+        DestroyMaterial(evidenceBodyMaterial);
+        evidenceBodyMaterial = null;
     }
 
     public int ShowFromServerResponse(JObject response)
@@ -235,7 +238,12 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             HideEvidenceForItem(item);
             return true;
         }
-        return EnsureEvidenceForItem(item);
+        if (EnsureEvidenceForItem(item))
+        {
+            return true;
+        }
+        ShowFrontMessage("history_placement_restoration_no_evidence");
+        return true;
     }
 
     private HistoryPlacementRestorationItem FindEvidenceItem(string taskIdOrModelKey)
@@ -316,28 +324,24 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
 
     private bool CreateDisplayForPayload(string taskId, JObject result, JObject payload, Vector3 arucoPosition, Quaternion arucoRotation)
     {
-        JObject display = payload["display"] as JObject;
-        if (display == null)
+        JObject display = payload != null ? payload["display"] as JObject : null;
+        string status = payload != null && payload["status"] != null ? payload["status"].ToString() : result?["status"]?.ToString() ?? "";
+        JObject polyhedron = display != null ? display["polyhedron"] as JObject : null;
+        bool hasPolyhedronPose = false;
+        Vector3 polyWorldPosition = Vector3.zero;
+        Quaternion polyWorldRotation = Quaternion.identity;
+        if (polyhedron != null && (polyhedron["enabled"] == null || polyhedron["enabled"].Value<bool>()))
+        {
+            JObject polyhedronPose = polyhedron["pose_aruco"] as JObject;
+            hasPolyhedronPose = TryReadArucoPose(polyhedronPose, arucoPosition, arucoRotation, out polyWorldPosition, out polyWorldRotation);
+        }
+        if (!hasPolyhedronPose && !TryReadFallbackPolyhedronPose(result, arucoPosition, arucoRotation, out polyWorldPosition, out polyWorldRotation))
         {
             return false;
         }
 
-        string status = payload["status"] != null ? payload["status"].ToString() : "";
-        JObject polyhedron = display["polyhedron"] as JObject;
-        bool polyhedronEnabled = polyhedron != null && polyhedron["enabled"] != null && polyhedron["enabled"].Value<bool>();
-        if (!polyhedronEnabled)
-        {
-            return false;
-        }
-
-        JObject polyhedronPose = polyhedron["pose_aruco"] as JObject;
-        if (!TryReadArucoPose(polyhedronPose, arucoPosition, arucoRotation, out Vector3 polyWorldPosition, out Quaternion polyWorldRotation))
-        {
-            return false;
-        }
-
-        string shape = polyhedron["shape"] != null ? polyhedron["shape"].ToString() : "cube";
-        float edgeLength = polyhedron["edge_length_m"] != null ? polyhedron["edge_length_m"].Value<float>() : 0.1f;
+        string shape = polyhedron != null && polyhedron["shape"] != null ? polyhedron["shape"].ToString() : FallbackShapeForStatus(status);
+        float edgeLength = polyhedron != null && polyhedron["edge_length_m"] != null ? polyhedron["edge_length_m"].Value<float>() : 0.12f;
         string itemKey = string.IsNullOrEmpty(taskId) ? System.Guid.NewGuid().ToString("N") : taskId;
         GameObject polyObject = CreatePolyhedron(shape, edgeLength, status);
         polyObject.name = "HistoryPlacement_" + shape + "_" + itemKey;
@@ -363,7 +367,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             ArucoReference = CloneOrNull(result != null ? result["aruco_reference"] : null),
         };
 
-        JObject animation = display["animation"] as JObject;
+        JObject animation = display != null ? display["animation"] as JObject : null;
         if (animation != null && animation["enabled"] != null && animation["enabled"].Value<bool>())
         {
             JObject fromPose = animation["from_pose_aruco"] as JObject;
@@ -381,6 +385,107 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         }
 
         activeItems[itemKey] = item;
+        return true;
+    }
+
+    private string FallbackShapeForStatus(string status)
+    {
+        string normalized = (status ?? "").ToUpperInvariant();
+        if (normalized == "MOVED")
+        {
+            return "cube";
+        }
+        if (normalized == "MISSING" || normalized == "TAKEN")
+        {
+            return "tetrahedron";
+        }
+        if (normalized == "STABLE")
+        {
+            return "octahedron";
+        }
+        return "icosahedron";
+    }
+
+    private bool TryReadFallbackPolyhedronPose(
+        JObject result,
+        Vector3 arucoPosition,
+        Quaternion arucoRotation,
+        out Vector3 worldPosition,
+        out Quaternion worldRotation
+    )
+    {
+        worldPosition = Vector3.zero;
+        worldRotation = Quaternion.identity;
+        JObject modelInstance = result != null ? result["model_instance"] as JObject : null;
+        JObject spatialBox = result != null ? result["sam3_spatial_box"] as JObject : null;
+        if (spatialBox == null && modelInstance != null)
+        {
+            spatialBox = modelInstance["sam3_spatial_box"] as JObject;
+        }
+        if (TryReadSpatialBoxTop(spatialBox, out worldPosition))
+        {
+            return true;
+        }
+
+        JObject objectAruco = result != null ? result["object_aruco"] as JObject : null;
+        if (objectAruco == null && modelInstance != null)
+        {
+            objectAruco = modelInstance["object_aruco"] as JObject;
+        }
+        if (TryReadArucoPose(objectAruco, arucoPosition, arucoRotation, out worldPosition, out worldRotation))
+        {
+            worldPosition += Vector3.up * 0.18f;
+            return true;
+        }
+
+        JObject objectWorld = result != null ? result["object_world"] as JObject : null;
+        if (objectWorld == null && modelInstance != null)
+        {
+            objectWorld = modelInstance["object_world"] as JObject;
+        }
+        if (TryReadWorldPose(objectWorld, out worldPosition, out worldRotation))
+        {
+            worldPosition += Vector3.up * 0.18f;
+            return true;
+        }
+        return false;
+    }
+
+    private bool TryReadSpatialBoxTop(JObject spatialBox, out Vector3 worldPosition)
+    {
+        worldPosition = Vector3.zero;
+        if (spatialBox == null)
+        {
+            return false;
+        }
+        if (TryReadVector3(spatialBox["aabb_min_world"], out Vector3 minWorld)
+            && TryReadVector3(spatialBox["aabb_max_world"], out Vector3 maxWorld))
+        {
+            worldPosition = new Vector3(
+                (minWorld.x + maxWorld.x) * 0.5f,
+                Mathf.Max(minWorld.y, maxWorld.y) + 0.14f,
+                (minWorld.z + maxWorld.z) * 0.5f
+            );
+            return true;
+        }
+        if (TryReadVector3(spatialBox["center_world"], out Vector3 centerWorld)
+            && TryReadVector3(spatialBox["size_world"], out Vector3 sizeWorld))
+        {
+            worldPosition = centerWorld + Vector3.up * (Mathf.Abs(sizeWorld.y) * 0.5f + 0.14f);
+            return true;
+        }
+        return false;
+    }
+
+    private bool TryReadWorldPose(JObject pose, out Vector3 worldPosition, out Quaternion worldRotation)
+    {
+        worldPosition = Vector3.zero;
+        worldRotation = Quaternion.identity;
+        if (pose == null || !TryReadVector3(pose["position"], out worldPosition))
+        {
+            return false;
+        }
+        TryReadQuaternion(pose["rotation_quaternion_xyzw"], out worldRotation);
         return true;
     }
 
@@ -599,6 +704,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             if (bodyRecord != null && bodyRecord.RootGameObject != null)
             {
+                ApplyEvidenceBodyMaterial(bodyRecord.RootGameObject);
                 bodyRecord.RootGameObject.SetActive(item.EvidenceVisibleRequested);
             }
             return true;
@@ -658,6 +764,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
                 && bodyRecord != null
                 && bodyRecord.RootGameObject != null)
             {
+                ApplyEvidenceBodyMaterial(bodyRecord.RootGameObject);
                 bodyRecord.RootGameObject.SetActive(item.EvidenceVisibleRequested);
                 item.BodyDownloadQueued = false;
                 item.BodyVisibilityCoroutine = null;
@@ -669,6 +776,40 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             item.BodyDownloadQueued = false;
             item.BodyVisibilityCoroutine = null;
+        }
+    }
+
+    private void ApplyEvidenceBodyMaterial(GameObject root)
+    {
+        if (root == null)
+        {
+            return;
+        }
+
+        Material material = GetEvidenceBodyMaterial();
+        foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
+        {
+            if (renderer != null)
+            {
+                renderer.sharedMaterial = material;
+            }
+        }
+    }
+
+    private Material GetEvidenceBodyMaterial()
+    {
+        if (evidenceBodyMaterial == null)
+        {
+            evidenceBodyMaterial = BuildMaterial(new Color(0.62f, 0.66f, 0.70f, 0.38f));
+        }
+        return evidenceBodyMaterial;
+    }
+
+    private static void DestroyMaterial(Material material)
+    {
+        if (material != null)
+        {
+            Destroy(material);
         }
     }
 
