@@ -1,8 +1,21 @@
 当前约定：
 data/config 和 data/aruco/reference 继续由 git 追踪，不用 dvc。
-data_backup 整体由 dvc 追踪。
-data 内运行期目录分开由 dvc 追踪。
+data_backup 整体由 dvc 追踪，不拆分子目录。
+data 内当前非空稳定运行期目录分开由 dvc 追踪。
+data/shigure_history_cache 是 1 分钟左右的实时缓存，不用 dvc。
+data/worker_sockets 是本地运行 socket 目录，不用 dvc。
+data/history_placement_requests 当前为空，不作为 dvc 入口。
 旧 data/upload 和 data/RecordPhotoAndVideo 不再作为当前 dvc 入口，历史数据放 data_backup。
+Shigure 诊断目录 data/shigure_mask_overlay_checks 可以由 dvc 追踪图片/json，持续追加的 recorder log 由 .dvcignore 忽略。
+
+当前 data 的 dvc 入口：
+data/aruco/shigure_marker_history.dvc
+data/aruco_processing.dvc
+data/console_logs.dvc
+data/database.dvc
+data/model.dvc
+data/shigure_mask_overlay_checks.dvc
+data_backup.dvc
 
 初次初始化（已有git仓库）：
 conda create -n dvc python=3.10 -y
@@ -19,23 +32,29 @@ dvc remote modify --local gdrive gdrive_client_id YOUR_ID
 dvc remote modify --local gdrive gdrive_client_secret YOUR_SECRET
 dvc remote list
 
+初次初始化以后，确认 .dvcignore 内包含 Shigure 诊断日志忽略规则：
+data/shigure_mask_overlay_checks/**/shigure_history_recorder.log
+
 git add .dvc .dvcignore
 git commit -m "init dvc"
 
 按当前结构创建追踪：
 conda activate dvc
-dvc add -f data/aruco/runtime data/aruco/shigure_marker_history data/aruco_processing data/console_logs data/database data/history_placement_requests data/model data/shigure_history_cache data/worker_sockets data_backup
+dvc add -f data/aruco/shigure_marker_history data/aruco_processing data/console_logs data/database data/model data/shigure_mask_overlay_checks data_backup
 
-git add .gitignore data/.gitignore data/aruco/.gitignore data/aruco/runtime.dvc data/aruco/shigure_marker_history.dvc data/aruco_processing.dvc data/console_logs.dvc data/database.dvc data/history_placement_requests.dvc data/model.dvc data/shigure_history_cache.dvc data/worker_sockets.dvc data_backup.dvc
+git add .dvcignore data/aruco/shigure_marker_history.dvc data/aruco_processing.dvc data/console_logs.dvc data/database.dvc data/model.dvc data/shigure_mask_overlay_checks.dvc data_backup.dvc
 git commit -m "track runtime data with dvc"
 dvc push
 git push
 
 不要执行：
+dvc add data
 dvc add data/config
 dvc add data/aruco/reference
 dvc add data/upload
 dvc add data/RecordPhotoAndVideo
+dvc add data/shigure_history_cache
+dvc add data/worker_sockets
 
 二次初始化：
 conda create -n dvc python=3.10 -y
@@ -56,10 +75,10 @@ dvc pull
 日常流程：
 上传：
 conda activate dvc
-dvc add -f data/aruco/runtime data/aruco/shigure_marker_history data/aruco_processing data/console_logs data/database data/history_placement_requests data/model data/shigure_history_cache data/worker_sockets data_backup
+dvc add -f data/aruco/shigure_marker_history data/aruco_processing data/console_logs data/database data/model data/shigure_mask_overlay_checks data_backup
 dvc status
 git status
-git add .gitignore data/.gitignore data/aruco/.gitignore data/aruco/runtime.dvc data/aruco/shigure_marker_history.dvc data/aruco_processing.dvc data/console_logs.dvc data/database.dvc data/history_placement_requests.dvc data/model.dvc data/shigure_history_cache.dvc data/worker_sockets.dvc data_backup.dvc
+git add .dvcignore data/aruco/shigure_marker_history.dvc data/aruco_processing.dvc data/console_logs.dvc data/database.dvc data/model.dvc data/shigure_mask_overlay_checks.dvc data_backup.dvc
 git commit -m "update dvc data"
 dvc push
 git push
@@ -73,9 +92,10 @@ dvc pull
 检查：
 git status --short
 dvc status
-find data -maxdepth 3 -name '*.dvc' -print | sort
-find . -maxdepth 1 -name 'data_backup.dvc' -print
+find data -maxdepth 3 -name "*.dvc" -print | sort
+find . -maxdepth 1 -name "data_backup.dvc" -print
 git ls-files data/config data/aruco/reference | head
+git check-ignore data/model data/database data/shigure_mask_overlay_checks data/shigure_history_cache data/worker_sockets
 
 关于google drive缓存刷新：
 rm -rf /root/.cache/pydrive2fs/*

@@ -572,3 +572,10 @@ HoloLens 上传 HoloLens 当前本地坐标 -> 服务器转 ArUco/世界 -> 服�
 3.固定 Shigure 视角下，历史再现不走 3D 投影。
 服务器永久保存 old_rgb + old_depth + old_mask + camera_info。
 后续用 current_rgb/current_depth 在 old_mask 区域内直接比较，判断 still / missing / occluded / unknown。
+
+260708-2
+1.侧面无法识别是同一个模型（上面似乎没问题？），后续是否使用instantmesh的生成mesh进行两个mesh之间的相似度匹配策略兜底
+2.对于同一个模型的第二次生成时，hololens应当删除本地现有原模型，做到即使是接收数据，也不要显示两个一样的模型
+3.runtimemesh这种大小调整我觉得没有必要在第二次生成时再次调用进行缩放，直接使用历史上的那个做好的模型就可以（只是要使用foundationpose重新摆放）
+4.仅审查，探讨以及探索：我感觉现在的真实大小估计实在是有点扯淡，总是估计的太小。在foundationpose后还可以选择什么方式比较好的再次缩放下啥的吗？或者又没有更好的大小估计手段。
+5.根据现在的data文件夹未被git追踪的部分，帮我尝试使用dvc追踪，并且data_backup依旧是文件夹整体备份。并且对当前文件的所有指引部分，进行针对性修改（要求按照当前文件风格）
