@@ -1,13 +1,22 @@
-# 任务处理流程与文件组织
+# 任务处理流程
 
-日期：2026-06-24  
+更新日期：2026-07-08
 状态：当前实现说明
 
-## 总览
+本文描述服务器和 Unity 当前使用的任务流程。`docs/hwang-project-flow.drawio` 只作为数据流参考，实际触发、队列、缓存、失败处理以代码为准。
 
-当前主流程以 `task_timestamp` 推导文件目录，以 SQLite 中的 `task_id` 做任务查询、队列管理和 Unity/服务器通信。`task_id` 不参与文件路径命名。
+## 核心原则
 
-核心目录由 `code/artifact_layout.py` 定义：
+- `task_id` 是 API、DB、Unity 侧追踪任务的主键。
+- `task_timestamp` 是文件目录和 artifact 文件名的主键。
+- HoloLens 上传 HoloLens 当前本地坐标；服务器负责转换到 ArUco/世界，再转换回当前 HoloLens 本地坐标下发。
+- Unity 正式模型必须使用服务器下发的 `object_hololens_current`。缺失时不再本地 fallback 摆放。
+- `Sam3SpatialBox` 只用于 pending preview，不作为历史模型或正式 runtime 位姿来源。
+- Shigure 视角历史再现不走 3D 投影，使用保存的 fixed Shigure `old_rgb + old_depth + old_mask + camera_info` 直接比较。
+
+## 目录布局
+
+目录由 `code/artifact_layout.py` 管理：
 
 ```text
 data/
@@ -27,216 +36,113 @@ data/
     result/
     debug/
   database/tasks.db
-  console_logs/
+  worker_sockets/
   shigure_history_cache/
   aruco/
-  output/                         # 外部工具 scratch / 兼容 HTTP 目录
+  console_logs/
 ```
 
-`data/upload/` 不再作为接收缓存。`/generate` 收到请求后先在 DB 中创建 `uploading` task，再把上传文件直接写入对应任务目录；必要文件和 `task.json` 写完后，状态切换为 `pending` 并入队。
+`data/upload/` 只视作旧数据/备份输入来源，不作为新任务接收缓存。
 
-## 启动初始化
+## 服务启动
 
-`server_api.py` import 时执行：
+`code/run_server.py` 启动 Flask API。`server_api.py` 初始化：
 
-1. `ensure_artifact_roots()`：初始化 `artifact_layout.ARTIFACT_ROOT_DIRS` 中的目录。
-2. `initialize_task_table()`：创建或迁移 SQLite schema。
-3. `start_worker()`：启动任务 worker 和 Shigurei history recorder sidecar。
+1. `ensure_artifact_roots()` 创建目录。
+2. `initialize_task_table()` 创建或迁移 SQLite。
+3. `start_worker()` 启动任务 worker。
+4. worker 自动启动 Shigure history recorder sidecar，用 Unix socket 提供最近 RGB-D/object_detection/cache 数据。
 
-`config.py` 只保存运行开关、阈值和 worker 参数。代码路径、脚本路径和 Python/Blender 可执行文件在 `path_config.py`；数据目录和文件命名在 `artifact_layout.py`。
+## Object Reconstruction Stage 顺序
 
-## 主流程图
-
-```mermaid
-flowchart TD
-    A[POST /generate] --> B[DB task: uploading]
-    B --> C[data/model/task_timestamp/task.json]
-    C --> W[data/model/task_timestamp/worker]
-    W --> P[DB task: pending]
-    P --> Q[task_worker]
-
-    Q --> S1[hololens2depth]
-    S1 --> F1[worker/01_upload_align_depth.png]
-    S1 --> D1[debug/01_depth_alignment_align_depth_turbo.png]
-
-    F1 --> S2[sam3mask]
-    S2 --> F2[worker/02_sam3_mask.png<br/>02_sam3_color.png<br/>02_sam3_depth.png]
-    S2 --> D2[debug/02_sam3_mask_overlay.png]
-
-    F2 --> S3[model generation<br/>InstantMesh or SAM3D Objects]
-    S3 --> F3[worker/03_model_source.obj<br/>03_model_source.mtl<br/>03_model_source_texture.png]
-    S3 --> G3[worker/03_generation_*]
-    S3 --> D3[debug/03_generation_instantmesh_video.mp4]
-
-    F3 --> S4[depthpointcloud]
-    S4 --> S5[modelscale]
-    S5 --> S6[object_alignment]
-    S6 --> S7[runtime_mesh]
-    S7 --> F7[worker/04_runtime_mesh.obj<br/>04_runtime_mesh.mtl<br/>04_runtime_mesh_texture.png]
-
-    F7 --> S8[pose]
-    S8 --> S9[aruco_sync]
-    S9 --> S10[blender]
-    S10 --> R10[result/05_export_final.fbx]
-
-    R10 --> S11[model_bounds]
-    S11 --> DB1[(SQLite model_bounds)]
-    S11 --> S12[display_identity]
-    S12 --> R12[result/06_identity_decision.json]
-    S12 --> DB2[(SQLite display identity tables)]
-
-    S12 --> S13[history_placement_restoration]
-    S13 --> H13[HistoryPlacementRestoration JSON<br/>or request-level output]
-
-    H13 --> S14[taken_object_detection]
-    S14 --> R14[result/07_taken_detection_*.json/png]
-
-    R14 --> S15[sam3d_body_mesh]
-    S15 --> R15[result/08_sam3d_body_*.json/obj/fbx]
-
-    R15 --> Done[completed]
-```
-
-`history_placement_restoration` 现在主要由独立 API 请求触发，见下方“历史位置再现请求”。模型任务内仍保留 stage 兼容入口，但结果目录以 request 目录为准。
-
-## Model Task 文件
-
-`data/model/<task_timestamp>/task.json` 是该任务的 JSON 交换文件。大文件按用途平铺在 `worker/result/debug/logs` 下。
-
-### `worker/`
+当前 `task_worker.STAGE_ORDER`：
 
 ```text
-01_upload_color.png
-01_upload_depth.png
-01_upload_meta.json
-01_upload_align_depth.png
-02_sam3_mask.png
-02_sam3_color.png
-02_sam3_depth.png
-03_model_source.obj
-03_model_source.mtl
-03_model_source_texture.png
-03_generation_instantmesh_input.png
-03_generation_instantmesh_raw.obj
-03_generation_sam3d_raw.glb
-03_generation_sam3d_postprocess.json
-04_runtime_mesh.obj
-04_runtime_mesh.mtl
-04_runtime_mesh_texture.png
+hololens2depth
+sam3mask
+historical_model_match
+instantmesh
+depthpointcloud
+modelscale
+object_alignment
+pose
+aruco_sync
+runtime_mesh
+model_bounds
+display_identity
+history_placement_restoration
+taken_object_detection
+sam3d_body_mesh
 ```
 
-`03_generation_*` 是生成阶段的中间数据。`03_model_source.*` 是后续阶段使用的规范化模型源文件。
+说明：
 
-### `result/`
+- `historical_model_match` 使用 DINOv2 识别历史模型。命中并允许复用时跳过 `instantmesh`，直接进入 `depthpointcloud`，后续仍重新计算点云、对齐、位姿和 runtime fbx。
+- `instantmesh` 是模型生成 stage 名。当前默认后端是 InstantMesh；`sam3d_objects` 只作为可选后端或运行库来源，不是当前默认生成后端。
+- `modelscale` 仍是独立 stage；`runtime_mesh` 内部负责 runtime mesh bake 和 FBX export。
+- `pose -> aruco_sync` 之后，任务保存 `object_aruco`，后续所有历史跨启动使用 ArUco pose 转当前 HoloLens pose。
 
-```text
-05_export_final.fbx
-06_identity_decision.json
-07_taken_detection_result.json
-07_taken_detection_result_rgb.png
-07_taken_detection_result_depth.png
-07_taken_detection_camera_info.json
-07_taken_detection_active_objects.json
-07_taken_detection_marker_6d_pose.json
-08_sam3d_body_result.json
-08_sam3d_body_people.json
-08_sam3d_body_selected_person.obj
-08_sam3d_body_selected_person.fbx
-```
+## 预览 3D Box
 
-`result/` 中的文件是最终结果或 Unity/下游稳定读取对象。`05_export_final.fbx` 是 `/generate` 完成后返回下载 URL 的主要模型文件。
+预览 3D box 由 `run_sam3_boxmask_from_json.py` 产生 `Sam3SpatialBox`：
 
-### `debug/`
+- 使用 depth limits 过滤深度。
+- 使用去边缘后的 mask/depth 点云。
+- 深度方向只向相机后方扩展，前边不动，中心自动后移。
+- 深度扩展倍数由 `config.PREVIEW_3D_BOX_DEPTH_EXPANSION_FACTOR` 控制，默认 `2.0`。
+- 输出 `coordinate_space = unity_world`，仅供 pending preview 使用。
 
-```text
-01_depth_alignment_align_depth_turbo.png
-02_sam3_mask_overlay.png
-03_generation_instantmesh_video.mp4
-```
+完成/历史/runtime 模型不得依赖 `Sam3SpatialBox` 放置。
 
-`TASK_DEBUG_OUTPUT_ENABLE=0` 时，debug 文件可以不生成，主流程仍应能运行。InstantMesh video 属于 debug 输出，关闭 debug 时不作为启动参数输出。
+## Shigure 相关 Stage
 
-## ArUco Processing 文件
+`taken_object_detection`：
 
-ArUco reference 使用独立目录：
+1. 从 Shigure cache 取上传时刻附近的 RGB-D、camera_info、object_detection。
+2. 将 HoloLens 深度点云生成的模型 box 投影到 Shigure 图像。
+3. 选择覆盖投影 box 且命中 2D ray 的最小 object mask。
+4. 保存 `old_rgb + old_depth + old_mask + camera_info` 作为历史再现 baseline。
+5. 在 old_mask 内做拿取判断。
 
-```text
-data/aruco_processing/<task_timestamp>/
-  task.json
-  worker/
-    <frame_timestamp>_color.png
-    <frame_timestamp>_meta.json
-  result/
-    summary.json
-    <frame_timestamp>_marker_detect.json
-  debug/
-    <frame_timestamp>_aruco_debug_overlay.png
-```
+`history_placement_restoration`：
 
-当前按单 marker 假设处理。`aruco_debug_overlay.png` 合并搜索范围、检测 ROI、marker 边框/角点/id 和摘要，不再拆成多个可视化图。
+1. 读取 taken stage 保存的 baseline。
+2. 获取当前 Shigure RGB-D。
+3. 只在 old_mask 内比较 RGB Lab 和 depth delta。
+4. 输出 still/missing/occluded/unknown 和 Unity 显示用 polyhedron。
 
-## 历史位置再现请求
+`sam3d_body_mesh`：
 
-Unity 点击历史位置再现会创建 request 级目录和 DB 记录：
+1. 使用拿走那帧生成人体 mesh。
+2. 基于 body mask + depth 只调整相对相机距离，并按距离变化缩放人体 mesh。
+3. 选择离物体中心最近的人体/手腕。
+4. 输出人体 mesh 和 subject crop。
 
-```text
-data/history_placement_requests/<request_timestamp>/
-  worker/
-    01_request.json
-    01_selected_model_tasks.json
-    02_result_<index>_working/
-    02_result_<index>_working_state.json
-  result/
-    02_result_<index>_summary.json
-    02_response.json
-    02_unity_display.json
-  debug/
-```
+## ArUco 更新与 Retro Sync
 
-`/history-placement-restoration/latest` 读取最新 completed request 的 `result/02_response.json`。Unity 默认使用最新 completed 结果；如果用户中止，服务端应通过 DB 状态区分，而不是靠 task 目录覆盖旧记录。
+ArUco reference 完成后：
 
-## Task-local Scratch 目录
+- 保存当前 `startup_session_id` 的最新 marker pose。
+- 同次启动内已到 `aruco_sync` 之后或 completed 的模型会 retro-sync。
+- retro-sync 只按 `startup_session_id` 查询同次启动任务，不修改其他启动批次。
+- 更新逻辑从 `object_hololens_original` 重新计算 `object_aruco`，再按最新 marker pose 更新 `object_hololens_current`。
 
-全局 `output` 目录已经移除。所有稳定产物写入 task 的 `worker/`、`result/` 或 `debug/`；外部后端必须使用临时目录时，也放在当前 task 的 `worker/<stage>_backend/` 下。
+## API 触发关系
 
-当前示例：
+主要入口：
 
-```text
-data/model/<task_timestamp>/worker/03_instantmesh_backend/
-data/model/<task_timestamp>/worker/04_object_alignment_preview/
-```
+- `POST /generate`：上传 object reconstruction 或 aruco reference。
+- `POST /check-queue`：Unity 查询任务状态和 completed model instance。
+- `GET /aruco/latest-reference`：按 startup session 获取最新 ArUco reference。
+- `GET /latest-completed-task-ids`：列出 completed 模型。
+- `POST /history-placement-restoration/start`：启动历史再现请求。
+- `GET /history-placement-restoration/latest`：获取最近 completed 历史再现结果。
+- `POST /spatial-query/ray` 和 `/spatial-query/ray-range`：基于当前 HoloLens 坐标查询模型。
 
-新代码应通过 `artifact_layout` 的 helper 推导 task 目录，不再新增全局兼容输出根。
+## 不再使用的旧逻辑
 
-## Debug 与耗时记录
-
-调试信息分三类：
-
-- 文件：`model/<task_timestamp>/debug/`、`aruco_processing/<task_timestamp>/debug/`、`history_placement_requests/<request_timestamp>/debug/`。
-- DB：`task_stage_runs`、`task_timing_events`、`ai_model_timings`、identity 相关表。
-- 日志：`data/console_logs/*.txt`，由 `CONSOLE_OUTPUT_LOG_ENABLE` 控制。
-
-AI 模型耗时分开记录：
-
-- `ai_model_timings.timing_kind = initialization`：模型或长驻服务初始化耗时。
-- `ai_model_timings.timing_kind = task`：单次任务实际推理/处理耗时。
-
-## 数据库要点
-
-主表 `tasks` 仍保存 `json_path`，但正常情况下该路径可由 `task_timestamp` 推导：
-
-```text
-data/model/<task_timestamp>/task.json
-```
-
-`task_id` 用于 API 查询、队列和 Unity 通信；`task_timestamp` 用于文件目录。`artifact_schema_version`、`debug_enabled`、`logs_enabled` 用于标记产物结构和开关状态。
-
-主要状态包括：`uploading`、`upload_failed`、`pending`、各 stage 名、`completed`、`failed`。
-
-## 清理规则
-
-可以清理的运行期目录应按任务维度处理：
-
-- 删除单个模型任务：`data/model/<task_timestamp>/`，同时保留或清理 DB 记录按维护策略决定。
-- 删除单次 ArUco 处理：`data/aruco_processing/<task_timestamp>/`。
-- 删除单次历史位置再现请求：`data/history_placement_requests/<request_timestamp>/`。
+- Unity 正式模型不再从 `sam3_spatial_box` fallback 放置。
+- Unity 正式模型不再在缺 pose 时放到相机前方。
+- 历史再现不再扫描 Shigure 全图找 object mask。
+- 历史再现不再用旧 YOLO baseline 重新恢复对象区域。
+- HoloLens 本地不保存或消费 ArUco 坐标。
