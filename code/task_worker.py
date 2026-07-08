@@ -24,7 +24,7 @@ from config import (
     SHIGURE_HISTORY_RECORDING_ENABLE,
     SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
 )
-from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, WORKER_SOCKET_ROOT
+from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, SHIGURE_HISTORY_SOCKET_PATH, WORKER_SOCKET_ROOT
 from path_config import (
     ARUCO_DETECT_STAGE_PY,
     ARUCO_DETECT_STAGE_RUN,
@@ -436,7 +436,7 @@ def _start_shigure_history_recorder(*, force: bool = False) -> None:
     global _shigure_recorder_process, _shigure_recorder_reader_thread, _last_shigure_recorder_start_attempt_at
     if _shutdown_requested or not SHIGURE_HISTORY_RECORDING_ENABLE:
         return
-    if _shigure_recorder_process is not None and _shigure_recorder_process.poll() is None:
+    if _shigure_recorder_process is not None and _shigure_recorder_process.poll() is None and SHIGURE_HISTORY_SOCKET_PATH.exists():
         return
 
     now = time.monotonic()
@@ -444,16 +444,28 @@ def _start_shigure_history_recorder(*, force: bool = False) -> None:
         return
     _last_shigure_recorder_start_attempt_at = now
 
+    if _shigure_recorder_process is not None:
+        _stop_shigure_history_recorder()
+
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
     env.setdefault("SHIGURE_HISTORY_CACHE_ROOT", str(SHIGURE_HISTORY_CACHE_ROOT))
+    env.setdefault("SHIGURE_HISTORY_SOCKET_PATH", str(SHIGURE_HISTORY_SOCKET_PATH))
     command = [
         _resolve_python(SHIGURE_HISTORY_RECORDER_STAGE_PY),
         str(SHIGURE_HISTORY_RECORDER_RUN),
         "--cache-root",
         str(SHIGURE_HISTORY_CACHE_ROOT),
+        "--socket-server",
+        str(SHIGURE_HISTORY_SOCKET_PATH),
     ]
     try:
+        WORKER_SOCKET_ROOT.mkdir(parents=True, exist_ok=True)
+        SHIGURE_HISTORY_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+        try:
+            SHIGURE_HISTORY_SOCKET_PATH.unlink()
+        except FileNotFoundError:
+            pass
         _shigure_recorder_process = subprocess.Popen(
             command,
             cwd=str(SHIGURE_HISTORY_RECORDER_RUN.parent),
@@ -470,7 +482,7 @@ def _start_shigure_history_recorder(*, force: bool = False) -> None:
             name="shigure-history-recorder-log-reader",
         )
         _shigure_recorder_reader_thread.start()
-        print(f"[worker] started Shigurei history recorder: pid={_shigure_recorder_process.pid}")
+        print(f"[worker] started Shigurei history recorder: pid={_shigure_recorder_process.pid} socket={SHIGURE_HISTORY_SOCKET_PATH}")
     except Exception as exc:
         _shigure_recorder_process = None
         _shigure_recorder_reader_thread = None
@@ -484,15 +496,28 @@ def _stop_shigure_history_recorder() -> None:
         return
     if process.poll() is None:
         try:
-            process.terminate()
+            _send_socket_request(SHIGURE_HISTORY_SOCKET_PATH, {"action": "shutdown"}, timeout=2.0)
+        except Exception:
+            pass
+        try:
             process.wait(timeout=5.0)
         except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5.0)
+            process.terminate()
+            try:
+                process.wait(timeout=5.0)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=5.0)
         except Exception as exc:
-            print(f"[worker] failed to stop Shigurei event recorder cleanly: {exc}")
+            print(f"[worker] failed to stop Shigurei history recorder cleanly: {exc}")
     _shigure_recorder_process = None
     _shigure_recorder_reader_thread = None
+    try:
+        SHIGURE_HISTORY_SOCKET_PATH.unlink()
+    except FileNotFoundError:
+        pass
+
+
 
 
 def _service_gpu_env(service_name: str, allowed_ids: tuple[str, ...] | None = None) -> dict[str, str]:
@@ -1180,7 +1205,6 @@ def start_worker() -> threading.Thread:
     initialize_task_table()
     _restore_unfinished_tasks()
     _start_shigure_history_recorder(force=True)
-
     if _worker_thread is not None and _worker_thread.is_alive():
         return _worker_thread
 

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import hashlib
+import base64
 import json
-import shutil
-import subprocess
+import os
+import socket
+import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -26,11 +27,11 @@ class RosStamp:
         return float(self.sec) + float(self.nanosec) / 1_000_000_000.0
 
     def to_dict(self) -> dict[str, int]:
-        return {'sec': int(self.sec), 'nanosec': int(self.nanosec)}
+        return {"sec": int(self.sec), "nanosec": int(self.nanosec)}
 
     @classmethod
-    def from_dict(cls, payload: Mapping[str, Any]) -> 'RosStamp':
-        return cls(sec=int(payload.get('sec', 0)), nanosec=int(payload.get('nanosec', 0)))
+    def from_dict(cls, payload: Mapping[str, Any]) -> "RosStamp":
+        return cls(sec=int(payload.get("sec", 0)), nanosec=int(payload.get("nanosec", 0)))
 
 
 @dataclass(frozen=True)
@@ -54,14 +55,14 @@ class CachedRgbdSample:
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            'stamp': self.stamp.to_dict(),
-            'chunk_id': self.chunk_id,
-            'frame_index': self.frame_index,
-            'camera_info_path': str(self.camera_info_path) if self.camera_info_path else None,
-            'yolo_hash': self.yolo_hash,
-            'yolo_path': str(self.yolo_path) if self.yolo_path else None,
+            "stamp": self.stamp.to_dict(),
+            "chunk_id": self.chunk_id,
+            "frame_index": self.frame_index,
+            "camera_info_path": str(self.camera_info_path) if self.camera_info_path else None,
+            "yolo_hash": self.yolo_hash,
+            "yolo_path": str(self.yolo_path) if self.yolo_path else None,
+            "has_yolo": self.yolo is not None,
         }
-
 
 
 @dataclass(frozen=True)
@@ -73,15 +74,29 @@ class CachedSampleMetadata:
     yolo_hash: str | None = None
     chunk_id: str | None = None
     frame_index: int = 0
+    yolo: dict[str, Any] | None = None
 
     @property
     def key(self) -> str:
         return sample_key(self.stamp)
 
     def load_yolo(self) -> dict[str, Any] | None:
+        if self.yolo is not None:
+            return dict(self.yolo)
         if self.yolo_path is None or not self.yolo_path.is_file():
             return None
         return load_json(self.yolo_path)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "stamp": self.stamp.to_dict(),
+            "chunk_id": self.chunk_id,
+            "frame_index": self.frame_index,
+            "camera_info_path": str(self.camera_info_path) if self.camera_info_path else None,
+            "yolo_hash": self.yolo_hash,
+            "yolo_path": str(self.yolo_path) if self.yolo_path else None,
+            "has_yolo": self.yolo is not None,
+        }
 
 
 class RecentRawSampleBuffer:
@@ -89,6 +104,9 @@ class RecentRawSampleBuffer:
         self.max_seconds = max(0.0, float(max_seconds))
         self.max_samples = max(0, int(max_samples))
         self._samples: OrderedDict[str, CachedRgbdSample] = OrderedDict()
+
+    def __len__(self) -> int:
+        return len(self._samples)
 
     def append(self, sample: CachedRgbdSample) -> None:
         if self.max_samples <= 0:
@@ -122,10 +140,45 @@ class RecentRawSampleBuffer:
                 continue
             yield sample
 
+    def iter_sample_metadata(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedSampleMetadata]:
+        for sample in self.iter_samples(start=start, end=end):
+            yield CachedSampleMetadata(
+                stamp=sample.stamp,
+                camera_info_path=sample.camera_info_path,
+                camera_info=dict(sample.camera_info) if sample.camera_info is not None else None,
+                yolo_path=sample.yolo_path,
+                yolo_hash=sample.yolo_hash,
+                chunk_id=sample.chunk_id,
+                frame_index=sample.frame_index,
+                yolo=dict(sample.yolo) if sample.yolo is not None else None,
+            )
+
+    def iter_samples_after(self, stamp: RosStamp | None) -> Iterable[CachedRgbdSample]:
+        minimum = stamp.seconds if stamp is not None else None
+        for sample in self.iter_samples(start=stamp):
+            if minimum is not None and sample.stamp.seconds <= minimum:
+                continue
+            yield sample
+
     def newest_sample(self) -> CachedRgbdSample | None:
         if not self._samples:
             return None
         return next(reversed(self._samples.values()))
+
+    def get_sample(self, stamp: RosStamp, *, mode: str = "nearest") -> CachedRgbdSample | None:
+        target = stamp.seconds
+        samples = list(self._samples.values())
+        if not samples:
+            return None
+        if mode == "before":
+            before = [sample for sample in samples if sample.stamp.seconds <= target]
+            return before[-1] if before else None
+        if mode == "after":
+            for sample in samples:
+                if sample.stamp.seconds >= target:
+                    return sample
+            return None
+        return min(samples, key=lambda sample: abs(sample.stamp.seconds - target))
 
     def clear(self) -> None:
         self._samples.clear()
@@ -140,486 +193,337 @@ class RecentRawSampleBuffer:
                     self._samples.pop(key, None)
 
 
+class ShigureMemoryStore:
+    """Thread-safe in-process RGB-D/object-detection ring buffer."""
+
+    def __init__(self, *, max_seconds: float, max_samples: int) -> None:
+        self._buffer = RecentRawSampleBuffer(max_seconds=max_seconds, max_samples=max_samples)
+        self._lock = RLock()
+        self.created_at = utc_now()
+        self.last_append_at: str | None = None
+
+    def append(self, sample: CachedRgbdSample) -> None:
+        with self._lock:
+            self._buffer.append(sample)
+            self.last_append_at = utc_now()
+
+    def iter_sample_metadata(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> list[CachedSampleMetadata]:
+        with self._lock:
+            return list(self._buffer.iter_sample_metadata(start=start, end=end))
+
+    def iter_samples(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> list[CachedRgbdSample]:
+        with self._lock:
+            return list(self._buffer.iter_samples(start=start, end=end))
+
+    def iter_samples_after(self, stamp: RosStamp | None) -> list[CachedRgbdSample]:
+        with self._lock:
+            return list(self._buffer.iter_samples_after(stamp))
+
+    def iter_depth_samples(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> list[CachedRgbdSample]:
+        return self.iter_samples(start=start, end=end)
+
+    def newest_sample(self) -> CachedRgbdSample | None:
+        with self._lock:
+            return self._buffer.newest_sample()
+
+    def get_sample(self, stamp: RosStamp, *, mode: str = "nearest") -> CachedRgbdSample | None:
+        with self._lock:
+            return self._buffer.get_sample(stamp, mode=mode)
+
+    def status(self) -> dict[str, Any]:
+        with self._lock:
+            newest = self._buffer.newest_sample()
+            return {
+                "created_at": self.created_at,
+                "last_append_at": self.last_append_at,
+                "sample_count": len(self._buffer),
+                "retention_seconds": self._buffer.max_seconds,
+                "max_samples": self._buffer.max_samples,
+                "newest_sample": newest.to_dict() if newest is not None else None,
+            }
+
+
 def sample_key(stamp: RosStamp) -> str:
-    return f'{int(stamp.sec):010d}_{int(stamp.nanosec):09d}'
+    return f"{int(stamp.sec):010d}_{int(stamp.nanosec):09d}"
 
 
 def write_json(path: str | Path, payload: Mapping[str, Any]) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + '.tmp')
-    with tmp.open('w', encoding='utf-8') as file:
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8") as file:
         json.dump(dict(payload), file, ensure_ascii=False, indent=2)
-        file.write('\n')
+        file.write("\n")
     tmp.replace(target)
 
 
 def load_json(path: str | Path) -> dict[str, Any]:
-    with Path(path).open('r', encoding='utf-8') as file:
+    with Path(path).open("r", encoding="utf-8") as file:
         return json.load(file)
-
-
-def file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open('rb') as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b''):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-class VideoChunkEncoder:
-    def __init__(self, chunk_dir: Path, *, width: int, height: int, fps: float, keyframe_interval: int) -> None:
-        self.chunk_dir = chunk_dir
-        self.width = int(width)
-        self.height = int(height)
-        self.fps = float(fps)
-        self.keyframe_interval = max(1, int(keyframe_interval))
-        self.rgb_path = chunk_dir / 'rgb.mp4'
-        self.depth_path = chunk_dir / 'depth.mkv'
-        self._rgb_process: subprocess.Popen[bytes] | None = None
-        self._depth_process: subprocess.Popen[bytes] | None = None
-
-    def start(self) -> None:
-        self.chunk_dir.mkdir(parents=True, exist_ok=True)
-        size = f'{self.width}x{self.height}'
-        rgb_cmd = [
-            'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-            '-f', 'rawvideo', '-pix_fmt', 'bgr24', '-s', size, '-r', str(self.fps), '-i', '-',
-            '-an', '-c:v', 'libx264', '-preset', settings.SHIGURE_HISTORY_RGB_PRESET,
-            '-crf', str(settings.SHIGURE_HISTORY_RGB_CRF), '-g', str(self.keyframe_interval),
-            '-pix_fmt', 'yuv420p', str(self.rgb_path),
-        ]
-        depth_cmd = [
-            'ffmpeg', '-y', '-hide_banner', '-loglevel', 'error',
-            '-f', 'rawvideo', '-pix_fmt', 'gray16le', '-s', size, '-r', str(self.fps), '-i', '-',
-            '-an', '-c:v', 'ffv1', '-level', '3', '-coder', '1', '-context', '1',
-            '-g', '1', '-slices', '4', '-slicecrc', '0', str(self.depth_path),
-        ]
-        self._rgb_process = subprocess.Popen(rgb_cmd, stdin=subprocess.PIPE)
-        self._depth_process = subprocess.Popen(depth_cmd, stdin=subprocess.PIPE)
-
-    def write(self, rgb_bgr: np.ndarray, depth: np.ndarray) -> None:
-        if self._rgb_process is None or self._depth_process is None:
-            raise RuntimeError('chunk encoder is not started')
-        if self._rgb_process.stdin is None or self._depth_process.stdin is None:
-            raise RuntimeError('chunk encoder stdin is unavailable')
-        rgb = np.ascontiguousarray(rgb_bgr, dtype=np.uint8)
-        depth_u16 = np.ascontiguousarray(depth, dtype=np.uint16)
-        if rgb.shape[:2] != (self.height, self.width):
-            raise ValueError(f'RGB shape {rgb.shape} does not match {(self.height, self.width)}')
-        if depth_u16.shape[:2] != (self.height, self.width):
-            raise ValueError(f'Depth shape {depth_u16.shape} does not match {(self.height, self.width)}')
-        self._rgb_process.stdin.write(rgb.tobytes())
-        self._depth_process.stdin.write(depth_u16.tobytes())
-
-    def close(self) -> None:
-        errors = []
-        for name, process in (('rgb', self._rgb_process), ('depth', self._depth_process)):
-            if process is None:
-                continue
-            try:
-                if process.stdin is not None:
-                    process.stdin.close()
-                code = process.wait(timeout=30)
-                if code != 0:
-                    errors.append(f'{name} ffmpeg exited with {code}')
-            except Exception as exc:
-                errors.append(f'{name} ffmpeg close failed: {exc}')
-        self._rgb_process = None
-        self._depth_process = None
-        if errors:
-            raise RuntimeError('; '.join(errors))
+def _stamp_to_wire(stamp: RosStamp | None) -> dict[str, int] | None:
+    return stamp.to_dict() if stamp is not None else None
 
 
-class ChunkedShigureHistoryWriter:
-    def __init__(self, root: str | Path, *, retention_seconds: float, sample_hz: float, chunk_seconds: float) -> None:
-        self.root = Path(root)
-        self.chunks_root = self.root / 'chunks'
-        self.yolo_root = self.root / 'yolo_payloads'
-        self.retention_seconds = max(1.0, float(retention_seconds))
-        self.sample_hz = max(0.1, float(sample_hz))
-        self.chunk_seconds = max(1.0, float(chunk_seconds))
-        self.max_frames_per_chunk = max(1, int(round(self.sample_hz * self.chunk_seconds)))
-        self.chunks_root.mkdir(parents=True, exist_ok=True)
-        self.yolo_root.mkdir(parents=True, exist_ok=True)
-        self._encoder: VideoChunkEncoder | None = None
-        self._chunk_dir: Path | None = None
-        self._chunk_id: str | None = None
-        self._frames: list[dict[str, Any]] = []
-        self._camera_info: dict[str, Any] | None = None
-        self._width: int | None = None
-        self._height: int | None = None
-        self.recent_buffer = RecentRawSampleBuffer(max_seconds=self.chunk_seconds, max_samples=self.max_frames_per_chunk)
+def _stamp_from_wire(payload: Mapping[str, Any] | None) -> RosStamp | None:
+    return RosStamp.from_dict(payload) if isinstance(payload, Mapping) else None
 
-    def append_sample(self, *, stamp: RosStamp, rgb_bgr: np.ndarray, depth: np.ndarray, camera_info: Mapping[str, Any], yolo_payload: str | None, headers: Mapping[str, Any], topic_counts: Mapping[str, int]) -> dict[str, Any]:
-        if rgb_bgr.ndim != 3 or rgb_bgr.shape[2] != 3:
-            raise ValueError(f'expected BGR image, got shape {rgb_bgr.shape}')
-        if depth.ndim == 3:
-            depth = depth[:, :, 0]
-        height, width = rgb_bgr.shape[:2]
-        if self._encoder is None or len(self._frames) >= self.max_frames_per_chunk:
-            self.finalize_current_chunk()
-            self._start_chunk(stamp, width=width, height=height)
-        assert self._encoder is not None
-        assert self._chunk_id is not None
-        yolo_hash = self._store_yolo(yolo_payload) if yolo_payload else None
-        yolo = None
-        if yolo_payload:
-            try:
-                yolo = json.loads(yolo_payload)
-            except Exception:
-                yolo = None
-        frame_index = len(self._frames)
-        self._encoder.write(rgb_bgr, depth)
-        self._camera_info = dict(camera_info)
-        frame = {'frame_index': frame_index, 'stamp': stamp.to_dict(), 'sample_key': sample_key(stamp), 'headers': dict(headers), 'topic_counts': dict(topic_counts), 'yolo_hash': yolo_hash}
-        self._frames.append(frame)
-        self.recent_buffer.append(CachedRgbdSample(stamp=stamp, rgb_bgr=rgb_bgr, depth=depth, camera_info_path=None, camera_info=dict(camera_info), yolo=yolo if isinstance(yolo, dict) else None, yolo_hash=yolo_hash, chunk_id=self._chunk_id, frame_index=frame_index))
-        return {'chunk_id': self._chunk_id, **frame}
 
-    def finalize_current_chunk(self) -> Path | None:
-        if self._encoder is None or self._chunk_dir is None or self._chunk_id is None:
-            return None
-        encoder = self._encoder
-        chunk_dir = self._chunk_dir
-        frames = self._frames
-        chunk_id = self._chunk_id
-        camera_info = self._camera_info
-        width = self._width
-        height = self._height
-        self._encoder = None
-        self._chunk_dir = None
-        self._chunk_id = None
-        self._frames = []
-        self._camera_info = None
-        self._width = None
-        self._height = None
-        encoder.close()
-        if camera_info is not None:
-            write_json(chunk_dir / 'camera_info.json', camera_info)
-        start_seconds = RosStamp.from_dict(frames[0]['stamp']).seconds if frames else None
-        end_seconds = RosStamp.from_dict(frames[-1]['stamp']).seconds if frames else None
-        manifest = {'chunk_id': chunk_id, 'created_at': utc_now(), 'fps': self.sample_hz, 'chunk_seconds': self.chunk_seconds, 'width': width, 'height': height, 'frame_count': len(frames), 'start_seconds': start_seconds, 'end_seconds': end_seconds, 'rgb_video': 'rgb.mp4', 'depth_video': 'depth.mkv', 'camera_info': 'camera_info.json' if camera_info is not None else None, 'frames': frames}
-        write_json(chunk_dir / 'chunk_manifest.json', manifest)
-        return chunk_dir
+def _array_to_wire(array: np.ndarray) -> dict[str, Any]:
+    contiguous = np.ascontiguousarray(array)
+    return {
+        "shape": [int(value) for value in contiguous.shape],
+        "dtype": str(contiguous.dtype),
+        "data_b64": base64.b64encode(contiguous.tobytes()).decode("ascii"),
+    }
 
-    def close(self) -> None:
-        self.finalize_current_chunk()
 
-    def prune(self, *, newest_stamp: RosStamp | None = None) -> None:
-        self.finalize_current_chunk()
-        ShigureRgbdCache(self.root).prune(newest_stamp=newest_stamp, retention_seconds=self.retention_seconds)
+def _array_from_wire(payload: Mapping[str, Any] | None, *, default: np.ndarray) -> np.ndarray:
+    if not isinstance(payload, Mapping):
+        return default
+    data = base64.b64decode(str(payload.get("data_b64") or ""))
+    dtype = np.dtype(str(payload.get("dtype") or default.dtype))
+    shape = tuple(int(value) for value in payload.get("shape") or default.shape)
+    if not shape:
+        return default
+    return np.frombuffer(data, dtype=dtype).reshape(shape).copy()
 
-    def _start_chunk(self, stamp: RosStamp, *, width: int, height: int) -> None:
-        chunk_id = sample_key(stamp)
-        chunk_dir = self.chunks_root / chunk_id
-        if chunk_dir.exists():
-            shutil.rmtree(chunk_dir)
-        keyframe_interval = max(1, int(round(self.sample_hz * settings.SHIGURE_HISTORY_RGB_KEYFRAME_SECONDS)))
-        encoder = VideoChunkEncoder(chunk_dir, width=width, height=height, fps=self.sample_hz, keyframe_interval=keyframe_interval)
-        encoder.start()
-        self._encoder = encoder
-        self._chunk_dir = chunk_dir
-        self._chunk_id = chunk_id
-        self._width = width
-        self._height = height
 
-    def _store_yolo(self, payload: str) -> str:
-        raw = payload.encode('utf-8')
-        digest = hashlib.sha256(raw).hexdigest()
-        path = self.yolo_root / f'{digest}.json'
-        if not path.exists():
-            try:
-                parsed = json.loads(payload)
-                write_json(path, parsed)
-            except Exception:
-                path.write_text(payload, encoding='utf-8')
-        return digest
+def _metadata_to_wire(metadata: CachedSampleMetadata) -> dict[str, Any]:
+    return {
+        "stamp": metadata.stamp.to_dict(),
+        "camera_info": metadata.camera_info,
+        "camera_info_path": str(metadata.camera_info_path) if metadata.camera_info_path else None,
+        "yolo": metadata.yolo,
+        "yolo_hash": metadata.yolo_hash,
+        "yolo_path": str(metadata.yolo_path) if metadata.yolo_path else None,
+        "chunk_id": metadata.chunk_id,
+        "frame_index": int(metadata.frame_index),
+    }
+
+
+def _metadata_from_wire(payload: Mapping[str, Any]) -> CachedSampleMetadata:
+    camera_info_path = payload.get("camera_info_path")
+    yolo_path = payload.get("yolo_path")
+    yolo = payload.get("yolo") if isinstance(payload.get("yolo"), dict) else None
+    camera_info = payload.get("camera_info") if isinstance(payload.get("camera_info"), dict) else None
+    return CachedSampleMetadata(
+        stamp=RosStamp.from_dict(payload.get("stamp") or {}),
+        camera_info_path=Path(str(camera_info_path)) if camera_info_path else None,
+        camera_info=camera_info,
+        yolo_path=Path(str(yolo_path)) if yolo_path else None,
+        yolo_hash=str(payload.get("yolo_hash")) if payload.get("yolo_hash") else None,
+        chunk_id=str(payload.get("chunk_id")) if payload.get("chunk_id") else None,
+        frame_index=int(payload.get("frame_index") or 0),
+        yolo=yolo,
+    )
+
+
+def _sample_to_wire(
+    sample: CachedRgbdSample,
+    *,
+    include_rgb: bool = True,
+    include_depth: bool = True,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "stamp": sample.stamp.to_dict(),
+        "camera_info": sample.camera_info,
+        "camera_info_path": str(sample.camera_info_path) if sample.camera_info_path else None,
+        "yolo": sample.yolo,
+        "yolo_hash": sample.yolo_hash,
+        "yolo_path": str(sample.yolo_path) if sample.yolo_path else None,
+        "chunk_id": sample.chunk_id,
+        "frame_index": int(sample.frame_index),
+        "rgb_path": str(sample.rgb_path) if sample.rgb_path else None,
+        "depth_path": str(sample.depth_path) if sample.depth_path else None,
+    }
+    if include_rgb:
+        payload["rgb_bgr"] = _array_to_wire(sample.rgb_bgr)
+    if include_depth:
+        payload["depth"] = _array_to_wire(sample.depth)
+    return payload
+
+
+def _sample_from_wire(payload: Mapping[str, Any]) -> CachedRgbdSample:
+    camera_info_path = payload.get("camera_info_path")
+    yolo_path = payload.get("yolo_path")
+    rgb_path = payload.get("rgb_path")
+    depth_path = payload.get("depth_path")
+    yolo = payload.get("yolo") if isinstance(payload.get("yolo"), dict) else None
+    camera_info = payload.get("camera_info") if isinstance(payload.get("camera_info"), dict) else None
+    return CachedRgbdSample(
+        stamp=RosStamp.from_dict(payload.get("stamp") or {}),
+        rgb_bgr=_array_from_wire(payload.get("rgb_bgr"), default=np.empty((0, 0, 3), dtype=np.uint8)),
+        depth=_array_from_wire(payload.get("depth"), default=np.empty((0, 0), dtype=np.uint16)),
+        camera_info_path=Path(str(camera_info_path)) if camera_info_path else None,
+        camera_info=camera_info,
+        yolo_path=Path(str(yolo_path)) if yolo_path else None,
+        yolo=yolo,
+        yolo_hash=str(payload.get("yolo_hash")) if payload.get("yolo_hash") else None,
+        chunk_id=str(payload.get("chunk_id")) if payload.get("chunk_id") else None,
+        frame_index=int(payload.get("frame_index") or 0),
+        rgb_path=Path(str(rgb_path)) if rgb_path else None,
+        depth_path=Path(str(depth_path)) if depth_path else None,
+    )
+
+
+def store_request(store: ShigureMemoryStore, request: Mapping[str, Any]) -> dict[str, Any]:
+    action = str(request.get("action") or "status")
+    start = _stamp_from_wire(request.get("start") if isinstance(request.get("start"), Mapping) else None)
+    end = _stamp_from_wire(request.get("end") if isinstance(request.get("end"), Mapping) else None)
+    if action == "status":
+        return {"ok": True, "status": store.status()}
+    if action == "iter_sample_metadata":
+        return {"ok": True, "metadata": [_metadata_to_wire(item) for item in store.iter_sample_metadata(start=start, end=end)]}
+    if action == "iter_samples":
+        samples = store.iter_samples(start=start, end=end)
+        return {"ok": True, "samples": [_sample_to_wire(item, include_rgb=True, include_depth=True) for item in samples]}
+    if action == "iter_depth_samples":
+        samples = store.iter_depth_samples(start=start, end=end)
+        return {"ok": True, "samples": [_sample_to_wire(item, include_rgb=False, include_depth=True) for item in samples]}
+    if action == "iter_samples_after":
+        stamp = _stamp_from_wire(request.get("stamp") if isinstance(request.get("stamp"), Mapping) else None)
+        samples = store.iter_samples_after(stamp)
+        return {"ok": True, "samples": [_sample_to_wire(item, include_rgb=True, include_depth=True) for item in samples]}
+    if action == "newest_sample":
+        sample = store.newest_sample()
+        return {"ok": True, "sample": _sample_to_wire(sample, include_rgb=True, include_depth=True) if sample is not None else None}
+    if action == "get_sample":
+        stamp = _stamp_from_wire(request.get("stamp") if isinstance(request.get("stamp"), Mapping) else None)
+        if stamp is None:
+            return {"ok": False, "error": "stamp is required"}
+        sample = store.get_sample(stamp, mode=str(request.get("mode") or "nearest"))
+        return {"ok": True, "sample": _sample_to_wire(sample, include_rgb=True, include_depth=True) if sample is not None else None}
+    if action in {"prune", "prune_yolo_payloads", "clear_decoded_cache"}:
+        return {"ok": True}
+    return {"ok": False, "error": f"unsupported action: {action}"}
+
+
+def resolve_socket_path(root: str | Path | None = None) -> Path:
+    raw = os.environ.get("SHIGURE_HISTORY_SOCKET_PATH")
+    if raw:
+        return Path(raw)
+    configured = getattr(settings, "SHIGURE_HISTORY_SOCKET_PATH", None)
+    if configured:
+        return Path(configured)
+    if root is not None:
+        return Path(root) / "shigure_history.sock"
+    return Path("/tmp/shigure_history.sock")
+
+
+def _send_socket_request(socket_path: Path, payload: Mapping[str, Any], *, timeout: float) -> dict[str, Any]:
+    with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as client:
+        client.settimeout(timeout)
+        client.connect(str(socket_path))
+        client.sendall((json.dumps(dict(payload), ensure_ascii=False) + "\n").encode("utf-8"))
+        client.shutdown(socket.SHUT_WR)
+        chunks: list[bytes] = []
+        while True:
+            chunk = client.recv(1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+    if not chunks:
+        raise RuntimeError(f"No response from Shigurei history socket: {socket_path}")
+    return json.loads(b"".join(chunks).decode("utf-8").splitlines()[0])
 
 
 class ShigureRgbdCache:
-    """Chunked Shigurei RGB-D cache with in-memory decoded chunk LRU."""
+    """Client for the online Shigurei RGB-D/object-detection memory cache."""
 
-    def __init__(self, root: str | Path, *, decoded_chunk_cache_max: int = settings.SHIGURE_HISTORY_DECODED_CHUNK_CACHE_MAX) -> None:
-        self.root = Path(root)
-        self.chunks_root = self.root / 'chunks'
-        self.yolo_root = self.root / 'yolo_payloads'
-        self.decoded_chunk_cache_max = max(0, int(decoded_chunk_cache_max))
-        self._decoded_chunks: OrderedDict[str, tuple[np.ndarray, np.ndarray]] = OrderedDict()
-        self._decoded_depth_chunks: OrderedDict[str, np.ndarray] = OrderedDict()
-        self._decoded_cache_lock = RLock()
-        self._chunk_decode_locks: dict[str, RLock] = {}
+    def __init__(
+        self,
+        root: str | Path | None = None,
+        *,
+        socket_path: str | Path | None = None,
+        timeout_seconds: float | None = None,
+        **_: Any,
+    ) -> None:
+        self.root = Path(root) if root is not None else None
+        self.socket_path = Path(socket_path) if socket_path is not None else resolve_socket_path(root)
+        self.timeout_seconds = float(timeout_seconds if timeout_seconds is not None else settings.SHIGURE_HISTORY_SOCKET_TIMEOUT_SECONDS)
+        self.last_error: str | None = None
+
+    def _request(self, payload: Mapping[str, Any]) -> dict[str, Any] | None:
+        if not self.socket_path.exists():
+            self.last_error = f"socket_not_found:{self.socket_path}"
+            return None
+        try:
+            response = _send_socket_request(self.socket_path, payload, timeout=self.timeout_seconds)
+        except (FileNotFoundError, ConnectionRefusedError, socket.timeout, TimeoutError, OSError) as exc:
+            self.last_error = str(exc)
+            return None
+        if not response.get("ok"):
+            raise RuntimeError(str(response.get("error") or "Shigurei history socket request failed"))
+        self.last_error = None
+        return response
 
     def clear_decoded_cache(self) -> None:
-        with self._decoded_cache_lock:
-            self._decoded_chunks.clear()
-            self._decoded_depth_chunks.clear()
-            self._chunk_decode_locks.clear()
-
-    def _decode_lock_for_chunk(self, chunk_id: str) -> RLock:
-        with self._decoded_cache_lock:
-            lock = self._chunk_decode_locks.get(chunk_id)
-            if lock is None:
-                lock = RLock()
-                self._chunk_decode_locks[chunk_id] = lock
-            return lock
+        self._request({"action": "clear_decoded_cache"})
 
     def iter_sample_metadata(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedSampleMetadata]:
-        start_seconds = start.seconds if start is not None else None
-        end_seconds = end.seconds if end is not None else None
-        for chunk_dir, manifest in self._iter_chunk_manifests(start_seconds=start_seconds, end_seconds=end_seconds):
-            camera_info_path = chunk_dir / str(manifest.get('camera_info') or 'camera_info.json')
-            camera_info = load_json(camera_info_path) if camera_info_path.is_file() else None
-            for frame in manifest.get('frames') or []:
-                stamp = RosStamp.from_dict(frame.get('stamp') or {})
-                seconds = stamp.seconds
-                if start_seconds is not None and seconds < start_seconds:
-                    continue
-                if end_seconds is not None and seconds > end_seconds:
-                    continue
-                yolo_hash = frame.get('yolo_hash')
-                yolo_path = self.yolo_root / f'{yolo_hash}.json' if yolo_hash else None
-                yield CachedSampleMetadata(
-                    stamp=stamp,
-                    camera_info_path=camera_info_path if camera_info_path.is_file() else None,
-                    camera_info=camera_info,
-                    yolo_path=yolo_path if yolo_path and yolo_path.is_file() else None,
-                    yolo_hash=str(yolo_hash) if yolo_hash else None,
-                    chunk_id=str(manifest.get('chunk_id') or chunk_dir.name),
-                    frame_index=int(frame.get('frame_index', 0)),
-                )
+        response = self._request({"action": "iter_sample_metadata", "start": _stamp_to_wire(start), "end": _stamp_to_wire(end)})
+        if response is None:
+            return
+        for payload in response.get("metadata") or []:
+            if isinstance(payload, Mapping):
+                yield _metadata_from_wire(payload)
 
     def iter_samples(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedRgbdSample]:
-        start_seconds = start.seconds if start is not None else None
-        end_seconds = end.seconds if end is not None else None
-        for chunk_dir, manifest in self._iter_chunk_manifests(start_seconds=start_seconds, end_seconds=end_seconds):
-            rgb_frames, depth_frames = self._decode_chunk(chunk_dir, manifest)
-            camera_info_path = chunk_dir / str(manifest.get('camera_info') or 'camera_info.json')
-            camera_info = load_json(camera_info_path) if camera_info_path.is_file() else None
-            for frame in manifest.get('frames') or []:
-                stamp = RosStamp.from_dict(frame.get('stamp') or {})
-                seconds = stamp.seconds
-                if start_seconds is not None and seconds < start_seconds:
-                    continue
-                if end_seconds is not None and seconds > end_seconds:
-                    continue
-                index = int(frame.get('frame_index', 0))
-                if index < 0 or index >= len(rgb_frames) or index >= len(depth_frames):
-                    continue
-                yolo_hash = frame.get('yolo_hash')
-                yolo_path = self.yolo_root / f'{yolo_hash}.json' if yolo_hash else None
-                yolo = load_json(yolo_path) if yolo_path and yolo_path.is_file() else None
-                yield CachedRgbdSample(stamp=stamp, rgb_bgr=rgb_frames[index], depth=depth_frames[index], camera_info_path=camera_info_path if camera_info_path.is_file() else None, camera_info=camera_info, yolo_path=yolo_path if yolo_path and yolo_path.is_file() else None, yolo=yolo, yolo_hash=str(yolo_hash) if yolo_hash else None, chunk_id=str(manifest.get('chunk_id') or chunk_dir.name), frame_index=index)
+        response = self._request({"action": "iter_samples", "start": _stamp_to_wire(start), "end": _stamp_to_wire(end)})
+        if response is None:
+            return
+        for payload in response.get("samples") or []:
+            if isinstance(payload, Mapping):
+                yield _sample_from_wire(payload)
 
     def iter_samples_after(self, stamp: RosStamp | None) -> Iterable[CachedRgbdSample]:
-        minimum = stamp.seconds if stamp is not None else None
-        for sample in self.iter_samples(start=stamp):
-            if minimum is not None and sample.stamp.seconds <= minimum:
-                continue
-            yield sample
+        response = self._request({"action": "iter_samples_after", "stamp": _stamp_to_wire(stamp)})
+        if response is None:
+            return
+        for payload in response.get("samples") or []:
+            if isinstance(payload, Mapping):
+                yield _sample_from_wire(payload)
 
     def iter_depth_samples(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedRgbdSample]:
-        start_seconds = start.seconds if start is not None else None
-        end_seconds = end.seconds if end is not None else None
-        empty_rgb = np.empty((0, 0, 3), dtype=np.uint8)
-        for chunk_dir, manifest in self._iter_chunk_manifests(start_seconds=start_seconds, end_seconds=end_seconds):
-            depth_frames = self._decode_depth_chunk(chunk_dir, manifest)
-            camera_info_path = chunk_dir / str(manifest.get('camera_info') or 'camera_info.json')
-            camera_info = load_json(camera_info_path) if camera_info_path.is_file() else None
-            for frame in manifest.get('frames') or []:
-                stamp = RosStamp.from_dict(frame.get('stamp') or {})
-                seconds = stamp.seconds
-                if start_seconds is not None and seconds < start_seconds:
-                    continue
-                if end_seconds is not None and seconds > end_seconds:
-                    continue
-                index = int(frame.get('frame_index', 0))
-                if index < 0 or index >= len(depth_frames):
-                    continue
-                yolo_hash = frame.get('yolo_hash')
-                yolo_path = self.yolo_root / f'{yolo_hash}.json' if yolo_hash else None
-                yield CachedRgbdSample(
-                    stamp=stamp,
-                    rgb_bgr=empty_rgb,
-                    depth=depth_frames[index],
-                    camera_info_path=camera_info_path if camera_info_path.is_file() else None,
-                    camera_info=camera_info,
-                    yolo_path=yolo_path if yolo_path and yolo_path.is_file() else None,
-                    yolo=None,
-                    yolo_hash=str(yolo_hash) if yolo_hash else None,
-                    chunk_id=str(manifest.get('chunk_id') or chunk_dir.name),
-                    frame_index=index,
-                )
-
-    def _sample_from_metadata(self, metadata: CachedSampleMetadata) -> CachedRgbdSample | None:
-        for sample in self.iter_samples(start=metadata.stamp, end=metadata.stamp):
-            if sample.stamp == metadata.stamp and sample.frame_index == metadata.frame_index:
-                return sample
-        for sample in self.iter_samples(start=metadata.stamp, end=metadata.stamp):
-            if sample.stamp == metadata.stamp:
-                return sample
-        return None
+        response = self._request({"action": "iter_depth_samples", "start": _stamp_to_wire(start), "end": _stamp_to_wire(end)})
+        if response is None:
+            return
+        for payload in response.get("samples") or []:
+            if isinstance(payload, Mapping):
+                yield _sample_from_wire(payload)
 
     def newest_sample(self) -> CachedRgbdSample | None:
-        newest = None
-        for metadata in self.iter_sample_metadata():
-            newest = metadata
-        return self._sample_from_metadata(newest) if newest is not None else None
-
-    def get_sample(self, stamp: RosStamp, *, mode: str = 'nearest') -> CachedRgbdSample | None:
-        target = stamp.seconds
-        if mode == 'before':
-            selected = None
-            for metadata in self.iter_sample_metadata(end=stamp):
-                selected = metadata
-            return self._sample_from_metadata(selected) if selected is not None else None
-        if mode == 'after':
-            for metadata in self.iter_sample_metadata(start=stamp):
-                return self._sample_from_metadata(metadata)
+        response = self._request({"action": "newest_sample"})
+        if response is None or response.get("sample") is None:
             return None
+        sample_payload = response.get("sample")
+        return _sample_from_wire(sample_payload) if isinstance(sample_payload, Mapping) else None
 
-        exact = list(self.iter_sample_metadata(start=stamp, end=stamp))
-        if exact:
-            selected = min(exact, key=lambda metadata: abs(metadata.stamp.seconds - target))
-            return self._sample_from_metadata(selected)
+    def get_sample(self, stamp: RosStamp, *, mode: str = "nearest") -> CachedRgbdSample | None:
+        response = self._request({"action": "get_sample", "stamp": stamp.to_dict(), "mode": mode})
+        if response is None or response.get("sample") is None:
+            return None
+        sample_payload = response.get("sample")
+        return _sample_from_wire(sample_payload) if isinstance(sample_payload, Mapping) else None
 
-        selected = None
-        best_delta = float('inf')
-        for metadata in self.iter_sample_metadata():
-            delta = abs(metadata.stamp.seconds - target)
-            if delta < best_delta:
-                selected = metadata
-                best_delta = delta
-        return self._sample_from_metadata(selected) if selected is not None else None
+    def status(self) -> dict[str, Any] | None:
+        response = self._request({"action": "status"})
+        return response.get("status") if isinstance(response, dict) else None
 
     def prune(self, *, newest_stamp: RosStamp | None = None, retention_seconds: float | None = None) -> None:
-        retention = float(retention_seconds if retention_seconds is not None else settings.SHIGURE_HISTORY_SECONDS)
-        manifests = list(self._iter_chunk_manifests())
-        if newest_stamp is None:
-            end_values = [float(manifest.get('end_seconds')) for _chunk, manifest in manifests if manifest.get('end_seconds') is not None]
-            newest_seconds = max(end_values) if end_values else None
-        else:
-            newest_seconds = newest_stamp.seconds
-        if newest_seconds is None:
-            return
-        cutoff = newest_seconds - retention
-        removed = set()
-        for chunk_dir, manifest in manifests:
-            end_seconds = manifest.get('end_seconds')
-            if end_seconds is not None and float(end_seconds) < cutoff:
-                shutil.rmtree(chunk_dir, ignore_errors=True)
-                removed.add(chunk_dir.name)
-        if removed:
-            self.clear_decoded_cache()
-        self.prune_yolo_payloads()
+        self._request(
+            {
+                "action": "prune",
+                "newest_stamp": _stamp_to_wire(newest_stamp),
+                "retention_seconds": retention_seconds,
+            }
+        )
 
     def prune_yolo_payloads(self) -> None:
-        referenced: set[str] = set()
-        for _chunk_dir, manifest in self._iter_chunk_manifests():
-            for frame in manifest.get('frames') or []:
-                yolo_hash = frame.get('yolo_hash')
-                if yolo_hash:
-                    referenced.add(str(yolo_hash))
-        for payload in self.yolo_root.glob('*.json'):
-            if payload.stem not in referenced:
-                try:
-                    payload.unlink()
-                except FileNotFoundError:
-                    pass
-
-    def _iter_chunk_manifests(self, *, start_seconds: float | None = None, end_seconds: float | None = None) -> Iterable[tuple[Path, dict[str, Any]]]:
-        if not self.chunks_root.is_dir():
-            return
-        for manifest_path in sorted(self.chunks_root.glob('*/chunk_manifest.json')):
-            try:
-                manifest = load_json(manifest_path)
-            except Exception:
-                continue
-            chunk_start = manifest.get('start_seconds')
-            chunk_end = manifest.get('end_seconds')
-            if start_seconds is not None and chunk_end is not None and float(chunk_end) < start_seconds:
-                continue
-            if end_seconds is not None and chunk_start is not None and float(chunk_start) > end_seconds:
-                continue
-            yield manifest_path.parent, manifest
-
-    def _remember_depth_chunk(self, chunk_id: str, depth: np.ndarray) -> np.ndarray:
-        with self._decoded_cache_lock:
-            if self.decoded_chunk_cache_max > 0:
-                self._decoded_depth_chunks[chunk_id] = depth
-                self._decoded_depth_chunks.move_to_end(chunk_id)
-                while len(self._decoded_depth_chunks) > self.decoded_chunk_cache_max:
-                    self._decoded_depth_chunks.popitem(last=False)
-            return depth
-
-    def _decode_depth_chunk(self, chunk_dir: Path, manifest: Mapping[str, Any]) -> np.ndarray:
-        chunk_id = str(manifest.get('chunk_id') or chunk_dir.name)
-        with self._decoded_cache_lock:
-            full_cached = self._decoded_chunks.get(chunk_id)
-            if full_cached is not None:
-                self._decoded_chunks.move_to_end(chunk_id)
-                return full_cached[1]
-            cached = self._decoded_depth_chunks.get(chunk_id)
-            if cached is not None:
-                self._decoded_depth_chunks.move_to_end(chunk_id)
-                return cached
-        with self._decode_lock_for_chunk(chunk_id):
-            with self._decoded_cache_lock:
-                full_cached = self._decoded_chunks.get(chunk_id)
-                if full_cached is not None:
-                    self._decoded_chunks.move_to_end(chunk_id)
-                    return full_cached[1]
-                cached = self._decoded_depth_chunks.get(chunk_id)
-                if cached is not None:
-                    self._decoded_depth_chunks.move_to_end(chunk_id)
-                    return cached
-            frame_count = int(manifest.get('frame_count') or len(manifest.get('frames') or []))
-            width = int(manifest['width'])
-            height = int(manifest['height'])
-            depth_path = chunk_dir / str(manifest.get('depth_video') or 'depth.mkv')
-            depth = self._decode_raw_video(depth_path, pix_fmt='gray16le', dtype=np.uint16, shape=(frame_count, height, width))
-            return self._remember_depth_chunk(chunk_id, depth)
-
-    def _decode_chunk(self, chunk_dir: Path, manifest: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray]:
-        chunk_id = str(manifest.get('chunk_id') or chunk_dir.name)
-        with self._decoded_cache_lock:
-            cached = self._decoded_chunks.get(chunk_id)
-            if cached is not None:
-                self._decoded_chunks.move_to_end(chunk_id)
-                return cached
-        with self._decode_lock_for_chunk(chunk_id):
-            with self._decoded_cache_lock:
-                cached = self._decoded_chunks.get(chunk_id)
-                if cached is not None:
-                    self._decoded_chunks.move_to_end(chunk_id)
-                    return cached
-            frame_count = int(manifest.get('frame_count') or len(manifest.get('frames') or []))
-            width = int(manifest['width'])
-            height = int(manifest['height'])
-            rgb_path = chunk_dir / str(manifest.get('rgb_video') or 'rgb.mp4')
-            depth_path = chunk_dir / str(manifest.get('depth_video') or 'depth.mkv')
-            rgb = self._decode_raw_video(rgb_path, pix_fmt='bgr24', dtype=np.uint8, shape=(frame_count, height, width, 3))
-            depth = self._decode_raw_video(depth_path, pix_fmt='gray16le', dtype=np.uint16, shape=(frame_count, height, width))
-            decoded = (rgb, depth)
-            with self._decoded_cache_lock:
-                if self.decoded_chunk_cache_max > 0:
-                    self._decoded_chunks[chunk_id] = decoded
-                    self._decoded_chunks.move_to_end(chunk_id)
-                    self._decoded_depth_chunks.pop(chunk_id, None)
-                    while len(self._decoded_chunks) > self.decoded_chunk_cache_max:
-                        self._decoded_chunks.popitem(last=False)
-                return decoded
-
-    @staticmethod
-    def _decode_raw_video(path: Path, *, pix_fmt: str, dtype: Any, shape: tuple[int, ...]) -> np.ndarray:
-        cmd = ['ffmpeg', '-hide_banner', '-loglevel', 'error', '-i', str(path), '-f', 'rawvideo', '-pix_fmt', pix_fmt, '-']
-        raw = subprocess.check_output(cmd)
-        array = np.frombuffer(raw, dtype=dtype)
-        expected = int(np.prod(shape))
-        if array.size != expected:
-            raise ValueError(f'decoded {array.size} values from {path}, expected {expected}')
-        return array.reshape(shape).copy()
+        self._request({"action": "prune_yolo_payloads"})
