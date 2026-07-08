@@ -20,8 +20,13 @@ from artifact_layout import model_debug_file, model_worker_dir, model_worker_fil
 from path_config import SAM3_BEP, SAM3_ROOT
 import numpy as np
 from PIL import Image, ImageDraw
+from object_alignment_common import compute_mask_border_crop, depth_limits_for_task, get_depth_border_crop_ratio
 from stage_common import ensure_file, load_stage_task
 from task_json import load_task_json, resolve_task_json_path, save_task_json
+
+
+SPATIAL_BOX_DEPTH_EXPANSION_FACTOR = 2.0
+SPATIAL_BOX_MIN_SIZE_M = 0.03
 
 
 def safe_name(text: str) -> str:
@@ -196,6 +201,40 @@ def _quat_xyzw_to_matrix(q: np.ndarray) -> np.ndarray:
     )
 
 
+def _camera_box_corners(box_min: np.ndarray, box_max: np.ndarray) -> np.ndarray:
+    x0, y0, z0 = [float(v) for v in box_min]
+    x1, y1, z1 = [float(v) for v in box_max]
+    return np.array(
+        [
+            [x0, y0, z0],
+            [x1, y0, z0],
+            [x1, y1, z0],
+            [x0, y1, z0],
+            [x0, y0, z1],
+            [x1, y0, z1],
+            [x1, y1, z1],
+            [x0, y1, z1],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _percentile_camera_box(points_camera: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    if points_camera.shape[0] >= 64:
+        box_min = np.percentile(points_camera, 2.0, axis=0)
+        box_max = np.percentile(points_camera, 98.0, axis=0)
+    else:
+        box_min = np.min(points_camera, axis=0)
+        box_max = np.max(points_camera, axis=0)
+
+    center = (box_min + box_max) * 0.5
+    size = np.maximum(
+        box_max - box_min,
+        np.array([SPATIAL_BOX_MIN_SIZE_M, SPATIAL_BOX_MIN_SIZE_M, SPATIAL_BOX_MIN_SIZE_M], dtype=np.float64),
+    )
+    return center - size * 0.5, center + size * 0.5
+
+
 def _camera_matrix_from_task(task: dict[str, Any]) -> np.ndarray | None:
     pvcamera = task.get("PVCamera") or {}
     raw = pvcamera.get("k") or pvcamera.get("K") or pvcamera.get("camera_matrix")
@@ -233,17 +272,35 @@ def compute_sam3_spatial_box(task: dict[str, Any], mask_bool: np.ndarray, depth_
             "mask_shape": list(mask.shape),
         }
 
-    valid = mask & np.isfinite(depth_m) & (depth_m > 0.0)
-    valid_count = int(np.count_nonzero(valid))
-    if valid_count < 32:
+    depth_limits = depth_limits_for_task(task)
+    min_depth_m = float(depth_limits.min_depth_mm) / 1000.0
+    max_depth_m = float(depth_limits.max_reliable_depth_mm) / 1000.0
+    crop_ratio = get_depth_border_crop_ratio()
+    crop = compute_mask_border_crop(mask, border_ratio=crop_ratio)
+
+    depth_in_range = np.isfinite(depth_m) & (depth_m >= min_depth_m) & (depth_m <= max_depth_m)
+    raw_valid = mask & depth_in_range
+    raw_valid_count = int(np.count_nonzero(raw_valid))
+    keep_mask = np.asarray(crop["keep_mask"], dtype=bool)
+    cropped_valid = keep_mask & depth_in_range
+    cropped_valid_count = int(np.count_nonzero(cropped_valid))
+    if cropped_valid_count < 32:
         return {
             "status": "unavailable",
-            "reason": "not_enough_valid_depth_pixels",
-            "valid_depth_pixels": valid_count,
+            "reason": "not_enough_valid_depth_pixels_after_border_crop",
+            "valid_depth_pixels": raw_valid_count,
+            "raw_valid_depth_pixels": raw_valid_count,
+            "border_cropped_valid_depth_pixels": cropped_valid_count,
+            "discarded_depth_pixels": max(raw_valid_count - cropped_valid_count, 0),
+            "depth_sensor": depth_limits.sensor,
+            "min_depth_m": min_depth_m,
+            "max_reliable_depth_m": max_depth_m,
+            "depth_border_crop_ratio": float(crop_ratio),
+            "depth_border_crop_threshold_px": float(crop["threshold_px"]),
         }
 
-    ys, xs = np.nonzero(valid)
-    zs = depth_m[valid].astype(np.float64)
+    ys, xs = np.nonzero(cropped_valid)
+    zs = depth_m[cropped_valid].astype(np.float64)
     z_low, z_high = np.percentile(zs, [5.0, 95.0])
     keep = (zs >= z_low) & (zs <= z_high)
     if int(np.count_nonzero(keep)) < 32:
@@ -259,18 +316,25 @@ def compute_sam3_spatial_box(task: dict[str, Any], mask_bool: np.ndarray, depth_
     # OpenCV camera: +X right, +Y down, +Z forward. Unity camera: +X right, +Y up, +Z forward.
     points_camera_unity = np.stack([x_cv, -y_cv, zs], axis=1)
     rotation_world_from_camera = _quat_xyzw_to_matrix(camera_rotation)
-    points_world = (rotation_world_from_camera @ points_camera_unity.T).T + camera_position.reshape(1, 3)
 
-    if points_world.shape[0] >= 64:
-        p_low = np.percentile(points_world, 2.0, axis=0)
-        p_high = np.percentile(points_world, 98.0, axis=0)
-    else:
-        p_low = np.min(points_world, axis=0)
-        p_high = np.max(points_world, axis=0)
-    size = np.maximum(p_high - p_low, np.array([0.03, 0.03, 0.03], dtype=np.float64))
+    base_camera_min, base_camera_max = _percentile_camera_box(points_camera_unity)
+    base_camera_size = base_camera_max - base_camera_min
+    expanded_camera_min = base_camera_min.copy()
+    expanded_camera_max = base_camera_max.copy()
+    expanded_camera_max[2] = expanded_camera_min[2] + base_camera_size[2] * SPATIAL_BOX_DEPTH_EXPANSION_FACTOR
+
+    expanded_camera_corners = _camera_box_corners(expanded_camera_min, expanded_camera_max)
+    expanded_world_corners = (
+        rotation_world_from_camera @ expanded_camera_corners.T
+    ).T + camera_position.reshape(1, 3)
+    p_low = np.min(expanded_world_corners, axis=0)
+    p_high = np.max(expanded_world_corners, axis=0)
+    size = p_high - p_low
     center = (p_low + p_high) * 0.5
-    p_low = center - size * 0.5
-    p_high = center + size * 0.5
+
+    base_camera_center = (base_camera_min + base_camera_max) * 0.5
+    expanded_camera_center = (expanded_camera_min + expanded_camera_max) * 0.5
+    center_shift_camera = expanded_camera_center - base_camera_center
 
     x0 = y0 = x1 = y1 = 0
     mask_ys, mask_xs = np.nonzero(mask)
@@ -278,6 +342,7 @@ def compute_sam3_spatial_box(task: dict[str, Any], mask_bool: np.ndarray, depth_
         x0, x1 = int(mask_xs.min()), int(mask_xs.max())
         y0, y1 = int(mask_ys.min()), int(mask_ys.max())
 
+    used_depth_pixels = int(zs.size)
     return {
         "status": "ready",
         "coordinate_space": "unity_world",
@@ -285,11 +350,33 @@ def compute_sam3_spatial_box(task: dict[str, Any], mask_bool: np.ndarray, depth_
         "aabb_max_world": [float(v) for v in p_high],
         "center_world": [float(v) for v in center],
         "size_world": [float(v) for v in size],
-        "source": "sam3_mask_aligned_depth_percentile",
+        "source": "sam3_mask_aligned_depth_border_cropped_camera_depth_x2",
         "mask_bbox_xyxy": [int(x0), int(y0), int(x1), int(y1)],
         "mask_pixels": int(np.count_nonzero(mask)),
-        "valid_depth_pixels": valid_count,
-        "used_depth_pixels": int(zs.size),
+        "depth_sensor": depth_limits.sensor,
+        "min_depth_m": min_depth_m,
+        "max_reliable_depth_m": max_depth_m,
+        "valid_depth_pixels": raw_valid_count,
+        "raw_valid_depth_pixels": raw_valid_count,
+        "border_cropped_valid_depth_pixels": cropped_valid_count,
+        "used_depth_pixels": used_depth_pixels,
+        "discarded_depth_pixels": max(raw_valid_count - used_depth_pixels, 0),
+        "edge_discarded_depth_pixels": max(raw_valid_count - cropped_valid_count, 0),
+        "depth_border_crop_ratio": float(crop_ratio),
+        "depth_border_crop_mode": str(crop["mode"]),
+        "depth_border_crop_threshold_px": float(crop["threshold_px"]),
+        "depth_border_crop_min_inside_distance_px": float(crop["min_inside_distance_px"]),
+        "depth_border_crop_max_inside_distance_px": float(crop["max_inside_distance_px"]),
+        "depth_border_crop_margin_x_px": int(crop["approx_margin_x_px"]),
+        "depth_border_crop_margin_y_px": int(crop["approx_margin_y_px"]),
+        "depth_expansion_factor": float(SPATIAL_BOX_DEPTH_EXPANSION_FACTOR),
+        "base_camera_box_min": [float(v) for v in base_camera_min],
+        "base_camera_box_max": [float(v) for v in base_camera_max],
+        "expanded_camera_box_min": [float(v) for v in expanded_camera_min],
+        "expanded_camera_box_max": [float(v) for v in expanded_camera_max],
+        "camera_depth_front_m": float(expanded_camera_min[2]),
+        "camera_depth_back_m": float(expanded_camera_max[2]),
+        "camera_depth_center_shift_m": float(center_shift_camera[2]),
         "depth_percentile_m": [float(z_low), float(z_high)],
     }
 

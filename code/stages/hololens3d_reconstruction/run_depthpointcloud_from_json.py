@@ -45,6 +45,13 @@ def main(argv: list[str]) -> int:
         min_depth_mm=depth_limits.min_depth_mm,
         max_depth_mm=depth_limits.max_reliable_depth_mm,
     )
+    valid_all = (
+        mask_bool
+        & (depth_mm >= depth_limits.min_depth_mm)
+        & (depth_mm <= depth_limits.max_reliable_depth_mm)
+    )
+    raw_point_count = int(np.count_nonzero(valid_all))
+
     _export_points, canonical_points = build_depth_pointcloud(
         depth_mm,
         mask_bool,
@@ -52,21 +59,17 @@ def main(argv: list[str]) -> int:
         min_depth_mm=depth_limits.min_depth_mm,
         max_depth_mm=depth_limits.max_reliable_depth_mm,
     )
-    raw_point_count = int(len(canonical_points))
+    border_cropped_point_count = int(len(canonical_points))
     extents = compute_front_view_extents(canonical_points)
 
-    valid_all = (
-        mask_bool
-        & (depth_mm >= depth_limits.min_depth_mm)
-        & (depth_mm <= depth_limits.max_reliable_depth_mm)
-    )
     depth_keep_mask = build_depth_border_keep_mask(mask_bool)
-    valid_cropped = valid_all & ~depth_keep_mask
+    discarded_edge_mask = valid_all & ~depth_keep_mask
     discarded_points_export, _discarded_points_canonical = build_depth_pointcloud_from_valid_mask(
         depth_mm,
-        valid_cropped,
+        discarded_edge_mask,
         k,
     )
+    discarded_point_count = int(len(discarded_points_export))
     _icp_used_points_canonical, target_front_indices = select_front_visible_points(
         canonical_points,
         bins=160,
@@ -85,11 +88,16 @@ def main(argv: list[str]) -> int:
         "real_height_measured": measurements["real_height_m"],
         "mean_depth_measured": measurements["mean_depth_m"],
         "raw_point_count": int(raw_point_count),
-        "point_count": int(raw_point_count),
+        "raw_valid_point_count": int(raw_point_count),
+        "edge_cropped_point_count": int(border_cropped_point_count),
+        "point_count": int(border_cropped_point_count),
         "valid_depth_ratio": measurements["valid_ratio"],
         "mask_bbox_xyxy": measurements["mask_bbox_xyxy"],
         "mask_pixels": measurements["mask_pixels"],
         "valid_depth_pixels": measurements["valid_depth_pixels"],
+        "raw_valid_depth_pixels": int(raw_point_count),
+        "border_cropped_valid_depth_pixels": int(border_cropped_point_count),
+        "discarded_depth_pixels": int(discarded_point_count),
         "depth_border_crop_ratio": measurements["depth_border_crop_ratio"],
         "depth_border_crop_mode": measurements["depth_border_crop_mode"],
         "depth_border_crop_margin_x_px": measurements["depth_border_crop_margin_x_px"],
@@ -99,7 +107,8 @@ def main(argv: list[str]) -> int:
         "mask_border_crop_max_inside_distance_px": measurements["mask_border_crop_max_inside_distance_px"],
         "usable_mask_pixels": measurements["usable_mask_pixels"],
         "cropped_mask_pixels": measurements["cropped_mask_pixels"],
-        "discarded_count": int(len(discarded_points_export)),
+        "discarded_count": int(discarded_point_count),
+        "edge_discarded_point_count": int(discarded_point_count),
         "used_count": int(len(target_front_indices)),
         "icp_target_front_max_points": int(ICP_TARGET_FRONT_MAX_POINTS),
     }
@@ -108,7 +117,8 @@ def main(argv: list[str]) -> int:
 
     print(
         f"[INFO] depthpointcloud : points raw={raw_point_count} "
-        f"used={len(target_front_indices)} discarded={len(discarded_points_export)} "
+        f"cropped={border_cropped_point_count} used={len(target_front_indices)} "
+        f"discarded={discarded_point_count} "
         f"size={measurements['real_width_m']:.4f}x{measurements['real_height_m']:.4f}m "
         f"depth={measurements['mean_depth_m']:.4f}m"
     )
