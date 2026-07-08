@@ -97,7 +97,7 @@ frame_index
 拿取初始化会读取 object_detection 中的候选 object mask：
 
 - mask 必须能转换为与 depth 同尺寸的 bool mask。
-- 候选 mask 会与 HoloLens model box 在 Shigure 图像上的投影比较。
+- 候选 mask 会与模型中心对角圆投影比较，并校验 mask 有效 depth 中位数和模型中心 depth 的偏差。
 - 选择规则见 `docs/taken-object-detection-state-machine.md`。
 
 ## Marker Pose
@@ -110,13 +110,13 @@ data/aruco/shigure_marker_history/
 
 最新 marker pose 用于：
 
-- HoloLens/ArUco model box 投影到 Shigure 图像。
+- HoloLens/ArUco 模型中心和 bounds corners 投影到 Shigure 图像，生成模型对角圆。
 - Shigure camera point 反投影到 ArUco。
 - SAM3D Body mesh 从 Shigure camera 坐标转 ArUco，再由服务器转换到 HoloLens current。
 
 ## 使用边界
 
 - Shigure fixed view 的历史再现不做 3D 投影扫描。
-- 初始化 old_mask 可以使用 model box 投影和 2D ray 辅助选择 object mask。
+- 初始化 old_mask 使用模型对角圆内占比、depth 偏差阈值，并在 accepted 候选中选择最大 object mask。
 - 一旦 old_mask 保存，后续 still/missing/occluded 判断只在 old_mask 内比较 RGB/depth。
 - 不要让 stage 直接读取 recorder 内部全局变量；统一走 `ShigureRgbdCache`。

@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 import math
-import os
 import shutil
 import sys
 from dataclasses import dataclass
@@ -23,12 +22,9 @@ if str(CODE_ROOT) not in sys.path:
 from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, model_debug_dir, model_result_file, model_worker_dir, model_worker_file
 from coordinate_systems import quat_xyzw_to_rotation_matrix
 from spatial_transforms import (
-    aruco_points_to_shigure_camera,
     camera_info_image_shape,
     camera_matrix_from_info,
-    hololens_point_to_aruco,
     project_aruco_points_to_shigure_pixels,
-    project_camera_points_to_pixels,
 )
 from stages.shigure_history.cache import CachedRgbdSample, CachedSampleMetadata, RosStamp, ShigureRgbdCache, load_json, sample_key
 from stages.shigure_history.marker_history import latest_marker_pose_path
@@ -62,22 +58,6 @@ class FrameDecision:
             'taken_ratio': self.taken_ratio,
             'candidate': self.candidate,
             'full_occlusion': self.full_occlusion,
-        }
-
-
-@dataclass(frozen=True)
-class ObjectCenterProjection:
-    pixel_xy: tuple[float, float]
-    depth_m: float
-    camera_xyz_m: tuple[float, float, float]
-    source: str
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            'pixel_xy': [float(self.pixel_xy[0]), float(self.pixel_xy[1])],
-            'depth_m': float(self.depth_m),
-            'camera_xyz_m': [float(v) for v in self.camera_xyz_m],
-            'source': self.source,
         }
 
 
@@ -328,50 +308,6 @@ def _object_center_aruco(task: Mapping[str, Any]) -> tuple[np.ndarray | None, st
     return None, 'missing_object_center_aruco'
 
 
-def _project_object_center_to_shigure(task: Mapping[str, Any], camera_info: Mapping[str, Any] | None, image_shape: tuple[int, int]) -> tuple[ObjectCenterProjection | None, dict[str, Any]]:
-    camera_matrix = camera_matrix_from_info(camera_info)
-    if camera_matrix is None:
-        return None, {'source': 'model_center_projection', 'reason': 'camera_matrix_missing'}
-    center_aruco, center_source = _object_center_aruco(task)
-    if center_aruco is None:
-        return None, {'source': 'model_center_projection', 'reason': center_source}
-    marker_pose = _load_marker_pose_cv()
-    if marker_pose is None:
-        return None, {'source': 'model_center_projection', 'reason': 'marker_pose_missing'}
-    marker_rotation, marker_translation, marker_path = marker_pose
-    center_camera_points, center_pixels, center_visible = project_aruco_points_to_shigure_pixels(
-        center_aruco.reshape(1, 3),
-        marker_rotation,
-        marker_translation,
-        camera_matrix,
-    )
-    center_camera = center_camera_points.reshape(3)
-    z = float(center_camera[2])
-    if not bool(center_visible[0]) or not np.isfinite(center_pixels[0]).all():
-        return None, {
-            'source': 'model_center_projection',
-            'reason': 'projected_center_behind_camera',
-            'camera_xyz_m': center_camera.tolist(),
-        }
-    x = float(center_pixels[0, 0])
-    y = float(center_pixels[0, 1])
-    h, w = image_shape
-    info = {
-        'source': 'model_center_projection',
-        'center_source': center_source,
-        'marker_pose_path': str(marker_path),
-        'object_center_aruco': center_aruco.tolist(),
-        'camera_matrix': camera_matrix.tolist(),
-        'pixel_xy': [x, y],
-        'depth_m': z,
-        'camera_xyz_m': center_camera.tolist(),
-        'image_shape': [h, w],
-    }
-    if x < 0 or y < 0 or x >= w or y >= h:
-        return None, {**info, 'reason': 'projected_center_outside_image'}
-    return ObjectCenterProjection(pixel_xy=(x, y), depth_m=z, camera_xyz_m=tuple(float(v) for v in center_camera), source=center_source), info
-
-
 def _unique_yolo_events(metadata: list[CachedSampleMetadata]) -> list[YoloEvent]:
     events: list[YoloEvent] = []
     last_hash: str | None = None
@@ -459,77 +395,8 @@ def _observation_from_object(cache: ShigureRgbdCache, event: YoloEvent, obj: Map
     )
 
 
-def _mask_iou(a: np.ndarray, b: np.ndarray) -> float:
-    if a.shape != b.shape:
-        return 0.0
-    inter = int(np.count_nonzero(a & b))
-    union = int(np.count_nonzero(a | b))
-    return inter / max(1, union)
-
-
 def _center_distance(a: tuple[float, float], b: tuple[float, float]) -> float:
     return float(math.hypot(float(a[0]) - float(b[0]), float(a[1]) - float(b[1])))
-
-
-def _score_yolo_match(obs: YoloObjectObservation, projection: ObjectCenterProjection) -> dict[str, Any]:
-    px, py = projection.pixel_xy
-    cx, cy = obs.center_xy
-    center_distance = _center_distance((px, py), (cx, cy))
-    depth_diff = None if obs.median_depth_m is None else abs(float(obs.median_depth_m) - float(projection.depth_m))
-    h, w = obs.mask.shape
-    ix = int(round(px))
-    iy = int(round(py))
-    point_inside = 0 <= ix < w and 0 <= iy < h and bool(obs.mask[iy, ix])
-    x0, y0, x1, y1 = obs.bbox_xyxy
-    point_in_bbox = x0 <= px <= x1 and y0 <= py <= y1
-    depth_score = 1.0 if depth_diff is None else min(3.0, depth_diff / max(1e-6, settings.YOLO_MATCH_DEPTH_TOLERANCE_M))
-    center_score = min(3.0, center_distance / max(1.0, settings.YOLO_MATCH_MAX_CENTER_PX))
-    score = center_score + depth_score
-    if not point_inside:
-        score += 0.75
-    if not point_in_bbox:
-        score += 0.75
-    return {
-        'score': float(score),
-        'center_distance_px': center_distance,
-        'depth_diff_m': depth_diff,
-        'point_inside_mask': point_inside,
-        'point_inside_bbox': point_in_bbox,
-        'observation': obs,
-    }
-
-
-def _find_yolo_target(cache: ShigureRgbdCache, events: list[YoloEvent], projection: ObjectCenterProjection, shape: tuple[int, int]) -> tuple[str | None, dict[str, Any]]:
-    scored: list[dict[str, Any]] = []
-    for event in events:
-        for obj in event.payload.get('objects') or []:
-            if not isinstance(obj, Mapping):
-                continue
-            obs = _observation_from_object(cache, event, obj, shape)
-            if obs is None:
-                continue
-            item = _score_yolo_match(obs, projection)
-            scored.append(item)
-    if not scored:
-        return None, {'reason': 'no_yolo_object_with_mask'}
-    scored.sort(key=lambda item: float(item['score']))
-    best = scored[0]
-    best_obs: YoloObjectObservation = best['observation']
-    accept = (
-        float(best['score']) <= settings.YOLO_MATCH_MAX_SCORE
-        and float(best['center_distance_px']) <= settings.YOLO_MATCH_MAX_CENTER_PX
-        and (best['depth_diff_m'] is None or float(best['depth_diff_m']) <= settings.YOLO_MATCH_DEPTH_TOLERANCE_M * 2.0)
-    )
-    return (best_obs.object_id if accept else None), {
-        'reason': 'matched' if accept else 'best_match_rejected',
-        'best': {k: v for k, v in best.items() if k != 'observation'},
-        'best_observation': best_obs.to_dict(),
-        'candidate_count': len(scored),
-        'top_candidates': [
-            {**{k: v for k, v in item.items() if k != 'observation'}, 'observation': item['observation'].to_dict()}
-            for item in scored[:5]
-        ],
-    }
 
 
 def _collect_target_observations(cache: ShigureRgbdCache, events: list[YoloEvent], object_id: str, shape: tuple[int, int]) -> list[YoloObjectObservation]:
@@ -545,37 +412,7 @@ def _collect_target_observations(cache: ShigureRgbdCache, events: list[YoloEvent
     return observations
 
 
-def _stable_observation_prefix(observations: list[YoloObjectObservation], *, minimum_count: int) -> tuple[list[YoloObjectObservation], dict[str, Any]]:
-    if len(observations) < minimum_count:
-        return [], {'reason': 'not_enough_unique_yolo', 'available': len(observations), 'required': minimum_count}
-    for start_index in range(0, len(observations) - minimum_count + 1):
-        window = observations[start_index:start_index + minimum_count]
-        anchor = window[0]
-        max_center = max(settings.YOLO_STABLE_MAX_CENTER_PX, anchor.bbox_diag * settings.YOLO_STABLE_MAX_CENTER_BBOX_RATIO)
-        center_distances = [_center_distance(anchor.center_xy, obs.center_xy) for obs in window[1:]]
-        mask_ious = [_mask_iou(anchor.mask, obs.mask) for obs in window[1:]]
-        depth_diffs = [abs(float(obs.median_depth_m) - float(anchor.median_depth_m)) for obs in window[1:] if obs.median_depth_m is not None and anchor.median_depth_m is not None]
-        stable = (
-            all(distance <= max_center for distance in center_distances)
-            and all(iou >= settings.YOLO_STABLE_MIN_MASK_IOU for iou in mask_ious)
-            and all(delta <= settings.YOLO_STABLE_MAX_DEPTH_DELTA_M for delta in depth_diffs)
-        )
-        stats = {
-            'reason': 'stable' if stable else 'unstable_yolo_window',
-            'start_index': start_index,
-            'required': minimum_count,
-            'max_center_px': max_center,
-            'center_distances_px': center_distances,
-            'mask_ious': mask_ious,
-            'depth_diffs_m': depth_diffs,
-            'window': [obs.to_dict() for obs in window],
-        }
-        if stable:
-            return window, stats
-    return [], {'reason': 'no_stable_yolo_window', 'available': len(observations), 'required': minimum_count}
-
-
-def _model_box_corners_aruco(task: Mapping[str, Any]) -> tuple[np.ndarray | None, dict[str, Any]]:
+def _model_bounds_corners_aruco(task: Mapping[str, Any]) -> tuple[np.ndarray | None, dict[str, Any]]:
     bounds = task.get('ModelBounds') if isinstance(task.get('ModelBounds'), Mapping) else None
     if not bounds:
         return None, {'reason': 'model_bounds_missing'}
@@ -601,172 +438,33 @@ def _model_box_corners_aruco(task: Mapping[str, Any]) -> tuple[np.ndarray | None
     return None, {'reason': 'model_bounds_corners_missing'}
 
 
-def _hololens_camera_origin_aruco(task: Mapping[str, Any]) -> tuple[np.ndarray | None, dict[str, Any]]:
-    reference = task.get('aruco_reference') if isinstance(task.get('aruco_reference'), Mapping) else None
-    if reference is None:
-        return None, {'status': 'unavailable', 'reason': 'task_aruco_reference_missing'}
-    for key in ('PVCamera', 'device'):
-        payload = task.get(key)
-        if not isinstance(payload, Mapping):
-            continue
-        raw_position = payload.get('position')
-        source = f'{key}.position'
-        if raw_position is None and payload.get('pose') is not None:
-            try:
-                matrix = np.asarray(payload.get('pose'), dtype=np.float64).reshape(4, 4)
-                raw_position = matrix[:3, 3]
-                source = f'{key}.pose.translation'
-            except Exception:
-                raw_position = None
-        if raw_position is None:
-            continue
-        try:
-            position_hololens = _parse_float_array(raw_position, 3, source)
-            return hololens_point_to_aruco(position_hololens, reference), {
-                'status': 'ready',
-                'source': source,
-                'coordinate_space': 'aruco',
-                'position_hololens': position_hololens.astype(float).tolist(),
-            }
-        except Exception as exc:
-            return None, {'status': 'unavailable', 'reason': 'hololens_camera_position_parse_failed', 'source': source, 'error_message': str(exc)}
-    return None, {'status': 'unavailable', 'reason': 'hololens_camera_position_missing'}
-
-
-def _camera_points_to_image_polyline(points_camera: np.ndarray, camera_matrix: np.ndarray, image_shape: tuple[int, int]) -> list[list[int]]:
-    points = np.asarray(points_camera, dtype=np.float64).reshape(-1, 3)
-    if points.size == 0:
-        return []
-    pixels, visible = project_camera_points_to_pixels(points, camera_matrix)
+def _circle_mask(image_shape: tuple[int, int], center_xy: tuple[float, float], radius_px: float) -> tuple[np.ndarray, tuple[int, int, int, int]]:
     h, w = image_shape
-    polyline: list[list[int]] = []
-    last: tuple[int, int] | None = None
-    for pixel, is_visible in zip(pixels, visible):
-        if not bool(is_visible) or not np.isfinite(pixel).all():
-            continue
-        ix = int(round(float(pixel[0])))
-        iy = int(round(float(pixel[1])))
-        if ix < 0 or iy < 0 or ix >= w or iy >= h:
-            continue
-        current = (ix, iy)
-        if current != last:
-            polyline.append([ix, iy])
-            last = current
-    return polyline
-
-
-def _build_hololens_center_ray_selection(task: Mapping[str, Any], center_aruco: np.ndarray, center_camera: np.ndarray, marker_rotation: np.ndarray, marker_translation: np.ndarray, camera_matrix: np.ndarray, image_shape: tuple[int, int]) -> dict[str, Any]:
-    origin_aruco, origin_info = _hololens_camera_origin_aruco(task)
-    if origin_aruco is None:
-        return {'status': 'unavailable', 'source': 'hololens_camera_to_box_center_extended', **origin_info}
-    origin_camera = aruco_points_to_shigure_camera(
-        origin_aruco.reshape(1, 3),
-        marker_rotation,
-        marker_translation,
-    ).reshape(3)
-    direction = np.asarray(center_camera, dtype=np.float64).reshape(3) - origin_camera
-    norm = float(np.linalg.norm(direction))
-    if not np.isfinite(norm) or norm <= 1.0e-6:
-        return {
-            'status': 'unavailable',
-            'source': 'hololens_camera_to_box_center_extended',
-            'reason': 'hololens_camera_origin_matches_box_center',
-            'origin_aruco': origin_aruco.astype(float).tolist(),
-            'origin_camera_m': origin_camera.astype(float).tolist(),
-        }
-    unit = direction / norm
-    extension_m = max(0.05, float(settings.MODEL_BOX_RAY_EXTENSION_M))
-    sample_count = max(2, int(settings.MODEL_BOX_RAY_SAMPLE_COUNT))
-    distances = np.linspace(0.0, extension_m, sample_count, dtype=np.float64)
-    ray_points = center_camera.reshape(1, 3) + distances.reshape(-1, 1) * unit.reshape(1, 3)
-    polyline = _camera_points_to_image_polyline(ray_points, camera_matrix, image_shape)
-    width_px = max(1, int(round(float(settings.MODEL_BOX_RAY_MASK_WIDTH_PX))))
-    if not polyline:
-        return {
-            'status': 'unavailable',
-            'source': 'hololens_camera_to_box_center_extended',
-            'reason': 'extended_ray_outside_shigure_image',
-            'origin_aruco': origin_aruco.astype(float).tolist(),
-            'origin_camera_m': origin_camera.astype(float).tolist(),
-            'center_camera_m': np.asarray(center_camera, dtype=np.float64).astype(float).tolist(),
-            'extension_m': extension_m,
-            'sample_count': sample_count,
-            'width_px': width_px,
-        }
-    return {
-        'status': 'ready',
-        'source': 'hololens_camera_to_box_center_extended',
-        'origin_source': origin_info.get('source'),
-        'origin_aruco': origin_aruco.astype(float).tolist(),
-        'origin_camera_m': origin_camera.astype(float).tolist(),
-        'object_center_aruco': np.asarray(center_aruco, dtype=np.float64).astype(float).tolist(),
-        'center_camera_m': np.asarray(center_camera, dtype=np.float64).astype(float).tolist(),
-        'direction_camera_unit': unit.astype(float).tolist(),
-        'extension_m': extension_m,
-        'sample_count': sample_count,
-        'width_px': width_px,
-        'pixel_polyline_xy': polyline,
-    }
-
-
-def _compact_ray_selection_info(info: Mapping[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(info, Mapping):
-        return {'status': 'unavailable', 'reason': 'ray_selection_missing'}
-    payload = dict(info)
-    payload.pop('pixel_polyline_xy', None)
-    return payload
-
-
-def _ray_mask_from_projection(projection: Mapping[str, Any], shape: tuple[int, int]) -> tuple[np.ndarray | None, dict[str, Any]]:
-    info = projection.get('ray_selection') if isinstance(projection.get('ray_selection'), Mapping) else None
-    if not isinstance(info, Mapping) or info.get('status') != 'ready':
-        return None, _compact_ray_selection_info(info)
-    raw_polyline = info.get('pixel_polyline_xy')
-    if not isinstance(raw_polyline, list) or not raw_polyline:
-        return None, {**_compact_ray_selection_info(info), 'status': 'unavailable', 'reason': 'ray_polyline_missing'}
-    h, w = shape
-    points: list[tuple[int, int]] = []
-    for point in raw_polyline:
-        if not (isinstance(point, list) and len(point) == 2):
-            continue
-        try:
-            x = int(point[0])
-            y = int(point[1])
-        except Exception:
-            continue
-        if 0 <= x < w and 0 <= y < h:
-            points.append((x, y))
-    if not points:
-        return None, {**_compact_ray_selection_info(info), 'status': 'unavailable', 'reason': 'ray_polyline_outside_image'}
-    width_px = max(1, int(round(float(info.get('width_px') or settings.MODEL_BOX_RAY_MASK_WIDTH_PX))))
+    cx, cy = center_xy
+    radius = max(1.0, float(radius_px))
+    x0 = int(max(0, math.floor(cx - radius)))
+    y0 = int(max(0, math.floor(cy - radius)))
+    x1 = int(min(w, math.ceil(cx + radius)))
+    y1 = int(min(h, math.ceil(cy + radius)))
     image = Image.new('L', (w, h), 0)
     draw = ImageDraw.Draw(image)
-    if len(points) == 1:
-        x, y = points[0]
-        radius = max(1, width_px // 2)
-        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=255)
-    else:
-        draw.line(points, fill=255, width=width_px)
-    mask = np.asarray(image, dtype=np.uint8) > 0
-    mask_pixels = int(np.count_nonzero(mask))
-    if mask_pixels <= 0:
-        return None, {**_compact_ray_selection_info(info), 'status': 'unavailable', 'reason': 'ray_mask_empty'}
-    return mask, {**_compact_ray_selection_info(info), 'mask_pixels': mask_pixels}
+    draw.ellipse((cx - radius, cy - radius, cx + radius, cy + radius), fill=255)
+    return np.asarray(image, dtype=np.uint8) > 0, (x0, y0, x1, y1)
 
 
-def _project_model_box_to_shigure(task: Mapping[str, Any], camera_info: Mapping[str, Any] | None, image_shape: tuple[int, int]) -> tuple[np.ndarray | None, dict[str, Any]]:
+def _project_model_diag_circle_to_shigure(task: Mapping[str, Any], camera_info: Mapping[str, Any] | None, image_shape: tuple[int, int]) -> tuple[np.ndarray | None, dict[str, Any]]:
     camera_matrix = camera_matrix_from_info(camera_info)
     if camera_matrix is None:
-        return None, {'source': 'model_box_projection', 'reason': 'camera_matrix_missing'}
+        return None, {'source': 'model_diag_circle_projection', 'reason': 'camera_matrix_missing'}
     marker_pose = _load_marker_pose_cv()
     if marker_pose is None:
-        return None, {'source': 'model_box_projection', 'reason': 'marker_pose_missing'}
-    corners_aruco, corners_info = _model_box_corners_aruco(task)
+        return None, {'source': 'model_diag_circle_projection', 'reason': 'marker_pose_missing'}
+    corners_aruco, corners_info = _model_bounds_corners_aruco(task)
     if corners_aruco is None:
-        return None, {'source': 'model_box_projection', **corners_info}
+        return None, {'source': 'model_diag_circle_projection', **corners_info}
     center_aruco, center_source = _object_center_aruco(task)
     if center_aruco is None:
-        return None, {'source': 'model_box_projection', 'reason': center_source, 'corners': corners_info}
+        return None, {'source': 'model_diag_circle_projection', 'reason': center_source, 'corners': corners_info}
 
     marker_rotation, marker_translation, marker_path = marker_pose
     points_camera, pixels, visible = project_aruco_points_to_shigure_pixels(
@@ -777,34 +475,14 @@ def _project_model_box_to_shigure(task: Mapping[str, Any], camera_info: Mapping[
     )
     if not np.any(visible):
         return None, {
-            'source': 'model_box_projection',
-            'reason': 'projected_box_behind_camera',
+            'source': 'model_diag_circle_projection',
+            'reason': 'projected_bounds_behind_camera',
             'camera_xyz_m': points_camera.astype(float).tolist(),
         }
 
     visible_points = points_camera[visible]
     visible_pixels = pixels[visible]
-    pixels_x = visible_pixels[:, 0]
-    pixels_y = visible_pixels[:, 1]
     h, w = image_shape
-    if pixels_x.size == 0 or pixels_y.size == 0:
-        return None, {'source': 'model_box_projection', 'reason': 'no_projected_box_pixels'}
-    raw_x0, raw_x1 = float(np.nanmin(pixels_x)), float(np.nanmax(pixels_x))
-    raw_y0, raw_y1 = float(np.nanmin(pixels_y)), float(np.nanmax(pixels_y))
-    box_w = max(1.0, raw_x1 - raw_x0)
-    box_h = max(1.0, raw_y1 - raw_y0)
-    pad = max(float(settings.MODEL_BOX_PADDING_PX), max(box_w, box_h) * float(settings.MODEL_BOX_PADDING_RATIO))
-    x0 = int(max(0, math.floor(raw_x0 - pad)))
-    y0 = int(max(0, math.floor(raw_y0 - pad)))
-    x1 = int(min(w, math.ceil(raw_x1 + pad)))
-    y1 = int(min(h, math.ceil(raw_y1 + pad)))
-    if x1 <= x0 or y1 <= y0:
-        return None, {
-            'source': 'model_box_projection',
-            'reason': 'projected_box_outside_image',
-            'raw_bbox_xyxy': [raw_x0, raw_y0, raw_x1, raw_y1],
-            'image_shape': [h, w],
-        }
 
     center_camera_points, center_pixels, center_visible = project_aruco_points_to_shigure_pixels(
         center_aruco.reshape(1, 3),
@@ -814,111 +492,74 @@ def _project_model_box_to_shigure(task: Mapping[str, Any], camera_info: Mapping[
     )
     center_camera = center_camera_points.reshape(3)
     center_z = float(center_camera[2])
-    center_pixel = None
-    if bool(center_visible[0]) and np.isfinite(center_pixels[0]).all():
-        center_pixel = [float(center_pixels[0, 0]), float(center_pixels[0, 1])]
-    projected_mask = np.zeros((h, w), dtype=bool)
-    ray_selection = _build_hololens_center_ray_selection(
-        task,
-        center_aruco,
-        center_camera,
-        marker_rotation,
-        marker_translation,
-        camera_matrix,
-        image_shape,
-    )
-    projected_mask[y0:y1, x0:x1] = True
+    if not bool(center_visible[0]) or not np.isfinite(center_pixels[0]).all():
+        return None, {
+            'source': 'model_diag_circle_projection',
+            'reason': 'projected_center_behind_camera',
+            'camera_xyz_m': center_camera.astype(float).tolist(),
+        }
+    center_pixel = (float(center_pixels[0, 0]), float(center_pixels[0, 1]))
+    if center_pixel[0] < 0 or center_pixel[1] < 0 or center_pixel[0] >= w or center_pixel[1] >= h:
+        return None, {
+            'source': 'model_diag_circle_projection',
+            'reason': 'projected_center_outside_image',
+            'center_pixel_xy': [float(center_pixel[0]), float(center_pixel[1])],
+            'image_shape': [h, w],
+        }
+    if not np.isfinite(center_z) or center_z <= 1.0e-6:
+        return None, {
+            'source': 'model_diag_circle_projection',
+            'reason': 'projected_center_depth_invalid',
+            'center_depth_m': center_z,
+        }
+
+    min_corner = np.nanmin(corners_aruco, axis=0)
+    max_corner = np.nanmax(corners_aruco, axis=0)
+    box_diag_m = float(np.linalg.norm(max_corner - min_corner))
+    if not np.isfinite(box_diag_m) or box_diag_m <= 0.0:
+        return None, {'source': 'model_diag_circle_projection', 'reason': 'model_bounds_diagonal_invalid'}
+    radius_m = box_diag_m * 0.5
+    corner_distances = np.linalg.norm(visible_pixels - np.asarray(center_pixel, dtype=np.float64).reshape(1, 2), axis=1)
+    finite_corner_distances = corner_distances[np.isfinite(corner_distances)]
+    if finite_corner_distances.size:
+        radius_px = float(np.nanmax(finite_corner_distances))
+        radius_source = 'projected_bounds_corners'
+    else:
+        focal = max(abs(float(camera_matrix[0, 0])), abs(float(camera_matrix[1, 1])))
+        radius_px = float(focal * radius_m / center_z)
+        radius_source = 'focal_length_radius_approximation'
+    circle_mask, circle_bbox = _circle_mask(image_shape, center_pixel, radius_px)
+    projected_pixels = int(np.count_nonzero(circle_mask))
+    if projected_pixels <= 0:
+        return None, {
+            'source': 'model_diag_circle_projection',
+            'reason': 'projected_diag_circle_outside_image',
+            'center_pixel_xy': [float(center_pixel[0]), float(center_pixel[1])],
+            'radius_px': radius_px,
+            'image_shape': [h, w],
+        }
     z_values = visible_points[:, 2]
     info = {
-        'source': 'model_box_projection',
-        'reason': 'projected_box_ready',
+        'source': 'model_diag_circle_projection',
+        'reason': 'projected_diag_circle_ready',
         'corners': corners_info,
         'center_source': center_source,
         'marker_pose_path': str(marker_path),
         'object_center_aruco': center_aruco.astype(float).tolist(),
-        'center_pixel_xy': center_pixel,
+        'center_pixel_xy': [float(center_pixel[0]), float(center_pixel[1])],
         'center_depth_m': center_z if np.isfinite(center_z) else None,
         'box_depth_min_m': float(np.nanmin(z_values)),
         'box_depth_max_m': float(np.nanmax(z_values)),
-        'raw_bbox_xyxy': [raw_x0, raw_y0, raw_x1, raw_y1],
-        'bbox_xyxy': [x0, y0, x1, y1],
-        'padding_px': float(pad),
+        'box_diag_m': box_diag_m,
+        'circle_radius_m': radius_m,
+        'circle_radius_px': radius_px,
+        'circle_radius_source': radius_source,
+        'bbox_xyxy': [int(v) for v in circle_bbox],
         'camera_matrix': camera_matrix.astype(float).tolist(),
         'image_shape': [h, w],
-        'projected_pixels': int(np.count_nonzero(projected_mask)),
-        'ray_selection': ray_selection,
+        'projected_pixels': projected_pixels,
     }
-    return projected_mask, info
-
-
-def _build_reference_from_model_box(sample: CachedRgbdSample, projected_mask: np.ndarray, projection: Mapping[str, Any]) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, Any]]:
-    depth = _sample_depth_m(sample)
-    if depth.shape != projected_mask.shape:
-        return None, None, {'reason': 'depth_mask_shape_mismatch', 'depth_shape': list(depth.shape), 'mask_shape': list(projected_mask.shape)}
-    box_depth_min = projection.get('box_depth_min_m')
-    box_depth_max = projection.get('box_depth_max_m')
-    center_depth = projection.get('center_depth_m')
-    margin = float(settings.MODEL_BOX_DEPTH_MARGIN_M)
-    if center_depth is not None and np.isfinite(float(center_depth)):
-        depth_min = float(center_depth) - margin
-        depth_max = float(center_depth) + margin
-        depth_source = 'model_center_depth'
-    elif box_depth_min is not None and box_depth_max is not None:
-        depth_min = float(box_depth_min) - margin
-        depth_max = float(box_depth_max) + margin
-        depth_source = 'model_box_depth_range'
-    else:
-        return None, None, {'reason': 'projected_depth_missing'}
-    valid_box = projected_mask & np.isfinite(depth) & (depth > 0.0)
-    valid_pixels = int(np.count_nonzero(valid_box))
-    if valid_pixels <= 0:
-        return None, None, {'reason': 'no_valid_depth_pixels_in_projected_box'}
-    occlusion_reference = float(box_depth_min) if box_depth_min is not None else depth_min
-    occluded = valid_box & (depth < occlusion_reference - abs(settings.OCCLUSION_DELTA_M))
-    occluded_ratio = int(np.count_nonzero(occluded)) / max(1, valid_pixels)
-    if occluded_ratio > settings.MODEL_BOX_INIT_MAX_OCCLUSION_RATIO:
-        return None, None, {
-            'reason': 'projected_box_occluded',
-            'valid_pixels': valid_pixels,
-            'occluded_pixels': int(np.count_nonzero(occluded)),
-            'occluded_ratio': occluded_ratio,
-            'max_occlusion_ratio': settings.MODEL_BOX_INIT_MAX_OCCLUSION_RATIO,
-        }
-    trusted = valid_box & (depth >= depth_min) & (depth <= depth_max)
-    trusted_pixels = int(np.count_nonzero(trusted))
-    image_ratio = trusted_pixels / float(trusted.size)
-    if trusted_pixels < settings.MODEL_BOX_MIN_TRUSTED_PIXELS or image_ratio < settings.TRUSTED_MASK_MIN_IMAGE_RATIO:
-        return None, None, {
-            'reason': 'trusted_mask_too_small',
-            'valid_pixels': valid_pixels,
-            'trusted_pixels': trusted_pixels,
-            'trusted_image_ratio': image_ratio,
-            'required_pixels': settings.MODEL_BOX_MIN_TRUSTED_PIXELS,
-            'required_image_ratio': settings.TRUSTED_MASK_MIN_IMAGE_RATIO,
-            'occluded_ratio': occluded_ratio,
-        }
-    reference_depth = np.where(trusted, depth, 0.0).astype(np.float32)
-    values = depth[trusted]
-    return trusted, reference_depth, {
-        'reason': 'initialized',
-        'mode': 'model_box_depth',
-        'valid_pixels': valid_pixels,
-        'trusted_pixels': trusted_pixels,
-        'trusted_image_ratio': image_ratio,
-        'occluded_pixels': int(np.count_nonzero(occluded)),
-        'occluded_ratio': occluded_ratio,
-        'depth_source': depth_source,
-        'trusted_depth_min_m': depth_min,
-        'trusted_depth_max_m': depth_max,
-        'box_depth_min_m': float(box_depth_min) if box_depth_min is not None else None,
-        'box_depth_max_m': float(box_depth_max) if box_depth_max is not None else None,
-        'center_depth_m': float(center_depth) if center_depth is not None else None,
-        'depth_margin_m': margin,
-        'median_depth_m': float(np.nanmedian(values)) if values.size else None,
-        'min_depth_m': float(np.nanmin(values)) if values.size else None,
-        'max_depth_m': float(np.nanmax(values)) if values.size else None,
-        'init_stamp': sample.stamp.to_dict(),
-    }
+    return circle_mask, info
 
 
 def _build_reference_from_yolo_mask(sample: CachedRgbdSample, mask: np.ndarray) -> tuple[np.ndarray | None, np.ndarray | None, dict[str, Any]]:
@@ -945,23 +586,6 @@ def _build_reference_from_yolo_mask(sample: CachedRgbdSample, mask: np.ndarray) 
 
 
 
-def _bbox_area(bbox: tuple[float, float, float, float]) -> float:
-    x0, y0, x1, y1 = bbox
-    return max(0.0, float(x1) - float(x0)) * max(0.0, float(y1) - float(y0))
-
-
-def _bbox_iou(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> float:
-    ax0, ay0, ax1, ay1 = a
-    bx0, by0, bx1, by1 = b
-    ix0 = max(float(ax0), float(bx0))
-    iy0 = max(float(ay0), float(by0))
-    ix1 = min(float(ax1), float(bx1))
-    iy1 = min(float(ay1), float(by1))
-    inter = max(0.0, ix1 - ix0) * max(0.0, iy1 - iy0)
-    union = _bbox_area(a) + _bbox_area(b) - inter
-    return inter / max(1.0, union)
-
-
 def _mask_rgb_stats(sample: CachedRgbdSample, mask: np.ndarray) -> dict[str, Any]:
     try:
         rgb = _sample_rgb(sample)
@@ -978,138 +602,28 @@ def _mask_rgb_stats(sample: CachedRgbdSample, mask: np.ndarray) -> dict[str, Any
     }
 
 
-def _check_model_box_visibility(sample: CachedRgbdSample, projected_mask: np.ndarray, projection: Mapping[str, Any]) -> tuple[bool, dict[str, Any]]:
-    depth = _sample_depth_m(sample)
-    if depth.shape != projected_mask.shape:
-        return False, {'reason': 'depth_mask_shape_mismatch', 'depth_shape': list(depth.shape), 'mask_shape': list(projected_mask.shape)}
-    valid_box = projected_mask & np.isfinite(depth) & (depth > 0.0)
-    valid_pixels = int(np.count_nonzero(valid_box))
-    if valid_pixels <= 0:
-        return False, {'reason': 'no_valid_depth_pixels_in_projected_box', 'valid_pixels': 0}
-    box_depth_min = projection.get('box_depth_min_m')
-    center_depth = projection.get('center_depth_m')
-    if box_depth_min is not None and np.isfinite(float(box_depth_min)):
-        occlusion_reference = float(box_depth_min)
-        occlusion_reference_source = 'model_box_front_depth'
-    elif center_depth is not None and np.isfinite(float(center_depth)):
-        occlusion_reference = float(center_depth)
-        occlusion_reference_source = 'model_center_depth'
-    else:
-        return False, {'reason': 'projected_depth_missing', 'valid_pixels': valid_pixels}
-    occluded = valid_box & (depth < occlusion_reference - abs(settings.OCCLUSION_DELTA_M))
-    occluded_pixels = int(np.count_nonzero(occluded))
-    occluded_ratio = occluded_pixels / max(1, valid_pixels)
-    center_depth_value = float(center_depth) if center_depth is not None and np.isfinite(float(center_depth)) else None
-    depth_band_pixels = 0
-    depth_band_ratio = 0.0
-    if center_depth_value is not None:
-        margin = float(settings.MODEL_BOX_DEPTH_MARGIN_M)
-        in_band = valid_box & (depth >= center_depth_value - margin) & (depth <= center_depth_value + margin)
-        depth_band_pixels = int(np.count_nonzero(in_band))
-        depth_band_ratio = depth_band_pixels / max(1, valid_pixels)
-    ok = occluded_ratio <= settings.MODEL_BOX_INIT_MAX_OCCLUSION_RATIO
-    return ok, {
-        'reason': 'visible' if ok else 'projected_box_occluded',
-        'valid_pixels': valid_pixels,
-        'occluded_pixels': occluded_pixels,
-        'occluded_ratio': occluded_ratio,
-        'max_occlusion_ratio': settings.MODEL_BOX_INIT_MAX_OCCLUSION_RATIO,
-        'occlusion_reference_m': occlusion_reference,
-        'occlusion_reference_source': occlusion_reference_source,
-        'center_depth_m': center_depth_value,
-        'depth_band_pixels': depth_band_pixels,
-        'depth_band_ratio': depth_band_ratio,
-    }
-
-
-def _score_model_box_candidate(obs: YoloObjectObservation, sample: CachedRgbdSample, projected_mask: np.ndarray, projection: Mapping[str, Any], ray_mask: np.ndarray | None = None, ray_info: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    bbox_values = projection.get('bbox_xyxy')
-    if isinstance(bbox_values, list) and len(bbox_values) == 4:
-        projected_bbox = tuple(float(v) for v in bbox_values)
-    else:
-        h, w = projected_mask.shape
-        ys, xs = np.where(projected_mask)
-        if xs.size == 0 or ys.size == 0:
-            projected_bbox = (0.0, 0.0, float(w), float(h))
-        else:
-            projected_bbox = (float(xs.min()), float(ys.min()), float(xs.max() + 1), float(ys.max() + 1))
-    projected_pixels = int(np.count_nonzero(projected_mask))
-    projected_area = float(max(1, projected_pixels))
-    center = projection.get('center_pixel_xy')
-    if not (isinstance(center, list) and len(center) == 2 and np.all(np.isfinite(np.asarray(center, dtype=float)))):
-        x0, y0, x1, y1 = projected_bbox
-        center_xy = ((x0 + x1) * 0.5, (y0 + y1) * 0.5)
-    else:
-        center_xy = (float(center[0]), float(center[1]))
-    center_distance = _center_distance(obs.center_xy, center_xy)
+def _score_model_diag_circle_candidate(obs: YoloObjectObservation, sample: CachedRgbdSample, diag_circle_mask: np.ndarray, projection: Mapping[str, Any]) -> dict[str, Any]:
     center_depth = projection.get('center_depth_m')
     depth_diff = None
     if obs.median_depth_m is not None and center_depth is not None and np.isfinite(float(center_depth)):
         depth_diff = abs(float(obs.median_depth_m) - float(center_depth))
-    overlap_pixels = int(np.count_nonzero(obs.mask & projected_mask))
-    mask_overlap_ratio = overlap_pixels / max(1, int(obs.mask_pixels))
-    box_coverage_ratio = overlap_pixels / max(1, projected_pixels)
-    bbox_iou = _bbox_iou(obs.bbox_xyxy, projected_bbox)
-    area_ratio = float(obs.mask_pixels) / projected_area
-    h, w = obs.mask.shape
-    ix = int(round(center_xy[0]))
-    iy = int(round(center_xy[1]))
-    point_inside_mask = 0 <= ix < w and 0 <= iy < h and bool(obs.mask[iy, ix])
-    x0, y0, x1, y1 = obs.bbox_xyxy
-    point_inside_bbox = x0 <= center_xy[0] <= x1 and y0 <= center_xy[1] <= y1
-    max_center = float(settings.MODEL_BOX_CANDIDATE_MAX_CENTER_PX)
-    max_depth = float(settings.MODEL_BOX_CANDIDATE_MAX_DEPTH_DIFF_M)
-    center_score = min(3.0, center_distance / max(1.0, max_center))
-    depth_score = 0.5 if depth_diff is None else min(3.0, depth_diff / max(1.0e-6, max_depth))
-    area_score = min(3.0, abs(math.log(max(area_ratio, 1.0e-6)))) * 0.35
-    overlap_score = (1.0 - min(1.0, mask_overlap_ratio)) * 0.7
-    score = center_score + depth_score + area_score + overlap_score
-    if not point_inside_mask:
-        score += 0.75
-    if not point_inside_bbox:
-        score += 0.5
+    overlap_pixels = int(np.count_nonzero(obs.mask & diag_circle_mask))
+    inside_ratio = overlap_pixels / max(1, int(obs.mask_pixels))
     reject_reasons: list[str] = []
-    if center_distance > max_center and not point_inside_bbox:
-        reject_reasons.append('center_too_far')
-    if depth_diff is not None and depth_diff > max_depth:
-        reject_reasons.append('depth_too_different')
-    ray_selection = _compact_ray_selection_info(ray_info)
-    if ray_mask is not None:
-        if ray_mask.shape != obs.mask.shape:
-            ray_selection = {**ray_selection, 'status': 'unavailable', 'reason': 'ray_mask_shape_mismatch', 'ray_mask_shape': list(ray_mask.shape), 'mask_shape': list(obs.mask.shape)}
-        else:
-            ray_hit_pixels = int(np.count_nonzero(obs.mask & ray_mask))
-            ray_hit_ratio = ray_hit_pixels / max(1, int(obs.mask_pixels))
-            min_hit_pixels = max(1, int(settings.MODEL_BOX_RAY_MIN_HIT_PIXELS))
-            ray_hit = ray_hit_pixels >= min_hit_pixels
-            ray_selection = {**ray_selection, 'status': 'ready', 'hit': ray_hit, 'mask_hit_pixels': ray_hit_pixels, 'mask_hit_ratio': ray_hit_ratio, 'min_hit_pixels': min_hit_pixels}
-            if not ray_hit:
-                reject_reasons.append('mask_not_on_hololens_center_ray')
-    if box_coverage_ratio < settings.MODEL_BOX_OBJECTMASK_MIN_BOX_COVERAGE:
-        reject_reasons.append('object_mask_does_not_cover_projected_box')
-    if mask_overlap_ratio < settings.MODEL_BOX_CANDIDATE_MIN_MASK_OVERLAP_RATIO and bbox_iou < settings.MODEL_BOX_CANDIDATE_MIN_BBOX_IOU and not point_inside_mask:
-        reject_reasons.append('mask_not_near_projected_box')
-    if area_ratio < settings.MODEL_BOX_CANDIDATE_MIN_AREA_RATIO:
-        reject_reasons.append('mask_too_small_for_box')
-    if area_ratio > settings.MODEL_BOX_CANDIDATE_MAX_AREA_RATIO:
-        reject_reasons.append('mask_too_large_for_box')
-    if score > settings.MODEL_BOX_CANDIDATE_MAX_SCORE:
-        reject_reasons.append('score_too_high')
+    if inside_ratio < settings.MODEL_DIAG_CIRCLE_MIN_MASK_INSIDE_RATIO:
+        reject_reasons.append('mask_not_enough_inside_model_diag_circle')
+    if depth_diff is None:
+        reject_reasons.append('depth_unavailable')
+    elif depth_diff > settings.MODEL_DIAG_CIRCLE_MAX_DEPTH_DIFF_M:
+        reject_reasons.append('depth_too_different_from_model_center')
     return {
-        'score': float(score),
         'accepted': not reject_reasons,
         'reject_reasons': reject_reasons,
-        'center_distance_px': center_distance,
         'depth_diff_m': depth_diff,
-        'bbox_iou': bbox_iou,
-        'mask_overlap_pixels': overlap_pixels,
-        'mask_overlap_ratio': mask_overlap_ratio,
-        'projected_box_coverage_ratio': box_coverage_ratio,
-        'min_projected_box_coverage_ratio': settings.MODEL_BOX_OBJECTMASK_MIN_BOX_COVERAGE,
-        'area_ratio_to_projected_box': area_ratio,
-        'point_inside_mask': point_inside_mask,
-        'point_inside_bbox': point_inside_bbox,
-        'ray_selection': ray_selection,
+        'max_depth_diff_m': settings.MODEL_DIAG_CIRCLE_MAX_DEPTH_DIFF_M,
+        'mask_inside_diag_circle_pixels': overlap_pixels,
+        'mask_inside_diag_circle_ratio': inside_ratio,
+        'min_mask_inside_diag_circle_ratio': settings.MODEL_DIAG_CIRCLE_MIN_MASK_INSIDE_RATIO,
         'rgb_signature': _mask_rgb_stats(sample, obs.mask),
         'observation': obs,
     }
@@ -1123,8 +637,7 @@ def _candidate_payload(item: Mapping[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def _select_model_box_yolo_candidate(cache: ShigureRgbdCache, event: YoloEvent, sample: CachedRgbdSample, shape: tuple[int, int], projected_mask: np.ndarray, projection: Mapping[str, Any]) -> tuple[YoloObjectObservation | None, dict[str, Any]]:
-    ray_mask, ray_info = _ray_mask_from_projection(projection, shape)
+def _select_model_diag_circle_yolo_candidate(cache: ShigureRgbdCache, event: YoloEvent, sample: CachedRgbdSample, shape: tuple[int, int], diag_circle_mask: np.ndarray, projection: Mapping[str, Any]) -> tuple[YoloObjectObservation | None, dict[str, Any]]:
     scored: list[dict[str, Any]] = []
     for obj in event.payload.get('objects') or []:
         if not isinstance(obj, Mapping):
@@ -1132,26 +645,32 @@ def _select_model_box_yolo_candidate(cache: ShigureRgbdCache, event: YoloEvent, 
         obs = _observation_from_object(cache, event, obj, shape)
         if obs is None:
             continue
-        scored.append(_score_model_box_candidate(obs, sample, projected_mask, projection, ray_mask=ray_mask, ray_info=ray_info))
+        scored.append(_score_model_diag_circle_candidate(obs, sample, diag_circle_mask, projection))
     if not scored:
         return None, {'reason': 'no_yolo_object_with_mask'}
-    scored.sort(key=lambda item: (not bool(item.get('accepted')), float(item.get('score', math.inf))))
     accepted = [item for item in scored if item.get('accepted')]
     if accepted:
         accepted.sort(
             key=lambda item: (
-                int(item['observation'].mask_pixels),
-                -float(item.get('projected_box_coverage_ratio') or 0.0),
-                float(item.get('center_distance_px') or math.inf),
+                -int(item['observation'].mask_pixels),
+                -float(item.get('mask_inside_diag_circle_ratio') or 0.0),
+                float(item.get('depth_diff_m') if item.get('depth_diff_m') is not None else math.inf),
             )
         )
+    scored.sort(
+        key=lambda item: (
+            not bool(item.get('accepted')),
+            -int(item['observation'].mask_pixels),
+            -float(item.get('mask_inside_diag_circle_ratio') or 0.0),
+            float(item.get('depth_diff_m') if item.get('depth_diff_m') is not None else math.inf),
+        )
+    )
     best = accepted[0] if accepted else scored[0]
-    reason = 'matched_projected_box_shigure_candidate_mask' if accepted else 'best_projected_box_candidate_rejected'
+    reason = 'matched_model_diag_circle_shigure_mask' if accepted else 'best_model_diag_circle_candidate_rejected'
     return (best['observation'] if accepted else None), {
         'reason': reason,
-        'candidate_scope': 'shigure_object_masks_covering_projected_hololens_depth_box_and_hololens_center_ray' if ray_mask is not None else 'shigure_object_masks_covering_projected_hololens_depth_box',
-        'selection_policy': 'smallest_accepted_mask_after_projected_box_coverage_and_ray_hit' if ray_mask is not None else 'smallest_accepted_mask_after_projected_box_coverage',
-        'ray_selection': ray_info,
+        'candidate_scope': 'shigure_object_masks_inside_projected_model_diag_circle_and_depth_near_model_center',
+        'selection_policy': 'largest_accepted_mask_after_diag_circle_ratio_and_depth_filter',
         'candidate_count': len(scored),
         'accepted_count': len(accepted),
         'best': _candidate_payload(best),
@@ -1159,21 +678,20 @@ def _select_model_box_yolo_candidate(cache: ShigureRgbdCache, event: YoloEvent, 
     }
 
 
-def _init_model_box_primary(cache: ShigureRgbdCache, task: Mapping[str, Any], metadata: list[CachedSampleMetadata], first_after: CachedSampleMetadata, capture_seconds: float) -> tuple[YoloInitResult | None, dict[str, Any]]:
+def _init_model_diag_circle_primary(cache: ShigureRgbdCache, task: Mapping[str, Any], metadata: list[CachedSampleMetadata], first_after: CachedSampleMetadata, capture_seconds: float) -> tuple[YoloInitResult | None, dict[str, Any]]:
     first_sample = cache.get_sample(first_after.stamp, mode='nearest')
     if first_sample is None:
-        return None, {'mode': 'model_box_yolo_mask_init', 'reason': 'first_frame_unavailable'}
+        return None, {'mode': 'model_diag_circle_yolo_mask_init', 'reason': 'first_frame_unavailable'}
     shape = camera_info_image_shape(first_after.camera_info or first_sample.camera_info) or first_sample.depth.shape[:2]
-    projected_mask, projection = _project_model_box_to_shigure(task, first_after.camera_info or first_sample.camera_info, shape)
+    diag_circle_mask, projection = _project_model_diag_circle_to_shigure(task, first_after.camera_info or first_sample.camera_info, shape)
     init_info: dict[str, Any] = {
-        'mode': 'model_box_yolo_mask_init',
+        'mode': 'model_diag_circle_yolo_mask_init',
         'projection': projection,
         'metadata_frame_count': len(metadata),
         'reference_source': 'selected_shigure_yolo_mask',
-        'candidate_scope': 'shigure_object_masks_covering_projected_hololens_depth_box',
-        'ray_selection': _compact_ray_selection_info(projection.get('ray_selection') if isinstance(projection, Mapping) else None),
+        'candidate_scope': 'shigure_object_masks_inside_projected_model_diag_circle_and_depth_near_model_center',
     }
-    if projected_mask is None:
+    if diag_circle_mask is None:
         return None, {**init_info, 'reason': projection.get('reason')}
 
     unique_events = _unique_yolo_events(metadata)
@@ -1187,12 +705,8 @@ def _init_model_box_primary(cache: ShigureRgbdCache, task: Mapping[str, Any], me
         if sample is None:
             checked.append({'stamp': event.sample.stamp.to_dict(), 'reason': 'sample_unavailable'})
             continue
-        visible, visibility_stats = _check_model_box_visibility(sample, projected_mask, projection)
-        record: dict[str, Any] = {'stamp': sample.stamp.to_dict(), 'visibility': visibility_stats}
-        if not visible:
-            checked.append(record)
-            continue
-        selected_obs, candidate_info = _select_model_box_yolo_candidate(cache, event, sample, shape, projected_mask, projection)
+        record: dict[str, Any] = {'stamp': sample.stamp.to_dict()}
+        selected_obs, candidate_info = _select_model_diag_circle_yolo_candidate(cache, event, sample, shape, diag_circle_mask, projection)
         record['candidate_match'] = candidate_info
         checked.append(record)
         if selected_obs is None:
@@ -1211,7 +725,6 @@ def _init_model_box_primary(cache: ShigureRgbdCache, task: Mapping[str, Any], me
             'reference_stamp': sample.stamp.to_dict(),
             'init_start_stamp': sample.stamp.to_dict(),
             'init_end_stamp': sample.stamp.to_dict(),
-            'visibility_init': visibility_stats,
             'candidate_match': candidate_info,
             'depth_init': depth_stats,
             'checked_init_frames': checked[:25],
@@ -1225,12 +738,12 @@ def _init_model_box_primary(cache: ShigureRgbdCache, task: Mapping[str, Any], me
             init_stats=init_stats,
             yolo_observations=post_observations,
             yolo_events=post_events,
-            projected_mask=projected_mask,
+            projected_mask=diag_circle_mask,
         ), init_stats
-    reason = 'no_post_capture_yolo_events' if not post_events else 'no_visible_projected_box_candidate_mask'
+    reason = 'no_post_capture_yolo_events' if not post_events else 'no_model_diag_circle_candidate_mask'
     if checked:
         last = checked[-1]
-        reason = str((last.get('candidate_match') or last.get('visibility') or {}).get('reason') or reason)
+        reason = str((last.get('candidate_match') or {}).get('reason') or reason)
     return None, {**init_info, 'reason': reason, 'checked_init_frames': checked[:25]}
 
 def _is_partial_occlusion(decision: FrameDecision) -> bool:
@@ -1540,7 +1053,7 @@ def _save_init_debug_files(
     selected_observation: Mapping[str, Any] | None,
 ) -> dict[str, str]:
     debug_dir = _taken_debug_dir(task_timestamp)
-    projected_path = debug_dir / '07_taken_init_projected_box_mask.png'
+    projected_path = debug_dir / '07_taken_init_projected_diag_circle_mask.png'
     trusted_path = debug_dir / '07_taken_init_trusted_shigure_mask.png'
     reference_path = debug_dir / '07_taken_init_reference_depth_m.npy'
     overlay_path = debug_dir / '07_taken_init_mask_rgb_overlay.png'
@@ -1558,13 +1071,13 @@ def _save_init_debug_files(
         overlay[trusted] = overlay[trusted] * 0.45 + trusted_color * 0.55
     image = Image.fromarray(np.clip(overlay, 0, 255).astype(np.uint8))
     draw = ImageDraw.Draw(image)
-    _draw_debug_bbox(draw, projection.get('bbox_xyxy'), 'projected model box', (255, 210, 0), width=3)
+    _draw_debug_bbox(draw, projection.get('bbox_xyxy'), 'projected model diag circle', (255, 210, 0), width=3)
     if isinstance(selected_observation, Mapping):
         _draw_debug_bbox(draw, selected_observation.get('bbox_xyxy'), f'shigure mask id {object_id}', (0, 190, 255), width=3)
     image.save(overlay_path)
 
     return {
-        'init_projected_box_mask_path': str(projected_path),
+        'init_projected_diag_circle_mask_path': str(projected_path),
         'init_trusted_shigure_mask_path': str(trusted_path),
         'init_reference_depth_m_path': str(reference_path),
         'init_mask_rgb_overlay_path': str(overlay_path),
@@ -1708,26 +1221,24 @@ def run_taken_object_detection(json_path_arg: str | Path) -> dict[str, Any]:
         _write_status(json_path, task, 'INIT_FAILED', reason='first_frame_too_late', tracking_window=tracking_window, output_dir=str(output_dir))
         return {'status': 'INIT_FAILED', 'reason': 'first_frame_too_late'}
 
-    if settings.TRACKING_MODE not in {'model_box', 'model_box_depth', 'projected_model_box'}:
+    if settings.TRACKING_MODE != 'model_diag_circle':
         _write_status(
             json_path,
             task,
             'INIT_FAILED',
             reason='unsupported_tracking_mode',
             tracking_window=tracking_window,
-            init={'requested_tracking_mode': settings.TRACKING_MODE, 'supported_modes': ['model_box', 'model_box_depth', 'projected_model_box']},
+            init={'requested_tracking_mode': settings.TRACKING_MODE, 'supported_modes': ['model_diag_circle']},
             output_dir=str(output_dir),
         )
         return {'status': 'INIT_FAILED', 'reason': 'unsupported_tracking_mode'}
 
-    yolo_init, yolo_info = _init_model_box_primary(cache, task, metadata, first_after, capture_seconds)
+    yolo_init, yolo_info = _init_model_diag_circle_primary(cache, task, metadata, first_after, capture_seconds)
     if yolo_init is None:
         _write_status(json_path, task, 'INIT_FAILED', reason=yolo_info.get('reason'), tracking_window=tracking_window, projection=yolo_info.get('projection'), init=yolo_info, output_dir=str(output_dir))
         return {'status': 'INIT_FAILED', 'reason': yolo_info.get('reason')}
 
     tracking_window['mode'] = yolo_init.init_stats.get('mode') or settings.TRACKING_MODE
-    tracking_window['yolo_init_soft_timeout_seconds'] = settings.YOLO_INIT_SOFT_TIMEOUT_SECONDS
-    tracking_window['yolo_init_hard_timeout_seconds'] = settings.YOLO_INIT_HARD_TIMEOUT_SECONDS
     tracking_window['tracking_trigger_mode'] = settings.YOLO_TRACKING_TRIGGER_MODE
     init_backup_dir = _backup_sample(task, yolo_init.init_frame, output_dir, kind='yolo_init')
     debug_projected_mask = yolo_init.projected_mask if yolo_init.projected_mask is not None else yolo_init.trusted_mask

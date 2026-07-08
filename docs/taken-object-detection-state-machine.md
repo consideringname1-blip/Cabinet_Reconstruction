@@ -11,7 +11,6 @@
 - `object_aruco` / `ModelBounds`。
 - Shigure history cache 中的 RGB-D、camera_info、object_detection。
 - Shigure marker pose。
-- HoloLens PV camera 位置，用于第 6 条 2D ray 选择。
 
 ## 初始化目标
 
@@ -27,24 +26,26 @@ old_reference_depth_m
 
 这些 artifact 写入 taken init backup 目录，并在 `TakenObjectDetection.history_baseline` 中记录路径。历史再现 stage 后续只依赖这份 baseline。
 
-## 第 6 条 mask 选择逻辑
+## 初始化 mask 选择逻辑
 
-当前仍保留第 6 条：
+当前使用模型中心对角圆约束：
 
-1. 将 HoloLens/ArUco 下的模型 box 投影到 Shigure 图像。
-2. 用 projected box 生成 2D mask。
-3. 从 HoloLens 相机位置指向 box center，再沿该方向向 box 后方延伸。
-4. 将这条方向投到 Shigure 图像，生成 2D ray mask。
-5. Shigure object mask 候选必须覆盖 projected box 足够面积，并命中 ray mask。
-6. 在 accepted 候选中选择面积最小的 mask 作为 `old_mask`。
+1. 读取 `ModelBounds` 的模型中心和 AABB 对角线长度。
+2. 将模型中心和 bounds corners 通过 Shigure marker pose 投影到 Shigure 图像，生成以模型中心为圆心、模型对角线为直径的投影圆。
+3. 对每个 Shigure object mask 计算 `mask_inside_diag_circle_ratio = area(mask ∩ diag_circle) / area(mask)`。
+4. 计算该 mask 的有效 depth 中位数，与模型中心在 Shigure 视角下的 depth 做绝对差。
+5. 候选必须同时满足对角圆内占比和 depth 偏差阈值。
+6. 在 accepted 候选中选择 `mask_pixels` 最大的 mask 作为 `old_mask`。
 
 关键阈值：
 
 ```text
-TAKEN_OBJECT_MODEL_BOX_OBJECTMASK_MIN_BOX_COVERAGE=0.40
+TAKEN_OBJECT_TRACKING_MODE=model_diag_circle
+TAKEN_OBJECT_MODEL_DIAG_CIRCLE_MIN_MASK_INSIDE_RATIO=0.80
+TAKEN_OBJECT_MODEL_DIAG_CIRCLE_MAX_DEPTH_DIFF_M=0.18
 ```
 
-ray 是图像上的 2D 线状 mask，不是 3D 体积选择。
+`MODEL_DIAG_CIRCLE_MAX_DEPTH_DIFF_M` 当前默认 0.18m，对应之前讨论的 0.15m ~ 0.20m 范围。
 
 ## 初始化失败条件
 
@@ -55,8 +56,8 @@ ray 是图像上的 2D 线状 mask，不是 3D 体积选择。
 - first frame 太晚。
 - marker pose 缺失。
 - camera_info 无法解析 K。
-- model box 无法投影到 Shigure 图像。
-- object_detection 没有符合 projected box + ray 的 object mask。
+- 模型中心或对角圆无法投影到 Shigure 图像。
+- object_detection 没有同时满足对角圆内占比和 depth 偏差阈值的 object mask。
 - old_mask 内有效 depth 太少。
 
 失败会写入 `TakenObjectDetection.status = INIT_FAILED` 和 reason。
@@ -113,6 +114,6 @@ taken = delta > threshold 或有效区域明显减少
 
 ## 不再使用的逻辑
 
-- 不再支持 legacy projected mask fallback。
+- 初始化必须由模型对角圆规则得到 `old_mask`。
 - 不再从 SAM3 mask 或 selection box 直接生成 taken mask。
-- 不再先限制识别范围后扫全图；初始化按第 6 条选 mask，后续判断只在 old_mask 内。
+- 初始化只按模型对角圆和 depth 偏差选择 `old_mask`；后续判断只在 `old_mask` 内。

@@ -99,8 +99,8 @@ sam3d_body_mesh
 `taken_object_detection`：
 
 1. 从 Shigure cache 取上传时刻附近的 RGB-D、camera_info、object_detection。
-2. 将 HoloLens 深度点云生成的模型 box 投影到 Shigure 图像。
-3. 选择覆盖投影 box 且命中 2D ray 的最小 object mask。
+2. 将 `ModelBounds` 的模型中心和对角线投影为 Shigure 图像上的模型对角圆。
+3. 选择 `mask_inside_diag_circle_ratio >= 0.80` 且有效 depth 中位数与模型中心 depth 差 `<= 0.18m` 的候选，并在 accepted 中取面积最大的 object mask。
 4. 保存 `old_rgb + old_depth + old_mask + camera_info` 作为历史再现 baseline。
 5. 在 old_mask 内做拿取判断。
 
