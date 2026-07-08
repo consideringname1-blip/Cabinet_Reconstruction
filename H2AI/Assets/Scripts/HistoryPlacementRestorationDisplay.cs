@@ -1453,7 +1453,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         {
             identity = record.RootGameObject.AddComponent<RuntimeModelEventIdentity>();
         }
-        identity.Configure(record.ModelKey, record.TaskId, record.FbxUrl);
+        identity.Configure(record.ModelKey, record.TaskId, record.FbxUrl, record.DisplayObjectId, record.CaptureInstanceId);
         return record.RootGameObject;
     }
 

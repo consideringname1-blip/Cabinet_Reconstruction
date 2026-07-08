@@ -39,6 +39,8 @@ public class RuntimeModelInstance
     public string ModelKey = "";
     public string TaskId = "";
     public string FbxUrl = "";
+    public string DisplayObjectId = "";
+    public string CaptureInstanceId = "";
     public bool IsEvidenceOverlay;
     public RuntimeModelPoseData Pose = new RuntimeModelPoseData();
     public RuntimeSpatialBoxData SpatialBox;
@@ -49,6 +51,8 @@ public class RuntimeModelRecord
     public string ModelKey = "";
     public string TaskId = "";
     public string FbxUrl = "";
+    public string DisplayObjectId = "";
+    public string CaptureInstanceId = "";
     public string LocalPath = "";
     public bool IsEvidenceOverlay;
     public GameObject RootGameObject;
@@ -175,6 +179,7 @@ public class RuntimeModelManager : MonoBehaviour
 
         if (!instance.IsEvidenceOverlay)
         {
+            RemoveDisplayObjectModels(instance.DisplayObjectId);
             while (CountVisibleDisplayModels() >= MaxVisibleModels)
             {
                 if (!RemoveOldestVisibleModel())
@@ -207,6 +212,8 @@ public class RuntimeModelManager : MonoBehaviour
             ModelKey = instance.ModelKey,
             TaskId = instance.TaskId,
             FbxUrl = instance.FbxUrl,
+            DisplayObjectId = instance.DisplayObjectId,
+            CaptureInstanceId = instance.CaptureInstanceId,
             LocalPath = localPath ?? "",
             IsEvidenceOverlay = instance.IsEvidenceOverlay,
             RootGameObject = rootGameObject,
@@ -277,6 +284,42 @@ public class RuntimeModelManager : MonoBehaviour
         return false;
     }
 
+    public bool HasMatchingModel(RuntimeModelInstance instance)
+    {
+        if (instance == null)
+        {
+            return false;
+        }
+
+        foreach (RuntimeModelRecord record in _records)
+        {
+            if (MatchesRuntimeModelIdentity(record, instance))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public bool HasDisplayObjectModel(string displayObjectId)
+    {
+        if (string.IsNullOrEmpty(displayObjectId))
+        {
+            return false;
+        }
+
+        foreach (RuntimeModelRecord record in _records)
+        {
+            if (MatchesDisplayObject(record, displayObjectId))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public List<string> GetLoadedTaskIds()
     {
         List<string> taskIds = new List<string>();
@@ -313,6 +356,28 @@ public class RuntimeModelManager : MonoBehaviour
                 matchedRecord = record;
                 return true;
             }
+        }
+
+        return false;
+    }
+
+    public bool UpdateModelPose(RuntimeModelInstance instance)
+    {
+        if (instance == null || instance.Pose == null)
+        {
+            return false;
+        }
+
+        foreach (RuntimeModelRecord record in _records)
+        {
+            if (!MatchesRuntimeModelIdentity(record, instance))
+            {
+                continue;
+            }
+
+            record.Pose = instance.Pose;
+            ApplyResolvedPose(record);
+            return true;
         }
 
         return false;
@@ -403,6 +468,53 @@ public class RuntimeModelManager : MonoBehaviour
         }
     }
 
+    private void RemoveDisplayObjectModels(string displayObjectId)
+    {
+        if (string.IsNullOrEmpty(displayObjectId))
+        {
+            return;
+        }
+
+        for (int i = _records.Count - 1; i >= 0; i--)
+        {
+            RuntimeModelRecord record = _records[i];
+            if (!MatchesDisplayObject(record, displayObjectId))
+            {
+                continue;
+            }
+
+            _records.RemoveAt(i);
+            DestroyRecordObject(record);
+            DeleteCachedFile(record.LocalPath);
+        }
+    }
+
+    private bool MatchesRuntimeModelIdentity(RuntimeModelRecord record, RuntimeModelInstance instance)
+    {
+        if (record == null || instance == null)
+        {
+            return false;
+        }
+
+        if (!string.IsNullOrEmpty(instance.TaskId) && record.TaskId == instance.TaskId)
+        {
+            return true;
+        }
+        if (!string.IsNullOrEmpty(instance.ModelKey) && record.ModelKey == instance.ModelKey)
+        {
+            return true;
+        }
+        return !instance.IsEvidenceOverlay && MatchesDisplayObject(record, instance.DisplayObjectId);
+    }
+
+    private bool MatchesDisplayObject(RuntimeModelRecord record, string displayObjectId)
+    {
+        return record != null
+            && !record.IsEvidenceOverlay
+            && !string.IsNullOrEmpty(displayObjectId)
+            && record.DisplayObjectId == displayObjectId;
+    }
+
     private int CountVisibleDisplayModels()
     {
         int count = 0;
@@ -470,7 +582,7 @@ public class RuntimeModelManager : MonoBehaviour
             identity = record.RootGameObject.AddComponent<RuntimeModelEventIdentity>();
         }
 
-        identity.Configure(record.ModelKey, record.TaskId, record.FbxUrl);
+        identity.Configure(record.ModelKey, record.TaskId, record.FbxUrl, record.DisplayObjectId, record.CaptureInstanceId);
     }
 
     private void EnforceCachedFileLimit()

@@ -1234,6 +1234,18 @@ public class ShuJuQingQiu : MonoBehaviour
             ModelKey = modelKey,
             TaskId = taskId,
             FbxUrl = "",
+            DisplayObjectId = ReadFirstString(
+                modelJ?["display_object_id"],
+                modelJ?["display_identity"]?["display_object_id"],
+                pendingTask["display_object_id"],
+                pendingTask["display_identity"]?["display_object_id"]
+            ),
+            CaptureInstanceId = ReadFirstString(
+                modelJ?["capture_instance_id"],
+                modelJ?["display_identity"]?["capture_instance_id"],
+                pendingTask["capture_instance_id"],
+                pendingTask["display_identity"]?["capture_instance_id"]
+            ),
             IsEvidenceOverlay = pendingTask["is_evidence_overlay"] != null && pendingTask["is_evidence_overlay"].Value<bool>(),
             Pose = new RuntimeModelPoseData(),
             SpatialBox = spatialBox,
@@ -1799,6 +1811,31 @@ public class ShuJuQingQiu : MonoBehaviour
         return token == null || token.Type == JTokenType.Null ? null : token;
     }
 
+    string ReadFirstString(params JToken[] tokens)
+    {
+        if (tokens == null)
+        {
+            return "";
+        }
+
+        foreach (JToken token in tokens)
+        {
+            JToken value = NonNullToken(token);
+            if (value == null)
+            {
+                continue;
+            }
+
+            string textValue = value.ToString();
+            if (!string.IsNullOrEmpty(textValue))
+            {
+                return textValue;
+            }
+        }
+
+        return "";
+    }
+
     bool ResponseReportsArucoDetected(JObject jo)
     {
         if (jo == null)
@@ -1871,6 +1908,18 @@ public class ShuJuQingQiu : MonoBehaviour
             ModelKey = modelKey,
             TaskId = modelJ["task_id"]?.ToString() ?? jo["task_id"]?.ToString() ?? "",
             FbxUrl = fbxUrl,
+            DisplayObjectId = ReadFirstString(
+                modelJ["display_object_id"],
+                modelJ["display_identity"]?["display_object_id"],
+                jo["display_object_id"],
+                jo["display_identity"]?["display_object_id"]
+            ),
+            CaptureInstanceId = ReadFirstString(
+                modelJ["capture_instance_id"],
+                modelJ["display_identity"]?["capture_instance_id"],
+                jo["capture_instance_id"],
+                jo["display_identity"]?["capture_instance_id"]
+            ),
             IsEvidenceOverlay = modelJ["is_evidence_overlay"] != null && modelJ["is_evidence_overlay"].Value<bool>(),
             Pose = poseData,
         };
@@ -1962,6 +2011,14 @@ public class ShuJuQingQiu : MonoBehaviour
                 modelInstance[key] = value.DeepClone();
             }
         }
+        foreach (string key in new[] { "display_identity", "display_object_id", "capture_instance_id" })
+        {
+            JToken value = NonNullToken(modelJ[key]);
+            if (value != null)
+            {
+                modelInstance[key] = value.DeepClone();
+            }
+        }
 
         return modelInstance;
     }
@@ -1990,6 +2047,18 @@ public class ShuJuQingQiu : MonoBehaviour
         wrapper["model_instance"] = modelInstance.DeepClone();
 
         foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space" })
+        {
+            JToken value = NonNullToken(modelJ[key]);
+            if (value != null)
+            {
+                wrapper[key] = value.DeepClone();
+                if (modelInstance[key] == null)
+                {
+                    modelInstance[key] = value.DeepClone();
+                }
+            }
+        }
+        foreach (string key in new[] { "display_identity", "display_object_id", "capture_instance_id" })
         {
             JToken value = NonNullToken(modelJ[key]);
             if (value != null)

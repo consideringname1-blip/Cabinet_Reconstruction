@@ -881,7 +881,40 @@ def _run_depthpointcloud(json_path: Path, context: StageWorkerContext | None = N
     )
 
 
+def _is_historical_model_reuse_task(task_json: dict | None) -> bool:
+    if not isinstance(task_json, dict):
+        return False
+    historical_match = task_json.get("HistoricalModelMatch")
+    return isinstance(historical_match, dict) and bool(historical_match.get("reuse_model"))
+
+
+def _historical_reuse_outputs_ready(task_json: dict | None) -> bool:
+    if not _is_historical_model_reuse_task(task_json):
+        return False
+    return (
+        isinstance((task_json or {}).get("model"), dict)
+        and isinstance((task_json or {}).get("RuntimeMesh"), dict)
+        and isinstance((task_json or {}).get("Blender"), dict)
+    )
+
+
+def _historical_reuse_next_status(stage_name: str, default_status: str, task_json: dict | None) -> str:
+    if not _historical_reuse_outputs_ready(task_json):
+        return default_status
+    if stage_name == "historical_model_match":
+        return "depthpointcloud"
+    if stage_name in {"depthpointcloud", "modelscale"}:
+        return "object_alignment"
+    if stage_name in {"aruco_sync", "runtime_mesh"}:
+        return "model_bounds"
+    return default_status
+
+
 def _run_modelscale(json_path: Path, context: StageWorkerContext | None = None) -> None:
+    task_json = load_task_json(json_path)
+    if _historical_reuse_outputs_ready(task_json):
+        print(f"[worker] historical model reused, skipping modelscale: {json_path}")
+        return
     _run_python_script(
         python_path=MODELSCALE_STAGE_PY,
         script_path=MODELSCALE_STAGE_RUN,
@@ -929,6 +962,10 @@ def _run_aruco_sync(json_path: Path, context: StageWorkerContext | None = None) 
 
 
 def _run_runtime_mesh(json_path: Path, context: StageWorkerContext | None = None) -> None:
+    task_json = load_task_json(json_path)
+    if _historical_reuse_outputs_ready(task_json):
+        print(f"[worker] historical model reused, skipping runtime_mesh: {json_path}")
+        return
     _run_python_script(
         python_path=RUNTIME_MESH_STAGE_PY,
         script_path=RUNTIME_MESH_STAGE_RUN,
@@ -1116,15 +1153,24 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
     next_status = "completed"
     if start_index + 1 < len(stage_order):
         next_status = stage_order[start_index + 1]
-    if stage_name == "historical_model_match":
-        try:
-            refreshed_task_json = load_task_json(json_path)
-            historical_match = refreshed_task_json.get("HistoricalModelMatch")
-            if isinstance(historical_match, dict) and bool(historical_match.get("reuse_model")):
-                next_status = "depthpointcloud"
-                print(f"[worker] historical model reused, skipping instantmesh: {task_id}")
-        except Exception as exc:
-            print(f"[worker] failed to inspect historical model match result: {exc}")
+    try:
+        refreshed_task_json = load_task_json(json_path)
+        reuse_next_status = _historical_reuse_next_status(stage_name, next_status, refreshed_task_json)
+        if reuse_next_status != next_status:
+            skipped: dict[str, str] = {
+                "historical_model_match": "instantmesh",
+                "depthpointcloud": "modelscale",
+                "modelscale": "modelscale",
+                "aruco_sync": "runtime_mesh",
+                "runtime_mesh": "runtime_mesh",
+            }
+            print(
+                f"[worker] historical model reused, skipping {skipped.get(stage_name, 'stage')}: "
+                f"{task_id} -> {reuse_next_status}"
+            )
+            next_status = reuse_next_status
+    except Exception as exc:
+        print(f"[worker] failed to inspect historical model reuse result: {exc}")
     update_task_status(task_id, next_status)
     if next_status == "completed":
         print(f"[worker] completed task: {task_id}")

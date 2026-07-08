@@ -12,7 +12,7 @@ from typing import Any
 import _bootstrap
 import numpy as np
 
-from artifact_layout import model_worker_file
+from artifact_layout import model_result_dir, model_result_file, model_worker_file
 from config import (
     DINO_IDENTITY_CANDIDATE_LIMIT,
     DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD,
@@ -26,6 +26,7 @@ from model_generation_common import (
     MODEL_STAGE_SAM3D_OBJECTS,
     build_model_generation_payload,
     resolve_model_generation_source,
+    resolve_runtime_mesh_source,
 )
 from stage_common import ensure_file, load_stage_task
 from task_db import (
@@ -183,6 +184,24 @@ def _rewrite_mtl_texture_reference(mtl_path: Path, texture_name: str) -> None:
     mtl_path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
 
 
+def _copy_checked_file(source_path: Path, target_path: Path, label: str) -> None:
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ensure_file(source_path, label), target_path)
+
+
+def _require_historical_model_payload(source_task: dict[str, Any]) -> dict[str, Any]:
+    model_payload = source_task.get("model")
+    if not isinstance(model_payload, dict):
+        raise ValueError("historical model scale payload is missing")
+    try:
+        overall_scale = float(model_payload.get("overall_scale") or 0.0)
+    except Exception as exc:
+        raise ValueError("historical model overall_scale is invalid") from exc
+    if overall_scale <= 0.0:
+        raise ValueError("historical model overall_scale is missing")
+    return dict(model_payload)
+
+
 def _copy_historical_model_source(
     *,
     current_task: dict[str, Any],
@@ -193,32 +212,61 @@ def _copy_historical_model_source(
     source = resolve_model_generation_source(source_task, require_mtl_image=True)
     if source.mtl_path is None or source.image_path is None:
         raise ValueError(f"{source.source_stage}.mesh / mtl / image is missing")
+    runtime_source = resolve_runtime_mesh_source(source_task, require_mtl_image=True)
+    if runtime_source is None or runtime_source.mtl_path is None or runtime_source.image_path is None:
+        raise ValueError("historical RuntimeMesh.mesh / mtl / image is missing")
+    source_model_payload = _require_historical_model_payload(source_task)
+
+    source_timestamp = str(source_task_row.get("task_timestamp") or source_task.get("task_timestamp") or "").strip()
+    if not source_timestamp:
+        raise ValueError("source task_timestamp is required for historical model reuse")
+    blender_source = source_task.get("Blender") if isinstance(source_task.get("Blender"), dict) else {}
+    source_fbx_name = str(blender_source.get("fbx") or "").strip()
+    if not source_fbx_name or str(blender_source.get("artifact_root") or "") != "model_result":
+        raise ValueError("historical Blender.fbx is missing")
+    source_fbx_path = model_result_dir(source_timestamp) / source_fbx_name
 
     current_timestamp = str(current_task.get("task_timestamp") or "").strip()
     if not current_timestamp:
         raise ValueError("task_timestamp is required for historical model reuse")
+
     target_obj = model_worker_file(current_timestamp, "model.source_obj")
     target_mtl = model_worker_file(current_timestamp, "model.source_mtl")
     target_texture = model_worker_file(current_timestamp, "model.source_texture")
-    for target in (target_obj, target_mtl, target_texture):
-        target.parent.mkdir(parents=True, exist_ok=True)
-
-    shutil.copy2(ensure_file(source.mesh_path, f"{source.source_stage} mesh"), target_obj)
-    shutil.copy2(ensure_file(source.mtl_path, f"{source.source_stage} mtl"), target_mtl)
-    shutil.copy2(ensure_file(source.image_path, f"{source.source_stage} texture"), target_texture)
+    _copy_checked_file(source.mesh_path, target_obj, f"{source.source_stage} mesh")
+    _copy_checked_file(source.mtl_path, target_mtl, f"{source.source_stage} mtl")
+    _copy_checked_file(source.image_path, target_texture, f"{source.source_stage} texture")
     _rewrite_obj_mtl_reference(target_obj, target_mtl.name)
     _rewrite_mtl_texture_reference(target_mtl, target_texture.name)
 
+    target_runtime_obj = model_worker_file(current_timestamp, "model.runtime_obj")
+    target_runtime_mtl = model_worker_file(current_timestamp, "model.runtime_mtl")
+    target_runtime_texture = model_worker_file(current_timestamp, "model.runtime_texture")
+    _copy_checked_file(runtime_source.mesh_path, target_runtime_obj, "historical runtime mesh obj")
+    _copy_checked_file(runtime_source.mtl_path, target_runtime_mtl, "historical runtime mesh mtl")
+    _copy_checked_file(runtime_source.image_path, target_runtime_texture, "historical runtime mesh texture")
+    _rewrite_obj_mtl_reference(target_runtime_obj, target_runtime_mtl.name)
+    _rewrite_mtl_texture_reference(target_runtime_mtl, target_runtime_texture.name)
+
+    target_fbx = model_result_file(current_timestamp, "model.final_fbx")
+    _copy_checked_file(source_fbx_path, target_fbx, "historical final fbx")
+
     reuse_info = {
         "enabled": True,
+        "reuse_mode": "copy_historical_runtime_assets_realign_pose",
+        "skipped_generation_stages": ["instantmesh", "modelscale", "runtime_mesh"],
         "source_task_id": source_task_row.get("task_id"),
-        "source_task_timestamp": source_task_row.get("task_timestamp") or source_task.get("task_timestamp"),
+        "source_task_timestamp": source_timestamp,
         "source_display_object_id": display_object_id,
         "source_stage": source.source_stage,
         "source_backend": source.backend,
         "source_mesh": source.mesh,
         "source_mtl": source.mtl,
         "source_image": source.image,
+        "source_runtime_mesh": runtime_source.mesh,
+        "source_runtime_mtl": runtime_source.mtl,
+        "source_runtime_image": runtime_source.image,
+        "source_fbx": source_fbx_name,
     }
     payload = build_model_generation_payload(
         backend=source.backend,
@@ -247,8 +295,33 @@ def _copy_historical_model_source(
         current_task["SAM3DObjects"] = dict(payload)
     else:
         raise ValueError(f"Unsupported historical model source stage: {source.source_stage}")
-    return reuse_info
 
+    model_payload = dict(source_model_payload)
+    model_payload["historical_reuse"] = reuse_info
+    current_task["model"] = model_payload
+
+    runtime_payload = dict(runtime_source.payload)
+    runtime_payload.update(
+        {
+            "mesh": target_runtime_obj.name,
+            "mtl": target_runtime_mtl.name,
+            "image": target_runtime_texture.name,
+            "artifact_root": "model_worker",
+            "historical_reuse": reuse_info,
+        }
+    )
+    current_task["RuntimeMesh"] = runtime_payload
+
+    blender_payload = dict(blender_source)
+    blender_payload.update(
+        {
+            "fbx": target_fbx.name,
+            "artifact_root": "model_result",
+            "historical_reuse": reuse_info,
+        }
+    )
+    current_task["Blender"] = blender_payload
+    return reuse_info
 
 def _public_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     return {
