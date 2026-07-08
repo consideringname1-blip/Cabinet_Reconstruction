@@ -304,7 +304,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         item.ModelKey = modelKey;
         item.Status = result["status"]?.ToString() ?? item.Status;
         item.DownloadModel = BuildDownloadModel(taskId, result);
-        item.TakenRgbUrl = ReadNestedString(result, "taken_object_detection_urls", "result_rgb_url");
+        item.TakenRgbUrl = ReadTakenEvidenceImageUrl(result);
         item.BodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url");
         item.BodyModelKey = "body:" + itemKey;
 
@@ -439,7 +439,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             PolyhedronObject = polyObject,
             DurationSeconds = ReadAnimationDuration(display),
             DownloadModel = BuildDownloadModel(taskId, result),
-            TakenRgbUrl = ReadNestedString(result, "taken_object_detection_urls", "result_rgb_url"),
+            TakenRgbUrl = ReadTakenEvidenceImageUrl(result),
             BodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url"),
             BodyModelKey = "body:" + itemKey,
             HasEvidenceAnchor = true,
@@ -1090,6 +1090,16 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
     {
         JObject obj = payload != null ? payload[objectKey] as JObject : null;
         return obj != null ? obj[valueKey]?.ToString() ?? "" : "";
+    }
+
+    private static string ReadTakenEvidenceImageUrl(JObject result)
+    {
+        string cropUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "subject_crop_url");
+        if (!string.IsNullOrEmpty(cropUrl))
+        {
+            return cropUrl;
+        }
+        return ReadNestedString(result, "taken_object_detection_urls", "result_rgb_url");
     }
 
     private GameObject CreatePolyhedron(string shape, float edgeLength, string status)

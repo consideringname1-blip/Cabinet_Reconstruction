@@ -965,6 +965,8 @@ def _score_model_box_candidate(obs: YoloObjectObservation, sample: CachedRgbdSam
         reject_reasons.append('center_too_far')
     if depth_diff is not None and depth_diff > max_depth:
         reject_reasons.append('depth_too_different')
+    if box_coverage_ratio < settings.MODEL_BOX_OBJECTMASK_MIN_BOX_COVERAGE:
+        reject_reasons.append('object_mask_does_not_cover_projected_box')
     if mask_overlap_ratio < settings.MODEL_BOX_CANDIDATE_MIN_MASK_OVERLAP_RATIO and bbox_iou < settings.MODEL_BOX_CANDIDATE_MIN_BBOX_IOU and not point_inside_mask:
         reject_reasons.append('mask_not_near_projected_box')
     if area_ratio < settings.MODEL_BOX_CANDIDATE_MIN_AREA_RATIO:
@@ -983,9 +985,11 @@ def _score_model_box_candidate(obs: YoloObjectObservation, sample: CachedRgbdSam
         'mask_overlap_pixels': overlap_pixels,
         'mask_overlap_ratio': mask_overlap_ratio,
         'projected_box_coverage_ratio': box_coverage_ratio,
+        'min_projected_box_coverage_ratio': settings.MODEL_BOX_OBJECTMASK_MIN_BOX_COVERAGE,
         'area_ratio_to_projected_box': area_ratio,
         'point_inside_mask': point_inside_mask,
         'point_inside_bbox': point_inside_bbox,
+        'ray_selection': {'status': 'not_available_in_current_server_inputs', 'fallback': 'smallest_accepted_projected_box_mask'},
         'rgb_signature': _mask_rgb_stats(sample, obs.mask),
         'observation': obs,
     }
@@ -1012,20 +1016,32 @@ def _select_model_box_yolo_candidate(cache: ShigureRgbdCache, event: YoloEvent, 
         return None, {'reason': 'no_yolo_object_with_mask'}
     scored.sort(key=lambda item: (not bool(item.get('accepted')), float(item.get('score', math.inf))))
     accepted = [item for item in scored if item.get('accepted')]
+    if accepted:
+        accepted.sort(
+            key=lambda item: (
+                int(item['observation'].mask_pixels),
+                -float(item.get('projected_box_coverage_ratio') or 0.0),
+                float(item.get('center_distance_px') or math.inf),
+            )
+        )
     best = accepted[0] if accepted else scored[0]
-    reason = 'matched_shigure_candidate_mask' if accepted else 'best_candidate_rejected'
+    reason = 'matched_projected_box_shigure_candidate_mask' if accepted else 'best_projected_box_candidate_rejected'
     return (best['observation'] if accepted else None), {
         'reason': reason,
+        'candidate_scope': 'shigure_object_masks_covering_projected_hololens_depth_box',
+        'selection_policy': 'smallest_accepted_mask_after_projected_box_coverage',
+        'ray_selection': {'status': 'not_available_in_current_server_inputs', 'fallback': 'smallest_accepted_projected_box_mask'},
         'candidate_count': len(scored),
         'accepted_count': len(accepted),
         'best': _candidate_payload(best),
         'top_candidates': [_candidate_payload(item) for item in scored[:8]],
     }
 
+
 def _init_model_box_primary(cache: ShigureRgbdCache, task: Mapping[str, Any], metadata: list[CachedSampleMetadata], first_after: CachedSampleMetadata, capture_seconds: float) -> tuple[YoloInitResult | None, dict[str, Any]]:
     first_sample = cache.get_sample(first_after.stamp, mode='nearest')
     if first_sample is None:
-        return None, {'mode': 'model_box_depth', 'reason': 'first_frame_unavailable'}
+        return None, {'mode': 'model_box_yolo_mask_init', 'reason': 'first_frame_unavailable'}
     info = _camera_info_message(first_after.camera_info or first_sample.camera_info)
     h = int(info.get('height') or 0) if info else 0
     w = int(info.get('width') or 0) if info else 0
@@ -1036,6 +1052,8 @@ def _init_model_box_primary(cache: ShigureRgbdCache, task: Mapping[str, Any], me
         'projection': projection,
         'metadata_frame_count': len(metadata),
         'reference_source': 'selected_shigure_yolo_mask',
+        'candidate_scope': 'shigure_object_masks_covering_projected_hololens_depth_box',
+        'ray_selection': {'status': 'not_available_in_current_server_inputs', 'fallback': 'smallest_accepted_projected_box_mask'},
     }
     if projected_mask is None:
         return None, {**init_info, 'reason': projection.get('reason')}
@@ -1645,6 +1663,31 @@ def _save_decisions_debug(task_timestamp: str, payload: Mapping[str, Any]) -> st
     return str(decisions_path)
 
 
+def _write_history_baseline_artifacts(
+    backup_dir: Path,
+    sample: CachedRgbdSample,
+    trusted_mask: np.ndarray,
+    reference_depth: np.ndarray,
+) -> dict[str, Any]:
+    mask_path = backup_dir / 'old_mask.png'
+    reference_path = backup_dir / 'old_reference_depth_m.npy'
+    Image.fromarray(trusted_mask.astype(np.uint8) * 255).save(mask_path)
+    np.save(reference_path, np.asarray(reference_depth, dtype=np.float32))
+    payload = {
+        'source': 'taken_object_detection_shigure_object_mask',
+        'coordinate_space': 'fixed_shigure_image',
+        'old_rgb_path': str(backup_dir / 'rgb.png'),
+        'old_depth_path': str(backup_dir / 'depth.png'),
+        'old_mask_path': str(mask_path),
+        'old_reference_depth_m_path': str(reference_path),
+        'camera_info_path': str(backup_dir / 'camera_info.json'),
+        'stamp': sample.stamp.to_dict(),
+        'valid_mask_pixels': int(np.count_nonzero(trusted_mask)),
+    }
+    _write_json(backup_dir / 'history_baseline.json', payload)
+    return payload
+
+
 def _tracking_window_payload(capture_seconds: float, capture_source: str | None, first_after: CachedSampleMetadata | None, input_frame_count: int) -> dict[str, Any]:
     payload = {
         'capture_time_source': capture_source,
@@ -1668,6 +1711,7 @@ def _write_not_taken(json_path: Path, task: dict[str, Any], *, tracking_window: 
         'tracking_window': tracking_window,
         'projection': projection,
         'init': init,
+        'history_baseline': init.get('history_baseline') if isinstance(init, Mapping) else None,
         'checked_frame_count': len(decisions),
         'debug_files': debug_files,
         'output_dir': str(output_dir),
@@ -1688,6 +1732,7 @@ def _write_taken(json_path: Path, task: dict[str, Any], *, frames: list[CachedRg
         'tracking_window': tracking_window,
         'projection': projection,
         'init': init_stats,
+        'history_baseline': init_stats.get('history_baseline') if isinstance(init_stats, Mapping) else None,
         'depth_taken_timestamp': candidate_start.stamp.to_dict(),
         'depth_confirm_timestamp': confirmed.stamp.to_dict(),
         'full_occlusion_start_timestamp': None,
@@ -1886,9 +1931,16 @@ def run_taken_object_detection(json_path_arg: str | Path) -> dict[str, Any]:
         yolo_init.object_id,
         yolo_init.init_stats.get('selected_observation') if isinstance(yolo_init.init_stats, Mapping) else None,
     )
+    history_baseline = _write_history_baseline_artifacts(
+        init_backup_dir,
+        yolo_init.init_frame,
+        yolo_init.trusted_mask,
+        yolo_init.reference_depth,
+    )
     yolo_init_stats = {
         **yolo_init.init_stats,
         'init_backup_shigurei_dir': str(init_backup_dir),
+        'history_baseline': history_baseline,
         'debug_files': debug_files,
     }
     _write_status(
@@ -1899,6 +1951,7 @@ def run_taken_object_detection(json_path_arg: str | Path) -> dict[str, Any]:
         projection=yolo_init.projection,
         init=yolo_init_stats,
         init_backup_shigurei_dir=str(init_backup_dir),
+        history_baseline=history_baseline,
         debug_files=debug_files,
         output_dir=str(output_dir),
     )

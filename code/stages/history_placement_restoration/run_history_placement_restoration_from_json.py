@@ -1621,6 +1621,9 @@ def _restore_baseline_from_taken_detection(
     if not isinstance(payload, dict):
         return None, {"reason": "taken_detection_payload_missing", "payload_source": payload_source}
     init = payload.get("init") if isinstance(payload.get("init"), dict) else {}
+    explicit_history_baseline = payload.get("history_baseline") if isinstance(payload.get("history_baseline"), dict) else None
+    if explicit_history_baseline is None and isinstance(init.get("history_baseline"), dict):
+        explicit_history_baseline = init.get("history_baseline")
     yolo_tracking = payload.get("yolo_tracking") if isinstance(payload.get("yolo_tracking"), dict) else {}
     backup_dir = _resolve_artifact_path(
         payload.get("init_backup_shigurei_dir")
@@ -1724,10 +1727,20 @@ def _restore_baseline_from_taken_detection(
     reference_signature.update(_model_bbox_size_signature(task))
     projection = payload.get("projection") if isinstance(payload.get("projection"), dict) else init.get("projection") if isinstance(init.get("projection"), dict) else {}
     match = init.get("candidate_match") if isinstance(init.get("candidate_match"), dict) else {}
+    history_baseline = explicit_history_baseline or {
+        "source": "taken_detection_init_recovered",
+        "coordinate_space": "fixed_shigure_image",
+        "old_rgb_path": str(backup_dir / "rgb.png"),
+        "old_depth_path": str(backup_dir / "depth.png"),
+        "old_mask_path": str(array_files.get("baseline_mask_path") or ""),
+        "old_reference_depth_m_path": str(array_files.get("baseline_reference_depth_m_path") or ""),
+        "camera_info_path": str(backup_dir / "camera_info.json"),
+    }
     baseline = {
         "status": "ready",
         "created_at": _utc_now(),
         "source": "taken_detection_init",
+        "history_baseline": history_baseline,
         "source_payload": payload_source,
         "capture_seconds": float(capture_seconds),
         "reference_observation": selected_obs.to_dict(),
@@ -1868,9 +1881,19 @@ def _establish_baseline(
         timing["reason"] = tracking_region_reference.get("reason")
     reference_signature = dict(selected_obs.signature)
     reference_signature.update(_model_bbox_size_signature(task))
+    history_baseline = {
+        "source": "history_baseline_established_from_shigure_object_mask",
+        "coordinate_space": "fixed_shigure_image",
+        "old_rgb_path": str(backup_dir / "rgb.png"),
+        "old_depth_path": str(backup_dir / "depth.png"),
+        "old_mask_path": str(array_files.get("baseline_mask_path") or ""),
+        "old_reference_depth_m_path": str(array_files.get("baseline_reference_depth_m_path") or ""),
+        "camera_info_path": str(backup_dir / "camera_info.json"),
+    }
     baseline = {
         "status": "ready",
         "created_at": _utc_now(),
+        "history_baseline": history_baseline,
         "capture_seconds": float(capture_seconds),
         "reference_observation": selected_obs.to_dict(),
         "reference_signature": reference_signature,
@@ -2026,30 +2049,31 @@ def _build_display_payload(
         },
     }
     if status == STATUS_ORIGINAL:
-        display["mode"] = "original_tetrahedron"
-        display["polyhedron"] = _polyhedron_payload(
-            task,
-            "tetrahedron",
-            current_position or original_position,
-            "current_object" if current_position is not None else "original_model",
-        )
+        display["mode"] = "still_octahedron_no_model"
+        display["show_model"] = False
+        display["polyhedron"] = _polyhedron_payload(task, "octahedron", original_position, "original_model")
     elif status == STATUS_MOVED and current_pose_aruco is not None:
-        display["mode"] = "moved_cube_to_original"
+        display["mode"] = "moved_cube_no_model"
+        display["show_model"] = False
         display["polyhedron"] = _polyhedron_payload(task, "cube", current_position, "current_object")
         display["animation"]["enabled"] = original_pose is not None
         display["animation"]["from_pose_aruco"] = current_pose_aruco
+    elif status == STATUS_MOVED:
+        display["mode"] = "moved_cube_no_model"
+        display["show_model"] = False
+        display["polyhedron"] = _polyhedron_payload(task, "cube", original_position, "original_model")
     elif status == STATUS_MISSING:
-        display["mode"] = "missing_original_octahedron"
-        display["show_model"] = True
-        display["polyhedron"] = _polyhedron_payload(task, "octahedron", original_position, "original_model")
+        display["mode"] = "missing_cube_no_model"
+        display["show_model"] = False
+        display["polyhedron"] = _polyhedron_payload(task, "cube", original_position, "original_model")
     elif status == STATUS_OCCLUDED_REUSE_LAST:
-        display["mode"] = "occluded_original_dodecahedron"
-        display["show_model"] = True
-        display["polyhedron"] = _polyhedron_payload(task, "dodecahedron", original_position, "original_model")
+        display["mode"] = "occluded_tetrahedron_no_model"
+        display["show_model"] = False
+        display["polyhedron"] = _polyhedron_payload(task, "tetrahedron", original_position, "original_model")
     elif status == STATUS_UNKNOWN:
-        display["mode"] = "unknown_original_icosahedron"
-        display["show_model"] = True
-        display["polyhedron"] = _polyhedron_payload(task, "icosahedron", original_position, "original_model")
+        display["mode"] = "unknown_dodecahedron_no_model"
+        display["show_model"] = False
+        display["polyhedron"] = _polyhedron_payload(task, "dodecahedron", original_position, "original_model")
     else:
         display["mode"] = "skipped" if status == STATUS_SKIPPED else "original_only"
     return display
@@ -2092,6 +2116,199 @@ def _save_visualization(
     path = output_dir / ("09_history_state_visualization.png" if output_dir.name == "worker" else "state_visualization.png")
     cv2.imwrite(str(path), image)
     return str(path)
+
+
+def _load_direct_baseline_assets(baseline: dict[str, Any]) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, dict[str, Any]]:
+    history = baseline.get("history_baseline") if isinstance(baseline.get("history_baseline"), dict) else {}
+    backup_dir = _resolve_artifact_path(baseline.get("baseline_backup_dir"))
+
+    old_rgb_path = _resolve_artifact_path(history.get("old_rgb_path"))
+    if old_rgb_path is None and backup_dir is not None:
+        old_rgb_path = backup_dir / "rgb.png"
+    old_depth_path = _resolve_artifact_path(history.get("old_depth_path"))
+    if old_depth_path is None and backup_dir is not None:
+        old_depth_path = backup_dir / "depth.png"
+    old_mask_path = _resolve_artifact_path(history.get("old_mask_path"))
+    if old_mask_path is None:
+        old_mask_path = _resolve_artifact_path(baseline.get("baseline_mask_path"))
+    old_reference_depth_path = _resolve_artifact_path(history.get("old_reference_depth_m_path"))
+    if old_reference_depth_path is None:
+        old_reference_depth_path = _resolve_artifact_path(baseline.get("baseline_reference_depth_m_path"))
+
+    old_rgb = cv2.imread(str(old_rgb_path), cv2.IMREAD_COLOR) if old_rgb_path is not None and old_rgb_path.is_file() else None
+    old_depth_raw = cv2.imread(str(old_depth_path), cv2.IMREAD_UNCHANGED) if old_depth_path is not None and old_depth_path.is_file() else None
+    old_depth = _depth_raw_to_m(old_depth_raw) if old_depth_raw is not None else None
+    old_mask = None
+    if old_mask_path is not None and old_mask_path.is_file():
+        raw = cv2.imread(str(old_mask_path), cv2.IMREAD_GRAYSCALE)
+        if raw is not None:
+            old_mask = raw > 0
+    if old_reference_depth_path is not None and old_reference_depth_path.is_file():
+        try:
+            reference_depth = np.load(str(old_reference_depth_path)).astype(np.float32)
+            if old_depth is None or old_depth.shape != reference_depth.shape:
+                old_depth = reference_depth
+        except Exception:
+            pass
+    return old_rgb, old_depth, old_mask, {
+        "old_rgb_path": str(old_rgb_path) if old_rgb_path is not None else None,
+        "old_depth_path": str(old_depth_path) if old_depth_path is not None else None,
+        "old_mask_path": str(old_mask_path) if old_mask_path is not None else None,
+        "old_reference_depth_m_path": str(old_reference_depth_path) if old_reference_depth_path is not None else None,
+        "baseline_backup_dir": str(backup_dir) if backup_dir is not None else None,
+    }
+
+
+def _write_direct_compare_debug(task: dict[str, Any], current_rgb: np.ndarray, masks: dict[str, np.ndarray]) -> dict[str, Any]:
+    task_timestamp = str(task.get("task_timestamp") or "").strip()
+    if not task_timestamp:
+        return {}
+    debug_dir = model_debug_dir(task_timestamp)
+    debug_dir.mkdir(parents=True, exist_ok=True)
+    paths: dict[str, Any] = {}
+    for name, mask in masks.items():
+        if mask is None:
+            continue
+        path = debug_dir / f"09_history_direct_{name}.png"
+        cv2.imwrite(str(path), mask.astype(np.uint8) * 255)
+        paths[f"direct_{name}_path"] = str(path)
+    changed = masks.get("changed_mask")
+    nearer = masks.get("nearer_mask")
+    farther = masks.get("farther_mask")
+    if changed is not None and current_rgb.shape[:2] == changed.shape:
+        overlay = np.asarray(current_rgb).copy()
+        if farther is not None:
+            overlay[farther] = cv2.addWeighted(
+                np.full_like(overlay[farther], (255, 170, 40)), 0.55, overlay[farther], 0.45, 0.0
+            )
+        if nearer is not None:
+            overlay[nearer] = cv2.addWeighted(
+                np.full_like(overlay[nearer], (40, 220, 255)), 0.55, overlay[nearer], 0.45, 0.0
+            )
+        path = debug_dir / "09_history_direct_compare_overlay.png"
+        cv2.imwrite(str(path), overlay)
+        paths["direct_compare_overlay_path"] = str(path)
+    return paths
+
+
+def _classify_current_direct(
+    task: dict[str, Any],
+    baseline: dict[str, Any],
+    current_sample: CachedRgbdSample,
+) -> dict[str, Any]:
+    old_rgb, old_depth, old_mask, asset_info = _load_direct_baseline_assets(baseline)
+    current_rgb = np.asarray(current_sample.rgb_bgr)
+    current_depth = _sample_depth_m(current_sample)
+    if old_rgb is None or old_depth is None or old_mask is None:
+        return {
+            "status": STATUS_UNKNOWN,
+            "reason": "direct_baseline_assets_missing",
+            "selected_observation": None,
+            "current_pose_aruco": None,
+            "validation": {"direct_compare": asset_info},
+        }
+    shape = current_depth.shape
+    if old_mask.shape != shape:
+        old_mask = cv2.resize(old_mask.astype(np.uint8), (shape[1], shape[0]), interpolation=cv2.INTER_NEAREST) > 0
+    if old_rgb.shape[:2] != shape or old_depth.shape != shape:
+        return {
+            "status": STATUS_UNKNOWN,
+            "reason": "direct_baseline_shape_mismatch",
+            "selected_observation": None,
+            "current_pose_aruco": None,
+            "validation": {
+                "direct_compare": {
+                    **asset_info,
+                    "old_rgb_shape": list(old_rgb.shape[:2]) if old_rgb is not None else None,
+                    "old_depth_shape": list(old_depth.shape) if old_depth is not None else None,
+                    "old_mask_shape": list(old_mask.shape) if old_mask is not None else None,
+                    "current_shape": list(shape),
+                }
+            },
+        }
+
+    valid = old_mask & np.isfinite(old_depth) & (old_depth > 0.0) & np.isfinite(current_depth) & (current_depth > 0.0)
+    valid_pixels = int(np.count_nonzero(valid))
+    if valid_pixels < int(settings.DIRECT_COMPARE_MIN_VALID_PIXELS):
+        return {
+            "status": STATUS_UNKNOWN,
+            "reason": "direct_compare_not_enough_valid_pixels",
+            "selected_observation": None,
+            "current_pose_aruco": None,
+            "validation": {"direct_compare": {**asset_info, "valid_pixels": valid_pixels}},
+        }
+
+    depth_delta = current_depth - old_depth
+    threshold = float(settings.DIRECT_COMPARE_DEPTH_DELTA_M)
+    changed = valid & (np.abs(depth_delta) > threshold)
+    nearer = valid & (depth_delta < -threshold)
+    farther = valid & (depth_delta > threshold)
+    old_lab = cv2.cvtColor(old_rgb, cv2.COLOR_BGR2LAB).astype(np.float32)
+    current_lab = cv2.cvtColor(current_rgb, cv2.COLOR_BGR2LAB).astype(np.float32)
+    lab_delta = np.linalg.norm(current_lab - old_lab, axis=2)
+    rgb_changed = valid & (lab_delta > float(settings.DIRECT_COMPARE_RGB_LAB_DELTA_THRESHOLD))
+
+    depth_changed_ratio = float(np.count_nonzero(changed) / max(1, valid_pixels))
+    depth_nearer_ratio = float(np.count_nonzero(nearer) / max(1, valid_pixels))
+    depth_farther_ratio = float(np.count_nonzero(farther) / max(1, valid_pixels))
+    rgb_changed_ratio = float(np.count_nonzero(rgb_changed) / max(1, valid_pixels))
+    lab_mean = float(np.nanmean(lab_delta[valid])) if valid_pixels > 0 else None
+
+    metrics = {
+        **asset_info,
+        "source": "fixed_shigure_old_mask_direct_compare",
+        "coordinate_space": "fixed_shigure_image",
+        "valid_pixels": valid_pixels,
+        "mask_pixels": int(np.count_nonzero(old_mask)),
+        "depth_delta_threshold_m": threshold,
+        "depth_changed_ratio": depth_changed_ratio,
+        "depth_nearer_ratio": depth_nearer_ratio,
+        "depth_farther_ratio": depth_farther_ratio,
+        "rgb_lab_delta_threshold": float(settings.DIRECT_COMPARE_RGB_LAB_DELTA_THRESHOLD),
+        "rgb_lab_mean_delta": lab_mean,
+        "rgb_changed_ratio": rgb_changed_ratio,
+        "occluded_nearer_ratio_threshold": float(settings.DIRECT_COMPARE_OCCLUDED_NEARER_RATIO),
+        "missing_farther_ratio_threshold": float(settings.DIRECT_COMPARE_MISSING_FARTHER_RATIO),
+        "still_max_depth_changed_ratio": float(settings.DIRECT_COMPARE_STILL_MAX_DEPTH_CHANGED_RATIO),
+        "still_max_rgb_changed_ratio": float(settings.DIRECT_COMPARE_STILL_MAX_RGB_CHANGED_RATIO),
+    }
+    debug_paths = _write_direct_compare_debug(
+        task,
+        current_rgb,
+        {
+            "old_mask": old_mask,
+            "changed_mask": changed,
+            "nearer_mask": nearer,
+            "farther_mask": farther,
+            "rgb_changed_mask": rgb_changed,
+        },
+    )
+    metrics.update(debug_paths)
+
+    if depth_nearer_ratio >= float(settings.DIRECT_COMPARE_OCCLUDED_NEARER_RATIO):
+        status = STATUS_OCCLUDED_REUSE_LAST
+        reason = "direct_compare_occluded_nearer_depth"
+    elif depth_farther_ratio >= float(settings.DIRECT_COMPARE_MISSING_FARTHER_RATIO):
+        status = STATUS_MISSING
+        reason = "direct_compare_not_in_original_place_farther_depth"
+    elif (
+        depth_changed_ratio <= float(settings.DIRECT_COMPARE_STILL_MAX_DEPTH_CHANGED_RATIO)
+        and rgb_changed_ratio <= float(settings.DIRECT_COMPARE_STILL_MAX_RGB_CHANGED_RATIO)
+    ):
+        status = STATUS_ORIGINAL
+        reason = "direct_compare_still_in_original_place"
+    else:
+        status = STATUS_UNKNOWN
+        reason = "direct_compare_ambiguous"
+
+    return {
+        "status": status,
+        "reason": reason,
+        "selected_observation": None,
+        "current_pose_aruco": None,
+        "validation": {"direct_compare": metrics},
+        "direct_compare": metrics,
+    }
 
 
 def _classify_current(
@@ -2345,90 +2562,19 @@ def prepare_shared_current_context(
                 "timings": events,
             })
 
-        yolo_search_seconds = max(0.0, settings.YOLO_NEAREST_SEARCH_SECONDS, settings.YOLO_MAX_DELTA_TO_TARGET_SECONDS)
-        yolo_start = _stamp_from_seconds(target_seconds - yolo_search_seconds)
-        yolo_end = _stamp_from_seconds(target_seconds + yolo_search_seconds)
-        yolo_window_key = f"{float(target_seconds):.9f}:{float(yolo_search_seconds):.9f}"
-        with span("current_yolo_metadata_scan", {"start_stamp": yolo_start.to_dict(), "end_stamp": yolo_end.to_dict()}) as timing:
-            shared_metadata = shared_context.get("current_yolo_metadata")
-            if isinstance(shared_metadata, dict) and shared_metadata.get("window_key") == yolo_window_key:
-                metadata = shared_metadata.get("metadata") or []
-                timing["shared_context_hit"] = True
-            else:
-                metadata = list(cache.iter_sample_metadata(start=yolo_start, end=yolo_end))
-                timing["shared_context_hit"] = False
-                shared_context["current_yolo_metadata"] = {"window_key": yolo_window_key, "metadata": metadata}
-            timing["metadata_frame_count"] = len(metadata)
-
-        with span("current_nearest_yolo_event_select", {"metadata_frame_count": len(metadata)}) as timing:
-            shared_event = shared_context.get("current_yolo_event")
-            if isinstance(shared_event, dict) and shared_event.get("window_key") == yolo_window_key:
-                yolo_event = shared_event.get("event")
-                yolo_timing = dict(shared_event.get("timing") or {})
-                timing["shared_context_hit"] = True
-            else:
-                yolo_event, yolo_timing = _nearest_yolo_event(metadata, target_seconds)
-                timing["shared_context_hit"] = False
-                shared_context["current_yolo_event"] = {"window_key": yolo_window_key, "event": yolo_event, "timing": dict(yolo_timing)}
-            timing.update({k: v for k, v in yolo_timing.items() if k in {"reason", "candidate_event_count", "yolo_delta_to_target_seconds", "is_stale"}})
-            timing["has_yolo_event"] = yolo_event is not None
-
-        yolo_event_key = yolo_event.sample.key if yolo_event is not None else ""
-        with span("current_yolo_paired_sample_load", {"has_yolo_event": yolo_event is not None}) as timing:
-            shared_paired = shared_context.get("current_yolo_paired_sample")
-            if (
-                yolo_event is not None
-                and isinstance(shared_paired, dict)
-                and shared_paired.get("event_key") == yolo_event_key
-                and isinstance(shared_paired.get("sample"), CachedRgbdSample)
-            ):
-                yolo_paired_sample = shared_paired["sample"]
-                timing["shared_context_hit"] = True
-            else:
-                yolo_paired_sample = cache.get_sample(yolo_event.sample.stamp, mode="nearest") if yolo_event is not None else None
-                timing["shared_context_hit"] = False
-                if yolo_event is not None and yolo_paired_sample is not None:
-                    shared_context["current_yolo_paired_sample"] = {"event_key": yolo_event_key, "sample": yolo_paired_sample}
-            timing["sample_available"] = yolo_paired_sample is not None
-            if yolo_paired_sample is not None:
-                timing["sample_stamp"] = yolo_paired_sample.stamp.to_dict()
-
-        shape = yolo_paired_sample.depth.shape[:2] if yolo_paired_sample is not None else current_sample.depth.shape[:2]
-        current_observations: list[YoloObjectObservation] | None = None
-        with span("current_observations_prepare", {"has_yolo_event": yolo_event is not None}) as timing:
-            if yolo_event is None:
-                timing["shared_context_hit"] = False
-                timing["observation_count"] = 0
-            else:
-                observation_key = f"{yolo_event.sample.key}:{int(shape[0])}x{int(shape[1])}"
-                timing["observation_cache_key"] = observation_key
-                observations_cache = shared_context.get("current_observations_by_key")
-                if not isinstance(observations_cache, dict):
-                    observations_cache = {}
-                    shared_context["current_observations_by_key"] = observations_cache
-                cached_observations = observations_cache.get(observation_key)
-                if isinstance(cached_observations, list):
-                    current_observations = cached_observations
-                    timing["shared_context_hit"] = True
-                else:
-                    current_observations = _observations_for_events(cache, [yolo_event], shape)
-                    timing["shared_context_hit"] = False
-                    observations_cache[observation_key] = current_observations
-                timing["observation_count"] = len(current_observations)
-
     return _jsonable({
         "success": True,
         "target_seconds": float(target_seconds),
         "target_time_source": target_source,
         "current_sample": current_sample.to_dict(),
-        "yolo_paired_sample": yolo_paired_sample.to_dict() if yolo_paired_sample is not None else None,
-        "metadata_frame_count": len(metadata),
-        "has_yolo_event": yolo_event is not None,
-        "yolo_timing": yolo_timing,
-        "observation_count": len(current_observations or []),
+        "metadata_frame_count": None,
+        "has_yolo_event": False,
+        "yolo_timing": {"status": "skipped_fixed_shigure_direct_compare"},
+        "observation_count": 0,
         "elapsed_seconds": round(time.perf_counter() - started_total, 3),
         "timings": events,
     })
+
 
 def run_history_placement_restoration(
     json_path_arg: str | Path,
@@ -2579,175 +2725,55 @@ def run_history_placement_restoration(
             )
             return {"status": STATUS_UNKNOWN, "payload": payload}
 
-        yolo_search_seconds = max(0.0, settings.YOLO_NEAREST_SEARCH_SECONDS, settings.YOLO_MAX_DELTA_TO_TARGET_SECONDS)
-        yolo_start = _stamp_from_seconds(target_seconds - yolo_search_seconds)
-        yolo_end = _stamp_from_seconds(target_seconds + yolo_search_seconds)
-        yolo_window_key = f"{float(target_seconds):.9f}:{float(yolo_search_seconds):.9f}"
-        with timings.span(
-            "current_yolo_metadata_scan",
-            {"start_stamp": yolo_start.to_dict(), "end_stamp": yolo_end.to_dict()},
-        ) as timing:
-            shared_metadata = shared_context.get("current_yolo_metadata") if shared_context is not None else None
-            if isinstance(shared_metadata, dict) and shared_metadata.get("window_key") == yolo_window_key:
-                metadata = shared_metadata.get("metadata") or []
-                timing["shared_context_hit"] = True
-            else:
-                metadata = list(cache.iter_sample_metadata(start=yolo_start, end=yolo_end))
-                timing["shared_context_hit"] = False
-                if shared_context is not None:
-                    shared_context["current_yolo_metadata"] = {"window_key": yolo_window_key, "metadata": metadata}
-            timing["metadata_frame_count"] = len(metadata)
-        with timings.span("current_nearest_yolo_event_select", {"metadata_frame_count": len(metadata)}) as timing:
-            shared_event = shared_context.get("current_yolo_event") if shared_context is not None else None
-            if isinstance(shared_event, dict) and shared_event.get("window_key") == yolo_window_key:
-                yolo_event = shared_event.get("event")
-                yolo_timing = dict(shared_event.get("timing") or {})
-                timing["shared_context_hit"] = True
-            else:
-                yolo_event, yolo_timing = _nearest_yolo_event(metadata, target_seconds)
-                timing["shared_context_hit"] = False
-                if shared_context is not None:
-                    shared_context["current_yolo_event"] = {"window_key": yolo_window_key, "event": yolo_event, "timing": dict(yolo_timing)}
-            timing.update({k: v for k, v in yolo_timing.items() if k in {"reason", "candidate_event_count", "yolo_delta_to_target_seconds", "is_stale"}})
-            timing["has_yolo_event"] = yolo_event is not None
-        yolo_event_key = yolo_event.sample.key if yolo_event is not None else ""
-        with timings.span("current_yolo_paired_sample_load", {"has_yolo_event": yolo_event is not None}) as timing:
-            shared_paired = shared_context.get("current_yolo_paired_sample") if shared_context is not None else None
-            if (
-                yolo_event is not None
-                and isinstance(shared_paired, dict)
-                and shared_paired.get("event_key") == yolo_event_key
-                and isinstance(shared_paired.get("sample"), CachedRgbdSample)
-            ):
-                yolo_paired_sample = shared_paired["sample"]
-                timing["shared_context_hit"] = True
-            else:
-                yolo_paired_sample = cache.get_sample(yolo_event.sample.stamp, mode="nearest") if yolo_event is not None else None
-                timing["shared_context_hit"] = False
-                if shared_context is not None and yolo_event is not None and yolo_paired_sample is not None:
-                    shared_context["current_yolo_paired_sample"] = {"event_key": yolo_event_key, "sample": yolo_paired_sample}
-            timing["sample_available"] = yolo_paired_sample is not None
-            if yolo_paired_sample is not None:
-                timing["sample_stamp"] = yolo_paired_sample.stamp.to_dict()
-        if yolo_event is not None and yolo_paired_sample is not None:
-            yolo_timing = {
-                **yolo_timing,
-                "target_rgbd_time": current_sample.stamp.to_dict(),
-                "yolo_paired_rgbd_time": yolo_paired_sample.stamp.to_dict(),
-                "yolo_pairing_delta_seconds": abs(float(yolo_paired_sample.stamp.seconds) - float(yolo_event.seconds)),
-            }
-        shape = yolo_paired_sample.depth.shape[:2] if yolo_paired_sample is not None else current_sample.depth.shape[:2]
-        current_observations: list[YoloObjectObservation] | None = None
-        with timings.span("current_observations_prepare", {"has_yolo_event": yolo_event is not None}) as timing:
-            if yolo_event is None:
-                timing["shared_context_hit"] = False
-                timing["observation_count"] = 0
-            else:
-                observation_key = f"{yolo_event.sample.key}:{int(shape[0])}x{int(shape[1])}"
-                timing["observation_cache_key"] = observation_key
-                observations_cache = None
-                if shared_context is not None:
-                    existing_cache = shared_context.get("current_observations_by_key")
-                    if not isinstance(existing_cache, dict):
-                        existing_cache = {}
-                        shared_context["current_observations_by_key"] = existing_cache
-                    observations_cache = existing_cache
-                cached_observations = observations_cache.get(observation_key) if observations_cache is not None else None
-                if isinstance(cached_observations, list):
-                    current_observations = cached_observations
-                    timing["shared_context_hit"] = True
-                else:
-                    current_observations = _observations_for_events(cache, [yolo_event], shape)
-                    timing["shared_context_hit"] = False
-                    if observations_cache is not None:
-                        observations_cache[observation_key] = current_observations
-                timing["observation_count"] = len(current_observations)
-    with timings.span("current_backup_write", {"stamp": current_sample.stamp.to_dict()}) as timing:
-        current_backup_dir = _save_sample_backup(task, current_sample, output_dir, kind="current")
-        timing["backup_dir"] = str(current_backup_dir)
-    paired_backup_dir = None
-    if yolo_paired_sample is not None and yolo_paired_sample.stamp != current_sample.stamp:
-        with timings.span("current_yolo_paired_backup_write", {"stamp": yolo_paired_sample.stamp.to_dict()}) as timing:
-            paired_backup_dir = _save_sample_backup(task, yolo_paired_sample, output_dir, kind="current_yolo_paired")
-            timing["backup_dir"] = str(paired_backup_dir)
-    with timings.span("current_classify_total") as timing:
-        classification = _classify_current(
+        with timings.span("current_backup_write", {"stamp": current_sample.stamp.to_dict()}) as timing:
+            current_backup_dir = _save_sample_backup(task, current_sample, output_dir, kind="current")
+            timing["backup_dir"] = str(current_backup_dir)
+
+        with timings.span("current_direct_compare_total") as timing:
+            classification = _classify_current_direct(task, baseline, current_sample)
+            timing["status"] = classification.get("status")
+            timing["reason"] = classification.get("reason")
+
+        status = str(classification["status"])
+        display = _build_display_payload(task, status=status, current_pose_aruco=None)
+        with timings.span("visualization_write", {"status": status}) as timing:
+            visualization_path = _save_visualization(
+                output_dir,
+                current_sample,
+                status=status,
+                observation=None,
+                projection=None,
+            )
+            timing["visualization_path"] = visualization_path
+
+        payload = _write_status(
+            json_path,
             task,
-            cache,
-            baseline,
-            current_sample,
-            yolo_event,
-            yolo_timing,
-            shape,
-            timings=timings,
-            current_observations=current_observations,
-            current_visual_sample=yolo_paired_sample if yolo_paired_sample is not None else current_sample,
+            status,
+            reason=classification.get("reason"),
+            request_source=request_source,
+            capture_time_source=capture_source,
+            target_time_source=target_source,
+            target_timestamp=current_sample.stamp.to_dict(),
+            baseline=baseline,
+            baseline_info=baseline_info,
+            current={
+                "sample": current_sample.to_dict(),
+                "backup_shigurei_dir": str(current_backup_dir),
+                "metadata_frame_count": None,
+                "yolo_timing": {"status": "skipped_fixed_shigure_direct_compare"},
+            },
+            classification=classification,
+            direct_compare=classification.get("direct_compare"),
+            display=display,
+            state_visualization_path=visualization_path,
+            output_dir=str(output_dir),
+            timings=timings.events,
         )
-        timing["status"] = classification.get("status")
-        timing["reason"] = classification.get("reason")
-
-    selected_observation = classification.get("selected_observation")
-    observation_obj = None
-    if selected_observation is not None and yolo_event is not None:
-        with timings.span("selected_observation_hydrate") as timing:
-            selected_id = str(selected_observation.get("object_id") or "")
-            selected_stamp = RosStamp.from_dict(selected_observation.get("stamp") or {})
-            timing["selected_object_id"] = selected_id
-            source_observations = current_observations if current_observations is not None else _observations_for_events(cache, [yolo_event], shape)
-            timing["used_current_observations"] = current_observations is not None
-            for obs in source_observations:
-                if obs.object_id == selected_id and obs.stamp == selected_stamp:
-                    observation_obj = obs
-                    break
-            timing["hydrated"] = observation_obj is not None
-
-    status = str(classification["status"])
-    current_pose = classification.get("current_pose_aruco")
-    display = _build_display_payload(
-        task,
-        status=status,
-        current_pose_aruco=current_pose if isinstance(current_pose, dict) else None,
-    )
-    visualization_sample = yolo_paired_sample if observation_obj is not None and yolo_paired_sample is not None else current_sample
-    with timings.span("visualization_write", {"status": status}) as timing:
-        visualization_path = _save_visualization(
-            output_dir,
-            visualization_sample,
-            status=status,
-            observation=observation_obj,
-            projection=baseline.get("projection") if isinstance(baseline.get("projection"), dict) else None,
-        )
-        timing["visualization_path"] = visualization_path
-
-    payload = _write_status(
-        json_path,
-        task,
-        status,
-        reason=classification.get("reason"),
-        request_source=request_source,
-        capture_time_source=capture_source,
-        target_time_source=target_source,
-        target_timestamp=current_sample.stamp.to_dict(),
-        baseline=baseline,
-        baseline_info=baseline_info,
-        current={
-            "sample": current_sample.to_dict(),
-            "backup_shigurei_dir": str(current_backup_dir),
-            "yolo_paired_sample": yolo_paired_sample.to_dict() if yolo_paired_sample is not None else None,
-            "yolo_paired_backup_shigurei_dir": str(paired_backup_dir) if paired_backup_dir is not None else None,
-            "metadata_frame_count": len(metadata),
-            "yolo_timing": yolo_timing,
-        },
-        classification=classification,
-        display=display,
-        state_visualization_path=visualization_path,
-        output_dir=str(output_dir),
-        timings=timings.events,
-    )
-    summary_path = output_dir / ("09_history_summary.json" if output_dir.name == "worker" else "summary.json")
-    with timings.span("summary_json_write", {"summary_path": str(summary_path)}):
-        _write_json(summary_path, payload)
-    return {"status": status, "payload": payload}
+        summary_path = output_dir / ("09_history_summary.json" if output_dir.name == "worker" else "summary.json")
+        with timings.span("summary_json_write", {"summary_path": str(summary_path)}):
+            _write_json(summary_path, payload)
+        return {"status": status, "payload": payload}
 
 
 def main(argv: list[str]) -> int:

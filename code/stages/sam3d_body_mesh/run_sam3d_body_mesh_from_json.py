@@ -20,10 +20,10 @@ CODE_ROOT = Path(__file__).resolve().parents[2]
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
-from artifact_layout import model_debug_dir, model_result_file, model_worker_dir
+from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, model_debug_dir, model_result_file, model_worker_dir
 from path_config import BLENDER_BIN, SAM3D_BODY_FBX_EXPORT_SCRIPT, SAM3D_BODY_ROOT
 from coordinate_systems import quat_xyzw_to_rotation_matrix
-from spatial_transforms import shigure_camera_points_to_aruco
+from spatial_transforms import aruco_points_to_shigure_camera, project_camera_points_to_pixels, shigure_camera_points_to_aruco
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 from stages.shigure_history.marker_history import latest_marker_pose_path
 
@@ -306,11 +306,12 @@ def _camera_ray(pixel_xy: np.ndarray, camera_matrix: np.ndarray) -> np.ndarray:
 
 
 def _align_person_depth(output: Mapping[str, Any], faces: np.ndarray, depth_m: np.ndarray, camera_matrix: np.ndarray) -> dict[str, Any]:
-    cam_t = _to_numpy(output['pred_cam_t']).astype(np.float64).reshape(1, 3)
-    vertices = _to_numpy(output['pred_vertices']).astype(np.float64) + cam_t
-    keypoints = _to_numpy(output['pred_keypoints_3d']).astype(np.float64) + cam_t
-    bbox = _to_numpy(output['bbox']).astype(np.float64).reshape(4)
+    cam_t = _to_numpy(output["pred_cam_t"]).astype(np.float64).reshape(1, 3)
+    vertices = _to_numpy(output["pred_vertices"]).astype(np.float64) + cam_t
+    keypoints = _to_numpy(output["pred_keypoints_3d"]).astype(np.float64) + cam_t
+    bbox = _to_numpy(output["bbox"]).astype(np.float64).reshape(4)
     rendered = _rasterize_mesh_depth(vertices, faces, camera_matrix, depth_m.shape[:2])
+    body_mask = rendered > 0.0
     x0, y0, x1, y1 = _clip_box(bbox, depth_m.shape[1], depth_m.shape[0], settings.BBOX_DEPTH_PAD_PX)
     roi_depth = depth_m[y0:y1, x0:x1]
     roi_rendered = rendered[y0:y1, x0:x1]
@@ -319,28 +320,52 @@ def _align_person_depth(output: Mapping[str, Any], faces: np.ndarray, depth_m: n
     rendered_pixels = int(np.count_nonzero(roi_rendered > 0.0))
     ratio = valid_pixels / max(1, rendered_pixels)
     offset = 0.0
-    method = 'rendered_front_depth_median_offset'
+    distance_scale = 1.0
+    original_distance = None
+    adjusted_distance = None
+    method = "body_mask_depth_median_offset_and_scale"
+    sampled_pixels = 0
     if valid_pixels >= settings.DEPTH_OVERLAP_PIXELS and ratio >= settings.DEPTH_OVERLAP_RATIO:
-        residual = (roi_depth[valid] - roi_rendered[valid]).astype(np.float64)
-        if residual.size > settings.DEPTH_SAMPLE_MAX:
-            step = max(1, int(math.ceil(residual.size / settings.DEPTH_SAMPLE_MAX)))
-            residual = residual[::step]
+        depth_values = roi_depth[valid].astype(np.float64)
+        rendered_values = roi_rendered[valid].astype(np.float64)
+        if depth_values.size > settings.DEPTH_SAMPLE_MAX:
+            indices = np.linspace(0, depth_values.size - 1, settings.DEPTH_SAMPLE_MAX, dtype=np.int64)
+            depth_values = depth_values[indices]
+            rendered_values = rendered_values[indices]
+        sampled_pixels = int(depth_values.size)
+        residual = depth_values - rendered_values
         offset = float(np.median(residual))
+        original_distance = float(np.median(rendered_values)) if rendered_values.size else None
+        adjusted_distance = float(original_distance + offset) if original_distance is not None else None
+        if original_distance is not None and original_distance > 1.0e-6 and adjusted_distance is not None and adjusted_distance > 1.0e-6:
+            distance_scale = float(np.clip(adjusted_distance / original_distance, settings.DEPTH_SCALE_MIN, settings.DEPTH_SCALE_MAX))
     else:
-        method = 'insufficient_depth_overlap_no_translation'
+        method = "insufficient_body_mask_depth_overlap_no_translation_or_scale"
+
     center = np.array([(bbox[0] + bbox[2]) * 0.5, (bbox[1] + bbox[3]) * 0.5], dtype=np.float64)
+    mesh_center = np.nanmedian(vertices, axis=0)
+    if np.all(np.isfinite(mesh_center)) and distance_scale != 1.0:
+        vertices = (vertices - mesh_center.reshape(1, 3)) * distance_scale + mesh_center.reshape(1, 3)
+        keypoints = (keypoints - mesh_center.reshape(1, 3)) * distance_scale + mesh_center.reshape(1, 3)
     shift = _camera_ray(center, camera_matrix) * offset
     vertices = vertices + shift.reshape(1, 3)
     keypoints = keypoints + shift.reshape(1, 3)
+    rendered_aligned = _rasterize_mesh_depth(vertices, faces, camera_matrix, depth_m.shape[:2])
+    aligned_body_mask = rendered_aligned > 0.0
     return {
-        'vertices_camera_m': vertices,
-        'keypoints_camera_m': keypoints,
-        'bbox_xyxy': bbox,
-        'depth_offset_m': offset,
-        'xyz_shift_m': shift,
-        'depth_overlap_pixels': valid_pixels,
-        'depth_overlap_ratio': ratio,
-        'depth_alignment_method': method,
+        "vertices_camera_m": vertices,
+        "keypoints_camera_m": keypoints,
+        "bbox_xyxy": bbox,
+        "body_mask": aligned_body_mask,
+        "depth_offset_m": offset,
+        "xyz_shift_m": shift,
+        "distance_scale": distance_scale,
+        "original_distance_m": original_distance,
+        "adjusted_distance_m": adjusted_distance,
+        "depth_overlap_pixels": valid_pixels,
+        "depth_sampled_pixels": sampled_pixels,
+        "depth_overlap_ratio": ratio,
+        "depth_alignment_method": method,
     }
 
 
@@ -451,6 +476,214 @@ def _load_backup_paths(taken: Mapping[str, Any]) -> tuple[Path, Path, Path, Path
     return rgb, depth, camera, latest_marker_pose_path()
 
 
+def _load_object_mask_from_taken(taken: Mapping[str, Any], image_shape: tuple[int, int]) -> tuple[np.ndarray | None, dict[str, Any]]:
+    history = taken.get("history_baseline") if isinstance(taken.get("history_baseline"), Mapping) else {}
+    init = taken.get("init") if isinstance(taken.get("init"), Mapping) else {}
+    if not history and isinstance(init.get("history_baseline"), Mapping):
+        history = init.get("history_baseline")
+    candidates = []
+    if isinstance(history, Mapping) and history.get("old_mask_path"):
+        candidates.append(("history_baseline.old_mask_path", Path(str(history.get("old_mask_path")))))
+    debug_files = taken.get("debug_files") if isinstance(taken.get("debug_files"), Mapping) else {}
+    init_debug = init.get("debug_files") if isinstance(init.get("debug_files"), Mapping) else {}
+    for source, payload in (("taken.debug_files", debug_files), ("taken.init.debug_files", init_debug)):
+        value = payload.get("init_trusted_shigure_mask_path")
+        if value:
+            candidates.append((f"{source}.init_trusted_shigure_mask_path", Path(str(value))))
+    backup_dir = Path(str(taken.get("init_backup_shigurei_dir") or init.get("init_backup_shigurei_dir") or ""))
+    if backup_dir.is_dir():
+        candidates.append(("init_backup.old_mask", backup_dir / "old_mask.png"))
+    for source, path in candidates:
+        if not path.is_file():
+            continue
+        raw = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
+        if raw is None:
+            continue
+        mask = raw > 0
+        if mask.shape != image_shape:
+            mask = cv2.resize(mask.astype(np.uint8), (image_shape[1], image_shape[0]), interpolation=cv2.INTER_NEAREST) > 0
+        if np.any(mask):
+            return mask, {"source": source, "path": str(path), "pixels": int(np.count_nonzero(mask))}
+    return None, {"source": "missing", "checked": [{"source": src, "path": str(p)} for src, p in candidates]}
+
+
+
+def _mask_bbox(mask: np.ndarray, pad: int, width: int, height: int) -> tuple[int, int, int, int] | None:
+    ys, xs = np.where(mask)
+    if xs.size == 0 or ys.size == 0:
+        return None
+    x0 = max(0, int(xs.min()) - pad)
+    y0 = max(0, int(ys.min()) - pad)
+    x1 = min(width, int(xs.max()) + 1 + pad)
+    y1 = min(height, int(ys.max()) + 1 + pad)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    return x0, y0, x1, y1
+
+
+def _normalise_mask(mask: np.ndarray | None, image_shape: tuple[int, int]) -> np.ndarray | None:
+    if mask is None:
+        return None
+    h, w = image_shape
+    normalized = np.asarray(mask).astype(bool)
+    if normalized.shape != (h, w):
+        normalized = cv2.resize(normalized.astype(np.uint8), (w, h), interpolation=cv2.INTER_NEAREST) > 0
+    return normalized if np.any(normalized) else None
+
+
+def _mask_from_bbox(bbox_xyxy: Any, image_shape: tuple[int, int], pad: int) -> tuple[np.ndarray | None, dict[str, Any]]:
+    h, w = image_shape
+    try:
+        values = np.asarray(bbox_xyxy, dtype=np.float64).reshape(-1)[:4]
+    except Exception as exc:
+        return None, {'source': 'selected_body_bbox', 'reason': 'invalid_bbox', 'error_message': str(exc)}
+    if values.size != 4 or not np.all(np.isfinite(values)):
+        return None, {'source': 'selected_body_bbox', 'reason': 'bbox_missing_or_non_finite'}
+    x0, y0, x1, y1 = _clip_box(values, w, h, float(pad))
+    if x1 <= x0 or y1 <= y0:
+        return None, {'source': 'selected_body_bbox', 'reason': 'bbox_outside_image', 'bbox_xyxy': values.astype(float).tolist()}
+    mask = np.zeros((h, w), dtype=bool)
+    mask[y0:y1, x0:x1] = True
+    return mask, {
+        'source': 'selected_body_bbox',
+        'bbox_xyxy': [int(x0), int(y0), int(x1), int(y1)],
+        'pixels': int(np.count_nonzero(mask)),
+    }
+
+
+def _project_object_center_mask(
+    object_center_aruco: np.ndarray | None,
+    marker_rotation: np.ndarray,
+    marker_translation: np.ndarray,
+    camera_matrix: np.ndarray,
+    image_shape: tuple[int, int],
+    object_mask: np.ndarray | None,
+) -> tuple[np.ndarray | None, dict[str, Any]]:
+    if object_center_aruco is None:
+        return None, {'source': 'object_center_armarker_projection', 'reason': 'object_center_missing'}
+    h, w = image_shape
+    try:
+        object_center = np.asarray(object_center_aruco, dtype=np.float64).reshape(1, 3)
+        camera_point = aruco_points_to_shigure_camera(object_center, marker_rotation, marker_translation).reshape(3)
+        pixels, visible = project_camera_points_to_pixels(camera_point.reshape(1, 3), camera_matrix)
+    except Exception as exc:
+        return None, {'source': 'object_center_armarker_projection', 'reason': 'projection_failed', 'error_message': str(exc)}
+    if not bool(visible[0]) or not np.all(np.isfinite(pixels[0])):
+        return None, {
+            'source': 'object_center_armarker_projection',
+            'reason': 'object_center_behind_camera_or_non_finite',
+            'object_center_camera_m': camera_point.astype(float).tolist(),
+        }
+    u = int(round(float(pixels[0, 0])))
+    v = int(round(float(pixels[0, 1])))
+    if u < 0 or u >= w or v < 0 or v >= h:
+        return None, {
+            'source': 'object_center_armarker_projection',
+            'reason': 'object_center_outside_image',
+            'pixel_xy': [float(pixels[0, 0]), float(pixels[0, 1])],
+            'object_center_camera_m': camera_point.astype(float).tolist(),
+        }
+    radius = int(settings.SUBJECT_CROP_OBJECT_CENTER_RADIUS_PX)
+    normalized_object = _normalise_mask(object_mask, image_shape)
+    object_bbox = None
+    if normalized_object is not None:
+        object_bbox = _mask_bbox(normalized_object, 0, w, h)
+        if object_bbox is not None:
+            ox0, oy0, ox1, oy1 = object_bbox
+            radius = max(radius, int(math.ceil(max(ox1 - ox0, oy1 - oy0) * 0.25)))
+    radius = max(1, min(int(settings.SUBJECT_CROP_OBJECT_CENTER_MAX_RADIUS_PX), radius))
+    mask_u8 = np.zeros((h, w), dtype=np.uint8)
+    cv2.circle(mask_u8, (u, v), radius, 1, thickness=-1)
+    mask = mask_u8 > 0
+    return mask, {
+        'source': 'object_center_armarker_projection',
+        'pixel_xy': [int(u), int(v)],
+        'radius_px': int(radius),
+        'pixels': int(np.count_nonzero(mask)),
+        'object_center_armarker': object_center.reshape(3).astype(float).tolist(),
+        'object_center_camera_m': camera_point.astype(float).tolist(),
+        'object_mask_bbox_xyxy': [int(v) for v in object_bbox] if object_bbox is not None else None,
+    }
+
+
+def _write_subject_crop(
+    task_timestamp: str,
+    rgb_bgr: np.ndarray,
+    body_mask: np.ndarray | None,
+    body_bbox_xyxy: Any,
+    object_mask: np.ndarray | None,
+    object_center_mask: np.ndarray | None,
+) -> tuple[str | None, dict[str, Any]]:
+    h, w = rgb_bgr.shape[:2]
+    image_shape = (h, w)
+    union = np.zeros((h, w), dtype=bool)
+    sources = []
+
+    body = _normalise_mask(body_mask, image_shape)
+    bbox_mask, bbox_info = _mask_from_bbox(body_bbox_xyxy, image_shape, int(settings.SUBJECT_CROP_BODY_BBOX_PAD_PX))
+    if body is not None and bbox_mask is not None:
+        clipped_body = body & bbox_mask
+        if np.any(clipped_body):
+            union |= clipped_body
+            sources.append({
+                'source': 'selected_body_mesh_mask_clipped_by_body_bbox',
+                'pixels': int(np.count_nonzero(clipped_body)),
+                'raw_body_mask_pixels': int(np.count_nonzero(body)),
+                'body_bbox': bbox_info,
+            })
+        else:
+            union |= body
+            sources.append({
+                'source': 'selected_body_mesh_mask_bbox_clip_empty_fallback',
+                'pixels': int(np.count_nonzero(body)),
+                'body_bbox': bbox_info,
+            })
+    elif body is not None:
+        union |= body
+        sources.append({'source': 'selected_body_mesh_mask', 'pixels': int(np.count_nonzero(body)), 'body_bbox': bbox_info})
+    elif bbox_mask is not None:
+        union |= bbox_mask
+        sources.append({'source': 'selected_body_bbox_fallback', 'pixels': int(np.count_nonzero(bbox_mask)), 'body_bbox': bbox_info})
+    else:
+        sources.append(bbox_info)
+
+    obj = _normalise_mask(object_mask, image_shape)
+    if obj is not None:
+        union |= obj
+        sources.append({'source': 'taken_object_old_mask', 'pixels': int(np.count_nonzero(obj))})
+
+    center = _normalise_mask(object_center_mask, image_shape)
+    if center is not None:
+        union |= center
+        sources.append({'source': 'object_center_armarker_projection_mask', 'pixels': int(np.count_nonzero(center))})
+
+    bbox = _mask_bbox(union, int(settings.SUBJECT_CROP_PAD_PX), w, h)
+    if bbox is None:
+        return None, {'reason': 'empty_subject_crop_mask', 'sources': sources}
+    x0, y0, x1, y1 = bbox
+    crop = rgb_bgr[y0:y1, x0:x1].copy()
+    crop_path = model_result_file(task_timestamp, 'body.subject_crop')
+    crop_path.parent.mkdir(parents=True, exist_ok=True)
+    cv2.imwrite(str(crop_path), crop)
+    return str(crop_path), {
+        'reason': 'subject_crop_ready',
+        'subject_crop_path': str(crop_path),
+        'subject_crop_folder': 'model_result',
+        'crop_bbox_xyxy': [int(x0), int(y0), int(x1), int(y1)],
+        'crop_size_px': [int(x1 - x0), int(y1 - y0)],
+        'source_image_size_px': [int(w), int(h)],
+        'display_resize_policy': 'fit_aspect_to_existing_window_max_scale',
+        'sources': sources,
+    }
+
+
+def _write_latest_body_mesh_registry(payload: Mapping[str, Any]) -> str:
+    path = SHIGURE_HISTORY_CACHE_ROOT / "latest_sam3d_body_mesh.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(path, {**dict(payload), "updated_at": _utc_now()})
+    return str(path)
+
+
 def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
     json_path = resolve_task_json_path(json_path_arg)
     task = load_task_json(json_path)
@@ -531,6 +764,7 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
                 faces=faces.astype(np.int32),
                 keypoints=aligned['keypoints_camera_m'].astype(np.float32),
                 bbox_xyxy=aligned['bbox_xyxy'].astype(np.float32),
+                body_mask=aligned['body_mask'].astype(np.uint8),
             )
             people.append({
                 'person_name': person_name,
@@ -541,7 +775,11 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
                 'face_count': int(faces.shape[0]),
                 'depth_offset_m': float(aligned['depth_offset_m']),
                 'xyz_shift_m': aligned['xyz_shift_m'].astype(float).tolist(),
+                'distance_scale': float(aligned['distance_scale']),
+                'original_distance_m': aligned.get('original_distance_m'),
+                'adjusted_distance_m': aligned.get('adjusted_distance_m'),
                 'depth_overlap_pixels': int(aligned['depth_overlap_pixels']),
+                'depth_sampled_pixels': int(aligned['depth_sampled_pixels']),
                 'depth_overlap_ratio': float(aligned['depth_overlap_ratio']),
                 'depth_alignment_method': aligned['depth_alignment_method'],
                 'nearest_wrist': nearest,
@@ -572,23 +810,53 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
     obj_path = model_result_file(task_timestamp, 'body.selected_obj')
     fbx_path = model_result_file(task_timestamp, 'body.selected_fbx')
     _write_obj(work_obj_path, selected_npz['vertices'], selected_npz['faces'])
+
     debug_files: dict[str, Any] = {}
+    selected_body_mask = None
+    selected_body_bbox = selected.get('bbox_xyxy')
+    selected_camera_mesh_npz_path = None
     camera_mesh_path = selected.get('camera_mesh_npz_path')
     if camera_mesh_path:
         try:
+            selected_camera_mesh_npz_path = str(camera_mesh_path)
             selected_camera_npz = np.load(str(camera_mesh_path))
+            if 'body_mask' in selected_camera_npz.files:
+                selected_body_mask = selected_camera_npz['body_mask'].astype(bool)
+            if 'bbox_xyxy' in selected_camera_npz.files:
+                selected_body_bbox = selected_camera_npz['bbox_xyxy'].astype(float).tolist()
             _overlay_path, overlay_stats = _save_body_mesh_debug_overlay(
                 task_timestamp,
                 rgb_bgr,
                 selected_camera_npz['vertices'],
                 selected_camera_npz['faces'],
                 camera_matrix,
-                selected_camera_npz['bbox_xyxy'] if 'bbox_xyxy' in selected_camera_npz.files else selected.get('bbox_xyxy'),
+                selected_body_bbox,
                 f'sam3d body {selected_name}',
             )
             debug_files.update(overlay_stats)
         except Exception as exc:
             debug_files['body_mesh_on_taken_rgb_error'] = str(exc)
+    object_mask, object_mask_info = _load_object_mask_from_taken(taken, rgb_bgr.shape[:2])
+    object_center_mask, object_center_projection_info = _project_object_center_mask(
+        object_center,
+        marker_rotation,
+        marker_translation,
+        camera_matrix,
+        rgb_bgr.shape[:2],
+        object_mask,
+    )
+    subject_crop_path, subject_crop_info = _write_subject_crop(
+        task_timestamp,
+        rgb_bgr,
+        selected_body_mask,
+        selected_body_bbox,
+        object_mask,
+        object_center_mask,
+    )
+    debug_files['object_mask_for_subject_crop'] = object_mask_info
+    debug_files['object_center_for_subject_crop'] = object_center_projection_info
+    debug_files['subject_crop'] = subject_crop_info
+
     if obj_path != work_obj_path:
         obj_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(work_obj_path, obj_path)
@@ -617,6 +885,11 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         'selected_person_fbx_folder': 'model_result',
         'selected_person_pose_armarker': np.eye(4, dtype=float).tolist(),
         'selected_person_obj_path': str(obj_path),
+        'selected_person_camera_mesh_npz_path': selected_camera_mesh_npz_path,
+        'selected_person_bbox_xyxy': selected_body_bbox,
+        'subject_crop_path': subject_crop_path,
+        'subject_crop_folder': 'model_result' if subject_crop_path else None,
+        'subject_crop': subject_crop_info,
         'material_color': settings.MATERIAL_COLOR,
         'material_alpha': settings.MATERIAL_ALPHA,
         'coordinate_space': 'armarker',
@@ -627,8 +900,22 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         'debug_files': debug_files,
         'object_center_armarker': object_center.tolist() if object_center is not None else None,
     }
+    payload['latest_body_mesh_registry_path'] = _write_latest_body_mesh_registry({
+        'task_id': str(task.get('task_id') or ''),
+        'task_timestamp': task_timestamp,
+        'result_timestamp': result_timestamp,
+        'selected_person_name': selected_name,
+        'selected_person_fbx_path': str(fbx_path),
+        'selected_person_obj_path': str(obj_path),
+        'selected_person_camera_mesh_npz_path': selected_camera_mesh_npz_path,
+        'selected_person_bbox_xyxy': selected_body_bbox,
+        'subject_crop_path': subject_crop_path,
+        'people_json_path': str(people_json_path),
+        'backup_shigurei_dir': backup_dir,
+        'coordinate_space': 'armarker',
+    })
     _write_status(json_path, task, 'SUCCESS', **payload)
-    return {'status': 'SUCCESS', 'selected_person_name': selected_name, 'selected_person_fbx_path': str(fbx_path)}
+    return {'status': 'SUCCESS', 'selected_person_name': selected_name, 'selected_person_fbx_path': str(fbx_path), 'subject_crop_path': subject_crop_path}
 
 
 def main(argv: list[str]) -> int:

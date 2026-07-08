@@ -199,6 +199,7 @@ MODEL_RESULT_FILES = {
     "body.people": "08_sam3d_body_people.json",
     "body.selected_obj": "08_sam3d_body_selected_person.obj",
     "body.selected_fbx": "08_sam3d_body_selected_person.fbx",
+    "body.subject_crop": "08_sam3d_body_subject_crop.png",
 }
 
 MODEL_DEBUG_FILES = {

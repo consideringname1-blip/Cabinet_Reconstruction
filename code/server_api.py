@@ -939,6 +939,7 @@ def _build_completed_task_response(
             ("selected_person_fbx_path", "selected_person_fbx_url"),
             ("selected_person_obj_path", "selected_person_obj_url"),
             ("people_json_path", "people_url"),
+            ("subject_crop_path", "subject_crop_url"),
         ):
             value = str(body_payload.get(payload_key) or "").strip()
             if value:
