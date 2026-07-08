@@ -48,6 +48,7 @@ ALLOWED_STATUSES = (
     "hololens2depth",
     "aruco_detect",
     "sam3mask",
+    "historical_model_match",
     "instantmesh",
     "depthpointcloud",
     "modelscale",
@@ -1290,6 +1291,49 @@ def list_identity_candidate_captures(
     return [dict(row) for row in rows]
 
 
+def update_capture_instance_feature(
+    capture_instance_id: str,
+    *,
+    feature: Any,
+    evidence: Any | None = None,
+) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    capture_instance_id = str(capture_instance_id or "").strip()
+    if not capture_instance_id:
+        return None
+    now = _utc_now_text()
+    with _get_connection() as conn:
+        if evidence is None:
+            conn.execute(
+                f"""
+                UPDATE {CAPTURE_INSTANCE_TABLE}
+                SET feature_json = ?, updated_at = ?
+                WHERE capture_instance_id = ?
+                """,
+                (json.dumps(feature if feature is not None else {}, ensure_ascii=False), now, capture_instance_id),
+            )
+        else:
+            conn.execute(
+                f"""
+                UPDATE {CAPTURE_INSTANCE_TABLE}
+                SET feature_json = ?, evidence_json = ?, updated_at = ?
+                WHERE capture_instance_id = ?
+                """,
+                (
+                    json.dumps(feature if feature is not None else {}, ensure_ascii=False),
+                    json.dumps(evidence if evidence is not None else {}, ensure_ascii=False),
+                    now,
+                    capture_instance_id,
+                ),
+            )
+        conn.commit()
+        row = conn.execute(
+            f"SELECT * FROM {CAPTURE_INSTANCE_TABLE} WHERE capture_instance_id = ?",
+            (capture_instance_id,),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
 def record_capture_binding_log(
     *,
     capture_instance_id: str,
@@ -1581,6 +1625,29 @@ def get_latest_completed_tasks(
             tuple(query_params),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def get_latest_completed_task_for_display_object(display_object_id: str) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    display_object_id = str(display_object_id or "").strip()
+    if not display_object_id:
+        return None
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"""
+            SELECT t.*
+            FROM {TABLE_NAME} AS t
+            INNER JOIN {CAPTURE_INSTANCE_TABLE} AS c
+                ON c.task_id = t.task_id
+            WHERE c.display_object_id = ?
+              AND c.binding_status = 'bound'
+              AND t.status = 'completed'
+            ORDER BY t.id DESC
+            LIMIT 1
+            """,
+            (display_object_id,),
+        ).fetchone()
+    return _row_to_dict(row)
 
 
 def get_completed_tasks_for_startup(

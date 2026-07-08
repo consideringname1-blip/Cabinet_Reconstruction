@@ -62,12 +62,19 @@ DEFAULT_BUDGETS_MIB: dict[str, ServiceGpuBudget] = {
         required_mib=24 * 1024,
         note="Conservative SAM3D object generation/postprocess budget.",
     ),
+    "dinov2_identity": ServiceGpuBudget(
+        service="dinov2_identity",
+        required_mib=6 * 1024,
+        note="DINOv2 ViT-L identity embedding worker with resident model weights and inference buffers.",
+    ),
 }
 
 
 ALIASES = {
     "sam3mask": "sam3_image_mask",
     "sam3_mask": "sam3_image_mask",
+    "dino_identity": "dinov2_identity",
+    "dinov2": "dinov2_identity",
 }
 
 

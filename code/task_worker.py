@@ -16,7 +16,9 @@ from typing import Any, Callable, Dict, Mapping, Optional
 from subprocess_stream import stream_command
 
 from config import (
+    DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC,
     FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
+    HISTORICAL_MODEL_REUSE_ENABLE,
     MODEL_SERVICE_PREWARM_ENABLE,
     INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
     INSTANTMESH_GPU_IDS,
@@ -32,6 +34,8 @@ from path_config import (
     ARUCO_SYNC_STAGE_RUN,
     DEPTHPOINTCLOUD_STAGE_PY,
     DEPTHPOINTCLOUD_STAGE_RUN,
+    DINO_IDENTITY_STAGE_PY,
+    DINO_IDENTITY_STAGE_RUN,
     FOUNDATIONPOSE_ALIGNMENT_PY,
     FOUNDATIONPOSE_ALIGNMENT_RUN,
     HOLOLENS2_CONVERT_DIR,
@@ -39,6 +43,8 @@ from path_config import (
     HOLOLENS2_PY,
     HISTORY_PLACEMENT_RESTORATION_STAGE_PY,
     HISTORY_PLACEMENT_RESTORATION_STAGE_RUN,
+    HISTORICAL_MODEL_MATCH_STAGE_PY,
+    HISTORICAL_MODEL_MATCH_STAGE_RUN,
     INSTANTMESH_STAGE_PY,
     INSTANTMESH_STAGE_RUN,
     MODEL_BOUNDS_STAGE_PY,
@@ -105,6 +111,7 @@ except Exception:
 STAGE_ORDER = [
     "hololens2depth",
     "sam3mask",
+    "historical_model_match",
     "instantmesh",
     "depthpointcloud",
     "modelscale",
@@ -561,6 +568,16 @@ _foundationpose_service = SocketStageService(
     echo_output=False,
     env_overrides=lambda: _service_gpu_env("foundationpose"),
 )
+_dinov2_identity_service = SocketStageService(
+    name="dinov2_identity",
+    python_path=DINO_IDENTITY_STAGE_PY,
+    script_path=DINO_IDENTITY_STAGE_RUN,
+    cwd=DINO_IDENTITY_STAGE_RUN.parent,
+    socket_name="dinov2_identity.sock",
+    idle_timeout_sec=DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC,
+    echo_output=True,
+    env_overrides=lambda: _service_gpu_env("dinov2_identity"),
+)
 
 
 def _queue_snapshot_no_lock() -> list[str]:
@@ -647,11 +664,13 @@ def _prewarm_model_pipeline_services(reason: str) -> None:
             print(f"[worker] failed to prewarm {service.name}: {exc}")
 
     def _run() -> None:
-        services = (
+        services = [
             _instantmesh_service,
             _sam3mask_service,
             _foundationpose_service,
-        )
+        ]
+        if HISTORICAL_MODEL_REUSE_ENABLE:
+            services.append(_dinov2_identity_service)
         starters: list[threading.Thread] = []
         for service in services:
             thread = threading.Thread(
@@ -762,6 +781,29 @@ def _run_sam3mask(json_path: Path, context: StageWorkerContext | None = None) ->
         stage_name="sam3mask",
         task_id=task_id,
         response=response,
+    )
+
+
+def _run_historical_model_match(json_path: Path, context: StageWorkerContext | None = None) -> None:
+    env = os.environ.copy()
+    if HISTORICAL_MODEL_REUSE_ENABLE:
+        task_id = _task_id_from_json_path(json_path)
+        try:
+            _dinov2_identity_service.ensure_started(
+                task_id=task_id,
+                stage_name="historical_model_match",
+                reason="DINOv2 historical model matching",
+            )
+            env["DINO_IDENTITY_WORKER_SOCKET"] = str(_dinov2_identity_service.socket_path)
+        except Exception as exc:
+            env["DINO_IDENTITY_START_ERROR"] = str(exc)
+            print(f"[worker] DINOv2 identity unavailable, falling back to full generation: {exc}")
+    _run_python_script(
+        python_path=HISTORICAL_MODEL_MATCH_STAGE_PY,
+        script_path=HISTORICAL_MODEL_MATCH_STAGE_RUN,
+        json_path=json_path,
+        cwd=HISTORICAL_MODEL_MATCH_STAGE_RUN.parent,
+        env=env,
     )
 
 
@@ -952,6 +994,7 @@ STAGE_RUNNERS = {
     "hololens2depth": _run_hololens2depth,
     "aruco_detect": _run_aruco_detect,
     "sam3mask": _run_sam3mask,
+    "historical_model_match": _run_historical_model_match,
     "instantmesh": _run_instantmesh,
     "depthpointcloud": _run_depthpointcloud,
     "modelscale": _run_modelscale,
@@ -1073,6 +1116,15 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
     next_status = "completed"
     if start_index + 1 < len(stage_order):
         next_status = stage_order[start_index + 1]
+    if stage_name == "historical_model_match":
+        try:
+            refreshed_task_json = load_task_json(json_path)
+            historical_match = refreshed_task_json.get("HistoricalModelMatch")
+            if isinstance(historical_match, dict) and bool(historical_match.get("reuse_model")):
+                next_status = "depthpointcloud"
+                print(f"[worker] historical model reused, skipping instantmesh: {task_id}")
+        except Exception as exc:
+            print(f"[worker] failed to inspect historical model match result: {exc}")
     update_task_status(task_id, next_status)
     if next_status == "completed":
         print(f"[worker] completed task: {task_id}")
@@ -1161,6 +1213,12 @@ def _service_monitor_loop() -> None:
                     and _has_unfinished_at_or_before("object_alignment")
                 ),
             )
+            _dinov2_identity_service.maybe_stop_idle(
+                keep_alive=(
+                    HISTORICAL_MODEL_REUSE_ENABLE
+                    and _has_unfinished_at_or_before("historical_model_match")
+                ),
+            )
         except Exception as exc:
             print(f"[worker] service monitor error: {exc}")
         time.sleep(5.0)
@@ -1171,7 +1229,7 @@ def shutdown_worker() -> None:
     global _shutdown_requested
     _shutdown_requested = True
     _stop_shigure_history_recorder()
-    for service in (_sam3mask_service, _instantmesh_service, _foundationpose_service):
+    for service in (_sam3mask_service, _instantmesh_service, _foundationpose_service, _dinov2_identity_service):
         try:
             service.stop()
         except Exception as exc:

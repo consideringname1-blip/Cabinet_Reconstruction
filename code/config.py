@@ -13,6 +13,15 @@ CONSOLE_OUTPUT_LOG_ENABLE = os.environ.get("CONSOLE_OUTPUT_LOG_ENABLE", "1").str
 TASK_DEBUG_OUTPUT_ENABLE = os.environ.get("TASK_DEBUG_OUTPUT_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
 TASK_LOG_OUTPUT_ENABLE = os.environ.get("TASK_LOG_OUTPUT_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
 
+# Historical model reuse / DINOv2 identity matching
+HISTORICAL_MODEL_REUSE_ENABLE = os.environ.get("HISTORICAL_MODEL_REUSE_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
+FORCE_NEW_3D_MODEL = os.environ.get("FORCE_NEW_3D_MODEL", "0").strip().lower() in {"1", "true", "yes", "on"}
+DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC = int(os.environ.get("DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC", "300"))
+DINO_IDENTITY_CANDIDATE_LIMIT = int(os.environ.get("DINO_IDENTITY_CANDIDATE_LIMIT", "500"))
+DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD = float(os.environ.get("DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD", "0.20"))
+DINO_IDENTITY_MATCH_SECOND_MARGIN = float(os.environ.get("DINO_IDENTITY_MATCH_SECOND_MARGIN", "0.05"))
+DINO_IDENTITY_MATCH_REQUIRE_MARGIN = os.environ.get("DINO_IDENTITY_MATCH_REQUIRE_MARGIN", "1").strip().lower() in {"1", "true", "yes", "on"}
+
 # Depth camera and ArUco server defaults
 AHAT_SENSOR_NAME = "AHAT"
 AHAT_MIN_DEPTH_MM = 200

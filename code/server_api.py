@@ -1119,6 +1119,12 @@ def generate_model():
 
         purpose = _normalize_purpose(request.form.get("purpose"))
         devj = _parse_json_field("deviceJ")
+        force_new_3d_model = _is_truthy_query_value(
+            request.form.get("force_new_3d_model")
+            or request.form.get("forceNew3DModel")
+            or devj.get("force_new_3d_model")
+            or devj.get("forceNew3DModel")
+        )
         pv_frames_input = _parse_optional_json_array_field("PVCameraFramesJ")
 
         if purpose == PURPOSE_OBJECT_RECONSTRUCTION or pv_frames_input is None:
@@ -1257,6 +1263,7 @@ def generate_model():
             "PVCameraFrames": normalized_pv_frames,
         }
         if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
+            out_json["force_new_3d_model"] = bool(force_new_3d_model)
             out_json["DepthCamera"] = {
                 "name": str(depth_path.name) if depth_path else None,
                 "pose": dj.get("pose") if dj else None,
