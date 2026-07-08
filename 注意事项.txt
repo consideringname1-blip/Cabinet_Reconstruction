@@ -552,24 +552,23 @@ shigurei没有正常记录，或许参考code/.test/save_latest_ros2_frame.py有
 2.unity绑定的那个比对现在时间点和过去拍照记录的那个函数在那里
 
 260708
-1！.重新审核预览3dbox状态，应当符合现有设计理念
-2！.hololens2本地无需保留aruco坐标相关数据，相关坐标变换完全由服务器完成，服务器只下发hololens当前原点下的物体位姿。第一次上传生成的话，只需要hololens2本地坐标就可以回传，之后armarker生成世界坐标的，扔给服务器后续自动处理就行，不必下发；之后再调用也是服务器再次处理回hololens2本地坐标，再直接下发到本地坐标。
+1.重新审核预览3dbox状态，应当符合现有设计理念
+2.hololens2本地无需保留aruco坐标相关数据，相关坐标变换完全由服务器完成，服务器只下发hololens当前原点下的物体位姿。第一次上传生成的话，只需要hololens2本地坐标就可以回传，之后armarker生成世界坐标的，扔给服务器后续自动处理就行，不必下发；之后再调用也是服务器再次处理回hololens2本地坐标，再直接下发到本地坐标。
 如果armarker坐标更新，服务器需要更新历史中同次启动的所有物体armarker下的位姿
-3！.合并降面和模型缩放并导出fbx两个阶段
-4！.PointCloud_3D_Box_Further_Depth*2应该使用去除边缘后的点云
-5！./shigure/object_detection需要重新开启（已解决）。shigure应当缓存1分钟左右的rgb-d，camerainfo，object_detection，并按照这个图进行对齐。
+3.合并降面和模型缩放并导出fbx两个阶段
+4.PointCloud_3D_Box_Further_Depth*2应该使用去除边缘后的点云
+5./shigure/object_detection需要重新开启（已解决）。shigure应当缓存1分钟左右的rgb-d，camerainfo，object_detection，并按照这个图进行对齐。
 6.转到shigure视角下的从hololens2视角下获得的深度点云的包围盒的2d投影，应该是shigure获得的objectmask在这个盒子里占有40%面积以上（待议），并且另一部分mask应该在hololens的摄像机位置视点，连接到盒子中心，再往后延申的方向的，最小的mask，作为初始化mask。
 7.sam3dbody生成的人体mesh就能对应到一个mask，进而我就可以通过深度图片搞到距离，进行简单类似icp（只调整相对相机距离，稍微选少一些点就行（从mask范围内均匀抽样），没必要全用上，太重了），只调整距离。然后根据调整后的距离，对比调整前的距离，以在图片中看到的大小应该一致为标准，直接调整人体3dmesh模型缩放。
 8.需要记录下最近的人体mesh是哪个，并且前面生成人体box时要保留结果。之后需要结合这两个，外加物体位置，精确裁切出图片中人拿走物体的主体部分，之后回传hololens2用的就是这个裁切后的图片。
 9.历史物体再现，使用rgb，depth以及mask查询。只需要mask套rgb和depth分割后：rgb使用Lab计算差异，depth_changed_ratio = mask 内 |current_depth - old_depth| > 0.12 的比例；depth_nearer_ratio = mask 内 current_depth < old_depth - 0.12 的比例；depth_farther_ratio = mask 内 current_depth > old_depth + 0.12 的比例。先判断遮挡，再判断不在原位，再判断仍在原位。遮挡使用正4面体，不在原位使用正6面体，仍在原位使用正8面体（不重叠显示模型），失败使用正12面体，不显示重叠模型。
-10！.hololens2的手指再现部分，由于改为hololens端只处理hololens端坐标系数据，所以上传也要是hololens数据，坐标系变换由服务器解决
+10.hololens2的手指再现部分，由于改为hololens端只处理hololens端坐标系数据，所以上传也要是hololens数据，坐标系变换由服务器解决
 11.hololens2拍摄同一物体，使用历史模型，不再次生成，只重新放置。
 12.拿走物体在hololens2本地显示的窗口要是裁切后的输出，裁切规则是保留物体和人体部分，进行最小矩形裁切，这会导致本地显示图片长宽比和大小不一致，这可能需要修改。并且我希望裁切后的图片可以放大到原图现在显示的大小（按照长宽约束缩放，以最大放大为准）
-13.由于拿取检测变得简单，所以不再限制识别范围。
 补充说明：
-1！.所有接口都要统一成：
+1.所有接口都要统一成：
 HoloLens 上传 HoloLens 当前本地坐标 -> 服务器转 ArUco/世界 -> 服务器再转回当前 HoloLens 本地坐标下发
-2！.ArMarker 更新时，直接覆盖历史 ArUco pose（最初就要保留一份在hololens2坐标系下的原始坐标位姿，更新是直接从hololens2原始位姿，套用新的arucomarker结果，计算新的arucomarker坐标系下的坐标）（更新需要限制在仅限这次unity启动，不要漏，也不要修改以前的数据）
+2.ArMarker 更新时，直接覆盖历史 ArUco pose（最初就要保留一份在hololens2坐标系下的原始坐标位姿，更新是直接从hololens2原始位姿，套用新的arucomarker结果，计算新的arucomarker坐标系下的坐标）（更新需要限制在仅限这次unity启动，不要漏，也不要修改以前的数据）
 3.固定 Shigure 视角下，历史再现不走 3D 投影。
 服务器永久保存 old_rgb + old_depth + old_mask + camera_info。
 后续用 current_rgb/current_depth 在 old_mask 区域内直接比较，判断 still / missing / occluded / unknown。
