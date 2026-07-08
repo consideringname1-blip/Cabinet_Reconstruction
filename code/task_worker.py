@@ -30,8 +30,6 @@ from path_config import (
     ARUCO_DETECT_STAGE_RUN,
     ARUCO_SYNC_STAGE_PY,
     ARUCO_SYNC_STAGE_RUN,
-    BLENDER_STAGE_PY,
-    BLENDER_STAGE_RUN,
     DEPTHPOINTCLOUD_STAGE_PY,
     DEPTHPOINTCLOUD_STAGE_RUN,
     FOUNDATIONPOSE_ALIGNMENT_PY,
@@ -71,11 +69,11 @@ from path_config import (
 from stages.hololens3d_reconstruction.settings import OBJECT_ALIGNMENT_MODE
 from task_db import (
     create_task as create_task_record,
-    get_completed_tasks_for_startup,
     get_latest_completed_task,
     get_task_stage_runs,
     get_task_timing_events,
     get_ai_model_timings_for_task,
+    get_tasks_for_startup_statuses,
     get_task_by_task_id,
     get_unfinished_tasks,
     get_unsynced_completed_tasks,
@@ -111,10 +109,9 @@ STAGE_ORDER = [
     "depthpointcloud",
     "modelscale",
     "object_alignment",
-    "runtime_mesh",
     "pose",
     "aruco_sync",
-    "blender",
+    "runtime_mesh",
     "model_bounds",
     "display_identity",
     "history_placement_restoration",
@@ -898,15 +895,6 @@ def _run_runtime_mesh(json_path: Path, context: StageWorkerContext | None = None
     )
 
 
-def _run_blender(json_path: Path, context: StageWorkerContext | None = None) -> None:
-    _run_python_script(
-        python_path=BLENDER_STAGE_PY,
-        script_path=BLENDER_STAGE_RUN,
-        json_path=json_path,
-        cwd=BLENDER_STAGE_RUN.parent,
-    )
-
-
 
 def _run_model_bounds(json_path: Path, context: StageWorkerContext | None = None) -> None:
     _run_python_script(
@@ -971,7 +959,6 @@ STAGE_RUNNERS = {
     "pose": _run_pose,
     "aruco_sync": _run_aruco_sync,
     "runtime_mesh": _run_runtime_mesh,
-    "blender": _run_blender,
     "model_bounds": _run_model_bounds,
     "display_identity": _run_display_identity,
     "history_placement_restoration": _run_history_placement_restoration,
@@ -1078,7 +1065,7 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
         except Exception as exc:
             print(f"[worker] failed to record ArUco retro-sync count: {exc}")
         if synced_count:
-            print(f"[worker] synced completed model tasks after ArUco reference: {synced_count}")
+            print(f"[worker] synced model tasks after ArUco reference: {synced_count}")
         update_task_status(task_id, "aruco_completed")
         print(f"[worker] completed task: {task_id}")
         return
@@ -1334,23 +1321,36 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     return task_record
 
 
+def _aruco_retro_sync_statuses() -> list[str]:
+    aruco_index = STAGE_ORDER.index("aruco_sync")
+    return list(STAGE_ORDER[aruco_index + 1:]) + ["completed"]
+
+
+def _model_bounds_refresh_statuses_after_aruco_sync() -> set[str]:
+    bounds_index = STAGE_ORDER.index("model_bounds")
+    return set(STAGE_ORDER[bounds_index:]) | {"completed"}
+
+
 def _sync_completed_tasks_for_startup(startup_session_id: str | None = None) -> int:
     synced_count = 0
+    refresh_statuses = _model_bounds_refresh_statuses_after_aruco_sync()
     task_rows = (
-        get_completed_tasks_for_startup(startup_session_id, require_unsynced=False)
+        get_tasks_for_startup_statuses(startup_session_id, _aruco_retro_sync_statuses())
         if startup_session_id
         else get_unsynced_completed_tasks()
     )
     for task_row in task_rows:
         try:
+            status = str(task_row.get("status") or "").strip()
             resolved_json_path = resolve_task_json_path_from_record(task_row)
             _run_aruco_sync(resolved_json_path)
-            _run_model_bounds(resolved_json_path)
-            _run_display_identity(resolved_json_path)
+            if not startup_session_id or status in refresh_statuses:
+                _run_model_bounds(resolved_json_path)
+                _run_display_identity(resolved_json_path)
             synced_count += 1
         except Exception as exc:
             print(
-                f"[worker] failed to sync completed task {task_row.get('task_id')} to ArUco reference/model bounds: {exc}"
+                f"[worker] failed to sync task {task_row.get('task_id')} to latest ArUco reference: {exc}"
             )
     return synced_count
 

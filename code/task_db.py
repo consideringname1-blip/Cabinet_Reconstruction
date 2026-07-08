@@ -3,7 +3,7 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from config import (
     ARUCO_ANCHOR_MARKER_ID,
@@ -55,7 +55,6 @@ ALLOWED_STATUSES = (
     "pose",
     "aruco_sync",
     "runtime_mesh",
-    "blender",
     "model_bounds",
     "display_identity",
     "history_placement_restoration",
@@ -1608,6 +1607,32 @@ def get_completed_tasks_for_startup(
             ORDER BY id DESC
             """,
             tuple(params),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_tasks_for_startup_statuses(
+    startup_session_id: str,
+    statuses: Iterable[str],
+) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    startup_session_id = str(startup_session_id or "").strip()
+    normalized_statuses = [str(status or "").strip() for status in statuses]
+    normalized_statuses = [status for status in normalized_statuses if status in ALLOWED_STATUSES]
+    if not startup_session_id or not normalized_statuses:
+        return []
+
+    placeholders = ", ".join("?" for _ in normalized_statuses)
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {TABLE_NAME}
+            WHERE startup_session_id = ?
+              AND status IN ({placeholders})
+            ORDER BY id DESC
+            """,
+            tuple([startup_session_id] + normalized_statuses),
         ).fetchall()
     return [dict(row) for row in rows]
 

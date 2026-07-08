@@ -555,7 +555,7 @@ shigurei没有正常记录，或许参考code/.test/save_latest_ros2_frame.py有
 1！.重新审核预览3dbox状态，应当符合现有设计理念
 2！.hololens2本地无需保留aruco坐标相关数据，相关坐标变换完全由服务器完成，服务器只下发hololens当前原点下的物体位姿。第一次上传生成的话，只需要hololens2本地坐标就可以回传，之后armarker生成世界坐标的，扔给服务器后续自动处理就行，不必下发；之后再调用也是服务器再次处理回hololens2本地坐标，再直接下发到本地坐标。
 如果armarker坐标更新，服务器需要更新历史中同次启动的所有物体armarker下的位姿
-3.合并降面和模型缩放并导出fbx两个阶段
+3！.合并降面和模型缩放并导出fbx两个阶段
 4！.PointCloud_3D_Box_Further_Depth*2应该使用去除边缘后的点云
 5！./shigure/object_detection需要重新开启（已解决）。shigure应当缓存1分钟左右的rgb-d，camerainfo，object_detection，并按照这个图进行对齐。
 6.转到shigure视角下的从hololens2视角下获得的深度点云的包围盒的2d投影，应该是shigure获得的objectmask在这个盒子里占有40%面积以上（待议），并且另一部分mask应该在hololens的摄像机位置视点，连接到盒子中心，再往后延申的方向的，最小的mask，作为初始化mask。

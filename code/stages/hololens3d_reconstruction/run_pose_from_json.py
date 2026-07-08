@@ -248,8 +248,8 @@ def main(argv: list[str]) -> int:
     save_task_json(json_path, task)
 
     print(
-        f"[INFO] pose : position={world_pose['position']} "
-        f"rotation={world_pose['rotation_quaternion_xyzw']} scale={world_pose['scale']}"
+        f"[INFO] pose : position={hololens_pose['position']} "
+        f"rotation={hololens_pose['rotation_quaternion_xyzw']} scale={hololens_pose['scale']}"
     )
     print("[OK] pose")
     return 0
