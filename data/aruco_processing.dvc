@@ -1,0 +1,6 @@
+outs:
+- md5: fbed945f8c3d349bc74bde496da585f4.dir
+  size: 3435884
+  nfiles: 26
+  hash: md5
+  path: aruco_processing

@@ -1,0 +1,6 @@
+outs:
+- md5: 6e0beca8d05f8e762edce220e92fa2eb.dir
+  size: 13812
+  nfiles: 3
+  hash: md5
+  path: shigure_marker_history
