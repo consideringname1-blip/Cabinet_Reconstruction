@@ -497,6 +497,7 @@ def _build_model_instance(
     fbx_url: str,
     *,
     startup_session_id: str | None = None,
+    include_spatial_box: bool = False,
 ) -> dict:
     task_id = task_data.get("task_id")
     instance = {
@@ -510,7 +511,7 @@ def _build_model_instance(
         task_data=task_data,
         startup_session_id=startup_session_id,
     )
-    if task_json.get("Sam3SpatialBox"):
+    if include_spatial_box and task_json.get("Sam3SpatialBox"):
         instance["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
     _append_display_identity_fields(instance, task_json)
     return instance
@@ -549,6 +550,7 @@ def _build_pending_task_response(
             task_json,
             "",
             startup_session_id=startup_session_id,
+            include_spatial_box=True,
         )
 
     return response
@@ -762,10 +764,6 @@ def _build_model_bounds_response(
             fbx_url,
             startup_session_id=startup_session_id,
         )
-        if task_json.get("Sam3SpatialBox"):
-            model["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
-            model["model_instance"]["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
-
     if hit_result:
         model["hit_distance_m"] = hit_result.get("hit_distance_m")
         if hit_result.get("hit_point_hololens") is not None:
@@ -867,8 +865,6 @@ def _build_completed_task_response(
         task_json.get("SAM3DBodyMesh") or None,
         startup_session_id=response_startup_session_id,
     )
-    response["sam3_spatial_box"] = task_json.get("Sam3SpatialBox") or None
-
     try:
         generated_source = resolve_model_generation_source(task_json, require_mtl_image=True)
     except Exception as exc:
@@ -1845,7 +1841,6 @@ def history_placement_restoration_start():
                         "object_hololens_current",
                         "object_hololens_original",
                         "coordinate_space",
-                        "sam3_spatial_box",
                         "taken_object_detection",
                         "taken_object_detection_urls",
                         "sam3d_body_mesh",

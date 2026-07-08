@@ -23,7 +23,7 @@ if str(CODE_ROOT) not in sys.path:
 
 from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, model_debug_dir, model_result_file, model_worker_dir, model_worker_file
 from coordinate_systems import quat_xyzw_to_rotation_matrix
-from spatial_transforms import aruco_points_to_shigure_camera
+from spatial_transforms import aruco_points_to_shigure_camera, hololens_point_to_aruco
 from stages.shigure_history.cache import CachedRgbdSample, CachedSampleMetadata, RosStamp, ShigureRgbdCache, load_json, sample_key
 from stages.shigure_history.marker_history import latest_marker_pose_path
 from task_json import load_task_json, resolve_task_json_path, save_task_json
@@ -654,6 +654,165 @@ def _model_box_corners_aruco(task: Mapping[str, Any]) -> tuple[np.ndarray | None
     return None, {'reason': 'model_bounds_corners_missing'}
 
 
+def _hololens_camera_origin_aruco(task: Mapping[str, Any]) -> tuple[np.ndarray | None, dict[str, Any]]:
+    reference = task.get('aruco_reference') if isinstance(task.get('aruco_reference'), Mapping) else None
+    if reference is None:
+        return None, {'status': 'unavailable', 'reason': 'task_aruco_reference_missing'}
+    for key in ('PVCamera', 'device'):
+        payload = task.get(key)
+        if not isinstance(payload, Mapping):
+            continue
+        raw_position = payload.get('position')
+        source = f'{key}.position'
+        if raw_position is None and payload.get('pose') is not None:
+            try:
+                matrix = np.asarray(payload.get('pose'), dtype=np.float64).reshape(4, 4)
+                raw_position = matrix[:3, 3]
+                source = f'{key}.pose.translation'
+            except Exception:
+                raw_position = None
+        if raw_position is None:
+            continue
+        try:
+            position_hololens = _parse_float_array(raw_position, 3, source)
+            return hololens_point_to_aruco(position_hololens, reference), {
+                'status': 'ready',
+                'source': source,
+                'coordinate_space': 'aruco',
+                'position_hololens': position_hololens.astype(float).tolist(),
+            }
+        except Exception as exc:
+            return None, {'status': 'unavailable', 'reason': 'hololens_camera_position_parse_failed', 'source': source, 'error_message': str(exc)}
+    return None, {'status': 'unavailable', 'reason': 'hololens_camera_position_missing'}
+
+
+def _camera_points_to_image_polyline(points_camera: np.ndarray, camera_matrix: np.ndarray, image_shape: tuple[int, int]) -> list[list[int]]:
+    points = np.asarray(points_camera, dtype=np.float64).reshape(-1, 3)
+    if points.size == 0:
+        return []
+    fx, fy = float(camera_matrix[0, 0]), float(camera_matrix[1, 1])
+    cx, cy = float(camera_matrix[0, 2]), float(camera_matrix[1, 2])
+    h, w = image_shape
+    polyline: list[list[int]] = []
+    last: tuple[int, int] | None = None
+    for point in points:
+        z = float(point[2])
+        if not np.isfinite(z) or z <= 1.0e-6:
+            continue
+        x = fx * float(point[0]) / z + cx
+        y = fy * float(point[1]) / z + cy
+        if not np.isfinite(x) or not np.isfinite(y):
+            continue
+        ix = int(round(x))
+        iy = int(round(y))
+        if ix < 0 or iy < 0 or ix >= w or iy >= h:
+            continue
+        current = (ix, iy)
+        if current != last:
+            polyline.append([ix, iy])
+            last = current
+    return polyline
+
+
+def _build_hololens_center_ray_selection(task: Mapping[str, Any], center_aruco: np.ndarray, center_camera: np.ndarray, marker_rotation: np.ndarray, marker_translation: np.ndarray, camera_matrix: np.ndarray, image_shape: tuple[int, int]) -> dict[str, Any]:
+    origin_aruco, origin_info = _hololens_camera_origin_aruco(task)
+    if origin_aruco is None:
+        return {'status': 'unavailable', 'source': 'hololens_camera_to_box_center_extended', **origin_info}
+    origin_camera = aruco_points_to_shigure_camera(
+        origin_aruco.reshape(1, 3),
+        marker_rotation,
+        marker_translation,
+    ).reshape(3)
+    direction = np.asarray(center_camera, dtype=np.float64).reshape(3) - origin_camera
+    norm = float(np.linalg.norm(direction))
+    if not np.isfinite(norm) or norm <= 1.0e-6:
+        return {
+            'status': 'unavailable',
+            'source': 'hololens_camera_to_box_center_extended',
+            'reason': 'hololens_camera_origin_matches_box_center',
+            'origin_aruco': origin_aruco.astype(float).tolist(),
+            'origin_camera_m': origin_camera.astype(float).tolist(),
+        }
+    unit = direction / norm
+    extension_m = max(0.05, float(settings.MODEL_BOX_RAY_EXTENSION_M))
+    sample_count = max(2, int(settings.MODEL_BOX_RAY_SAMPLE_COUNT))
+    distances = np.linspace(0.0, extension_m, sample_count, dtype=np.float64)
+    ray_points = center_camera.reshape(1, 3) + distances.reshape(-1, 1) * unit.reshape(1, 3)
+    polyline = _camera_points_to_image_polyline(ray_points, camera_matrix, image_shape)
+    width_px = max(1, int(round(float(settings.MODEL_BOX_RAY_MASK_WIDTH_PX))))
+    if not polyline:
+        return {
+            'status': 'unavailable',
+            'source': 'hololens_camera_to_box_center_extended',
+            'reason': 'extended_ray_outside_shigure_image',
+            'origin_aruco': origin_aruco.astype(float).tolist(),
+            'origin_camera_m': origin_camera.astype(float).tolist(),
+            'center_camera_m': np.asarray(center_camera, dtype=np.float64).astype(float).tolist(),
+            'extension_m': extension_m,
+            'sample_count': sample_count,
+            'width_px': width_px,
+        }
+    return {
+        'status': 'ready',
+        'source': 'hololens_camera_to_box_center_extended',
+        'origin_source': origin_info.get('source'),
+        'origin_aruco': origin_aruco.astype(float).tolist(),
+        'origin_camera_m': origin_camera.astype(float).tolist(),
+        'object_center_aruco': np.asarray(center_aruco, dtype=np.float64).astype(float).tolist(),
+        'center_camera_m': np.asarray(center_camera, dtype=np.float64).astype(float).tolist(),
+        'direction_camera_unit': unit.astype(float).tolist(),
+        'extension_m': extension_m,
+        'sample_count': sample_count,
+        'width_px': width_px,
+        'pixel_polyline_xy': polyline,
+    }
+
+
+def _compact_ray_selection_info(info: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(info, Mapping):
+        return {'status': 'unavailable', 'reason': 'ray_selection_missing'}
+    payload = dict(info)
+    payload.pop('pixel_polyline_xy', None)
+    return payload
+
+
+def _ray_mask_from_projection(projection: Mapping[str, Any], shape: tuple[int, int]) -> tuple[np.ndarray | None, dict[str, Any]]:
+    info = projection.get('ray_selection') if isinstance(projection.get('ray_selection'), Mapping) else None
+    if not isinstance(info, Mapping) or info.get('status') != 'ready':
+        return None, _compact_ray_selection_info(info)
+    raw_polyline = info.get('pixel_polyline_xy')
+    if not isinstance(raw_polyline, list) or not raw_polyline:
+        return None, {**_compact_ray_selection_info(info), 'status': 'unavailable', 'reason': 'ray_polyline_missing'}
+    h, w = shape
+    points: list[tuple[int, int]] = []
+    for point in raw_polyline:
+        if not (isinstance(point, list) and len(point) == 2):
+            continue
+        try:
+            x = int(point[0])
+            y = int(point[1])
+        except Exception:
+            continue
+        if 0 <= x < w and 0 <= y < h:
+            points.append((x, y))
+    if not points:
+        return None, {**_compact_ray_selection_info(info), 'status': 'unavailable', 'reason': 'ray_polyline_outside_image'}
+    width_px = max(1, int(round(float(info.get('width_px') or settings.MODEL_BOX_RAY_MASK_WIDTH_PX))))
+    image = Image.new('L', (w, h), 0)
+    draw = ImageDraw.Draw(image)
+    if len(points) == 1:
+        x, y = points[0]
+        radius = max(1, width_px // 2)
+        draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=255)
+    else:
+        draw.line(points, fill=255, width=width_px)
+    mask = np.asarray(image, dtype=np.uint8) > 0
+    mask_pixels = int(np.count_nonzero(mask))
+    if mask_pixels <= 0:
+        return None, {**_compact_ray_selection_info(info), 'status': 'unavailable', 'reason': 'ray_mask_empty'}
+    return mask, {**_compact_ray_selection_info(info), 'mask_pixels': mask_pixels}
+
+
 def _project_model_box_to_shigure(task: Mapping[str, Any], camera_info: Mapping[str, Any] | None, image_shape: tuple[int, int]) -> tuple[np.ndarray | None, dict[str, Any]]:
     camera_matrix = _camera_matrix_from_info(camera_info)
     if camera_matrix is None:
@@ -720,6 +879,15 @@ def _project_model_box_to_shigure(task: Mapping[str, Any], camera_info: Mapping[
             float(fy * float(center_camera[1]) / center_z + cy),
         ]
     projected_mask = np.zeros((h, w), dtype=bool)
+    ray_selection = _build_hololens_center_ray_selection(
+        task,
+        center_aruco,
+        center_camera,
+        marker_rotation,
+        marker_translation,
+        camera_matrix,
+        image_shape,
+    )
     projected_mask[y0:y1, x0:x1] = True
     z_values = visible_points[:, 2]
     info = {
@@ -739,6 +907,7 @@ def _project_model_box_to_shigure(task: Mapping[str, Any], camera_info: Mapping[
         'camera_matrix': camera_matrix.astype(float).tolist(),
         'image_shape': [h, w],
         'projected_pixels': int(np.count_nonzero(projected_mask)),
+        'ray_selection': ray_selection,
     }
     return projected_mask, info
 
@@ -914,7 +1083,7 @@ def _check_model_box_visibility(sample: CachedRgbdSample, projected_mask: np.nda
     }
 
 
-def _score_model_box_candidate(obs: YoloObjectObservation, sample: CachedRgbdSample, projected_mask: np.ndarray, projection: Mapping[str, Any]) -> dict[str, Any]:
+def _score_model_box_candidate(obs: YoloObjectObservation, sample: CachedRgbdSample, projected_mask: np.ndarray, projection: Mapping[str, Any], ray_mask: np.ndarray | None = None, ray_info: Mapping[str, Any] | None = None) -> dict[str, Any]:
     bbox_values = projection.get('bbox_xyxy')
     if isinstance(bbox_values, list) and len(bbox_values) == 4:
         projected_bbox = tuple(float(v) for v in bbox_values)
@@ -965,6 +1134,18 @@ def _score_model_box_candidate(obs: YoloObjectObservation, sample: CachedRgbdSam
         reject_reasons.append('center_too_far')
     if depth_diff is not None and depth_diff > max_depth:
         reject_reasons.append('depth_too_different')
+    ray_selection = _compact_ray_selection_info(ray_info)
+    if ray_mask is not None:
+        if ray_mask.shape != obs.mask.shape:
+            ray_selection = {**ray_selection, 'status': 'unavailable', 'reason': 'ray_mask_shape_mismatch', 'ray_mask_shape': list(ray_mask.shape), 'mask_shape': list(obs.mask.shape)}
+        else:
+            ray_hit_pixels = int(np.count_nonzero(obs.mask & ray_mask))
+            ray_hit_ratio = ray_hit_pixels / max(1, int(obs.mask_pixels))
+            min_hit_pixels = max(1, int(settings.MODEL_BOX_RAY_MIN_HIT_PIXELS))
+            ray_hit = ray_hit_pixels >= min_hit_pixels
+            ray_selection = {**ray_selection, 'status': 'ready', 'hit': ray_hit, 'mask_hit_pixels': ray_hit_pixels, 'mask_hit_ratio': ray_hit_ratio, 'min_hit_pixels': min_hit_pixels}
+            if not ray_hit:
+                reject_reasons.append('mask_not_on_hololens_center_ray')
     if box_coverage_ratio < settings.MODEL_BOX_OBJECTMASK_MIN_BOX_COVERAGE:
         reject_reasons.append('object_mask_does_not_cover_projected_box')
     if mask_overlap_ratio < settings.MODEL_BOX_CANDIDATE_MIN_MASK_OVERLAP_RATIO and bbox_iou < settings.MODEL_BOX_CANDIDATE_MIN_BBOX_IOU and not point_inside_mask:
@@ -989,7 +1170,7 @@ def _score_model_box_candidate(obs: YoloObjectObservation, sample: CachedRgbdSam
         'area_ratio_to_projected_box': area_ratio,
         'point_inside_mask': point_inside_mask,
         'point_inside_bbox': point_inside_bbox,
-        'ray_selection': {'status': 'not_available_in_current_server_inputs', 'fallback': 'smallest_accepted_projected_box_mask'},
+        'ray_selection': ray_selection,
         'rgb_signature': _mask_rgb_stats(sample, obs.mask),
         'observation': obs,
     }
@@ -1004,6 +1185,7 @@ def _candidate_payload(item: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _select_model_box_yolo_candidate(cache: ShigureRgbdCache, event: YoloEvent, sample: CachedRgbdSample, shape: tuple[int, int], projected_mask: np.ndarray, projection: Mapping[str, Any]) -> tuple[YoloObjectObservation | None, dict[str, Any]]:
+    ray_mask, ray_info = _ray_mask_from_projection(projection, shape)
     scored: list[dict[str, Any]] = []
     for obj in event.payload.get('objects') or []:
         if not isinstance(obj, Mapping):
@@ -1011,7 +1193,7 @@ def _select_model_box_yolo_candidate(cache: ShigureRgbdCache, event: YoloEvent, 
         obs = _observation_from_object(cache, event, obj, shape)
         if obs is None:
             continue
-        scored.append(_score_model_box_candidate(obs, sample, projected_mask, projection))
+        scored.append(_score_model_box_candidate(obs, sample, projected_mask, projection, ray_mask=ray_mask, ray_info=ray_info))
     if not scored:
         return None, {'reason': 'no_yolo_object_with_mask'}
     scored.sort(key=lambda item: (not bool(item.get('accepted')), float(item.get('score', math.inf))))
@@ -1028,9 +1210,9 @@ def _select_model_box_yolo_candidate(cache: ShigureRgbdCache, event: YoloEvent, 
     reason = 'matched_projected_box_shigure_candidate_mask' if accepted else 'best_projected_box_candidate_rejected'
     return (best['observation'] if accepted else None), {
         'reason': reason,
-        'candidate_scope': 'shigure_object_masks_covering_projected_hololens_depth_box',
-        'selection_policy': 'smallest_accepted_mask_after_projected_box_coverage',
-        'ray_selection': {'status': 'not_available_in_current_server_inputs', 'fallback': 'smallest_accepted_projected_box_mask'},
+        'candidate_scope': 'shigure_object_masks_covering_projected_hololens_depth_box_and_hololens_center_ray' if ray_mask is not None else 'shigure_object_masks_covering_projected_hololens_depth_box',
+        'selection_policy': 'smallest_accepted_mask_after_projected_box_coverage_and_ray_hit' if ray_mask is not None else 'smallest_accepted_mask_after_projected_box_coverage',
+        'ray_selection': ray_info,
         'candidate_count': len(scored),
         'accepted_count': len(accepted),
         'best': _candidate_payload(best),
@@ -1053,7 +1235,7 @@ def _init_model_box_primary(cache: ShigureRgbdCache, task: Mapping[str, Any], me
         'metadata_frame_count': len(metadata),
         'reference_source': 'selected_shigure_yolo_mask',
         'candidate_scope': 'shigure_object_masks_covering_projected_hololens_depth_box',
-        'ray_selection': {'status': 'not_available_in_current_server_inputs', 'fallback': 'smallest_accepted_projected_box_mask'},
+        'ray_selection': _compact_ray_selection_info(projection.get('ray_selection') if isinstance(projection, Mapping) else None),
     }
     if projected_mask is None:
         return None, {**init_info, 'reason': projection.get('reason')}
@@ -1436,55 +1618,6 @@ def _classify_frame(sample: CachedRgbdSample, trusted_mask: np.ndarray, referenc
     )
 
 
-def _rgb_diff(a: np.ndarray, b: np.ndarray, mask: np.ndarray) -> float | None:
-    if a.shape[:2] != b.shape[:2] or mask.shape != a.shape[:2] or not np.any(mask):
-        return None
-    return float(np.mean(np.abs(a[mask] - b[mask])))
-
-
-def _backtrack_rgb_frame(frames: list[CachedRgbdSample], depth_frame: CachedRgbdSample, init_frame: CachedRgbdSample, trusted_mask: np.ndarray) -> tuple[CachedRgbdSample, dict[str, Any]]:
-    start_seconds = depth_frame.stamp.seconds - max(0.0, settings.RGB_BACKTRACK_SECONDS)
-    candidates = [f for f in frames if start_seconds <= f.stamp.seconds <= depth_frame.stamp.seconds]
-    if not candidates:
-        return depth_frame, {'status': 'fallback_no_rgb_candidates'}
-    try:
-        init_rgb = _sample_rgb(init_frame)
-    except Exception as exc:
-        return depth_frame, {'status': 'fallback_no_init_rgb', 'reason': str(exc)}
-    rgb_cache: dict[str, np.ndarray] = {}
-    records = []
-    selected: CachedRgbdSample | None = None
-    for index in range(len(candidates) - 1, -1, -1):
-        frame = candidates[index]
-        try:
-            key = sample_key(frame.stamp)
-            rgb = rgb_cache.setdefault(key, _sample_rgb(frame))
-            prev_rgb = None
-            if index > 0:
-                prev_key = sample_key(candidates[index - 1].stamp)
-                prev_rgb = rgb_cache.setdefault(prev_key, _sample_rgb(candidates[index - 1]))
-            init_diff = _rgb_diff(rgb, init_rgb, trusted_mask)
-            adjacent_diff = _rgb_diff(rgb, prev_rgb, trusted_mask) if prev_rgb is not None else 0.0
-        except Exception:
-            continue
-        record = {
-            'stamp': frame.stamp.to_dict(),
-            'init_diff': init_diff,
-            'adjacent_diff': adjacent_diff,
-        }
-        records.append(record)
-        if (
-            init_diff is not None
-            and adjacent_diff is not None
-            and init_diff <= settings.RGB_INIT_DIFF_THRESHOLD
-            and adjacent_diff <= settings.RGB_ADJACENT_DIFF_THRESHOLD
-        ):
-            selected = frame
-            break
-    if selected is None:
-        return depth_frame, {'status': 'fallback_no_quiet_frame', 'checked': records[:25]}
-    return selected, {'status': 'found', 'selected_stamp': selected.stamp.to_dict(), 'checked': records[:25]}
-
 
 def _nearest_sample_by_stamp(frames: list[CachedRgbdSample], stamp: RosStamp) -> CachedRgbdSample | None:
     if not frames:
@@ -1723,7 +1856,16 @@ def _write_not_taken(json_path: Path, task: dict[str, Any], *, tracking_window: 
 
 
 def _write_taken(json_path: Path, task: dict[str, Any], *, frames: list[CachedRgbdSample], candidate_start: CachedRgbdSample, confirmed: CachedRgbdSample, init_frame: CachedRgbdSample, trusted: np.ndarray, tracking_window: dict[str, Any], projection: dict[str, Any], init_stats: dict[str, Any], decisions: list[FrameDecision], debug_files: dict[str, str], output_dir: Path, extra: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    result_frame, rgb_backtrack = _backtrack_rgb_frame(frames, candidate_start, init_frame, trusted)
+    result_frame = candidate_start
+    rgb_backtrack = {
+        'status': 'disabled_use_depth_taken_frame',
+        'reason': 'taken_subject_crop_requires_event_frame_not_quiet_pre_take_frame',
+        'selected_stamp': result_frame.stamp.to_dict(),
+        'depth_taken_timestamp': candidate_start.stamp.to_dict(),
+        'depth_confirm_timestamp': confirmed.stamp.to_dict(),
+        'init_timestamp': init_frame.stamp.to_dict(),
+        'window_frame_count': len(frames),
+    }
     backup_dir = _backup_sample(task, result_frame, output_dir)
     result_timestamp = result_frame.stamp.to_dict()
     payload = {

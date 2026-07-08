@@ -12,6 +12,8 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
     private const string RootName = "HistoryPlacementRestorationDisplayRoot";
     private const float PolyhedronTopClearanceMeters = 0.30f;
     private const float EvidenceImageVerticalOffsetMeters = 0.30f;
+    private const float EvidenceImageMaxWidthMeters = 0.43f;
+    private const float EvidenceImageMaxHeightMeters = 0.24f;
     private const float EvidenceImageSideOffsetMeters = 0.0f;
     private const float EvidenceImageLerpSpeed = 8.0f;
 
@@ -495,16 +497,6 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         worldPosition = Vector3.zero;
         worldRotation = Quaternion.identity;
         JObject modelInstance = result != null ? result["model_instance"] as JObject : null;
-        JObject spatialBox = result != null ? result["sam3_spatial_box"] as JObject : null;
-        if (spatialBox == null && modelInstance != null)
-        {
-            spatialBox = modelInstance["sam3_spatial_box"] as JObject;
-        }
-        if (TryReadSpatialBoxTop(spatialBox, out worldPosition))
-        {
-            return true;
-        }
-
         JObject objectHololens = result != null ? result["object_hololens_current"] as JObject : null;
         if (objectHololens == null && modelInstance != null)
         {
@@ -515,32 +507,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             worldPosition += Vector3.up * PolyhedronTopClearanceMeters;
             return true;
         }
-        return false;
-    }
 
-    private bool TryReadSpatialBoxTop(JObject spatialBox, out Vector3 worldPosition)
-    {
-        worldPosition = Vector3.zero;
-        if (spatialBox == null)
-        {
-            return false;
-        }
-        if (TryReadVector3(spatialBox["aabb_min_world"], out Vector3 minWorld)
-            && TryReadVector3(spatialBox["aabb_max_world"], out Vector3 maxWorld))
-        {
-            worldPosition = new Vector3(
-                (minWorld.x + maxWorld.x) * 0.5f,
-                Mathf.Max(minWorld.y, maxWorld.y) + PolyhedronTopClearanceMeters,
-                (minWorld.z + maxWorld.z) * 0.5f
-            );
-            return true;
-        }
-        if (TryReadVector3(spatialBox["center_world"], out Vector3 centerWorld)
-            && TryReadVector3(spatialBox["size_world"], out Vector3 sizeWorld))
-        {
-            worldPosition = centerWorld + Vector3.up * (Mathf.Abs(sizeWorld.y) * 0.5f + PolyhedronTopClearanceMeters);
-            return true;
-        }
         return false;
     }
 
@@ -569,7 +536,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             ["task_id"] = string.IsNullOrEmpty(taskId) ? modelInstance["task_id"]?.ToString() ?? "" : taskId,
             ["model_instance"] = modelInstance.DeepClone(),
         };
-        foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space", "sam3_spatial_box" })
+        foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space" })
         {
             JToken value = result[key];
             if (value != null && value.Type != JTokenType.Null)
@@ -824,9 +791,15 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             Destroy(collider);
         }
 
-        float aspect = texture.height > 0 ? (float)texture.width / (float)texture.height : 1.0f;
-        float height = 0.24f;
-        quad.transform.localScale = new Vector3(height * aspect, height, 1.0f);
+        float aspect = texture.height > 0 ? Mathf.Max(0.001f, (float)texture.width / (float)texture.height) : 1.0f;
+        float width = EvidenceImageMaxWidthMeters;
+        float height = width / aspect;
+        if (height > EvidenceImageMaxHeightMeters)
+        {
+            height = EvidenceImageMaxHeightMeters;
+            width = height * aspect;
+        }
+        quad.transform.localScale = new Vector3(width, height, 1.0f);
 
         Renderer renderer = quad.GetComponent<Renderer>();
         if (renderer != null)
