@@ -129,23 +129,6 @@ public class LoadModel : MonoBehaviour
         game.SetActive(true);
 
         RuntimeModelManager manager = RuntimeModelManager.Instance;
-        if (manager != null && manager.TryResolveWorldPose(
-            _pendingInstance.Pose,
-            out Vector3 targetPosition,
-            out Quaternion targetRotation
-        ))
-        {
-            game.transform.SetPositionAndRotation(targetPosition, targetRotation);
-            Debug.Log("[LoadModel] Use runtime pose: pos=" + targetPosition + ", rot=" + targetRotation);
-        }
-        else
-        {
-            ApplyFallbackPose(game);
-        }
-
-        AddGameObjectCollider(game);
-        DisableRuntimeModelManipulation(game);
-
         if (manager == null)
         {
             Debug.LogError("[RuntimeModelManager] Missing RuntimeModelManager component on scene Scripts object.");
@@ -155,6 +138,26 @@ public class LoadModel : MonoBehaviour
             NotifyRuntimeModelLoadCompleted(loadedInstance, false);
             return;
         }
+
+        if (!manager.TryResolveWorldPose(
+            _pendingInstance.Pose,
+            out Vector3 targetPosition,
+            out Quaternion targetRotation
+        ))
+        {
+            Debug.LogError("[LoadModel] Runtime model missing server HoloLens-local pose; refusing fallback placement.");
+            ShowFrontMessage("download_ERR_missing_object_pose");
+            Destroy(game);
+            ClearPendingModel();
+            NotifyRuntimeModelLoadCompleted(loadedInstance, false);
+            return;
+        }
+
+        game.transform.SetPositionAndRotation(targetPosition, targetRotation);
+        Debug.Log("[LoadModel] Use runtime pose: pos=" + targetPosition + ", rot=" + targetRotation);
+
+        AddGameObjectCollider(game);
+        DisableRuntimeModelManipulation(game);
 
         manager.RegisterLoadedModel(_pendingInstance, _pendingLocalPath, game);
         HideSpatialHint(_pendingInstance);
@@ -167,31 +170,6 @@ public class LoadModel : MonoBehaviour
     private void OnLoad(AssetLoaderContext assetLoaderContext)
     {
         Debug.Log("Model loaded. Loading materials.");
-    }
-
-    private void ApplyFallbackPose(GameObject game)
-    {
-        Vector3 targetPosition = Vector3.zero;
-        Quaternion targetRotation = Quaternion.identity;
-
-        Camera cam = Camera.main;
-        if (cam != null)
-        {
-            Vector3 forwardFlat = new Vector3(cam.transform.forward.x, 0f, cam.transform.forward.z).normalized;
-            if (forwardFlat.sqrMagnitude < 1e-4f)
-            {
-                forwardFlat = cam.transform.forward.normalized;
-            }
-
-            targetPosition = cam.transform.position + forwardFlat * 2f;
-            targetRotation = Quaternion.LookRotation(forwardFlat, Vector3.up);
-        }
-        else
-        {
-            Debug.LogWarning("[LoadModel] Camera.main was not found. Using identity fallback pose.");
-        }
-
-        game.transform.SetPositionAndRotation(targetPosition, targetRotation);
     }
 
     private void ClearPendingModel()

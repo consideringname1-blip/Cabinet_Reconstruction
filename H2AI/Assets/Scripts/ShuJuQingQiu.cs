@@ -1446,7 +1446,7 @@ public class ShuJuQingQiu : MonoBehaviour
                 ["task_id"] = taskId,
                 ["model_instance"] = modelInstance.DeepClone(),
             };
-            foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space", "sam3_spatial_box" })
+            foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space" })
             {
                 JToken extra = NonNullToken(result[key]);
                 if (extra != null)
@@ -1857,18 +1857,14 @@ public class ShuJuQingQiu : MonoBehaviour
         RuntimeModelPoseData poseData = new RuntimeModelPoseData();
         JToken hololensPoseToken = NonNullToken(modelJ["object_hololens_current"])
             ?? NonNullToken(jo["object_hololens_current"]);
-        if (TryParsePoseToken(hololensPoseToken, out Vector3 hololensPosition, out Quaternion hololensRotation))
+        if (!TryParsePoseToken(hololensPoseToken, out Vector3 hololensPosition, out Quaternion hololensRotation))
         {
-            poseData.HasHololensPose = true;
-            poseData.HololensPosition = hololensPosition;
-            poseData.HololensRotation = hololensRotation;
+            errorMessage = "download_ERR_missing_object_pose";
+            return false;
         }
-
-        RuntimeSpatialBoxData spatialBox = null;
-        TryParseSpatialBoxToken(
-            NonNullToken(modelJ["sam3_spatial_box"]) ?? NonNullToken(jo["sam3_spatial_box"]),
-            out spatialBox
-        );
+        poseData.HasHololensPose = true;
+        poseData.HololensPosition = hololensPosition;
+        poseData.HololensRotation = hololensRotation;
 
         instance = new RuntimeModelInstance
         {
@@ -1877,7 +1873,6 @@ public class ShuJuQingQiu : MonoBehaviour
             FbxUrl = fbxUrl,
             IsEvidenceOverlay = modelJ["is_evidence_overlay"] != null && modelJ["is_evidence_overlay"].Value<bool>(),
             Pose = poseData,
-            SpatialBox = spatialBox,
         };
         return true;
     }
@@ -1921,12 +1916,6 @@ public class ShuJuQingQiu : MonoBehaviour
         ApplyDebugInfo(jo);
         ApplyResponsePoses(jo);
 
-        if (!modelInstance.Pose.HasHololensPose)
-        {
-            Debug.LogWarning("[" + sourceTag + "] completed response missing HoloLens-local model pose.");
-            ShowFrontMessage("pose_WARN_missing_object");
-        }
-
         return true;
     }
 
@@ -1965,7 +1954,7 @@ public class ShuJuQingQiu : MonoBehaviour
             modelInstance["is_evidence_overlay"] = modelJ["is_evidence_overlay"].DeepClone();
         }
 
-        foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space", "sam3_spatial_box" })
+        foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space" })
         {
             JToken value = NonNullToken(modelJ[key]);
             if (value != null)
@@ -2000,7 +1989,7 @@ public class ShuJuQingQiu : MonoBehaviour
         }
         wrapper["model_instance"] = modelInstance.DeepClone();
 
-        foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space", "sam3_spatial_box" })
+        foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space" })
         {
             JToken value = NonNullToken(modelJ[key]);
             if (value != null)

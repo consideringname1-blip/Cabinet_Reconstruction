@@ -22,6 +22,9 @@ DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD = float(os.environ.get("DINO_IDENTITY_MAT
 DINO_IDENTITY_MATCH_SECOND_MARGIN = float(os.environ.get("DINO_IDENTITY_MATCH_SECOND_MARGIN", "0.05"))
 DINO_IDENTITY_MATCH_REQUIRE_MARGIN = os.environ.get("DINO_IDENTITY_MATCH_REQUIRE_MARGIN", "1").strip().lower() in {"1", "true", "yes", "on"}
 
+# Preview 3D box / pending spatial hint
+PREVIEW_3D_BOX_DEPTH_EXPANSION_FACTOR = float(os.environ.get("PREVIEW_3D_BOX_DEPTH_EXPANSION_FACTOR", "2.0"))
+
 # Depth camera and ArUco server defaults
 AHAT_SENSOR_NAME = "AHAT"
 AHAT_MIN_DEPTH_MM = 200

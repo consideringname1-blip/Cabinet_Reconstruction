@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Any, Mapping
 
 import numpy as np
@@ -19,6 +20,53 @@ def vector3(value: Any, label: str = "vector") -> np.ndarray:
     if not np.isfinite(vector).all():
         raise ValueError(f"{label} contains non-finite values")
     return vector.astype(np.float64)
+
+
+def camera_info_message(camera_info: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(camera_info, Mapping):
+        return {}
+    message = camera_info.get("message")
+    if isinstance(message, Mapping):
+        merged = dict(message)
+        for key, value in camera_info.items():
+            if key != "message" and key not in merged:
+                merged[key] = value
+        return merged
+    return dict(camera_info)
+
+
+def parse_camera_matrix(raw: Any) -> np.ndarray | None:
+    if raw is None:
+        return None
+    if isinstance(raw, str):
+        values = [float(v) for v in re.findall(r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?", raw)]
+    else:
+        try:
+            values = list(np.asarray(raw, dtype=np.float64).reshape(-1))
+        except Exception:
+            return None
+    if len(values) != 9:
+        return None
+    matrix = np.asarray(values, dtype=np.float64).reshape(3, 3)
+    if not np.isfinite(matrix).all() or matrix[0, 0] == 0 or matrix[1, 1] == 0:
+        return None
+    return matrix
+
+
+def camera_matrix_from_info(camera_info: Mapping[str, Any] | None) -> np.ndarray | None:
+    info = camera_info_message(camera_info)
+    raw = info.get("k") or info.get("K") or info.get("camera_matrix")
+    return parse_camera_matrix(raw)
+
+
+def camera_info_image_shape(camera_info: Mapping[str, Any] | None) -> tuple[int, int] | None:
+    info = camera_info_message(camera_info)
+    try:
+        height = int(info.get("height") or 0)
+        width = int(info.get("width") or 0)
+    except Exception:
+        return None
+    return (height, width) if height > 0 and width > 0 else None
 
 
 def pose_to_rt(pose: Mapping[str, Any], label: str = "pose") -> tuple[np.ndarray, np.ndarray, list[float] | None]:
@@ -194,6 +242,21 @@ def project_camera_points_to_pixels(points_camera_m: Any, camera_matrix: Any) ->
     pixels[visible, 0] = (k[0, 0] * points[visible, 0] / z[visible]) + k[0, 2]
     pixels[visible, 1] = (k[1, 1] * points[visible, 1] / z[visible]) + k[1, 2]
     return pixels, visible
+
+
+def project_aruco_points_to_shigure_pixels(
+    points_aruco: Any,
+    marker_rotation_camera_marker_cv: np.ndarray,
+    marker_translation_camera_marker_cv: np.ndarray,
+    camera_matrix: Any,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    points_camera = aruco_points_to_shigure_camera(
+        points_aruco,
+        marker_rotation_camera_marker_cv,
+        marker_translation_camera_marker_cv,
+    )
+    pixels, visible = project_camera_points_to_pixels(points_camera, camera_matrix)
+    return points_camera, pixels, visible
 
 
 def pixel_depth_to_shigure_camera(pixel_xy: tuple[float, float], depth_m: float, camera_matrix: Any) -> np.ndarray:

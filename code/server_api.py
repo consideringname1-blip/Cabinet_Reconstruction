@@ -228,13 +228,11 @@ def _hololens_current_pose_for_response(
     object_aruco = task_json.get("object_aruco") if isinstance(task_json.get("object_aruco"), dict) else None
     if object_aruco is not None:
         aruco_reference = _load_latest_aruco_reference_pose(response_startup_session_id)
-        if aruco_reference is None:
-            return None
-        try:
-            return aruco_pose_to_hololens_pose(object_aruco, aruco_reference)
-        except Exception as exc:
-            print(f"[WARN] pose response conversion failed for startup={response_startup_session_id}: {exc}")
-            return None
+        if aruco_reference is not None:
+            try:
+                return aruco_pose_to_hololens_pose(object_aruco, aruco_reference)
+            except Exception as exc:
+                print(f"[WARN] pose response conversion failed for startup={response_startup_session_id}: {exc}")
 
     task_startup_session_id = _task_startup_session_id(task_data, task_json)
     if task_startup_session_id != response_startup_session_id:
@@ -251,7 +249,16 @@ def _hololens_current_pose_for_response(
         return None
 
 
-def _hololens_original_pose_for_response(task_json: dict) -> dict | None:
+def _hololens_original_pose_for_response(
+    task_json: dict,
+    *,
+    task_data: dict | None = None,
+    startup_session_id: str | None = None,
+) -> dict | None:
+    response_startup_session_id = _response_startup_session_id(task_data, task_json, startup_session_id)
+    task_startup_session_id = _task_startup_session_id(task_data, task_json)
+    if not response_startup_session_id or task_startup_session_id != response_startup_session_id:
+        return None
     original = resolve_hololens_original_pose(task_json)
     if original is None:
         return None
@@ -273,7 +280,11 @@ def _append_pose_fields(
         task_data=task_data,
         startup_session_id=startup_session_id,
     )
-    original_pose = _hololens_original_pose_for_response(task_json)
+    original_pose = _hololens_original_pose_for_response(
+        task_json,
+        task_data=task_data,
+        startup_session_id=startup_session_id,
+    )
     response["object_hololens_current"] = current_pose
     response["object_hololens_original"] = original_pose
     response["coordinate_space"] = "hololens_current_local" if current_pose else None
@@ -337,12 +348,17 @@ def _hololens_pose_key_for_public_response(key: str) -> str | None:
         return "pose_hololens"
     if key.endswith("_pose_aruco"):
         return f"{key[:-len('_aruco')]}_hololens"
+    if key == "pose_armarker":
+        return "pose_hololens"
+    if key.endswith("_pose_armarker"):
+        return f"{key[:-len('_armarker')]}_hololens"
     return None
 
 
 def _hololens_point_key_for_public_response(key: str) -> str | None:
     point_keys = {
         "object_center_aruco",
+        "object_center_armarker",
         "aruco_position",
         "reference_aruco",
     }
@@ -350,6 +366,8 @@ def _hololens_point_key_for_public_response(key: str) -> str | None:
         return None
     if key.endswith("_aruco"):
         return f"{key[:-len('_aruco')]}_hololens"
+    if key.endswith("_armarker"):
+        return f"{key[:-len('_armarker')]}_hololens"
     if key.startswith("aruco_"):
         return f"hololens_{key[len('aruco_') :]}"
     return f"{key}_hololens"
@@ -383,7 +401,7 @@ def _public_spatial_payload(value, *, startup_session_id: str | None = None):
                         except Exception as exc:
                             converted[f"{point_key}_error"] = str(exc)
                     continue
-                if key == "coordinate_space" and child == "aruco":
+                if key == "coordinate_space" and child in {"aruco", "armarker"}:
                     converted[key] = "hololens_current_local" if aruco_reference is not None else None
                     continue
                 converted[key] = convert(child)

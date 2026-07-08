@@ -15,7 +15,7 @@ from scipy import ndimage as ndi
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
 import _bootstrap
-from config import TASK_DEBUG_OUTPUT_ENABLE
+from config import PREVIEW_3D_BOX_DEPTH_EXPANSION_FACTOR, TASK_DEBUG_OUTPUT_ENABLE
 from artifact_layout import model_debug_file, model_worker_dir, model_worker_file
 from path_config import SAM3_BEP, SAM3_ROOT
 import numpy as np
@@ -25,8 +25,15 @@ from stage_common import ensure_file, load_stage_task
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
 
-SPATIAL_BOX_DEPTH_EXPANSION_FACTOR = 2.0
 SPATIAL_BOX_MIN_SIZE_M = 0.03
+
+
+def _preview_depth_expansion_factor() -> float:
+    try:
+        factor = float(PREVIEW_3D_BOX_DEPTH_EXPANSION_FACTOR)
+    except Exception:
+        factor = 2.0
+    return max(1.0e-6, factor)
 
 
 def safe_name(text: str) -> str:
@@ -319,9 +326,10 @@ def compute_sam3_spatial_box(task: dict[str, Any], mask_bool: np.ndarray, depth_
 
     base_camera_min, base_camera_max = _percentile_camera_box(points_camera_unity)
     base_camera_size = base_camera_max - base_camera_min
+    depth_expansion_factor = _preview_depth_expansion_factor()
     expanded_camera_min = base_camera_min.copy()
     expanded_camera_max = base_camera_max.copy()
-    expanded_camera_max[2] = expanded_camera_min[2] + base_camera_size[2] * SPATIAL_BOX_DEPTH_EXPANSION_FACTOR
+    expanded_camera_max[2] = expanded_camera_min[2] + base_camera_size[2] * depth_expansion_factor
 
     expanded_camera_corners = _camera_box_corners(expanded_camera_min, expanded_camera_max)
     expanded_world_corners = (
@@ -350,7 +358,7 @@ def compute_sam3_spatial_box(task: dict[str, Any], mask_bool: np.ndarray, depth_
         "aabb_max_world": [float(v) for v in p_high],
         "center_world": [float(v) for v in center],
         "size_world": [float(v) for v in size],
-        "source": "sam3_mask_aligned_depth_border_cropped_camera_depth_x2",
+        "source": "sam3_mask_aligned_depth_border_cropped_camera_depth_expanded",
         "mask_bbox_xyxy": [int(x0), int(y0), int(x1), int(y1)],
         "mask_pixels": int(np.count_nonzero(mask)),
         "depth_sensor": depth_limits.sensor,
@@ -369,7 +377,8 @@ def compute_sam3_spatial_box(task: dict[str, Any], mask_bool: np.ndarray, depth_
         "depth_border_crop_max_inside_distance_px": float(crop["max_inside_distance_px"]),
         "depth_border_crop_margin_x_px": int(crop["approx_margin_x_px"]),
         "depth_border_crop_margin_y_px": int(crop["approx_margin_y_px"]),
-        "depth_expansion_factor": float(SPATIAL_BOX_DEPTH_EXPANSION_FACTOR),
+        "depth_expansion_factor": float(depth_expansion_factor),
+        "depth_expansion_factor_config": "PREVIEW_3D_BOX_DEPTH_EXPANSION_FACTOR",
         "base_camera_box_min": [float(v) for v in base_camera_min],
         "base_camera_box_max": [float(v) for v in base_camera_max],
         "expanded_camera_box_min": [float(v) for v in expanded_camera_min],

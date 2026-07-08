@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 import json
 import math
-import re
 import shutil
 import sys
 import time
@@ -23,8 +22,9 @@ if str(CODE_ROOT) not in sys.path:
 from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, model_debug_dir, model_result_dir, model_worker_dir
 from coordinate_systems import quat_xyzw_to_rotation_matrix
 from spatial_transforms import (
-    aruco_points_to_shigure_camera,
+    camera_matrix_from_info,
     pixel_depth_to_aruco as spatial_pixel_depth_to_aruco,
+    project_aruco_points_to_shigure_pixels,
 )
 from stages.history_placement_restoration import settings
 from stages.shigure_history.cache import CachedRgbdSample, CachedSampleMetadata, RosStamp, ShigureRgbdCache, load_json, sample_key
@@ -296,53 +296,6 @@ def _sample_depth_m(sample: CachedRgbdSample) -> np.ndarray:
     return _depth_raw_to_m(sample.depth)
 
 
-def _camera_info_message(camera_info: dict[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(camera_info, dict):
-        return {}
-    message = camera_info.get("message")
-    if isinstance(message, dict):
-        merged = dict(message)
-        for key, value in camera_info.items():
-            if key not in merged and key != "message":
-                merged[key] = value
-        return merged
-    return camera_info
-
-
-def _parse_camera_k(raw: Any) -> np.ndarray | None:
-    if raw is None:
-        return None
-    if isinstance(raw, str):
-        values = [float(v) for v in re.findall(r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?", raw)]
-    else:
-        try:
-            values = list(np.asarray(raw, dtype=np.float64).reshape(-1))
-        except Exception:
-            return None
-    if len(values) != 9:
-        return None
-    matrix = np.asarray(values, dtype=np.float64).reshape(3, 3)
-    if not np.isfinite(matrix).all() or matrix[0, 0] == 0 or matrix[1, 1] == 0:
-        return None
-    return matrix
-
-
-def _camera_matrix_from_info(camera_info: dict[str, Any] | None) -> np.ndarray | None:
-    info = _camera_info_message(camera_info)
-    raw = info.get("k") or info.get("K") or info.get("camera_matrix")
-    return _parse_camera_k(raw)
-
-
-def _shape_from_camera_info(camera_info: dict[str, Any] | None) -> tuple[int, int] | None:
-    info = _camera_info_message(camera_info)
-    try:
-        height = int(info.get("height") or 0)
-        width = int(info.get("width") or 0)
-    except Exception:
-        return None
-    return (height, width) if height > 0 and width > 0 else None
-
-
 def _parse_float_array(value: Any, size: int, name: str) -> np.ndarray:
     array = np.asarray(value, dtype=np.float64).reshape(-1)
     if array.size != size:
@@ -467,7 +420,7 @@ def _project_object_center_to_shigure(
     camera_info: dict[str, Any] | None,
     image_shape: tuple[int, int],
 ) -> tuple[ObjectCenterProjection | None, dict[str, Any]]:
-    camera_matrix = _camera_matrix_from_info(camera_info)
+    camera_matrix = camera_matrix_from_info(camera_info)
     if camera_matrix is None:
         return None, {"source": "model_center_projection", "reason": "camera_matrix_missing"}
     center_aruco, center_source = _object_center_aruco(task)
@@ -477,22 +430,22 @@ def _project_object_center_to_shigure(
     if marker_pose is None:
         return None, {"source": "model_center_projection", "reason": "marker_pose_missing"}
     marker_rotation, marker_translation, marker_path = marker_pose
-    center_camera = aruco_points_to_shigure_camera(
+    center_camera_points, center_pixels, center_visible = project_aruco_points_to_shigure_pixels(
         center_aruco.reshape(1, 3),
         marker_rotation,
         marker_translation,
-    ).reshape(3)
+        camera_matrix,
+    )
+    center_camera = center_camera_points.reshape(3)
     z = float(center_camera[2])
-    if not np.isfinite(z) or z <= 0.0:
+    if not bool(center_visible[0]) or not np.isfinite(center_pixels[0]).all():
         return None, {
             "source": "model_center_projection",
             "reason": "projected_center_behind_camera",
             "camera_xyz_m": center_camera.tolist(),
         }
-    fx, fy = float(camera_matrix[0, 0]), float(camera_matrix[1, 1])
-    cx, cy = float(camera_matrix[0, 2]), float(camera_matrix[1, 2])
-    x = fx * float(center_camera[0]) / z + cx
-    y = fy * float(center_camera[1]) / z + cy
+    x = float(center_pixels[0, 0])
+    y = float(center_pixels[0, 1])
     h, w = image_shape
     info = {
         "source": "model_center_projection",
@@ -525,7 +478,7 @@ def _pixel_depth_to_aruco(
 ) -> tuple[float, float, float] | None:
     if depth_m is None or not np.isfinite(depth_m) or depth_m <= 0:
         return None
-    camera_matrix = _camera_matrix_from_info(camera_info)
+    camera_matrix = camera_matrix_from_info(camera_info)
     marker_pose = _load_marker_pose_cv()
     if camera_matrix is None or marker_pose is None:
         return None
@@ -643,7 +596,7 @@ def _model_bbox_size_signature(task: dict[str, Any]) -> dict[str, Any]:
 def _pointcloud_size_features(sample: CachedRgbdSample | None, mask: np.ndarray) -> dict[str, Any]:
     if sample is None or sample.depth.shape[:2] != mask.shape:
         return {"point_bbox_status": "sample_unavailable"}
-    camera_matrix = _camera_matrix_from_info(sample.camera_info)
+    camera_matrix = camera_matrix_from_info(sample.camera_info)
     if camera_matrix is None:
         return {"point_bbox_status": "camera_matrix_missing"}
     depth = _sample_depth_m(sample)
@@ -1188,10 +1141,17 @@ def _restore_baseline_from_taken_detection(
     payload, payload_source = _taken_detection_payload(task)
     if not isinstance(payload, dict):
         return None, {"reason": "taken_detection_payload_missing", "payload_source": payload_source}
+
     init = payload.get("init") if isinstance(payload.get("init"), dict) else {}
     explicit_history_baseline = payload.get("history_baseline") if isinstance(payload.get("history_baseline"), dict) else None
     if explicit_history_baseline is None and isinstance(init.get("history_baseline"), dict):
         explicit_history_baseline = init.get("history_baseline")
+    if not isinstance(explicit_history_baseline, dict):
+        return None, {
+            "reason": "taken_detection_history_baseline_missing",
+            "payload_source": payload_source,
+        }
+
     yolo_tracking = payload.get("yolo_tracking") if isinstance(payload.get("yolo_tracking"), dict) else {}
     backup_dir = _resolve_artifact_path(
         payload.get("init_backup_shigurei_dir")
@@ -1199,141 +1159,65 @@ def _restore_baseline_from_taken_detection(
         or init.get("backup_shigurei_dir")
         or yolo_tracking.get("init_backup_shigurei_dir")
     )
-    if backup_dir is None:
-        return None, {"reason": "taken_init_backup_missing", "payload_source": payload_source}
-    sample = _load_backup_sample(backup_dir)
-    if sample is None or not isinstance(sample.yolo, dict):
-        return None, {"reason": "taken_init_backup_unreadable", "payload_source": payload_source, "backup_dir": str(backup_dir)}
-
-    shape = sample.depth.shape[:2]
-    sample_metadata = CachedSampleMetadata(
-        stamp=sample.stamp,
-        camera_info_path=sample.camera_info_path,
-        camera_info=sample.camera_info,
-        yolo_path=sample.yolo_path,
-        yolo_hash=sample.yolo_hash,
-        chunk_id=sample.chunk_id,
-        frame_index=sample.frame_index,
-    )
-    event = YoloEvent(sample=sample_metadata, payload=sample.yolo)
     init_obs = init.get("selected_observation") if isinstance(init.get("selected_observation"), dict) else {}
-    target_object_id = str(
-        init_obs.get("object_id")
-        or init.get("target_object_id")
-        or yolo_tracking.get("tracked_object_id")
-        or ""
-    ).strip()
-    if not target_object_id:
-        return None, {"reason": "taken_init_object_id_missing", "payload_source": payload_source, "backup_dir": str(backup_dir)}
-
-    all_observations: list[YoloObjectObservation] = []
-    selected_obs: YoloObjectObservation | None = None
-    needed_object_ids = set(_tracking_region_ids())
-    needed_object_ids.add(target_object_id)
-    skipped_object_count = 0
-    for obj in sample.yolo.get("objects") or []:
-        if not isinstance(obj, dict):
-            continue
-        object_id = str(obj.get("object_id"))
-        if object_id not in needed_object_ids:
-            skipped_object_count += 1
-            continue
-        obs = _observation_from_object(cache, event, obj, shape, sample=sample)
-        if obs is None:
-            continue
-        all_observations.append(obs)
-        if obs.object_id == target_object_id:
-            selected_obs = obs
-    if selected_obs is None:
-        return None, {
-            "reason": "taken_init_object_not_found_in_yolo_backup",
-            "payload_source": payload_source,
-            "backup_dir": str(backup_dir),
-            "target_object_id": target_object_id,
-            "observation_count": len(all_observations),
-            "skipped_object_count": skipped_object_count,
-        }
-
-    debug_files = payload.get("debug_files") if isinstance(payload.get("debug_files"), dict) else {}
-    init_debug_files = init.get("debug_files") if isinstance(init.get("debug_files"), dict) else {}
-    yolo_debug_files = yolo_tracking.get("debug_files") if isinstance(yolo_tracking.get("debug_files"), dict) else {}
-    trusted_mask_path = _resolve_artifact_path(
-        debug_files.get("init_trusted_shigure_mask_path")
-        or init_debug_files.get("init_trusted_shigure_mask_path")
-        or yolo_debug_files.get("init_trusted_shigure_mask_path")
-    )
-    trusted_mask = None
-    if trusted_mask_path is not None and trusted_mask_path.is_file():
-        raw_mask = cv2.imread(str(trusted_mask_path), cv2.IMREAD_GRAYSCALE)
-        if raw_mask is not None:
-            trusted_mask = raw_mask > 0
-    selected_obs = _with_trusted_mask(selected_obs, sample, trusted_mask)
-
-    reference_depth_path = _resolve_artifact_path(
-        debug_files.get("init_reference_depth_m_path")
-        or init_debug_files.get("init_reference_depth_m_path")
-        or yolo_debug_files.get("init_reference_depth_m_path")
-    )
-    baseline_mask_path = trusted_mask_path if trusted_mask_path is not None and trusted_mask_path.is_file() else None
-    array_files: dict[str, str]
-    if baseline_mask_path is not None and reference_depth_path is not None and reference_depth_path.is_file():
-        array_files = {
-            "baseline_mask_path": str(baseline_mask_path),
-            "baseline_reference_depth_m_path": str(reference_depth_path),
-        }
-    else:
-        array_files = _save_baseline_arrays(str(task.get("task_timestamp") or "").strip(), selected_obs, sample)
-
-    tracking_region_reference = _build_tracking_search_region(
-        cache,
-        [event],
-        shape,
-        reference_region=None,
-        observations=all_observations,
-    )
-    reference_signature = dict(selected_obs.signature)
-    reference_signature.update(_model_bbox_size_signature(task))
     projection = payload.get("projection") if isinstance(payload.get("projection"), dict) else init.get("projection") if isinstance(init.get("projection"), dict) else {}
     match = init.get("candidate_match") if isinstance(init.get("candidate_match"), dict) else {}
-    history_baseline = explicit_history_baseline or {
-        "source": "taken_detection_init_recovered",
-        "coordinate_space": "fixed_shigure_image",
-        "old_rgb_path": str(backup_dir / "rgb.png"),
-        "old_depth_path": str(backup_dir / "depth.png"),
-        "old_mask_path": str(array_files.get("baseline_mask_path") or ""),
-        "old_reference_depth_m_path": str(array_files.get("baseline_reference_depth_m_path") or ""),
-        "camera_info_path": str(backup_dir / "camera_info.json"),
-    }
+
     baseline = {
         "status": "ready",
         "created_at": _utc_now(),
-        "source": "taken_detection_init",
-        "history_baseline": history_baseline,
+        "source": "taken_detection_history_baseline",
+        "history_baseline": explicit_history_baseline,
         "source_payload": payload_source,
         "capture_seconds": float(capture_seconds),
-        "reference_observation": selected_obs.to_dict(),
-        "reference_signature": reference_signature,
+        "reference_observation": init_obs or None,
+        "reference_signature": _model_bbox_size_signature(task),
         "projection": projection,
         "match": match,
         "baseline_visibility": {
-            "reason": "taken_detection_yolo_init",
-            "seconds_from_capture": float(selected_obs.seconds - capture_seconds),
+            "reason": "taken_detection_history_baseline",
             "partial_initialization": False,
-            "valid_mask_pixels": int(selected_obs.mask_pixels),
         },
-        "tracking_search_region_reference": tracking_region_reference,
-        "baseline_backup_dir": str(backup_dir),
-        **array_files,
+        "tracking_search_region_reference": {
+            "source": "fixed_shigure_direct_compare",
+            "is_unrestricted": False,
+            "valid": True,
+            "reason": "direct_old_mask_only",
+        },
     }
+    if backup_dir is not None:
+        baseline["baseline_backup_dir"] = str(backup_dir)
+
+    old_rgb, old_depth, old_mask, asset_info = _load_direct_baseline_assets(baseline)
+    if old_rgb is None or old_depth is None or old_mask is None:
+        return None, {
+            "reason": "taken_detection_history_baseline_assets_missing",
+            "payload_source": payload_source,
+            "baseline_assets": asset_info,
+        }
+    if old_rgb.shape[:2] != old_mask.shape or old_depth.shape[:2] != old_mask.shape:
+        return None, {
+            "reason": "taken_detection_history_baseline_shape_mismatch",
+            "payload_source": payload_source,
+            "baseline_assets": asset_info,
+            "old_rgb_shape": list(old_rgb.shape[:2]),
+            "old_depth_shape": list(old_depth.shape[:2]),
+            "old_mask_shape": list(old_mask.shape),
+        }
+    valid_mask_pixels = int(np.count_nonzero(old_mask))
+    if valid_mask_pixels <= 0:
+        return None, {
+            "reason": "taken_detection_history_baseline_empty_mask",
+            "payload_source": payload_source,
+            "baseline_assets": asset_info,
+        }
+    baseline["baseline_visibility"]["valid_mask_pixels"] = valid_mask_pixels
     return baseline, {
-        "reason": "baseline_reused_taken_detection_init",
+        "reason": "baseline_reused_taken_detection_history_baseline",
         "payload_source": payload_source,
-        "backup_dir": str(backup_dir),
-        "target_object_id": target_object_id,
-        "observation_count": len(all_observations),
-        "skipped_object_count": skipped_object_count,
-        "trusted_mask_path": str(trusted_mask_path) if trusted_mask_path is not None else None,
-        "reference_depth_path": str(reference_depth_path) if reference_depth_path is not None else None,
+        "backup_dir": str(backup_dir) if backup_dir is not None else None,
+        "baseline_assets": asset_info,
+        "valid_mask_pixels": valid_mask_pixels,
         "baseline": baseline,
     }
 
@@ -1359,125 +1243,11 @@ def _establish_baseline(
         timing["backup_dir"] = restored_info.get("backup_dir")
     if restored_baseline is not None:
         return restored_baseline, restored_info
-
-    start = _stamp_from_seconds(capture_seconds)
-    end = _stamp_from_seconds(capture_seconds + max(0.0, settings.BASELINE_POST_CAPTURE_SECONDS))
-    with _timing_span(
-        timings,
-        "baseline_metadata_scan",
-        {"start_stamp": start.to_dict(), "end_stamp": end.to_dict()},
-    ) as timing:
-        metadata = list(cache.iter_sample_metadata(start=start, end=end))
-        timing["metadata_frame_count"] = len(metadata)
-    if not metadata:
-        return None, {"reason": "no_shigure_frames_for_baseline", "metadata_frame_count": 0}
-
-    with _timing_span(timings, "baseline_first_sample_load", {"stamp": metadata[0].stamp.to_dict()}) as timing:
-        first_sample = cache.get_sample(metadata[0].stamp, mode="nearest")
-        timing["sample_available"] = first_sample is not None
-    if first_sample is None:
-        return None, {"reason": "baseline_first_sample_unavailable"}
-
-    with _timing_span(timings, "baseline_yolo_payload_load", {"metadata_frame_count": len(metadata)}) as timing:
-        yolo_events = _yolo_events_from_metadata(metadata)
-        timing["yolo_event_count"] = len(yolo_events)
-    if not yolo_events:
-        return None, {"reason": "no_yolo_payload_for_baseline", "metadata_frame_count": len(metadata)}
-
-    attempts: list[dict[str, Any]] = []
-    selected_obs: YoloObjectObservation | None = None
-    selected_projection_info: dict[str, Any] | None = None
-    selected_match_info: dict[str, Any] | None = None
-    selected_sample: CachedRgbdSample | None = None
-
-    with _timing_span(timings, "baseline_yolo_target_search", {"yolo_event_count": len(yolo_events)}) as timing:
-        for event in sorted(yolo_events, key=lambda item: abs(float(item.seconds) - float(capture_seconds))):
-            paired_sample = cache.get_sample(event.sample.stamp, mode="nearest")
-            if paired_sample is None:
-                attempts.append({"event_stamp": event.sample.stamp.to_dict(), "reason": "paired_sample_unavailable"})
-                continue
-            shape = paired_sample.depth.shape[:2]
-            projection, projection_info = _project_object_center_to_shigure(task, paired_sample.camera_info or event.sample.camera_info, shape)
-            if projection is None:
-                attempts.append({"event_stamp": event.sample.stamp.to_dict(), "reason": "projection_failed", "projection": projection_info})
-                continue
-            matched_obs, match_info = _find_yolo_target(cache, [event], projection, shape)
-            attempts.append(
-                {
-                    "event_stamp": event.sample.stamp.to_dict(),
-                    "seconds_from_capture": float(event.seconds - capture_seconds),
-                    "match": match_info,
-                }
-            )
-            if matched_obs is None:
-                continue
-            selected_obs = matched_obs
-            selected_projection_info = projection_info
-            selected_match_info = match_info
-            selected_sample = paired_sample
-            break
-        timing["attempt_count"] = len(attempts)
-        timing["selected"] = selected_obs is not None
-        if selected_obs is not None:
-            timing["selected_object_id"] = selected_obs.object_id
-            timing["selected_stamp"] = selected_obs.stamp.to_dict()
-
-    if selected_obs is None or selected_sample is None:
-        return None, {
-            "reason": "baseline_yolo_match_failed",
-            "metadata_frame_count": len(metadata),
-            "yolo_event_count": len(yolo_events),
-            "attempts": attempts[:10],
-        }
-
-    with _timing_span(timings, "baseline_backup_write", {"stamp": selected_sample.stamp.to_dict()}) as timing:
-        backup_dir = _save_sample_backup(task, selected_sample, output_dir, kind="baseline")
-        timing["backup_dir"] = str(backup_dir)
-    with _timing_span(timings, "baseline_array_write", {"object_id": selected_obs.object_id}) as timing:
-        array_files = _save_baseline_arrays(str(task.get("task_timestamp") or "").strip(), selected_obs, selected_sample)
-        timing.update(array_files)
-    with _timing_span(timings, "baseline_tracking_region_build", {"object_id": selected_obs.object_id}) as timing:
-        tracking_region_reference = _build_tracking_search_region(
-            cache,
-            [selected_obs.event],
-            selected_sample.depth.shape[:2],
-            reference_region=None,
-        )
-        timing["source"] = tracking_region_reference.get("source")
-        timing["is_unrestricted"] = bool(tracking_region_reference.get("is_unrestricted"))
-        timing["valid"] = bool(tracking_region_reference.get("valid", True))
-        timing["reason"] = tracking_region_reference.get("reason")
-    reference_signature = dict(selected_obs.signature)
-    reference_signature.update(_model_bbox_size_signature(task))
-    history_baseline = {
-        "source": "history_baseline_established_from_shigure_object_mask",
-        "coordinate_space": "fixed_shigure_image",
-        "old_rgb_path": str(backup_dir / "rgb.png"),
-        "old_depth_path": str(backup_dir / "depth.png"),
-        "old_mask_path": str(array_files.get("baseline_mask_path") or ""),
-        "old_reference_depth_m_path": str(array_files.get("baseline_reference_depth_m_path") or ""),
-        "camera_info_path": str(backup_dir / "camera_info.json"),
+    return None, {
+        "reason": "taken_detection_history_baseline_required",
+        "restore_attempt": restored_info,
+        "legacy_yolo_baseline_disabled": True,
     }
-    baseline = {
-        "status": "ready",
-        "created_at": _utc_now(),
-        "history_baseline": history_baseline,
-        "capture_seconds": float(capture_seconds),
-        "reference_observation": selected_obs.to_dict(),
-        "reference_signature": reference_signature,
-        "projection": selected_projection_info or {},
-        "match": selected_match_info or {},
-        "baseline_visibility": {
-            "reason": "nearest_unoccluded_candidate",
-            "seconds_from_capture": float(selected_obs.seconds - capture_seconds),
-            "partial_initialization": False,
-            "valid_mask_pixels": int(selected_obs.mask_pixels),
-        },
-        "tracking_search_region_reference": tracking_region_reference,
-        "baseline_backup_dir": str(backup_dir),
-        **array_files,
-    }
-    return baseline, {"reason": "baseline_ready", "baseline": baseline, "attempts": attempts[:10]}
 
 
 def _polyhedron_pose(position: list[float] | None, task: dict[str, Any]) -> dict[str, Any] | None:

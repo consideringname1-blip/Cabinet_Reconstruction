@@ -309,6 +309,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         item.TakenRgbUrl = ReadTakenEvidenceImageUrl(result);
         item.BodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url");
         item.BodyModelKey = "body:" + itemKey;
+        item.BodyRootHololensPose = ReadNestedJObject(result, "sam3d_body_mesh", "selected_person_pose_hololens");
 
         ResolveRuntimeModelManager();
         if (TryReadFallbackPolyhedronPose(result, out Vector3 anchorPosition, out Quaternion anchorRotation))
@@ -444,6 +445,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             TakenRgbUrl = ReadTakenEvidenceImageUrl(result),
             BodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url"),
             BodyModelKey = "body:" + itemKey,
+            BodyRootHololensPose = ReadNestedJObject(result, "sam3d_body_mesh", "selected_person_pose_hololens"),
             HasEvidenceAnchor = true,
             EvidenceAnchorPosition = polyWorldPosition,
             EvidenceAnchorRotation = polyWorldRotation,
@@ -473,19 +475,19 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
     private string FallbackShapeForStatus(string status)
     {
         string normalized = (status ?? "").ToUpperInvariant();
-        if (normalized == "MOVED")
-        {
-            return "cube";
-        }
-        if (normalized == "MISSING" || normalized == "TAKEN")
+        if (normalized == "OCCLUDED_REUSE_LAST" || normalized == "OCCLUDED")
         {
             return "tetrahedron";
         }
-        if (normalized == "STABLE")
+        if (normalized == "MOVED" || normalized == "MISSING" || normalized == "TAKEN")
+        {
+            return "cube";
+        }
+        if (normalized == "ORIGINAL" || normalized == "STABLE")
         {
             return "octahedron";
         }
-        return "icosahedron";
+        return "dodecahedron";
     }
 
     private bool TryReadFallbackPolyhedronPose(
@@ -990,7 +992,10 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
 
     private JObject BuildBodyRootHololensPose(HistoryPlacementRestorationItem item)
     {
-        // The selected body mesh is treated as already expressed in Unity/HoloLens axes.
+        if (item != null && item.BodyRootHololensPose != null)
+        {
+            return (JObject)item.BodyRootHololensPose.DeepClone();
+        }
         return new JObject
         {
             ["position"] = new JArray(0.0f, 0.0f, 0.0f),
@@ -1063,6 +1068,13 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
     {
         JObject obj = payload != null ? payload[objectKey] as JObject : null;
         return obj != null ? obj[valueKey]?.ToString() ?? "" : "";
+    }
+
+    private static JObject ReadNestedJObject(JObject payload, string objectKey, string valueKey)
+    {
+        JObject obj = payload != null ? payload[objectKey] as JObject : null;
+        JObject value = obj != null ? obj[valueKey] as JObject : null;
+        return value != null ? (JObject)value.DeepClone() : null;
     }
 
     private static string ReadTakenEvidenceImageUrl(JObject result)
@@ -1546,6 +1558,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         public string TakenRgbUrl = "";
         public string BodyFbxUrl = "";
         public string BodyModelKey = "";
+        public JObject BodyRootHololensPose;
         public bool HasEvidenceAnchor;
         public Vector3 EvidenceAnchorPosition;
         public Quaternion EvidenceAnchorRotation = Quaternion.identity;

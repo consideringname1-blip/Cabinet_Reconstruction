@@ -883,7 +883,11 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         'selected_person_name': selected_name,
         'selected_person_fbx_path': str(fbx_path),
         'selected_person_fbx_folder': 'model_result',
-        'selected_person_pose_armarker': np.eye(4, dtype=float).tolist(),
+        'selected_person_pose_aruco': {
+            'position': [0.0, 0.0, 0.0],
+            'rotation_quaternion_xyzw': [0.0, 0.0, 0.0, 1.0],
+            'scale': [1.0, 1.0, 1.0],
+        },
         'selected_person_obj_path': str(obj_path),
         'selected_person_camera_mesh_npz_path': selected_camera_mesh_npz_path,
         'selected_person_bbox_xyxy': selected_body_bbox,
@@ -892,7 +896,7 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         'subject_crop': subject_crop_info,
         'material_color': settings.MATERIAL_COLOR,
         'material_alpha': settings.MATERIAL_ALPHA,
-        'coordinate_space': 'armarker',
+        'coordinate_space': 'aruco',
         'camera_to_armarker_basis': 'spatial_transforms.shigure_camera_points_to_aruco',
         'camera_to_armarker_source': str(marker_pose_path),
         'people_json_path': str(people_json_path),
@@ -912,7 +916,7 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         'subject_crop_path': subject_crop_path,
         'people_json_path': str(people_json_path),
         'backup_shigurei_dir': backup_dir,
-        'coordinate_space': 'armarker',
+        'coordinate_space': 'aruco',
     })
     _write_status(json_path, task, 'SUCCESS', **payload)
     return {'status': 'SUCCESS', 'selected_person_name': selected_name, 'selected_person_fbx_path': str(fbx_path), 'subject_crop_path': subject_crop_path}

@@ -4,7 +4,6 @@ import base64
 import json
 import math
 import os
-import re
 import shutil
 import sys
 from dataclasses import dataclass
@@ -23,7 +22,14 @@ if str(CODE_ROOT) not in sys.path:
 
 from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, model_debug_dir, model_result_file, model_worker_dir, model_worker_file
 from coordinate_systems import quat_xyzw_to_rotation_matrix
-from spatial_transforms import aruco_points_to_shigure_camera, hololens_point_to_aruco
+from spatial_transforms import (
+    aruco_points_to_shigure_camera,
+    camera_info_image_shape,
+    camera_matrix_from_info,
+    hololens_point_to_aruco,
+    project_aruco_points_to_shigure_pixels,
+    project_camera_points_to_pixels,
+)
 from stages.shigure_history.cache import CachedRgbdSample, CachedSampleMetadata, RosStamp, ShigureRgbdCache, load_json, sample_key
 from stages.shigure_history.marker_history import latest_marker_pose_path
 from task_json import load_task_json, resolve_task_json_path, save_task_json
@@ -276,70 +282,11 @@ def _mask_from_image(path: Path, shape: tuple[int, int]) -> np.ndarray:
     return _resize_mask(mask, shape)
 
 
-def _selection_box_mask(task: Mapping[str, Any], shape: tuple[int, int]) -> np.ndarray | None:
-    if not settings.ALLOW_SELECTION_BOX_MASK_FALLBACK:
-        return None
-    box = task.get('SelectionBox') if isinstance(task.get('SelectionBox'), Mapping) else None
-    if not box:
-        return None
-    top_left = box.get('top_left')
-    bottom_right = box.get('bottom_right')
-    if not (isinstance(top_left, list) and isinstance(bottom_right, list) and len(top_left) == 2 and len(bottom_right) == 2):
-        return None
-    h, w = shape
-    x0 = int(max(0, min(w - 1, math.floor(float(top_left[0]) * w))))
-    y0 = int(max(0, min(h - 1, math.floor(float(top_left[1]) * h))))
-    x1 = int(max(0, min(w, math.ceil(float(bottom_right[0]) * w))))
-    y1 = int(max(0, min(h, math.ceil(float(bottom_right[1]) * h))))
-    if x1 <= x0 or y1 <= y0:
-        return None
-    mask = np.zeros(shape, dtype=bool)
-    mask[y0:y1, x0:x1] = True
-    return mask
-
-
 def _parse_float_array(value: Any, size: int, name: str) -> np.ndarray:
     array = np.asarray(value, dtype=np.float64).reshape(-1)
     if array.size != size:
         raise ValueError(f'{name} expected {size} values, got {array.size}')
     return array
-
-
-def _camera_info_message(camera_info: Mapping[str, Any] | None) -> Mapping[str, Any]:
-    if not isinstance(camera_info, Mapping):
-        return {}
-    message = camera_info.get('message')
-    if isinstance(message, Mapping):
-        merged = dict(message)
-        for key, value in camera_info.items():
-            if key != 'message' and key not in merged:
-                merged[key] = value
-        return merged
-    return camera_info
-
-
-def _parse_camera_k(raw: Any) -> np.ndarray | None:
-    if raw is None:
-        return None
-    if isinstance(raw, str):
-        values = [float(v) for v in re.findall(r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?", raw)]
-    else:
-        try:
-            values = list(np.asarray(raw, dtype=np.float64).reshape(-1))
-        except Exception:
-            return None
-    if len(values) != 9:
-        return None
-    matrix = np.asarray(values, dtype=np.float64).reshape(3, 3)
-    if not np.isfinite(matrix).all() or matrix[0, 0] == 0 or matrix[1, 1] == 0:
-        return None
-    return matrix
-
-
-def _camera_matrix_from_info(camera_info: Mapping[str, Any] | None) -> np.ndarray | None:
-    info = _camera_info_message(camera_info)
-    raw = info.get('k') or info.get('K') or info.get('camera_matrix')
-    return _parse_camera_k(raw)
 
 
 def _load_marker_pose_cv() -> tuple[np.ndarray, np.ndarray, Path] | None:
@@ -382,7 +329,7 @@ def _object_center_aruco(task: Mapping[str, Any]) -> tuple[np.ndarray | None, st
 
 
 def _project_object_center_to_shigure(task: Mapping[str, Any], camera_info: Mapping[str, Any] | None, image_shape: tuple[int, int]) -> tuple[ObjectCenterProjection | None, dict[str, Any]]:
-    camera_matrix = _camera_matrix_from_info(camera_info)
+    camera_matrix = camera_matrix_from_info(camera_info)
     if camera_matrix is None:
         return None, {'source': 'model_center_projection', 'reason': 'camera_matrix_missing'}
     center_aruco, center_source = _object_center_aruco(task)
@@ -392,22 +339,22 @@ def _project_object_center_to_shigure(task: Mapping[str, Any], camera_info: Mapp
     if marker_pose is None:
         return None, {'source': 'model_center_projection', 'reason': 'marker_pose_missing'}
     marker_rotation, marker_translation, marker_path = marker_pose
-    center_camera = aruco_points_to_shigure_camera(
+    center_camera_points, center_pixels, center_visible = project_aruco_points_to_shigure_pixels(
         center_aruco.reshape(1, 3),
         marker_rotation,
         marker_translation,
-    ).reshape(3)
+        camera_matrix,
+    )
+    center_camera = center_camera_points.reshape(3)
     z = float(center_camera[2])
-    if not np.isfinite(z) or z <= 0.0:
+    if not bool(center_visible[0]) or not np.isfinite(center_pixels[0]).all():
         return None, {
             'source': 'model_center_projection',
             'reason': 'projected_center_behind_camera',
             'camera_xyz_m': center_camera.tolist(),
         }
-    fx, fy = float(camera_matrix[0, 0]), float(camera_matrix[1, 1])
-    cx, cy = float(camera_matrix[0, 2]), float(camera_matrix[1, 2])
-    x = fx * float(center_camera[0]) / z + cx
-    y = fy * float(center_camera[1]) / z + cy
+    x = float(center_pixels[0, 0])
+    y = float(center_pixels[0, 1])
     h, w = image_shape
     info = {
         'source': 'model_center_projection',
@@ -690,21 +637,15 @@ def _camera_points_to_image_polyline(points_camera: np.ndarray, camera_matrix: n
     points = np.asarray(points_camera, dtype=np.float64).reshape(-1, 3)
     if points.size == 0:
         return []
-    fx, fy = float(camera_matrix[0, 0]), float(camera_matrix[1, 1])
-    cx, cy = float(camera_matrix[0, 2]), float(camera_matrix[1, 2])
+    pixels, visible = project_camera_points_to_pixels(points, camera_matrix)
     h, w = image_shape
     polyline: list[list[int]] = []
     last: tuple[int, int] | None = None
-    for point in points:
-        z = float(point[2])
-        if not np.isfinite(z) or z <= 1.0e-6:
+    for pixel, is_visible in zip(pixels, visible):
+        if not bool(is_visible) or not np.isfinite(pixel).all():
             continue
-        x = fx * float(point[0]) / z + cx
-        y = fy * float(point[1]) / z + cy
-        if not np.isfinite(x) or not np.isfinite(y):
-            continue
-        ix = int(round(x))
-        iy = int(round(y))
+        ix = int(round(float(pixel[0])))
+        iy = int(round(float(pixel[1])))
         if ix < 0 or iy < 0 or ix >= w or iy >= h:
             continue
         current = (ix, iy)
@@ -814,7 +755,7 @@ def _ray_mask_from_projection(projection: Mapping[str, Any], shape: tuple[int, i
 
 
 def _project_model_box_to_shigure(task: Mapping[str, Any], camera_info: Mapping[str, Any] | None, image_shape: tuple[int, int]) -> tuple[np.ndarray | None, dict[str, Any]]:
-    camera_matrix = _camera_matrix_from_info(camera_info)
+    camera_matrix = camera_matrix_from_info(camera_info)
     if camera_matrix is None:
         return None, {'source': 'model_box_projection', 'reason': 'camera_matrix_missing'}
     marker_pose = _load_marker_pose_cv()
@@ -828,12 +769,12 @@ def _project_model_box_to_shigure(task: Mapping[str, Any], camera_info: Mapping[
         return None, {'source': 'model_box_projection', 'reason': center_source, 'corners': corners_info}
 
     marker_rotation, marker_translation, marker_path = marker_pose
-    points_camera = aruco_points_to_shigure_camera(
+    points_camera, pixels, visible = project_aruco_points_to_shigure_pixels(
         corners_aruco.reshape(-1, 3),
         marker_rotation,
         marker_translation,
+        camera_matrix,
     )
-    visible = points_camera[:, 2] > 1e-6
     if not np.any(visible):
         return None, {
             'source': 'model_box_projection',
@@ -841,11 +782,10 @@ def _project_model_box_to_shigure(task: Mapping[str, Any], camera_info: Mapping[
             'camera_xyz_m': points_camera.astype(float).tolist(),
         }
 
-    fx, fy = float(camera_matrix[0, 0]), float(camera_matrix[1, 1])
-    cx, cy = float(camera_matrix[0, 2]), float(camera_matrix[1, 2])
     visible_points = points_camera[visible]
-    pixels_x = fx * visible_points[:, 0] / visible_points[:, 2] + cx
-    pixels_y = fy * visible_points[:, 1] / visible_points[:, 2] + cy
+    visible_pixels = pixels[visible]
+    pixels_x = visible_pixels[:, 0]
+    pixels_y = visible_pixels[:, 1]
     h, w = image_shape
     if pixels_x.size == 0 or pixels_y.size == 0:
         return None, {'source': 'model_box_projection', 'reason': 'no_projected_box_pixels'}
@@ -866,18 +806,17 @@ def _project_model_box_to_shigure(task: Mapping[str, Any], camera_info: Mapping[
             'image_shape': [h, w],
         }
 
-    center_camera = aruco_points_to_shigure_camera(
+    center_camera_points, center_pixels, center_visible = project_aruco_points_to_shigure_pixels(
         center_aruco.reshape(1, 3),
         marker_rotation,
         marker_translation,
-    ).reshape(3)
+        camera_matrix,
+    )
+    center_camera = center_camera_points.reshape(3)
     center_z = float(center_camera[2])
     center_pixel = None
-    if np.isfinite(center_z) and center_z > 1e-6:
-        center_pixel = [
-            float(fx * float(center_camera[0]) / center_z + cx),
-            float(fy * float(center_camera[1]) / center_z + cy),
-        ]
+    if bool(center_visible[0]) and np.isfinite(center_pixels[0]).all():
+        center_pixel = [float(center_pixels[0, 0]), float(center_pixels[0, 1])]
     projected_mask = np.zeros((h, w), dtype=bool)
     ray_selection = _build_hololens_center_ray_selection(
         task,
@@ -1224,10 +1163,7 @@ def _init_model_box_primary(cache: ShigureRgbdCache, task: Mapping[str, Any], me
     first_sample = cache.get_sample(first_after.stamp, mode='nearest')
     if first_sample is None:
         return None, {'mode': 'model_box_yolo_mask_init', 'reason': 'first_frame_unavailable'}
-    info = _camera_info_message(first_after.camera_info or first_sample.camera_info)
-    h = int(info.get('height') or 0) if info else 0
-    w = int(info.get('width') or 0) if info else 0
-    shape = (h, w) if h > 0 and w > 0 else first_sample.depth.shape[:2]
+    shape = camera_info_image_shape(first_after.camera_info or first_sample.camera_info) or first_sample.depth.shape[:2]
     projected_mask, projection = _project_model_box_to_shigure(task, first_after.camera_info or first_sample.camera_info, shape)
     init_info: dict[str, Any] = {
         'mode': 'model_box_yolo_mask_init',
@@ -1296,75 +1232,6 @@ def _init_model_box_primary(cache: ShigureRgbdCache, task: Mapping[str, Any], me
         last = checked[-1]
         reason = str((last.get('candidate_match') or last.get('visibility') or {}).get('reason') or reason)
     return None, {**init_info, 'reason': reason, 'checked_init_frames': checked[:25]}
-
-def _init_yolo_primary(cache: ShigureRgbdCache, task: Mapping[str, Any], metadata: list[CachedSampleMetadata], first_after: CachedSampleMetadata, capture_seconds: float) -> tuple[YoloInitResult | None, dict[str, Any]]:
-    shape = None
-    if first_after.camera_info:
-        info = _camera_info_message(first_after.camera_info)
-        h = int(info.get('height') or 0)
-        w = int(info.get('width') or 0)
-        if h > 0 and w > 0:
-            shape = (h, w)
-    first_sample = cache.get_sample(first_after.stamp, mode='nearest')
-    if first_sample is None:
-        return None, {'reason': 'first_frame_unavailable'}
-    if shape is None:
-        shape = first_sample.depth.shape[:2]
-    projection, projection_info = _project_object_center_to_shigure(task, first_after.camera_info or first_sample.camera_info, shape)
-    if projection is None:
-        return None, {'reason': 'projection_failed', 'projection': projection_info}
-    unique_events = _unique_yolo_events(metadata)
-    pre_events = [event for event in unique_events if event.seconds < capture_seconds]
-    pre_events = pre_events[-max(0, settings.YOLO_PRE_CAPTURE_UNIQUE_COUNT):]
-    post_deadline = capture_seconds + settings.YOLO_INIT_HARD_TIMEOUT_SECONDS
-    post_events = [event for event in unique_events if capture_seconds <= event.seconds <= post_deadline]
-    match_events = pre_events + post_events
-    target_id, match_info = _find_yolo_target(cache, match_events, projection, shape)
-    init_info: dict[str, Any] = {
-        'mode': 'yolo_primary',
-        'projection': projection_info,
-        'unique_yolo_count': len(unique_events),
-        'pre_capture_unique_count': len(pre_events),
-        'post_capture_unique_count': len(post_events),
-        'match': match_info,
-    }
-    if target_id is None:
-        return None, {**init_info, 'reason': 'yolo_target_match_failed'}
-    post_observations = _collect_target_observations(cache, post_events, target_id, shape)
-    stable, stable_stats = _stable_observation_prefix(post_observations, minimum_count=max(1, settings.YOLO_INIT_STABLE_UNIQUE_COUNT))
-    init_info['target_object_id'] = target_id
-    init_info['stable'] = stable_stats
-    init_info['post_observations'] = [obs.to_dict() for obs in post_observations]
-    if not stable:
-        return None, {**init_info, 'reason': stable_stats.get('reason', 'yolo_not_stable')}
-    init_obs = stable[0]
-    init_sample = cache.get_sample(init_obs.stamp, mode='nearest')
-    if init_sample is None:
-        return None, {**init_info, 'reason': 'init_sample_unavailable'}
-    trusted, reference_depth, depth_stats = _build_reference_from_yolo_mask(init_sample, init_obs.mask)
-    init_info['depth_init'] = depth_stats
-    if trusted is None or reference_depth is None:
-        return None, {**init_info, 'reason': depth_stats.get('reason')}
-    init_stats = {
-        **init_info,
-        'reason': 'initialized',
-        'init_frame_count': len(stable),
-        'init_start_stamp': stable[0].stamp.to_dict(),
-        'init_end_stamp': stable[-1].stamp.to_dict(),
-        'reference_stamp': init_sample.stamp.to_dict(),
-    }
-    return YoloInitResult(
-        trusted_mask=trusted,
-        reference_depth=reference_depth,
-        init_frame=init_sample,
-        object_id=target_id,
-        projection=projection_info,
-        init_stats=init_stats,
-        yolo_observations=post_observations,
-        yolo_events=post_events,
-        projected_mask=init_obs.mask,
-    ), init_stats
-
 
 def _is_partial_occlusion(decision: FrameDecision) -> bool:
     if decision.valid_pixels <= 0:
@@ -1495,91 +1362,6 @@ def _run_yolo_primary_tracking(cache: ShigureRgbdCache, init: YoloInitResult, en
     }
     return candidate_start, confirmed, decisions, info, frames
 
-
-
-def _resolve_projected_mask(task: Mapping[str, Any], first_depth: np.ndarray) -> tuple[np.ndarray | None, dict[str, Any]]:
-    shape = first_depth.shape[:2]
-    candidates: list[tuple[str, Path]] = []
-    env_path = os.environ.get('TAKEN_OBJECT_PROJECTED_MASK') or os.environ.get('TAKEN_OBJECT_PROJECTED_MASK_PATH')
-    if env_path:
-        candidates.append(('env_projected_mask', Path(env_path)))
-    projection = task.get('TakenObjectProjection') if isinstance(task.get('TakenObjectProjection'), Mapping) else {}
-    if projection.get('mask_path'):
-        candidates.append(('task_projected_mask', Path(str(projection.get('mask_path')))))
-    task_timestamp = str(task.get('task_timestamp') or '').strip()
-    if not task_timestamp:
-        raise ValueError('task_timestamp is required for taken object projected mask')
-    candidates.append(('sam3_mask', model_worker_file(task_timestamp, 'sam3.mask')))
-
-    for source, raw_path in candidates:
-        path = raw_path if raw_path.is_file() else _resolve_existing_path(str(raw_path))
-        if not path or not path.is_file():
-            continue
-        mask = _mask_from_image(path, shape)
-        if np.count_nonzero(mask) > 0:
-            return mask, {'source': source, 'path': str(path), 'shape': list(shape)}
-
-    fallback = _selection_box_mask(task, shape)
-    if fallback is not None and np.count_nonzero(fallback) > 0:
-        return fallback, {'source': 'selection_box_scaled_fallback', 'shape': list(shape)}
-    return None, {'source': 'missing', 'shape': list(shape)}
-
-
-def _init_trusted_mask(frames: list[CachedRgbdSample], projected_mask: np.ndarray) -> tuple[np.ndarray | None, np.ndarray | None, CachedRgbdSample | None, dict[str, Any]]:
-    if not frames:
-        return None, None, None, {'reason': 'no_init_frames'}
-    depths = []
-    used_frames: list[CachedRgbdSample] = []
-    for sample in frames:
-        depth = _sample_depth_m(sample)
-        if depth.shape != projected_mask.shape:
-            continue
-        depths.append(depth)
-        used_frames.append(sample)
-    if len(depths) < 2:
-        return None, None, None, {'reason': 'not_enough_init_depth_frames', 'frame_count': len(depths)}
-    stack = np.stack(depths, axis=0)
-    valid = np.isfinite(stack) & (stack > 0.0) & projected_mask.reshape(1, *projected_mask.shape)
-    valid_count = np.count_nonzero(valid, axis=0)
-    has_depth = valid_count > 0
-    masked = np.where(valid, stack, np.nan)
-    depth_min = np.nanmin(masked, axis=0)
-    depth_max = np.nanmax(masked, axis=0)
-    depth_mean = np.nanmean(masked, axis=0)
-    stable = projected_mask & has_depth & ((depth_max - depth_min) <= settings.INIT_STABLE_DEPTH_DELTA_M)
-    stable_ratio = float(np.count_nonzero(stable)) / max(1, int(np.count_nonzero(projected_mask)))
-    if stable_ratio < settings.INIT_STABLE_PIXEL_RATIO:
-        return None, None, used_frames[-1], {
-            'reason': 'unstable_init_depth',
-            'stable_ratio': stable_ratio,
-            'projected_pixels': int(np.count_nonzero(projected_mask)),
-            'stable_pixels': int(np.count_nonzero(stable)),
-        }
-    stable_depth = depth_mean[stable]
-    front_min = float(np.nanmin(stable_depth)) if stable_depth.size else 0.0
-    front_max = float(np.nanmax(stable_depth)) if stable_depth.size else 0.0
-    trusted = stable & (depth_mean >= front_min - settings.DEPTH_MARGIN_M) & (depth_mean <= front_max + settings.DEPTH_MARGIN_M)
-    image_ratio = float(np.count_nonzero(trusted)) / float(trusted.size)
-    if image_ratio < settings.TRUSTED_MASK_MIN_IMAGE_RATIO:
-        return None, None, used_frames[-1], {
-            'reason': 'trusted_mask_too_small',
-            'trusted_image_ratio': image_ratio,
-            'trusted_pixels': int(np.count_nonzero(trusted)),
-        }
-    reference_depth = np.where(trusted, depth_mean, 0.0).astype(np.float32)
-    return trusted, reference_depth, used_frames[-1], {
-        'reason': 'initialized',
-        'init_frame_count': len(used_frames),
-        'init_start_stamp': used_frames[0].stamp.to_dict(),
-        'init_end_stamp': used_frames[-1].stamp.to_dict(),
-        'projected_pixels': int(np.count_nonzero(projected_mask)),
-        'stable_pixels': int(np.count_nonzero(stable)),
-        'stable_ratio': stable_ratio,
-        'trusted_pixels': int(np.count_nonzero(trusted)),
-        'trusted_image_ratio': image_ratio,
-        'mesh_front_surface_min_depth_m': front_min,
-        'mesh_front_surface_max_depth_m': front_max,
-    }
 
 
 def _classify_frame(sample: CachedRgbdSample, trusted_mask: np.ndarray, reference_depth: np.ndarray) -> tuple[FrameDecision, np.ndarray, np.ndarray]:
@@ -1891,120 +1673,6 @@ def _write_taken(json_path: Path, task: dict[str, Any], *, frames: list[CachedRg
     return {'status': 'TAKEN', 'result_timestamp': result_timestamp, 'backup_shigurei_dir': str(backup_dir)}
 
 
-def _run_legacy_projected_mask_detection(json_path: Path, task: dict[str, Any], cache: ShigureRgbdCache, output_dir: Path, *, capture_seconds: float, capture_source: str | None, start: RosStamp, end: RosStamp, fallback_reason: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    task_timestamp = str(task.get('task_timestamp') or '').strip()
-    frames = list(cache.iter_samples(start=start, end=end))
-    tracking_window = _tracking_window_payload(capture_seconds, capture_source, None, len(frames))
-    tracking_window['mode'] = 'legacy_projected_mask'
-    if fallback_reason:
-        tracking_window['fallback_reason'] = dict(fallback_reason)
-    if not frames:
-        _write_status(json_path, task, 'INIT_FAILED', reason='no_shigure_frames_in_window', tracking_window=tracking_window, output_dir=str(output_dir))
-        return {'status': 'INIT_FAILED', 'reason': 'no_shigure_frames_in_window'}
-    first_delay = frames[0].stamp.seconds - capture_seconds
-    tracking_window['first_frame_stamp'] = frames[0].stamp.to_dict()
-    tracking_window['first_frame_delay_seconds'] = first_delay
-    if first_delay > settings.INIT_MAX_START_DELAY_SECONDS:
-        _write_status(json_path, task, 'INIT_FAILED', reason='first_frame_too_late', tracking_window=tracking_window, output_dir=str(output_dir))
-        return {'status': 'INIT_FAILED', 'reason': 'first_frame_too_late'}
-
-    first_depth = _sample_depth_m(frames[0])
-    projected_mask, projection = _resolve_projected_mask(task, first_depth)
-    projection['mode'] = 'legacy_projected_mask'
-    if projected_mask is None:
-        _write_status(json_path, task, 'INIT_FAILED', reason='projected_mask_missing', tracking_window=tracking_window, projection=projection, output_dir=str(output_dir))
-        return {'status': 'INIT_FAILED', 'reason': 'projected_mask_missing'}
-
-    init_deadline = frames[0].stamp.seconds + min(settings.INIT_TIMEOUT_SECONDS, settings.INIT_STABLE_WINDOW_SECONDS)
-    init_frames = [frame for frame in frames if frame.stamp.seconds <= init_deadline]
-    trusted, reference_depth, init_end_frame, init_stats = _init_trusted_mask(init_frames, projected_mask)
-    init_stats['mode'] = 'legacy_projected_mask'
-    if trusted is None or reference_depth is None or init_end_frame is None:
-        _write_status(json_path, task, 'INIT_FAILED', reason=init_stats.get('reason'), tracking_window=tracking_window, projection=projection, init=init_stats, output_dir=str(output_dir))
-        return {'status': 'INIT_FAILED', 'reason': init_stats.get('reason')}
-
-    _write_status(json_path, task, 'RUNNING', tracking_window=tracking_window, projection=projection, init=init_stats, output_dir=str(output_dir))
-
-    decisions: list[FrameDecision] = []
-    taken_count = 0
-    candidate_start: CachedRgbdSample | None = None
-    confirmed: CachedRgbdSample | None = None
-    full_occlusion_start: CachedRgbdSample | None = None
-    active_full_occlusion = False
-    for frame in frames:
-        if frame.stamp.seconds <= init_end_frame.stamp.seconds:
-            continue
-        decision, _occluded, _taken = _classify_frame(frame, trusted, reference_depth)
-        decisions.append(decision)
-        if decision.full_occlusion:
-            taken_count = 0
-            candidate_start = None
-            if not active_full_occlusion:
-                full_occlusion_start = frame
-                active_full_occlusion = True
-            continue
-        if active_full_occlusion and not decision.full_occlusion:
-            active_full_occlusion = False
-        if decision.candidate:
-            if taken_count == 0:
-                candidate_start = frame
-            taken_count += 1
-            if taken_count >= max(1, settings.TAKEN_CONSECUTIVE_FRAMES):
-                confirmed = frame
-                break
-        else:
-            taken_count = 0
-            candidate_start = None
-
-    debug_files: dict[str, str] = {}
-    if settings.FULL_OUTPUT:
-        debug_files = _save_debug_masks(task_timestamp, trusted, reference_depth, projected_mask)
-        debug_files['decisions_path'] = _save_decisions_debug(task_timestamp, {'frames': [d.to_dict() for d in decisions]})
-
-    if confirmed is None or candidate_start is None:
-        return _write_not_taken(json_path, task, tracking_window=tracking_window, projection=projection, init=init_stats, decisions=decisions, debug_files=debug_files, output_dir=output_dir)
-
-    used_full_occlusion = full_occlusion_start is not None and full_occlusion_start.stamp.seconds <= candidate_start.stamp.seconds
-    if used_full_occlusion:
-        result_frame = full_occlusion_start
-        backup_dir = _backup_sample(task, result_frame, output_dir)
-        result_timestamp = result_frame.stamp.to_dict()
-        payload = {
-            'result_timestamp': result_timestamp,
-            'backup_shigurei_dir': str(backup_dir),
-            'tracking_window': tracking_window,
-            'projection': projection,
-            'init': init_stats,
-            'depth_taken_timestamp': candidate_start.stamp.to_dict(),
-            'depth_confirm_timestamp': confirmed.stamp.to_dict(),
-            'full_occlusion_start_timestamp': full_occlusion_start.stamp.to_dict(),
-            'used_full_occlusion_start': True,
-            'rgb_backtrack': {'status': 'skipped_full_occlusion'},
-            'checked_frame_count': len(decisions),
-            'debug_files': debug_files,
-            'output_dir': str(output_dir),
-        }
-        payload.update(_publish_taken_result_artifacts(task, backup_dir))
-        _write_status(json_path, task, 'TAKEN', **payload)
-        return {'status': 'TAKEN', 'result_timestamp': result_timestamp, 'backup_shigurei_dir': str(backup_dir)}
-
-    return _write_taken(
-        json_path,
-        task,
-        frames=frames,
-        candidate_start=candidate_start,
-        confirmed=confirmed,
-        init_frame=init_end_frame,
-        trusted=trusted,
-        tracking_window=tracking_window,
-        projection=projection,
-        init_stats=init_stats,
-        decisions=decisions,
-        debug_files=debug_files,
-        output_dir=output_dir,
-    )
-
-
 def run_taken_object_detection(json_path_arg: str | Path) -> dict[str, Any]:
     json_path = resolve_task_json_path(json_path_arg)
     task = load_task_json(json_path)
@@ -2040,20 +1708,20 @@ def run_taken_object_detection(json_path_arg: str | Path) -> dict[str, Any]:
         _write_status(json_path, task, 'INIT_FAILED', reason='first_frame_too_late', tracking_window=tracking_window, output_dir=str(output_dir))
         return {'status': 'INIT_FAILED', 'reason': 'first_frame_too_late'}
 
-    if settings.TRACKING_MODE in {'legacy', 'legacy_projected_mask', 'projected_mask'}:
-        if not settings.ENABLE_LEGACY_PROJECTED_MASK:
-            _write_status(json_path, task, 'INIT_FAILED', reason='legacy_projected_mask_disabled', tracking_window=tracking_window, output_dir=str(output_dir))
-            return {'status': 'INIT_FAILED', 'reason': 'legacy_projected_mask_disabled'}
-        return _run_legacy_projected_mask_detection(json_path, task, cache, output_dir, capture_seconds=capture_seconds, capture_source=capture_source, start=start, end=end)
+    if settings.TRACKING_MODE not in {'model_box', 'model_box_depth', 'projected_model_box'}:
+        _write_status(
+            json_path,
+            task,
+            'INIT_FAILED',
+            reason='unsupported_tracking_mode',
+            tracking_window=tracking_window,
+            init={'requested_tracking_mode': settings.TRACKING_MODE, 'supported_modes': ['model_box', 'model_box_depth', 'projected_model_box']},
+            output_dir=str(output_dir),
+        )
+        return {'status': 'INIT_FAILED', 'reason': 'unsupported_tracking_mode'}
 
-    if settings.TRACKING_MODE in {'model_box', 'model_box_depth', 'projected_model_box'}:
-        yolo_init, yolo_info = _init_model_box_primary(cache, task, metadata, first_after, capture_seconds)
-    else:
-        yolo_init, yolo_info = _init_yolo_primary(cache, task, metadata, first_after, capture_seconds)
+    yolo_init, yolo_info = _init_model_box_primary(cache, task, metadata, first_after, capture_seconds)
     if yolo_init is None:
-        fallback_reason = {'mode': 'yolo_primary', 'reason': yolo_info.get('reason'), 'details': yolo_info}
-        if settings.ENABLE_LEGACY_FALLBACK:
-            return _run_legacy_projected_mask_detection(json_path, task, cache, output_dir, capture_seconds=capture_seconds, capture_source=capture_source, start=start, end=end, fallback_reason=fallback_reason)
         _write_status(json_path, task, 'INIT_FAILED', reason=yolo_info.get('reason'), tracking_window=tracking_window, projection=yolo_info.get('projection'), init=yolo_info, output_dir=str(output_dir))
         return {'status': 'INIT_FAILED', 'reason': yolo_info.get('reason')}
 
