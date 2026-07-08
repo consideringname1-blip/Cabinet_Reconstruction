@@ -543,7 +543,12 @@ def main() -> int:
             print(f"[shigure_history] subscribe {key}: {state.topic} [{state.type_name}]", flush=True)
 
         while _running:
-            rclpy.spin_once(node, timeout_sec=0.05)
+            try:
+                rclpy.spin_once(node, timeout_sec=0.05)
+            except Exception as exc:
+                if exc.__class__.__name__ == "ExternalShutdownException":
+                    break
+                raise
             now = time.monotonic()
             if now < next_sample:
                 continue

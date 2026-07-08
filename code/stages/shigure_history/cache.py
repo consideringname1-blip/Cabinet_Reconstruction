@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import socket
+import tempfile
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -250,11 +251,26 @@ def sample_key(stamp: RosStamp) -> str:
 def write_json(path: str | Path, payload: Mapping[str, Any]) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_suffix(target.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as file:
-        json.dump(dict(payload), file, ensure_ascii=False, indent=2)
-        file.write("\n")
-    tmp.replace(target)
+    tmp: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=target.parent,
+            prefix=f".{target.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as file:
+            tmp = Path(file.name)
+            json.dump(dict(payload), file, ensure_ascii=False, indent=2)
+            file.write("\n")
+        tmp.replace(target)
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def load_json(path: str | Path) -> dict[str, Any]:

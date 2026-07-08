@@ -436,6 +436,18 @@ def _consume_shigure_history_recorder_output(process: subprocess.Popen[str]) -> 
         print(f"[shigure-recorder] {line}", end="", flush=True)
 
 
+def _shutdown_existing_shigure_history_socket_owner() -> None:
+    if not SHIGURE_HISTORY_SOCKET_PATH.exists():
+        return
+    try:
+        _send_socket_request(SHIGURE_HISTORY_SOCKET_PATH, {"action": "shutdown"}, timeout=2.0)
+        deadline = time.monotonic() + 2.0
+        while SHIGURE_HISTORY_SOCKET_PATH.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+    except Exception:
+        pass
+
+
 def _start_shigure_history_recorder(*, force: bool = False) -> None:
     global _shigure_recorder_process, _shigure_recorder_reader_thread, _last_shigure_recorder_start_attempt_at
     if _shutdown_requested or not SHIGURE_HISTORY_RECORDING_ENABLE:
@@ -466,6 +478,7 @@ def _start_shigure_history_recorder(*, force: bool = False) -> None:
     try:
         WORKER_SOCKET_ROOT.mkdir(parents=True, exist_ok=True)
         SHIGURE_HISTORY_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
+        _shutdown_existing_shigure_history_socket_owner()
         try:
             SHIGURE_HISTORY_SOCKET_PATH.unlink()
         except FileNotFoundError:

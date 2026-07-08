@@ -4,7 +4,8 @@
 This is a standalone smoke-test tool for the online Shigure RGB-D/object cache.
 It can be launched with any Python. If the current interpreter cannot import
 the image stack, it re-execs itself in the server Python environment. If the
-Shigure recorder socket is not running, it starts the recorder sidecar first.
+Shigure recorder socket is not running, it starts the recorder sidecar first
+and stops that sidecar before exit.
 """
 
 from __future__ import annotations
@@ -362,7 +363,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--near-pixels", type=int, default=8)
     parser.add_argument("--alpha", type=float, default=0.52)
     parser.add_argument("--no-start-recorder", action="store_true", help="Fail instead of starting the recorder sidecar when the socket is missing.")
-    parser.add_argument("--stop-started-recorder", action="store_true", help="Terminate the recorder sidecar if this script started it.")
+    parser.add_argument("--keep-started-recorder", action="store_true", help="Leave the recorder sidecar running if this script started it.")
+    parser.add_argument("--stop-started-recorder", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--allow-no-objects", action="store_true", help="Return success even if the latest sample has no object masks.")
     return parser
 
@@ -466,7 +468,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         return 0
     finally:
-        if started_recorder is not None and args.stop_started_recorder:
+        if started_recorder is not None and not args.keep_started_recorder:
             started_recorder.terminate()
             try:
                 started_recorder.wait(timeout=5.0)
