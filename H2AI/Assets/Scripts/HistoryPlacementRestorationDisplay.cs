@@ -93,11 +93,6 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             return 0;
         }
 
-        if (!TryGetArucoReference(out Vector3 arucoPosition, out Quaternion arucoRotation))
-        {
-            ShowFrontMessage("history_placement_restoration_ERR_no_aruco_reference");
-            return 0;
-        }
 
         JArray results = response != null ? response["results"] as JArray : null;
         if (results == null || results.Count == 0)
@@ -128,7 +123,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
                 taskId = payload["task_id"] != null ? payload["task_id"].ToString() : "";
             }
 
-            if (CreateDisplayForPayload(taskId, result, payload, arucoPosition, arucoRotation))
+            if (CreateDisplayForPayload(taskId, result, payload))
             {
                 createdCount++;
             }
@@ -312,14 +307,9 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         item.TakenRgbUrl = ReadNestedString(result, "taken_object_detection_urls", "result_rgb_url");
         item.BodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url");
         item.BodyModelKey = "body:" + itemKey;
-        item.ArucoReference = CloneOrNull(result["aruco_reference"]);
-        item.ObjectAruco = CloneOrNull(result["object_aruco"]);
-        JObject bodyPayload = result["sam3d_body_mesh"] as JObject;
-        item.HasBodyObjectCenterAruco = bodyPayload != null && TryReadVector3(bodyPayload["object_center_armarker"], out item.BodyObjectCenterAruco);
 
         ResolveRuntimeModelManager();
-        if (TryGetArucoReference(out Vector3 arucoPosition, out Quaternion arucoRotation)
-            && TryReadFallbackPolyhedronPose(result, arucoPosition, arucoRotation, out Vector3 anchorPosition, out Quaternion anchorRotation))
+        if (TryReadFallbackPolyhedronPose(result, out Vector3 anchorPosition, out Quaternion anchorRotation))
         {
             item.HasEvidenceAnchor = true;
             item.EvidenceAnchorPosition = anchorPosition;
@@ -407,7 +397,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         }
     }
 
-    private bool CreateDisplayForPayload(string taskId, JObject result, JObject payload, Vector3 arucoPosition, Quaternion arucoRotation)
+    private bool CreateDisplayForPayload(string taskId, JObject result, JObject payload)
     {
         JObject display = payload != null ? payload["display"] as JObject : null;
         string status = payload != null && payload["status"] != null ? payload["status"].ToString() : result?["status"]?.ToString() ?? "";
@@ -417,10 +407,10 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         Quaternion polyWorldRotation = Quaternion.identity;
         if (polyhedron != null && (polyhedron["enabled"] == null || polyhedron["enabled"].Value<bool>()))
         {
-            JObject polyhedronPose = polyhedron["pose_aruco"] as JObject;
-            hasPolyhedronPose = TryReadArucoPose(polyhedronPose, arucoPosition, arucoRotation, out polyWorldPosition, out polyWorldRotation);
+            JObject polyhedronPose = polyhedron["pose_hololens"] as JObject;
+            hasPolyhedronPose = TryReadHololensPose(polyhedronPose, out polyWorldPosition, out polyWorldRotation);
         }
-        if (!hasPolyhedronPose && !TryReadFallbackPolyhedronPose(result, arucoPosition, arucoRotation, out polyWorldPosition, out polyWorldRotation))
+        if (!hasPolyhedronPose && !TryReadFallbackPolyhedronPose(result, out polyWorldPosition, out polyWorldRotation))
         {
             return false;
         }
@@ -452,7 +442,6 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             TakenRgbUrl = ReadNestedString(result, "taken_object_detection_urls", "result_rgb_url"),
             BodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url"),
             BodyModelKey = "body:" + itemKey,
-            ArucoReference = CloneOrNull(result != null ? result["aruco_reference"] : null),
             HasEvidenceAnchor = true,
             EvidenceAnchorPosition = polyWorldPosition,
             EvidenceAnchorRotation = polyWorldRotation,
@@ -461,10 +450,10 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         JObject animation = display != null ? display["animation"] as JObject : null;
         if (animation != null && animation["enabled"] != null && animation["enabled"].Value<bool>())
         {
-            JObject fromPose = animation["from_pose_aruco"] as JObject;
-            JObject toPose = animation["to_pose_aruco"] as JObject;
-            if (TryReadArucoPose(fromPose, arucoPosition, arucoRotation, out Vector3 fromPosition, out Quaternion fromRotation)
-                && TryReadArucoPose(toPose, arucoPosition, arucoRotation, out Vector3 toPosition, out Quaternion toRotation))
+            JObject fromPose = animation["from_pose_hololens"] as JObject;
+            JObject toPose = animation["to_pose_hololens"] as JObject;
+            if (TryReadHololensPose(fromPose, out Vector3 fromPosition, out Quaternion fromRotation)
+                && TryReadHololensPose(toPose, out Vector3 toPosition, out Quaternion toRotation))
             {
                 item.HasAnimation = true;
                 item.FromPosition = fromPosition;
@@ -499,8 +488,6 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
 
     private bool TryReadFallbackPolyhedronPose(
         JObject result,
-        Vector3 arucoPosition,
-        Quaternion arucoRotation,
         out Vector3 worldPosition,
         out Quaternion worldRotation
     )
@@ -518,23 +505,12 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             return true;
         }
 
-        JObject objectAruco = result != null ? result["object_aruco"] as JObject : null;
-        if (objectAruco == null && modelInstance != null)
+        JObject objectHololens = result != null ? result["object_hololens_current"] as JObject : null;
+        if (objectHololens == null && modelInstance != null)
         {
-            objectAruco = modelInstance["object_aruco"] as JObject;
+            objectHololens = modelInstance["object_hololens_current"] as JObject;
         }
-        if (TryReadArucoPose(objectAruco, arucoPosition, arucoRotation, out worldPosition, out worldRotation))
-        {
-            worldPosition += Vector3.up * PolyhedronTopClearanceMeters;
-            return true;
-        }
-
-        JObject objectWorld = result != null ? result["object_world"] as JObject : null;
-        if (objectWorld == null && modelInstance != null)
-        {
-            objectWorld = modelInstance["object_world"] as JObject;
-        }
-        if (TryReadWorldPose(objectWorld, out worldPosition, out worldRotation))
+        if (TryReadHololensPose(objectHololens, out worldPosition, out worldRotation))
         {
             worldPosition += Vector3.up * PolyhedronTopClearanceMeters;
             return true;
@@ -568,7 +544,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         return false;
     }
 
-    private bool TryReadWorldPose(JObject pose, out Vector3 worldPosition, out Quaternion worldRotation)
+    private bool TryReadHololensPose(JObject pose, out Vector3 worldPosition, out Quaternion worldRotation)
     {
         worldPosition = Vector3.zero;
         worldRotation = Quaternion.identity;
@@ -593,7 +569,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             ["task_id"] = string.IsNullOrEmpty(taskId) ? modelInstance["task_id"]?.ToString() ?? "" : taskId,
             ["model_instance"] = modelInstance.DeepClone(),
         };
-        foreach (string key in new[] { "object_world", "object_aruco", "aruco_reference", "sam3_spatial_box" })
+        foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space", "sam3_spatial_box" })
         {
             JToken value = result[key];
             if (value != null && value.Type != JTokenType.Null)
@@ -1005,31 +981,25 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             return false;
         }
 
-        JObject bodyRootPose = BuildBodyRootArucoPose(item);
+        JObject bodyRootPose = BuildBodyRootHololensPose(item);
         JObject modelInstance = new JObject
         {
             ["model_key"] = item.BodyModelKey,
             ["task_id"] = item.BodyModelKey,
             ["fbx_url"] = item.BodyFbxUrl,
             ["is_evidence_overlay"] = true,
-            ["object_aruco"] = bodyRootPose.DeepClone(),
+            ["object_hololens_current"] = bodyRootPose.DeepClone(),
+            ["coordinate_space"] = "hololens_current_local",
         };
-        if (item.ArucoReference != null)
-        {
-            modelInstance["aruco_reference"] = item.ArucoReference.DeepClone();
-        }
 
         JObject bodyModel = new JObject
         {
             ["task_id"] = item.BodyModelKey,
             ["is_evidence_overlay"] = true,
             ["model_instance"] = modelInstance,
-            ["object_aruco"] = bodyRootPose,
+            ["object_hololens_current"] = bodyRootPose,
+            ["coordinate_space"] = "hololens_current_local",
         };
-        if (item.ArucoReference != null)
-        {
-            bodyModel["aruco_reference"] = item.ArucoReference.DeepClone();
-        }
 
         if (ShuJuQingQiu.initialize.DownloadRuntimeModelFromSpatialQueryModel(bodyModel))
         {
@@ -1045,11 +1015,9 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         return false;
     }
 
-    private JObject BuildBodyRootArucoPose(HistoryPlacementRestorationItem item)
+    private JObject BuildBodyRootHololensPose(HistoryPlacementRestorationItem item)
     {
-        // The selected SAM3D body OBJ stores vertices directly in ArUco/Unity axes,
-        // so the runtime root is the ArUco origin. Object-center alignment would
-        // incorrectly treat the absolute body mesh as a local object mesh.
+        // The selected body mesh is treated as already expressed in Unity/HoloLens axes.
         return new JObject
         {
             ["position"] = new JArray(0.0f, 0.0f, 0.0f),
@@ -1122,11 +1090,6 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
     {
         JObject obj = payload != null ? payload[objectKey] as JObject : null;
         return obj != null ? obj[valueKey]?.ToString() ?? "" : "";
-    }
-
-    private static JToken CloneOrNull(JToken token)
-    {
-        return token != null && token.Type != JTokenType.Null ? token.DeepClone() : null;
     }
 
     private GameObject CreatePolyhedron(string shape, float edgeLength, string status)
@@ -1529,50 +1492,6 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         return 1.2f;
     }
 
-    private bool TryReadArucoPose(
-        JObject pose,
-        Vector3 arucoPosition,
-        Quaternion arucoRotation,
-        out Vector3 worldPosition,
-        out Quaternion worldRotation
-    )
-    {
-        worldPosition = Vector3.zero;
-        worldRotation = Quaternion.identity;
-        if (pose == null)
-        {
-            return false;
-        }
-        if (!TryReadVector3(pose["position"], out Vector3 localPosition))
-        {
-            return false;
-        }
-        Quaternion localRotation = Quaternion.identity;
-        TryReadQuaternion(pose["rotation_quaternion_xyzw"], out localRotation);
-        worldPosition = arucoPosition + (arucoRotation * localPosition);
-        worldRotation = arucoRotation * localRotation;
-        return true;
-    }
-
-    private bool TryGetArucoReference(out Vector3 position, out Quaternion rotation)
-    {
-        position = Vector3.zero;
-        rotation = Quaternion.identity;
-        if (runtimeModelManager != null && runtimeModelManager.TryGetCurrentArucoReference(out position, out rotation))
-        {
-            return true;
-        }
-
-        ShuJuQingQiu loader = ShuJuQingQiu.initialize != null ? ShuJuQingQiu.initialize : FindObjectOfType<ShuJuQingQiu>();
-        if (loader != null && loader.hasArucoReferencePose)
-        {
-            position = loader.arucoReferencePosition;
-            rotation = loader.arucoReferenceRotation;
-            return true;
-        }
-        return false;
-    }
-
     private bool TryReadVector3(JToken token, out Vector3 value)
     {
         value = Vector3.zero;
@@ -1644,10 +1563,6 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         public string TakenRgbUrl = "";
         public string BodyFbxUrl = "";
         public string BodyModelKey = "";
-        public JToken ArucoReference;
-        public JToken ObjectAruco;
-        public bool HasBodyObjectCenterAruco;
-        public Vector3 BodyObjectCenterAruco;
         public bool HasEvidenceAnchor;
         public Vector3 EvidenceAnchorPosition;
         public Quaternion EvidenceAnchorRotation = Quaternion.identity;

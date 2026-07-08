@@ -22,7 +22,8 @@ if str(CODE_ROOT) not in sys.path:
 
 from artifact_layout import model_debug_dir, model_result_file, model_worker_dir
 from path_config import BLENDER_BIN, SAM3D_BODY_FBX_EXPORT_SCRIPT, SAM3D_BODY_ROOT
-from coordinate_systems import UNITY_TO_OPENCV_CAMERA_BASIS, quat_xyzw_to_rotation_matrix
+from coordinate_systems import quat_xyzw_to_rotation_matrix
+from spatial_transforms import shigure_camera_points_to_aruco
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 from stages.shigure_history.marker_history import latest_marker_pose_path
 
@@ -359,10 +360,11 @@ def _load_marker_camera_pose(path: Path) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _camera_to_armarker_points(points_camera_m: np.ndarray, marker_rotation_camera_marker_cv: np.ndarray, marker_translation_camera_marker_cv: np.ndarray) -> np.ndarray:
-    points = np.asarray(points_camera_m, dtype=np.float64).reshape(-1, 3)
-    marker_cv = (marker_rotation_camera_marker_cv.T @ (points - marker_translation_camera_marker_cv.reshape(1, 3)).T).T
-    basis = np.asarray(UNITY_TO_OPENCV_CAMERA_BASIS, dtype=np.float64)
-    return (basis @ marker_cv.T).T
+    return shigure_camera_points_to_aruco(
+        points_camera_m,
+        marker_rotation_camera_marker_cv,
+        marker_translation_camera_marker_cv,
+    )
 
 
 def _object_center_aruco(task: Mapping[str, Any]) -> np.ndarray | None:
@@ -618,7 +620,7 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         'material_color': settings.MATERIAL_COLOR,
         'material_alpha': settings.MATERIAL_ALPHA,
         'coordinate_space': 'armarker',
-        'camera_to_armarker_basis': 'UNITY_TO_OPENCV_CAMERA_BASIS',
+        'camera_to_armarker_basis': 'spatial_transforms.shigure_camera_points_to_aruco',
         'camera_to_armarker_source': str(marker_pose_path),
         'people_json_path': str(people_json_path),
         'people': people,

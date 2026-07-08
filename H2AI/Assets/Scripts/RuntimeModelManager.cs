@@ -5,17 +5,9 @@ using UnityEngine;
 
 public class RuntimeModelPoseData
 {
-    public bool HasWorldPose;
-    public Vector3 WorldPosition = Vector3.zero;
-    public Quaternion WorldRotation = Quaternion.identity;
-
-    public bool HasArucoPose;
-    public Vector3 ArucoLocalPosition = Vector3.zero;
-    public Quaternion ArucoLocalRotation = Quaternion.identity;
-
-    public bool HasResponseArucoReference;
-    public Vector3 ResponseArucoReferencePosition = Vector3.zero;
-    public Quaternion ResponseArucoReferenceRotation = Quaternion.identity;
+    public bool HasHololensPose;
+    public Vector3 HololensPosition = Vector3.zero;
+    public Quaternion HololensRotation = Quaternion.identity;
 }
 
 
@@ -78,9 +70,6 @@ public class RuntimeModelManager : MonoBehaviour
 
     private readonly List<RuntimeModelRecord> _records = new List<RuntimeModelRecord>();
     private string _cacheRootPath = "";
-    private bool _hasCurrentArucoReference;
-    private Vector3 _currentArucoReferencePosition = Vector3.zero;
-    private Quaternion _currentArucoReferenceRotation = Quaternion.identity;
 
     public static RuntimeModelManager Instance
     {
@@ -362,28 +351,6 @@ public class RuntimeModelManager : MonoBehaviour
         return removedCount;
     }
 
-    internal void SetArucoReference(Vector3 position, Quaternion rotation)
-    {
-        _currentArucoReferencePosition = position;
-        _currentArucoReferenceRotation = rotation;
-        _hasCurrentArucoReference = true;
-
-        foreach (RuntimeModelRecord record in _records)
-        {
-            if (record.Pose != null && record.Pose.HasArucoPose)
-            {
-                ApplyResolvedPose(record);
-            }
-        }
-    }
-
-    public bool TryGetCurrentArucoReference(out Vector3 position, out Quaternion rotation)
-    {
-        position = _currentArucoReferencePosition;
-        rotation = _currentArucoReferenceRotation;
-        return _hasCurrentArucoReference;
-    }
-
     public bool TryResolveWorldPose(RuntimeModelPoseData pose, out Vector3 position, out Quaternion rotation)
     {
         position = Vector3.zero;
@@ -393,37 +360,10 @@ public class RuntimeModelManager : MonoBehaviour
             return false;
         }
 
-        if (pose.HasArucoPose)
+        if (pose.HasHololensPose)
         {
-            if (_hasCurrentArucoReference)
-            {
-                ComposeArucoWorldPose(
-                    _currentArucoReferencePosition,
-                    _currentArucoReferenceRotation,
-                    pose,
-                    out position,
-                    out rotation
-                );
-                return true;
-            }
-
-            if (pose.HasResponseArucoReference)
-            {
-                ComposeArucoWorldPose(
-                    pose.ResponseArucoReferencePosition,
-                    pose.ResponseArucoReferenceRotation,
-                    pose,
-                    out position,
-                    out rotation
-                );
-                return true;
-            }
-        }
-
-        if (pose.HasWorldPose)
-        {
-            position = pose.WorldPosition;
-            rotation = pose.WorldRotation;
+            position = pose.HololensPosition;
+            rotation = pose.HololensRotation;
             return true;
         }
 
@@ -442,18 +382,6 @@ public class RuntimeModelManager : MonoBehaviour
             record.RootGameObject.transform.SetPositionAndRotation(position, rotation);
             record.LastTouchedAtUtc = DateTime.UtcNow;
         }
-    }
-
-    private void ComposeArucoWorldPose(
-        Vector3 arucoPosition,
-        Quaternion arucoRotation,
-        RuntimeModelPoseData pose,
-        out Vector3 position,
-        out Quaternion rotation
-    )
-    {
-        position = arucoPosition + (arucoRotation * pose.ArucoLocalPosition);
-        rotation = arucoRotation * pose.ArucoLocalRotation;
     }
 
     private void RemoveModel(string modelKey)

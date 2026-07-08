@@ -1064,6 +1064,19 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
     if stage_name == "aruco_detect" and purpose == PURPOSE_ARUCO_REFERENCE:
         startup_session_id = str((task_json.get("device") or {}).get("startup_session_id") or "").strip() or None
         synced_count = _sync_completed_tasks_for_startup(startup_session_id)
+        try:
+            refreshed_task_json = load_task_json(json_path)
+            debug_section = dict(refreshed_task_json.get("debug") or {})
+            pose_transform_stages = dict(debug_section.get("pose_transform_stages") or {})
+            aruco_stage = dict(pose_transform_stages.get("aruco_stage") or {})
+            aruco_stage["retro_synced_completed_task_count"] = int(synced_count)
+            aruco_stage["retro_sync_authority"] = "task_worker"
+            pose_transform_stages["aruco_stage"] = aruco_stage
+            debug_section["pose_transform_stages"] = pose_transform_stages
+            refreshed_task_json["debug"] = debug_section
+            save_task_json(json_path, refreshed_task_json)
+        except Exception as exc:
+            print(f"[worker] failed to record ArUco retro-sync count: {exc}")
         if synced_count:
             print(f"[worker] synced completed model tasks after ArUco reference: {synced_count}")
         update_task_status(task_id, "aruco_completed")

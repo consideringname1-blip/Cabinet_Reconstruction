@@ -22,7 +22,8 @@ if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
 from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, model_debug_dir, model_result_file, model_worker_dir, model_worker_file
-from coordinate_systems import UNITY_TO_OPENCV_CAMERA_BASIS, quat_xyzw_to_rotation_matrix
+from coordinate_systems import quat_xyzw_to_rotation_matrix
+from spatial_transforms import aruco_points_to_shigure_camera
 from stages.shigure_history.cache import CachedRgbdSample, CachedSampleMetadata, RosStamp, ShigureRgbdCache, load_json, sample_key
 from stages.shigure_history.marker_history import latest_marker_pose_path
 from task_json import load_task_json, resolve_task_json_path, save_task_json
@@ -391,9 +392,11 @@ def _project_object_center_to_shigure(task: Mapping[str, Any], camera_info: Mapp
     if marker_pose is None:
         return None, {'source': 'model_center_projection', 'reason': 'marker_pose_missing'}
     marker_rotation, marker_translation, marker_path = marker_pose
-    basis = np.asarray(UNITY_TO_OPENCV_CAMERA_BASIS, dtype=np.float64)
-    center_marker_cv = basis @ center_aruco.reshape(3)
-    center_camera = marker_rotation @ center_marker_cv + marker_translation.reshape(3)
+    center_camera = aruco_points_to_shigure_camera(
+        center_aruco.reshape(1, 3),
+        marker_rotation,
+        marker_translation,
+    ).reshape(3)
     z = float(center_camera[2])
     if not np.isfinite(z) or z <= 0.0:
         return None, {
@@ -411,7 +414,6 @@ def _project_object_center_to_shigure(task: Mapping[str, Any], camera_info: Mapp
         'center_source': center_source,
         'marker_pose_path': str(marker_path),
         'object_center_aruco': center_aruco.tolist(),
-        'object_center_marker_opencv': center_marker_cv.tolist(),
         'camera_matrix': camera_matrix.tolist(),
         'pixel_xy': [x, y],
         'depth_m': z,
@@ -667,9 +669,11 @@ def _project_model_box_to_shigure(task: Mapping[str, Any], camera_info: Mapping[
         return None, {'source': 'model_box_projection', 'reason': center_source, 'corners': corners_info}
 
     marker_rotation, marker_translation, marker_path = marker_pose
-    basis = np.asarray(UNITY_TO_OPENCV_CAMERA_BASIS, dtype=np.float64)
-    points_marker_cv = (basis @ corners_aruco.reshape(-1, 3).T).T
-    points_camera = (marker_rotation @ points_marker_cv.T).T + marker_translation.reshape(1, 3)
+    points_camera = aruco_points_to_shigure_camera(
+        corners_aruco.reshape(-1, 3),
+        marker_rotation,
+        marker_translation,
+    )
     visible = points_camera[:, 2] > 1e-6
     if not np.any(visible):
         return None, {
@@ -703,8 +707,11 @@ def _project_model_box_to_shigure(task: Mapping[str, Any], camera_info: Mapping[
             'image_shape': [h, w],
         }
 
-    center_marker_cv = basis @ center_aruco.reshape(3)
-    center_camera = marker_rotation @ center_marker_cv + marker_translation.reshape(3)
+    center_camera = aruco_points_to_shigure_camera(
+        center_aruco.reshape(1, 3),
+        marker_rotation,
+        marker_translation,
+    ).reshape(3)
     center_z = float(center_camera[2])
     center_pixel = None
     if np.isfinite(center_z) and center_z > 1e-6:

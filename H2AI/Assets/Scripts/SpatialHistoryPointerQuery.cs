@@ -36,7 +36,6 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
 
     [Header("References")]
     [SerializeField] private ShuJuQingQiu shuJuQingQiu;
-    [SerializeField] private RuntimeModelManager runtimeModelManager;
     [SerializeField] private LoadModel loadModel;
 
     [Header("Debug Bounds")]
@@ -118,10 +117,6 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
             shuJuQingQiu = ShuJuQingQiu.initialize != null
                 ? ShuJuQingQiu.initialize
                 : FindObjectOfType<ShuJuQingQiu>();
-        }
-        if (runtimeModelManager == null)
-        {
-            runtimeModelManager = RuntimeModelManager.Instance;
         }
         if (loadModel == null)
         {
@@ -340,41 +335,10 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
         return false;
     }
 
-    private bool TryGetCurrentArucoReference(out Vector3 arucoPosition, out Quaternion arucoRotation)
+    private string CurrentStartupSessionId()
     {
         ResolveReferences();
-        arucoPosition = Vector3.zero;
-        arucoRotation = Quaternion.identity;
-
-        if (runtimeModelManager != null
-            && runtimeModelManager.TryGetCurrentArucoReference(out arucoPosition, out arucoRotation))
-        {
-            return true;
-        }
-
-        if (shuJuQingQiu != null && shuJuQingQiu.hasArucoReferencePose)
-        {
-            arucoPosition = shuJuQingQiu.arucoReferencePosition;
-            arucoRotation = shuJuQingQiu.arucoReferenceRotation;
-            return true;
-        }
-
-        return false;
-    }
-
-    private Vector3 WorldPointToAruco(Vector3 worldPoint, Vector3 arucoPosition, Quaternion arucoRotation)
-    {
-        return Quaternion.Inverse(arucoRotation) * (worldPoint - arucoPosition);
-    }
-
-    private Vector3 WorldDirectionToAruco(Vector3 worldDirection, Quaternion arucoRotation)
-    {
-        return (Quaternion.Inverse(arucoRotation) * worldDirection).normalized;
-    }
-
-    private Vector3 ArucoPointToWorld(Vector3 arucoPoint, Vector3 arucoPosition, Quaternion arucoRotation)
-    {
-        return arucoPosition + (arucoRotation * arucoPoint);
+        return shuJuQingQiu != null ? (shuJuQingQiu.startup_session_id ?? "") : "";
     }
 
     private int RaycastMaskWithoutDebugBounds()
@@ -472,25 +436,20 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
             yield break;
         }
 
-        if (!TryGetCurrentArucoReference(out Vector3 arucoPosition, out Quaternion arucoRotation))
+        string startupSessionId = CurrentStartupSessionId();
+        if (string.IsNullOrEmpty(startupSessionId))
         {
-            Debug.LogWarning("[SpatialHistoryPointerQuery] ArUco reference is not available.");
-            if (!RequestLatestArucoReferenceRefresh("spatial_query_refresh_aruco"))
-            {
-                ShowFrontMessage("spatial_query_ERR_no_aruco_reference");
-            }
+            Debug.LogWarning("[SpatialHistoryPointerQuery] startup_session_id is not available.");
+            ShowFrontMessage("spatial_query_ERR_no_startup_session");
             yield break;
         }
 
-        Vector3 originAruco = WorldPointToAruco(originWorld, arucoPosition, arucoRotation);
-        Vector3 directionAruco = WorldDirectionToAruco(directionWorld, arucoRotation);
-        Vector3 endAruco = WorldPointToAruco(endWorld, arucoPosition, arucoRotation);
-
         JObject payload = new JObject
         {
-            ["origin_aruco"] = VectorToJArray(originAruco),
-            ["direction_aruco"] = VectorToJArray(directionAruco),
-            ["end_aruco"] = VectorToJArray(endAruco),
+            ["startup_session_id"] = startupSessionId,
+            ["origin_hololens"] = VectorToJArray(originWorld),
+            ["direction_hololens"] = VectorToJArray(directionWorld.normalized),
+            ["end_hololens"] = VectorToJArray(endWorld),
             ["max_distance_m"] = Mathf.Max(0.1f, maxDistanceMeters),
             ["limit"] = Mathf.Clamp(historyLimit, 1, 50),
         };
@@ -560,21 +519,20 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
             return;
         }
 
-        if (!TryGetCurrentArucoReference(out Vector3 arucoPosition, out Quaternion arucoRotation))
+        string startupSessionId = CurrentStartupSessionId();
+        if (string.IsNullOrEmpty(startupSessionId))
         {
-            Debug.LogWarning("[SpatialHistoryPointerQuery] ArUco reference is not available; bounds debug skipped.");
-            if (!RequestLatestArucoReferenceRefresh("bounds_debug_refresh_aruco"))
-            {
-                ShowFrontMessage("bounds_debug_ERR_no_aruco_reference");
-            }
+            Debug.LogWarning("[SpatialHistoryPointerQuery] startup_session_id is not available; bounds debug skipped.");
+            ShowFrontMessage("bounds_debug_ERR_no_startup_session");
             return;
         }
 
         string url = NormalizeServerBaseUrl()
             + "/model-bounds/latest?limit="
-            + Mathf.Clamp(historyLimit, 1, 50).ToString(CultureInfo.InvariantCulture);
+            + Mathf.Clamp(historyLimit, 1, 50).ToString(CultureInfo.InvariantCulture)
+            + "&startup_session_id="
+            + Uri.EscapeDataString(startupSessionId);
         HTTPRequest request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnBoundsLatestResponse);
-        request.Tag = new Tuple<Vector3, Quaternion>(arucoPosition, arucoRotation);
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
         request.Send();
         ShowFrontMessage("bounds_debug_loading");
@@ -590,10 +548,6 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
             ShowFrontMessage("bounds_debug_ERR_request_failed");
             return;
         }
-
-        Tuple<Vector3, Quaternion> reference = request.Tag as Tuple<Vector3, Quaternion>;
-        Vector3 arucoPosition = reference != null ? reference.Item1 : Vector3.zero;
-        Quaternion arucoRotation = reference != null ? reference.Item2 : Quaternion.identity;
 
         JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
         JArray boundsArray = jo["bounds"] as JArray;
@@ -614,7 +568,7 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
             {
                 continue;
             }
-            if (!TryReadCorners(boundJ["corners_aruco"], out Vector3[] cornersAruco))
+            if (!TryReadCorners(boundJ["corners_hololens"], out Vector3[] cornersWorld))
             {
                 continue;
             }
@@ -622,12 +576,6 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
             Color color = debugBoundsColors != null && debugBoundsColors.Length > 0
                 ? debugBoundsColors[i % debugBoundsColors.Length]
                 : Color.cyan;
-            Vector3[] cornersWorld = new Vector3[cornersAruco.Length];
-            for (int c = 0; c < cornersAruco.Length; c++)
-            {
-                cornersWorld[c] = ArucoPointToWorld(cornersAruco[c], arucoPosition, arucoRotation);
-            }
-
             CreateBoundsWireframe(boundJ, cornersWorld, color, i);
         }
 
@@ -714,19 +662,6 @@ public class SpatialHistoryPointerQuery : MonoBehaviour
                 Vector3.up
             );
         }
-    }
-
-    private bool RequestLatestArucoReferenceRefresh(string frontMessage)
-    {
-        ResolveReferences();
-        if (shuJuQingQiu == null)
-        {
-            return false;
-        }
-
-        shuJuQingQiu.RefreshArucoReferenceFromServer();
-        ShowFrontMessage(frontMessage);
-        return true;
     }
 
     private bool TryReadCorners(JToken token, out Vector3[] corners)

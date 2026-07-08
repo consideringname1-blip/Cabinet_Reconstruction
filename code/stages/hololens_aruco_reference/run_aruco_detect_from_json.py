@@ -54,7 +54,6 @@ try:
         resolve_pv_image_path,
         resolve_task_name,
     )
-    from run_aruco_sync_from_json import sync_completed_tasks_for_startup
 except ModuleNotFoundError:
     from .aruco_common import (
         compose_world_pose,
@@ -71,7 +70,6 @@ except ModuleNotFoundError:
         resolve_pv_image_path,
         resolve_task_name,
     )
-    from .run_aruco_sync_from_json import sync_completed_tasks_for_startup
 
 
 def _load_cv2():
@@ -639,9 +637,7 @@ def main(argv: list[str]) -> int:
                     "anchor_marker_id": int(ARUCO_ANCHOR_MARKER_ID),
                 },
             )
-            aruco_stage["retro_synced_completed_task_count"] = sync_completed_tasks_for_startup(
-                startup_session_id
-            )
+            aruco_stage["retro_sync_deferred_to_worker"] = True
 
     _write_debug(task, aruco_stage)
     save_task_json(json_path, task)

@@ -223,7 +223,7 @@ def build_pose_debug(task: dict) -> dict:
             "axis_contract": RUNTIME_AXIS_CONTRACT,
             "runtime_local_to_unity_rotation": runtime_local_to_unity.astype(float).tolist(),
         },
-        "final_object_world": {
+        "final_object_hololens_local": {
             "scale": [float(alignment.get("model_real_scale") or 0.0)] * 3,
             "pose": serialize_pose(world_rotation, world_position),
         },
@@ -237,8 +237,9 @@ def main(argv: list[str]) -> int:
         stage_name="pose",
     )
 
-    world_pose = compute_world_pose(task)
-    task["object_world"] = dict(world_pose)
+    hololens_pose = compute_world_pose(task)
+    task["object_hololens_original"] = dict(hololens_pose)
+    task["object_hololens_current"] = dict(hololens_pose)
     debug_section = dict(task.get("debug") or {})
     pose_debug = dict(debug_section.get("pose_transform_stages") or {})
     pose_debug["pose_stage"] = build_pose_debug(task)

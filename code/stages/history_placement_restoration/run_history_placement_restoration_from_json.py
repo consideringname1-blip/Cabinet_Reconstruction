@@ -21,7 +21,11 @@ if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
 from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, model_debug_dir, model_result_dir, model_worker_dir
-from coordinate_systems import UNITY_TO_OPENCV_CAMERA_BASIS, quat_xyzw_to_rotation_matrix
+from coordinate_systems import quat_xyzw_to_rotation_matrix
+from spatial_transforms import (
+    aruco_points_to_shigure_camera,
+    pixel_depth_to_aruco as spatial_pixel_depth_to_aruco,
+)
 from stages.history_placement_restoration import settings
 from stages.shigure_history.cache import CachedRgbdSample, CachedSampleMetadata, RosStamp, ShigureRgbdCache, load_json, sample_key
 from stages.shigure_history.marker_history import latest_marker_pose_path
@@ -473,9 +477,11 @@ def _project_object_center_to_shigure(
     if marker_pose is None:
         return None, {"source": "model_center_projection", "reason": "marker_pose_missing"}
     marker_rotation, marker_translation, marker_path = marker_pose
-    basis = np.asarray(UNITY_TO_OPENCV_CAMERA_BASIS, dtype=np.float64)
-    center_marker_cv = basis @ center_aruco.reshape(3)
-    center_camera = marker_rotation @ center_marker_cv + marker_translation.reshape(3)
+    center_camera = aruco_points_to_shigure_camera(
+        center_aruco.reshape(1, 3),
+        marker_rotation,
+        marker_translation,
+    ).reshape(3)
     z = float(center_camera[2])
     if not np.isfinite(z) or z <= 0.0:
         return None, {
@@ -524,14 +530,16 @@ def _pixel_depth_to_aruco(
     if camera_matrix is None or marker_pose is None:
         return None
     marker_rotation, marker_translation, _marker_path = marker_pose
-    u, v = float(pixel_xy[0]), float(pixel_xy[1])
-    z = float(depth_m)
-    fx, fy = float(camera_matrix[0, 0]), float(camera_matrix[1, 1])
-    cx, cy = float(camera_matrix[0, 2]), float(camera_matrix[1, 2])
-    camera_cv = np.asarray([(u - cx) * z / fx, (v - cy) * z / fy, z], dtype=np.float64)
-    marker_cv = marker_rotation.T @ (camera_cv.reshape(3) - marker_translation.reshape(3))
-    basis = np.asarray(UNITY_TO_OPENCV_CAMERA_BASIS, dtype=np.float64)
-    aruco = basis @ marker_cv.reshape(3)
+    try:
+        aruco = spatial_pixel_depth_to_aruco(
+            pixel_xy,
+            float(depth_m),
+            camera_matrix,
+            marker_rotation,
+            marker_translation,
+        )
+    except Exception:
+        return None
     if not np.isfinite(aruco).all():
         return None
     return tuple(float(v) for v in aruco)
@@ -1973,7 +1981,7 @@ def _polyhedron_pose(position: list[float] | None, task: dict[str, Any]) -> dict
     return {
         "position": [float(v) for v in pos],
         "rotation_quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
-        "source": "object_world_up_hint",
+        "source": "aruco_local_up_hint",
         "local_up_aruco": [float(v) for v in local_up],
     }
 

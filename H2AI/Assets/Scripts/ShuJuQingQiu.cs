@@ -24,7 +24,6 @@ public class ShuJuQingQiu : MonoBehaviour
     const float MARKER_CAPTURE_TOTAL_SECONDS = 3.0f;
     const float MARKER_CAPTURE_INTERVAL_SECONDS = 0.5f;
     const int MARKER_CAPTURE_MIN_SUCCESS = 1;
-    const int ARUCO_DEBUG_MARKER_RETRY_FRAMES = 30;
     const int STARTUP_CAMERA_MARKER_RETRY_FRAMES = 90;
     const int COMPLETED_MODEL_HISTORY_LIMIT = 5;
     const float ASYNC_TASK_QUEUE_POLL_INTERVAL_SECONDS = 3.0f;
@@ -38,9 +37,6 @@ public class ShuJuQingQiu : MonoBehaviour
     public Vector3 serverCameraPosition = Vector3.zero;
     public Quaternion serverCameraRotation = Quaternion.identity;
     public string startup_session_id = "";
-    public bool hasArucoReferencePose = false;
-    public Vector3 arucoReferencePosition = Vector3.zero;
-    public Quaternion arucoReferenceRotation = Quaternion.identity;
 
     public HoloLensPVAquirer PV_controler;
     public HoloLensDepthAquirer DP_controler;
@@ -75,9 +71,6 @@ public class ShuJuQingQiu : MonoBehaviour
         public bool hasDebugObjectPose;
         public Vector3 debugObjectPosition;
         public Quaternion debugObjectRotation;
-        public bool hasDebugArucoPose;
-        public Vector3 debugArucoPosition;
-        public Quaternion debugArucoRotation;
     }
 
     private class PendingAsyncTask
@@ -92,7 +85,6 @@ public class ShuJuQingQiu : MonoBehaviour
     private readonly Queue<PendingModelDownload> pendingModelLoadQueue = new Queue<PendingModelDownload>();
     private PendingModelDownload activeModelLoad;
     private Coroutine modelLoadQueueRetryCoroutine;
-    private Coroutine arucoDebugMarkerRetryCoroutine;
     private Coroutine asyncTaskQueuePollingCoroutine;
     private readonly List<PendingAsyncTask> asyncTaskQueue = new List<PendingAsyncTask>();
     private bool asyncTaskQueueCheckInFlight = false;
@@ -252,68 +244,6 @@ public class ShuJuQingQiu : MonoBehaviour
             + " bytes=" + byteCount.ToString(CultureInfo.InvariantCulture)
             + " url=" + url
         );
-    }
-
-    void PlaceArucoDebugMarkerWhenReady(Vector3 arucoPosition, Quaternion arucoRotation, string source)
-    {
-        if (TryPlaceArucoDebugMarker(arucoPosition, arucoRotation, source, true))
-        {
-            return;
-        }
-
-        if (arucoDebugMarkerRetryCoroutine != null)
-        {
-            StopCoroutine(arucoDebugMarkerRetryCoroutine);
-        }
-
-        arucoDebugMarkerRetryCoroutine = StartCoroutine(RetryPlaceArucoDebugMarker(arucoPosition, arucoRotation, source));
-    }
-
-    IEnumerator RetryPlaceArucoDebugMarker(Vector3 arucoPosition, Quaternion arucoRotation, string source)
-    {
-        for (int frame = 0; frame < ARUCO_DEBUG_MARKER_RETRY_FRAMES; frame++)
-        {
-            yield return null;
-            if (TryPlaceArucoDebugMarker(arucoPosition, arucoRotation, source, false))
-            {
-                arucoDebugMarkerRetryCoroutine = null;
-                yield break;
-            }
-        }
-
-        arucoDebugMarkerRetryCoroutine = null;
-        Debug.LogWarning(
-            $"[ARUCO] showDebugMarkers=true but CameraPoseDebugMarker.Instance was not found after " +
-            $"{ARUCO_DEBUG_MARKER_RETRY_FRAMES} frames ({source})."
-        );
-        ShowFrontMessage("aruco_ERR_debug_marker_missing");
-    }
-
-    bool TryPlaceArucoDebugMarker(
-        Vector3 arucoPosition,
-        Quaternion arucoRotation,
-        string source,
-        bool logMissing
-    )
-    {
-        CameraPoseDebugMarker marker = CameraPoseDebugMarker.Instance;
-        if (marker == null)
-        {
-            if (logMissing)
-            {
-                Debug.LogWarning(
-                    $"[ARUCO] showDebugMarkers=true but CameraPoseDebugMarker.Instance is missing ({source}); retrying."
-                );
-            }
-            return false;
-        }
-
-        marker.PlaceArucoMarker(arucoPosition, arucoRotation);
-        Debug.Log(
-            $"[ARUCO] showDebugMarkers placed ArUco marker ({source}) " +
-            $"pos={arucoPosition}, rot={arucoRotation.eulerAngles}"
-        );
-        return true;
     }
 
     string NormalizeServerErrorForFrontMessage(string serverError, string fallbackMessage, string purpose)
@@ -973,6 +903,7 @@ public class ShuJuQingQiu : MonoBehaviour
         JObject payload = new JObject
         {
             ["task_ids"] = taskIds,
+            ["startup_session_id"] = startup_session_id ?? "",
         };
 
         string url = "http://10.40.1.122:7355/check-queue";
@@ -1083,7 +1014,7 @@ public class ShuJuQingQiu : MonoBehaviour
             asyncTaskQueueActiveTaskId = completedTaskId;
             task_id = completedTaskId;
             pendingModelShouldPlaceDebugMarkers = false;
-            if (!ApplyCompletedTaskResponse(taskResponse, "ASYNC_QUEUE_MODEL_READY", false, false))
+            if (!ApplyCompletedTaskResponse(taskResponse, "ASYNC_QUEUE_MODEL_READY"))
             {
                 Debug.LogWarning("[ASYNC_QUEUE] model_ready response missing runtime model outputs.");
                 ResumeAsyncTaskQueuePolling();
@@ -1116,9 +1047,9 @@ public class ShuJuQingQiu : MonoBehaviour
         if (purpose == TASK_PURPOSE_ARUCO_REFERENCE || status == "aruco_completed")
         {
             ApplyDebugInfo(taskResponse);
-            bool appliedArucoReference = ApplyArucoReference(taskResponse, true, true, true);
-            ShowFrontMessage(appliedArucoReference ? "aruco_completed" : "aruco_ERR_missing_reference");
-            if (appliedArucoReference)
+            bool arucoDetected = ResponseReportsArucoDetected(taskResponse);
+            ShowFrontMessage(arucoDetected ? "aruco_completed" : "aruco_ERR_missing_reference");
+            if (arucoDetected)
             {
                 RequestModelResultAfterArucoIfNeeded(taskResponse);
             }
@@ -1149,7 +1080,7 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         pendingModelShouldPlaceDebugMarkers = false;
-        if (!ApplyCompletedTaskResponse(taskResponse, "ASYNC_QUEUE", false, false))
+        if (!ApplyCompletedTaskResponse(taskResponse, "ASYNC_QUEUE"))
         {
             string completedError = taskResponse["error"]?.ToString();
             if (!string.IsNullOrEmpty(completedError))
@@ -1515,7 +1446,7 @@ public class ShuJuQingQiu : MonoBehaviour
                 ["task_id"] = taskId,
                 ["model_instance"] = modelInstance.DeepClone(),
             };
-            foreach (string key in new[] { "object_world", "object_aruco", "aruco_reference", "sam3_spatial_box" })
+            foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space", "sam3_spatial_box" })
             {
                 JToken extra = NonNullToken(result[key]);
                 if (extra != null)
@@ -1868,97 +1799,34 @@ public class ShuJuQingQiu : MonoBehaviour
         return token == null || token.Type == JTokenType.Null ? null : token;
     }
 
-    JToken ResolveArucoReferenceToken(JObject jo)
+    bool ResponseReportsArucoDetected(JObject jo)
     {
-        JToken modelInstanceToken = NonNullToken(jo["model_instance"]);
-        return NonNullToken(jo["aruco_reference"])
-            ?? NonNullToken(modelInstanceToken?["aruco_reference"])
-            ?? NonNullToken(jo["debug"]?["pose_transform_stages"]?["aruco_stage"]?["marker_pose_world"]);
-    }
-
-    bool ApplyArucoReference(JObject jo, bool updateCurrentSession, bool showDebugMarkers, bool warnIfMissing = false)
-    {
-        JToken arucoReferenceToken = ResolveArucoReferenceToken(jo);
-        if (!TryParsePoseToken(arucoReferenceToken, out Vector3 arucoPosition, out Quaternion arucoRotation))
+        if (jo == null)
         {
-            if (warnIfMissing)
-            {
-                Debug.LogWarning(
-                    $"[ARUCO] showDebugMarkers={showDebugMarkers}, updateCurrentSession={updateCurrentSession}; " +
-                    "response missing usable aruco_reference: " + jo.ToString(Formatting.None)
-                );
-            }
             return false;
         }
-
-        Debug.Log(
-            $"[ARUCO] Parsed aruco_reference updateCurrentSession={updateCurrentSession}, " +
-            $"showDebugMarkers={showDebugMarkers}, pos={arucoPosition}, rot={arucoRotation.eulerAngles}"
-        );
-
-        if (updateCurrentSession)
+        JToken detectedToken = NonNullToken(jo["aruco_detected"]);
+        if (detectedToken != null && detectedToken.Type == JTokenType.Boolean)
         {
-            arucoReferencePosition = arucoPosition;
-            arucoReferenceRotation = arucoRotation;
-            hasArucoReferencePose = true;
-            RuntimeModelManager manager = RuntimeModelManager.Instance;
-            if (manager != null)
-            {
-                manager.SetArucoReference(arucoPosition, arucoRotation);
-            }
-            else
-            {
-                Debug.LogError("[RuntimeModelManager] Missing RuntimeModelManager component on scene Scripts object.");
-                ShowFrontMessage("runtime_model_mgr_missing");
-            }
+            return detectedToken.Value<bool>();
         }
-
-        if (showDebugMarkers)
-        {
-            PlaceArucoDebugMarkerWhenReady(arucoPosition, arucoRotation, "aruco_reference");
-        }
-        return true;
+        string status = jo["status"]?.ToString() ?? "";
+        return status == "aruco_completed" || status == "aruco_reference";
     }
 
-    bool TryResolveObjectWorldPose(JObject jo, out Vector3 position, out Quaternion rotation)
+    bool TryResolveObjectHololensPose(JObject jo, out Vector3 position, out Quaternion rotation)
     {
         position = Vector3.zero;
         rotation = Quaternion.identity;
+        if (jo == null)
+        {
+            return false;
+        }
 
         JToken modelInstanceToken = NonNullToken(jo["model_instance"]);
-        JToken objectArucoToken = NonNullToken(jo["object_aruco"]) ?? NonNullToken(modelInstanceToken?["object_aruco"]);
-        JToken objectWorldToken = NonNullToken(jo["object_world"]) ?? NonNullToken(modelInstanceToken?["object_world"]);
-        JToken arucoReferenceToken = ResolveArucoReferenceToken(jo);
-        Vector3 responseArucoPosition;
-        Quaternion responseArucoRotation;
-        bool hasResponseArucoReference = TryParsePoseToken(
-            arucoReferenceToken,
-            out responseArucoPosition,
-            out responseArucoRotation
-        );
-        Vector3 localPosition;
-        Quaternion localRotation;
-        bool hasArucoObjectPose = TryParsePoseToken(objectArucoToken, out localPosition, out localRotation);
-        if (hasArucoObjectPose && hasResponseArucoReference)
-        {
-            position = responseArucoPosition + (responseArucoRotation * localPosition);
-            rotation = responseArucoRotation * localRotation;
-            return true;
-        }
-
-        if (hasArucoObjectPose && hasArucoReferencePose)
-        {
-            position = arucoReferencePosition + (arucoReferenceRotation * localPosition);
-            rotation = arucoReferenceRotation * localRotation;
-            return true;
-        }
-
-        if (TryParsePoseToken(objectWorldToken, out position, out rotation))
-        {
-            return true;
-        }
-
-        return false;
+        JToken objectHololensToken = NonNullToken(jo["object_hololens_current"])
+            ?? NonNullToken(modelInstanceToken?["object_hololens_current"]);
+        return TryParsePoseToken(objectHololensToken, out position, out rotation);
     }
 
     bool TryBuildRuntimeModelInstance(JObject jo, out RuntimeModelInstance instance, out string errorMessage)
@@ -1987,25 +1855,13 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         RuntimeModelPoseData poseData = new RuntimeModelPoseData();
-        if (TryParsePoseToken(modelJ["object_world"], out Vector3 worldPosition, out Quaternion worldRotation))
+        JToken hololensPoseToken = NonNullToken(modelJ["object_hololens_current"])
+            ?? NonNullToken(jo["object_hololens_current"]);
+        if (TryParsePoseToken(hololensPoseToken, out Vector3 hololensPosition, out Quaternion hololensRotation))
         {
-            poseData.HasWorldPose = true;
-            poseData.WorldPosition = worldPosition;
-            poseData.WorldRotation = worldRotation;
-        }
-
-        if (TryParsePoseToken(modelJ["object_aruco"], out Vector3 arucoLocalPosition, out Quaternion arucoLocalRotation))
-        {
-            poseData.HasArucoPose = true;
-            poseData.ArucoLocalPosition = arucoLocalPosition;
-            poseData.ArucoLocalRotation = arucoLocalRotation;
-        }
-
-        if (TryParsePoseToken(modelJ["aruco_reference"], out Vector3 arucoReferencePosition, out Quaternion arucoReferenceRotation))
-        {
-            poseData.HasResponseArucoReference = true;
-            poseData.ResponseArucoReferencePosition = arucoReferencePosition;
-            poseData.ResponseArucoReferenceRotation = arucoReferenceRotation;
+            poseData.HasHololensPose = true;
+            poseData.HololensPosition = hololensPosition;
+            poseData.HololensRotation = hololensRotation;
         }
 
         RuntimeSpatialBoxData spatialBox = null;
@@ -2026,11 +1882,9 @@ public class ShuJuQingQiu : MonoBehaviour
         return true;
     }
 
-    void ApplyResponsePoses(JObject jo, bool updateCurrentSessionArucoReference, bool showDebugMarkers)
+    void ApplyResponsePoses(JObject jo)
     {
-        ApplyArucoReference(jo, updateCurrentSessionArucoReference, showDebugMarkers);
-
-        if (TryResolveObjectWorldPose(jo, out Vector3 objectPosition, out Quaternion objectRotation))
+        if (TryResolveObjectHololensPose(jo, out Vector3 objectPosition, out Quaternion objectRotation))
         {
             serverObjectPosition = objectPosition;
             serverObjectRotation = objectRotation;
@@ -2054,12 +1908,7 @@ public class ShuJuQingQiu : MonoBehaviour
         }
     }
 
-    bool ApplyCompletedTaskResponse(
-        JObject jo,
-        string sourceTag,
-        bool updateCurrentSessionArucoReference,
-        bool showDebugMarkers
-    )
+    bool ApplyCompletedTaskResponse(JObject jo, string sourceTag)
     {
         if (!TryBuildRuntimeModelInstance(jo, out RuntimeModelInstance modelInstance, out string errorMessage))
         {
@@ -2070,20 +1919,12 @@ public class ShuJuQingQiu : MonoBehaviour
 
         pendingModelInstance = modelInstance;
         ApplyDebugInfo(jo);
-        ApplyResponsePoses(jo, updateCurrentSessionArucoReference, showDebugMarkers);
+        ApplyResponsePoses(jo);
 
-        if (!modelInstance.Pose.HasWorldPose && !modelInstance.Pose.HasArucoPose)
+        if (!modelInstance.Pose.HasHololensPose)
         {
-            Debug.LogWarning("[" + sourceTag + "] completed response missing model pose.");
+            Debug.LogWarning("[" + sourceTag + "] completed response missing HoloLens-local model pose.");
             ShowFrontMessage("pose_WARN_missing_object");
-        }
-        else if (modelInstance.Pose.HasWorldPose && !modelInstance.Pose.HasArucoPose)
-        {
-            Debug.Log(
-                "[" + sourceTag + "] using temporary world/device pose for this startup session; "
-                + "ArUco-local pose will be applied when a reference becomes available."
-            );
-            ShowFrontMessage("pose_world_temporary");
         }
 
         return true;
@@ -2124,25 +1965,13 @@ public class ShuJuQingQiu : MonoBehaviour
             modelInstance["is_evidence_overlay"] = modelJ["is_evidence_overlay"].DeepClone();
         }
 
-        JToken objectWorld = NonNullToken(modelJ["object_world"]);
-        JToken objectAruco = NonNullToken(modelJ["object_aruco"]);
-        JToken arucoReference = NonNullToken(modelJ["aruco_reference"]);
-        JToken spatialBox = NonNullToken(modelJ["sam3_spatial_box"]);
-        if (objectWorld != null)
+        foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space", "sam3_spatial_box" })
         {
-            modelInstance["object_world"] = objectWorld.DeepClone();
-        }
-        if (objectAruco != null)
-        {
-            modelInstance["object_aruco"] = objectAruco.DeepClone();
-        }
-        if (arucoReference != null)
-        {
-            modelInstance["aruco_reference"] = arucoReference.DeepClone();
-        }
-        if (spatialBox != null)
-        {
-            modelInstance["sam3_spatial_box"] = spatialBox.DeepClone();
+            JToken value = NonNullToken(modelJ[key]);
+            if (value != null)
+            {
+                modelInstance[key] = value.DeepClone();
+            }
         }
 
         return modelInstance;
@@ -2171,34 +2000,22 @@ public class ShuJuQingQiu : MonoBehaviour
         }
         wrapper["model_instance"] = modelInstance.DeepClone();
 
-        JToken objectWorld = NonNullToken(modelJ["object_world"]);
-        JToken objectAruco = NonNullToken(modelJ["object_aruco"]);
-        JToken arucoReference = NonNullToken(modelJ["aruco_reference"]);
-        JToken spatialBox = NonNullToken(modelJ["sam3_spatial_box"]);
-        if (objectWorld != null)
+        foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space", "sam3_spatial_box" })
         {
-            wrapper["object_world"] = objectWorld.DeepClone();
-        }
-        if (objectAruco != null)
-        {
-            wrapper["object_aruco"] = objectAruco.DeepClone();
-        }
-        if (arucoReference != null)
-        {
-            wrapper["aruco_reference"] = arucoReference.DeepClone();
-        }
-        if (spatialBox != null)
-        {
-            wrapper["sam3_spatial_box"] = spatialBox.DeepClone();
-            if (modelInstance["sam3_spatial_box"] == null)
+            JToken value = NonNullToken(modelJ[key]);
+            if (value != null)
             {
-                modelInstance["sam3_spatial_box"] = spatialBox.DeepClone();
+                wrapper[key] = value.DeepClone();
+                if (modelInstance[key] == null)
+                {
+                    modelInstance[key] = value.DeepClone();
+                }
             }
         }
         wrapper["model_instance"] = modelInstance.DeepClone();
 
         pendingModelShouldPlaceDebugMarkers = false;
-        if (!ApplyCompletedTaskResponse(wrapper, "SPATIAL", false, false))
+        if (!ApplyCompletedTaskResponse(wrapper, "SPATIAL"))
         {
             return false;
         }
@@ -2221,9 +2038,9 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
-        bool appliedArucoReference = ApplyArucoReference(jo, true, true, true);
-        ShowFrontMessage(appliedArucoReference ? "aruco_reference_refreshed" : "aruco_ERR_missing_reference");
-        if (appliedArucoReference)
+        bool arucoDetected = ResponseReportsArucoDetected(jo);
+        ShowFrontMessage(arucoDetected ? "aruco_reference_refreshed" : "aruco_ERR_missing_reference");
+        if (arucoDetected)
         {
             RequestModelResultAfterArucoIfNeeded(jo);
         }
@@ -2269,16 +2086,7 @@ public class ShuJuQingQiu : MonoBehaviour
             hasDebugObjectPose = hasServerPose,
             debugObjectPosition = serverObjectPosition,
             debugObjectRotation = serverObjectRotation,
-            hasDebugArucoPose = hasArucoReferencePose,
-            debugArucoPosition = arucoReferencePosition,
-            debugArucoRotation = arucoReferenceRotation,
         };
-        if (pendingModelInstance.Pose != null && pendingModelInstance.Pose.HasResponseArucoReference)
-        {
-            pendingDownload.hasDebugArucoPose = true;
-            pendingDownload.debugArucoPosition = pendingModelInstance.Pose.ResponseArucoReferencePosition;
-            pendingDownload.debugArucoRotation = pendingModelInstance.Pose.ResponseArucoReferenceRotation;
-        }
 
         var request = new HTTPRequest(new Uri(pendingModelInstance.FbxUrl), HTTPMethods.Get, OnRequestXiaZai);
         request.Tag = pendingDownload;
@@ -2367,20 +2175,6 @@ public class ShuJuQingQiu : MonoBehaviour
                     }
                 }
 
-                if (pendingDownload.hasDebugArucoPose)
-                {
-                    PlaceArucoDebugMarkerWhenReady(
-                        pendingDownload.debugArucoPosition,
-                        pendingDownload.debugArucoRotation,
-                        "download"
-                    );
-                }
-                else
-                {
-                    Debug.LogWarning(
-                        "[DOWNLOAD] showDebugMarkers=true but no ArUco pose is cached for this download."
-                    );
-                }
             }
             EnqueueRuntimeModelLoad(pendingDownload);
             ShowFrontMessage("download completes");

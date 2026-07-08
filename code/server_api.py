@@ -71,6 +71,12 @@ from stages.history_placement_restoration.run_history_placement_restoration_from
 )
 from task_json import resolve_task_json_path_from_record, save_task_json
 from coordinate_systems import convert_hololens_pv_pose_matrix_to_unity_pose_components
+from spatial_transforms import (
+    aruco_points_to_hololens,
+    aruco_pose_to_hololens_pose,
+    minimal_pose_payload,
+    resolve_hololens_original_pose,
+)
 
 
 app = Flask(__name__)
@@ -181,10 +187,96 @@ def _normalize_purpose(value) -> str:
     return purpose
 
 
-def _append_pose_fields(response: dict, task_json: dict) -> None:
-    for key in ("object_world", "object_aruco", "aruco_reference", "debug"):
-        value = task_json.get(key)
-        response[key] = value if value else None
+def _task_startup_session_id(task_data: dict | None = None, task_json: dict | None = None) -> str | None:
+    task_json = task_json or ((task_data or {}).get("task_json") or {})
+    value = (
+        (task_data or {}).get("startup_session_id")
+        or ((task_json.get("device") or {}).get("startup_session_id") if isinstance(task_json, dict) else None)
+    )
+    return str(value or "").strip() or None
+
+
+def _load_latest_aruco_reference_pose(startup_session_id: str | None) -> dict | None:
+    startup_session_id = str(startup_session_id or "").strip()
+    if not startup_session_id:
+        return None
+    row = get_latest_aruco_reference(startup_session_id)
+    if not row:
+        return None
+    return _load_marker_pose_json(row.get("marker_pose_json"))
+
+
+def _response_startup_session_id(
+    task_data: dict | None = None,
+    task_json: dict | None = None,
+    startup_session_id: str | None = None,
+) -> str | None:
+    _ = task_data, task_json
+    return str(startup_session_id or "").strip() or None
+
+
+def _hololens_current_pose_for_response(
+    task_json: dict,
+    *,
+    task_data: dict | None = None,
+    startup_session_id: str | None = None,
+) -> dict | None:
+    response_startup_session_id = _response_startup_session_id(task_data, task_json, startup_session_id)
+    if not response_startup_session_id:
+        return None
+
+    object_aruco = task_json.get("object_aruco") if isinstance(task_json.get("object_aruco"), dict) else None
+    if object_aruco is not None:
+        aruco_reference = _load_latest_aruco_reference_pose(response_startup_session_id)
+        if aruco_reference is None:
+            return None
+        try:
+            return aruco_pose_to_hololens_pose(object_aruco, aruco_reference)
+        except Exception as exc:
+            print(f"[WARN] pose response conversion failed for startup={response_startup_session_id}: {exc}")
+            return None
+
+    task_startup_session_id = _task_startup_session_id(task_data, task_json)
+    if task_startup_session_id != response_startup_session_id:
+        return None
+
+    current = task_json.get("object_hololens_current")
+    if current is None:
+        current = task_json.get("object_hololens_original")
+    if not isinstance(current, dict):
+        return None
+    try:
+        return minimal_pose_payload(current, include_scale=True)
+    except Exception:
+        return None
+
+
+def _hololens_original_pose_for_response(task_json: dict) -> dict | None:
+    original = resolve_hololens_original_pose(task_json)
+    if original is None:
+        return None
+    try:
+        return minimal_pose_payload(original, include_scale=True)
+    except Exception:
+        return None
+
+
+def _append_pose_fields(
+    response: dict,
+    task_json: dict,
+    *,
+    task_data: dict | None = None,
+    startup_session_id: str | None = None,
+) -> None:
+    current_pose = _hololens_current_pose_for_response(
+        task_json,
+        task_data=task_data,
+        startup_session_id=startup_session_id,
+    )
+    original_pose = _hololens_original_pose_for_response(task_json)
+    response["object_hololens_current"] = current_pose
+    response["object_hololens_original"] = original_pose
+    response["coordinate_space"] = "hololens_current_local" if current_pose else None
 
 
 def _build_model_key(task_id: str | None, fbx_url: str) -> str:
@@ -238,6 +330,69 @@ def _append_display_identity_fields(payload: dict, task_json: dict) -> None:
         return
     payload["display_object_id"] = identity.get("display_object_id")
     payload["capture_instance_id"] = identity.get("capture_instance_id")
+
+
+def _hololens_pose_key_for_public_response(key: str) -> str | None:
+    if key == "pose_aruco":
+        return "pose_hololens"
+    if key.endswith("_pose_aruco"):
+        return f"{key[:-len('_aruco')]}_hololens"
+    return None
+
+
+def _hololens_point_key_for_public_response(key: str) -> str | None:
+    point_keys = {
+        "object_center_aruco",
+        "aruco_position",
+        "reference_aruco",
+    }
+    if key not in point_keys:
+        return None
+    if key.endswith("_aruco"):
+        return f"{key[:-len('_aruco')]}_hololens"
+    if key.startswith("aruco_"):
+        return f"hololens_{key[len('aruco_') :]}"
+    return f"{key}_hololens"
+
+
+def _public_spatial_payload(value, *, startup_session_id: str | None = None):
+    aruco_reference = _load_latest_aruco_reference_pose(startup_session_id)
+
+    def convert(item):
+        if isinstance(item, dict):
+            converted = {}
+            for key, child in item.items():
+                if key in {"aruco_reference", "object_aruco"}:
+                    continue
+                if key in {"aabb_min_aruco", "aabb_max_aruco", "corners_aruco", "local_up_aruco"}:
+                    continue
+                pose_key = _hololens_pose_key_for_public_response(str(key))
+                if pose_key is not None:
+                    if aruco_reference is not None and isinstance(child, dict):
+                        try:
+                            converted[pose_key] = aruco_pose_to_hololens_pose(child, aruco_reference)
+                        except Exception as exc:
+                            converted[f"{pose_key}_error"] = str(exc)
+                    continue
+                point_key = _hololens_point_key_for_public_response(str(key))
+                if point_key is not None:
+                    if aruco_reference is not None:
+                        try:
+                            point = aruco_points_to_hololens([child], aruco_reference)[0]
+                            converted[point_key] = [float(v) for v in point]
+                        except Exception as exc:
+                            converted[f"{point_key}_error"] = str(exc)
+                    continue
+                if key == "coordinate_space" and child == "aruco":
+                    converted[key] = "hololens_current_local" if aruco_reference is not None else None
+                    continue
+                converted[key] = convert(child)
+            return converted
+        if isinstance(item, list):
+            return [convert(child) for child in item]
+        return item
+
+    return convert(value)
 
 
 def _dedupe_display_object_models(models: list[dict], *, limit: int | None = None) -> list[dict]:
@@ -336,23 +491,37 @@ def _include_duplicate_captures_requested() -> bool:
     )
 
 
-def _build_model_instance(task_data: dict, task_json: dict, fbx_url: str) -> dict:
+def _build_model_instance(
+    task_data: dict,
+    task_json: dict,
+    fbx_url: str,
+    *,
+    startup_session_id: str | None = None,
+) -> dict:
     task_id = task_data.get("task_id")
     instance = {
         "model_key": _build_model_key(task_id, fbx_url),
         "task_id": task_id,
         "fbx_url": fbx_url,
-        "object_world": task_json.get("object_world") or None,
-        "object_aruco": task_json.get("object_aruco") or None,
-        "aruco_reference": task_json.get("aruco_reference") or None,
     }
+    _append_pose_fields(
+        instance,
+        task_json,
+        task_data=task_data,
+        startup_session_id=startup_session_id,
+    )
     if task_json.get("Sam3SpatialBox"):
         instance["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
     _append_display_identity_fields(instance, task_json)
     return instance
 
 
-def _build_pending_task_response(task_data: dict, *, position: int | None = None) -> dict:
+def _build_pending_task_response(
+    task_data: dict,
+    *,
+    position: int | None = None,
+    startup_session_id: str | None = None,
+) -> dict:
     task_json = task_data.get("task_json") or {}
     task_id = str(task_data.get("task_id") or "")
     status = str(task_data.get("status") or "pending")
@@ -375,7 +544,12 @@ def _build_pending_task_response(task_data: dict, *, position: int | None = None
     spatial_box = task_json.get("Sam3SpatialBox") or None
     if spatial_box:
         response["sam3_spatial_box"] = spatial_box
-        response["model_instance"] = _build_model_instance(task_data, task_json, "")
+        response["model_instance"] = _build_model_instance(
+            task_data,
+            task_json,
+            "",
+            startup_session_id=startup_session_id,
+        )
 
     return response
 
@@ -383,38 +557,109 @@ def _build_pending_task_response(task_data: dict, *, position: int | None = None
 def _resolve_placement_status(task_data: dict, task_json: dict) -> str:
     if bool(task_data.get("aruco_coordinate_synced")) and task_json.get("object_aruco"):
         return "aruco_synced"
-    if task_json.get("object_world"):
-        return "world_temporary"
+    if task_json.get("object_hololens_current"):
+        return "hololens_local"
     return "missing_pose"
 
 
-def _build_task_model_bounds_status(task_id: str, task_json: dict) -> dict:
+def _aabb_corners_from_min_max(min_corner: list | None, max_corner: list | None) -> list[list[float]] | None:
+    if min_corner is None or max_corner is None:
+        return None
+    try:
+        a = np.asarray(min_corner, dtype=np.float64).reshape(3)
+        b = np.asarray(max_corner, dtype=np.float64).reshape(3)
+    except Exception:
+        return None
+    return [[float(x), float(y), float(z)] for x in (a[0], b[0]) for y in (a[1], b[1]) for z in (a[2], b[2])]
+
+
+def _hololens_bounds_from_decoded(
+    decoded: dict,
+    task_json: dict,
+    *,
+    task_data: dict | None = None,
+    startup_session_id: str | None = None,
+) -> dict:
+    response_startup_session_id = _response_startup_session_id(task_data, task_json, startup_session_id)
+    aruco_reference = _load_latest_aruco_reference_pose(response_startup_session_id)
+    if aruco_reference is None:
+        return {}
+
+    corners = decoded.get("corners_aruco") or _aabb_corners_from_min_max(
+        decoded.get("aabb_min_aruco"),
+        decoded.get("aabb_max_aruco"),
+    )
+    if not corners:
+        return {}
+    try:
+        points = aruco_points_to_hololens(corners, aruco_reference)
+    except Exception as exc:
+        print(f"[WARN] bounds response conversion failed for startup={response_startup_session_id}: {exc}")
+        return {}
+    min_corner = points.min(axis=0)
+    max_corner = points.max(axis=0)
+    return {
+        "coordinate_space": "hololens_current_local",
+        "aabb_min_hololens": [float(v) for v in min_corner],
+        "aabb_max_hololens": [float(v) for v in max_corner],
+        "corners_hololens": points.astype(float).tolist(),
+    }
+
+
+def _build_task_model_bounds_status(
+    task_id: str,
+    task_json: dict,
+    *,
+    task_data: dict | None = None,
+    startup_session_id: str | None = None,
+) -> dict:
     row = get_model_bounds_by_task_id(task_id) if task_id else None
     if row:
         decoded = decode_model_bounds_row(row)
-        return {
+        payload = {
             "status": decoded.get("status") or "missing",
-            "coordinate_space": decoded.get("coordinate_space") or "aruco",
-            "aruco_reference_task_id": decoded.get("aruco_reference_task_id"),
-            "object_aruco": decoded.get("object_aruco"),
-            "aabb_min_aruco": decoded.get("aabb_min_aruco"),
-            "aabb_max_aruco": decoded.get("aabb_max_aruco"),
-            "corners_aruco": decoded.get("corners_aruco"),
+            "coordinate_space": "hololens_current_local",
             "error_message": decoded.get("error_message"),
         }
+        payload.update(
+            _hololens_bounds_from_decoded(
+                decoded,
+                task_json,
+                task_data=task_data,
+                startup_session_id=startup_session_id,
+            )
+        )
+        return payload
 
     model_bounds = task_json.get("ModelBounds")
     if isinstance(model_bounds, dict):
-        return model_bounds
+        payload = {
+            "status": model_bounds.get("status") or "missing",
+            "coordinate_space": "hololens_current_local",
+            "error_message": model_bounds.get("error_message"),
+        }
+        payload.update(
+            _hololens_bounds_from_decoded(
+                {
+                    "aabb_min_aruco": model_bounds.get("aabb_min_aruco"),
+                    "aabb_max_aruco": model_bounds.get("aabb_max_aruco"),
+                    "corners_aruco": model_bounds.get("corners_aruco"),
+                },
+                task_json,
+                task_data=task_data,
+                startup_session_id=startup_session_id,
+            )
+        )
+        return payload
 
     if not task_json.get("object_aruco"):
         return {
             "status": "pending_reference",
-            "coordinate_space": "aruco",
-            "error_message": "object_aruco is missing; wait for a valid ArUco reference",
+            "coordinate_space": "hololens_current_local",
+            "error_message": "object ArUco pose is not available on the server yet",
         }
 
-    return {"status": "missing", "coordinate_space": "aruco"}
+    return {"status": "missing", "coordinate_space": "hololens_current_local"}
 
 
 def _source_url_if_present(host: str, task_id: str, source, filename: str | None, file_path) -> str | None:
@@ -468,13 +713,17 @@ def _build_bounds_download_urls(task_id: str, task_json: dict, fbx_name: str | N
 
     return urls
 
-def _build_model_bounds_response(row: dict, hit_result: dict | None = None) -> dict:
+def _build_model_bounds_response(
+    row: dict,
+    hit_result: dict | None = None,
+    *,
+    startup_session_id: str | None = None,
+) -> dict:
     decoded = decode_model_bounds_row(row)
     task_id = str(decoded.get("task_id") or "")
     task_data = get_task(task_id) if task_id else None
     task_json = (task_data or {}).get("task_json") or {}
     fbx_name = decoded.get("fbx_name") or (task_json.get("Blender") or {}).get("fbx")
-    object_aruco = decoded.get("object_aruco") or task_json.get("object_aruco") or None
     download_urls = _build_bounds_download_urls(task_id, task_json, fbx_name)
     fbx_url = download_urls.get("fbx")
 
@@ -485,35 +734,42 @@ def _build_model_bounds_response(row: dict, hit_result: dict | None = None) -> d
         "model_name": decoded.get("model_name"),
         "fbx_name": fbx_name,
         "uploaded_at": decoded.get("uploaded_at"),
-        "coordinate_space": decoded.get("coordinate_space") or "aruco",
-        "aruco_reference_task_id": decoded.get("aruco_reference_task_id"),
-        "object_aruco": object_aruco,
-        "aabb_min_aruco": decoded.get("aabb_min_aruco"),
-        "aabb_max_aruco": decoded.get("aabb_max_aruco"),
-        "corners_aruco": decoded.get("corners_aruco"),
+        "coordinate_space": "hololens_current_local",
         "source_model_path": decoded.get("source_model_path"),
         "error_message": decoded.get("error_message"),
         "download_urls": download_urls,
     }
+    model.update(
+        _hololens_bounds_from_decoded(
+            decoded,
+            task_json,
+            task_data=task_data,
+            startup_session_id=startup_session_id,
+        )
+    )
+    _append_pose_fields(
+        model,
+        task_json,
+        task_data=task_data,
+        startup_session_id=startup_session_id,
+    )
     _append_display_identity_fields(model, task_json)
     if fbx_url:
         model["fbx_url"] = fbx_url
-        model["model_instance"] = {
-            "model_key": _build_model_key(task_id, fbx_url),
-            "task_id": task_id,
-            "fbx_url": fbx_url,
-            "object_world": task_json.get("object_world") or None,
-            "object_aruco": object_aruco,
-            "aruco_reference": None,
-        }
-        _append_display_identity_fields(model["model_instance"], task_json)
+        model["model_instance"] = _build_model_instance(
+            task_data or {"task_id": task_id},
+            task_json,
+            fbx_url,
+            startup_session_id=startup_session_id,
+        )
         if task_json.get("Sam3SpatialBox"):
             model["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
             model["model_instance"]["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
 
     if hit_result:
         model["hit_distance_m"] = hit_result.get("hit_distance_m")
-        model["hit_point_aruco"] = hit_result.get("hit_point_aruco")
+        if hit_result.get("hit_point_hololens") is not None:
+            model["hit_point_hololens"] = hit_result.get("hit_point_hololens")
 
     return model
 
@@ -564,7 +820,12 @@ def _sanitize_depth_png(depth_png_bytes: bytes, sensor_name: str) -> tuple[bytes
     return encoded_png.tobytes(), stats
 
 
-def _build_completed_task_response(task_data: dict, *, host_override: str | None = None) -> dict:
+def _build_completed_task_response(
+    task_data: dict,
+    *,
+    host_override: str | None = None,
+    startup_session_id: str | None = None,
+) -> dict:
     response = {
         "status": task_data["status"],
         "task_id": task_data.get("task_id"),
@@ -578,15 +839,34 @@ def _build_completed_task_response(task_data: dict, *, host_override: str | None
     task_json = task_data.get("task_json") or {}
     task_id = str(task_data.get("task_id") or "")
     response["placement_status"] = _resolve_placement_status(task_data, task_json)
-    response["model_bounds"] = _build_task_model_bounds_status(task_id, task_json)
+    response["model_bounds"] = _build_task_model_bounds_status(
+        task_id,
+        task_json,
+        task_data=task_data,
+        startup_session_id=startup_session_id,
+    )
     response["model_generation"] = task_json.get("ModelGeneration") or None
     response["display_identity"] = task_json.get("DisplayIdentity") or None
     if response["display_identity"]:
         response["display_object_id"] = response["display_identity"].get("display_object_id")
         response["capture_instance_id"] = response["display_identity"].get("capture_instance_id")
-    response["history_placement_restoration"] = task_json.get("HistoryPlacementRestoration") or None
-    response["taken_object_detection"] = task_json.get("TakenObjectDetection") or None
-    response["sam3d_body_mesh"] = task_json.get("SAM3DBodyMesh") or None
+    response_startup_session_id = _response_startup_session_id(
+        task_data,
+        task_json,
+        startup_session_id,
+    )
+    response["history_placement_restoration"] = _public_spatial_payload(
+        task_json.get("HistoryPlacementRestoration") or None,
+        startup_session_id=response_startup_session_id,
+    )
+    response["taken_object_detection"] = _public_spatial_payload(
+        task_json.get("TakenObjectDetection") or None,
+        startup_session_id=response_startup_session_id,
+    )
+    response["sam3d_body_mesh"] = _public_spatial_payload(
+        task_json.get("SAM3DBodyMesh") or None,
+        startup_session_id=response_startup_session_id,
+    )
     response["sam3_spatial_box"] = task_json.get("Sam3SpatialBox") or None
 
     try:
@@ -606,7 +886,12 @@ def _build_completed_task_response(task_data: dict, *, host_override: str | None
     else:
         fbx_path = None
 
-    _append_pose_fields(response, task_json)
+    _append_pose_fields(
+        response,
+        task_json,
+        task_data=task_data,
+        startup_session_id=startup_session_id,
+    )
 
     if not generated_source.mesh_path.exists():
         response["error"] = f"{generated_source.source_stage} obj not found on disk"
@@ -681,7 +966,12 @@ def _build_completed_task_response(task_data: dict, *, host_override: str | None
     if fbx_path and fbx_path.exists():
         fbx_url = _task_artifact_url(host, task_id, "result", fbx_name)
         response["fbx_url"] = fbx_url
-        response["model_instance"] = _build_model_instance(task_data, task_json, fbx_url)
+        response["model_instance"] = _build_model_instance(
+            task_data,
+            task_json,
+            fbx_url,
+            startup_session_id=startup_session_id,
+        )
 
     return response
 
@@ -693,6 +983,11 @@ def _build_aruco_completed_task_response(task_data: dict) -> dict:
         or (task_json.get("device") or {}).get("startup_session_id")
         or ""
     ).strip()
+    aruco_stage = (
+        ((task_json.get("debug") or {}).get("pose_transform_stages") or {}).get("aruco_stage")
+        or {}
+    )
+    latest_reference_row = get_latest_aruco_reference(startup_session_id) if startup_session_id else None
     response = {
         "status": task_data["status"],
         "task_id": task_data.get("task_id"),
@@ -701,31 +996,20 @@ def _build_aruco_completed_task_response(task_data: dict) -> dict:
         "stage_runs": task_data.get("stage_runs") or [],
         "timing_events": task_data.get("timing_events") or [],
         "ai_model_timings": task_data.get("ai_model_timings") or [],
+        "startup_session_id": startup_session_id,
+        "aruco_detected": latest_reference_row is not None,
+        "aruco_reference_task_id": (latest_reference_row or {}).get("task_id"),
+        "retro_synced_completed_task_count": _safe_int(
+            aruco_stage.get("retro_synced_completed_task_count") or 0
+        ),
+        "coordinate_handling": "server_only_hololens_local_payloads",
     }
-    _append_pose_fields(response, task_json)
-
-    aruco_stage = (
-        ((task_json.get("debug") or {}).get("pose_transform_stages") or {}).get("aruco_stage")
-        or {}
-    )
-    response["retro_synced_completed_task_count"] = _safe_int(
-        aruco_stage.get("retro_synced_completed_task_count") or 0
-    )
-
-    if not response.get("aruco_reference"):
-        latest_reference_row = get_latest_aruco_reference(startup_session_id) if startup_session_id else None
-        latest_reference_task_id = str((latest_reference_row or {}).get("task_id") or "")
-        if latest_reference_row and latest_reference_task_id == str(task_data.get("task_id") or ""):
-            response["aruco_reference"] = _load_marker_pose_json(latest_reference_row.get("marker_pose_json"))
-
-    response["aruco_detected"] = bool(response.get("aruco_reference"))
     latest_completed_model = get_latest_completed_task_data(
         startup_session_id=startup_session_id,
         require_aruco_coordinate_synced=True,
         history_offset=0,
         attempt_sync=False,
     )
-
     response["latest_completed_model_available"] = latest_completed_model is not None
     if latest_completed_model:
         response["latest_completed_model_task_id"] = latest_completed_model.get("task_id")
@@ -1023,11 +1307,11 @@ def _model_is_ready_for_runtime_download(task_data: dict) -> bool:
         return False
     if not (model_result_dir(task_timestamp) / fbx_name).exists():
         return False
-    return bool(task_json.get("object_world") or task_json.get("object_aruco"))
+    return bool(task_json.get("object_hololens_current") or task_json.get("object_aruco"))
 
 
-def _build_model_ready_task_response(task_data: dict) -> dict:
-    response = _build_completed_task_response(task_data)
+def _build_model_ready_task_response(task_data: dict, *, startup_session_id: str | None = None) -> dict:
+    response = _build_completed_task_response(task_data, startup_session_id=startup_session_id)
     response["status"] = "model_ready"
     response["terminal"] = False
     response["model_ready"] = True
@@ -1039,8 +1323,11 @@ def check_task_queue():
     try:
         payload = request.get_json(silent=True) or {}
         task_ids = payload.get("task_ids")
+        client_startup_session_id = str(payload.get("startup_session_id") or "").strip() or None
         if not isinstance(task_ids, list):
             return jsonify({"error": "task_ids must be a JSON array"}), 400
+        if not client_startup_session_id:
+            return jsonify({"error": "startup_session_id is required"}), 400
 
         pending = []
         seen = set()
@@ -1072,7 +1359,10 @@ def check_task_queue():
             task_json = task_data.get("task_json") or {}
             purpose = task_json.get("purpose")
             if status == "completed":
-                response = _build_completed_task_response(task_data)
+                response = _build_completed_task_response(
+                    task_data,
+                    startup_session_id=client_startup_session_id,
+                )
             elif status == "aruco_completed":
                 response = _build_aruco_completed_task_response(task_data)
             elif status == "failed":
@@ -1088,7 +1378,10 @@ def check_task_queue():
                 }
             else:
                 if _model_is_ready_for_runtime_download(task_data):
-                    response = _build_model_ready_task_response(task_data)
+                    response = _build_model_ready_task_response(
+                        task_data,
+                        startup_session_id=client_startup_session_id,
+                    )
                     return jsonify(
                         {
                             "ready": True,
@@ -1100,7 +1393,11 @@ def check_task_queue():
                         }
                     )
                 pending.append(
-                    _build_pending_task_response(task_data, position=len(pending) + 1)
+                    _build_pending_task_response(
+                        task_data,
+                        position=len(pending) + 1,
+                        startup_session_id=client_startup_session_id,
+                    )
                 )
                 continue
 
@@ -1130,10 +1427,7 @@ def latest_aruco_reference():
             return jsonify({"error": "Missing startup_session_id parameter"}), 400
 
         latest_reference_row = get_latest_aruco_reference(startup_session_id)
-        aruco_reference = _load_marker_pose_json(
-            latest_reference_row.get("marker_pose_json") if latest_reference_row else None
-        )
-        if not aruco_reference:
+        if not latest_reference_row:
             return jsonify(
                 {
                     "error": "No ArUco reference found for this startup session",
@@ -1147,7 +1441,8 @@ def latest_aruco_reference():
                 "startup_session_id": startup_session_id,
                 "task_id": latest_reference_row.get("task_id"),
                 "created_at": latest_reference_row.get("created_at"),
-                "aruco_reference": aruco_reference,
+                "aruco_detected": True,
+                "coordinate_handling": "server_only_hololens_local_payloads",
                 "terminal": True,
             }
         )
@@ -1215,14 +1510,38 @@ def latest_completed_task_ids():
         return jsonify({"success": False, "error": str(exc)}), 500
 
 
+
+def _prepare_spatial_query_payload(payload: dict) -> tuple[dict, str | None]:
+    startup_session_id = str(
+        payload.get("startup_session_id")
+        or request.args.get("startup_session_id")
+        or ""
+    ).strip() or None
+    if payload.get("origin_hololens") is None or payload.get("direction_hololens") is None:
+        raise ValueError("origin_hololens and direction_hololens are required for public spatial queries")
+    if not startup_session_id:
+        raise ValueError("startup_session_id is required for HoloLens-coordinate spatial queries")
+    aruco_reference = _load_latest_aruco_reference_pose(startup_session_id)
+    if aruco_reference is None:
+        raise ValueError("No ArUco reference found for this startup session")
+    converted = dict(payload)
+    converted["aruco_reference"] = aruco_reference
+    return converted, startup_session_id
+
 @app.route("/model-bounds/latest", methods=["GET"], strict_slashes=False)
 def model_bounds_latest():
     try:
         limit = max(1, request.args.get("limit", default=5, type=int) or 5)
         include_duplicates = _include_duplicate_captures_requested()
+        startup_session_id = str(request.args.get("startup_session_id") or "").strip() or None
+        if not startup_session_id:
+            return jsonify({"success": False, "error": "startup_session_id is required"}), 400
         fetch_limit = limit if include_duplicates else min(max(limit * 4, limit), 50)
         rows = get_latest_ready_model_bounds(fetch_limit)
-        models = [_build_model_bounds_response(row) for row in rows]
+        models = [
+            _build_model_bounds_response(row, startup_session_id=startup_session_id)
+            for row in rows
+        ]
         bounds = models if include_duplicates else _dedupe_display_object_models(models, limit=limit)
         return jsonify(
             {
@@ -1245,8 +1564,14 @@ def model_bounds_range():
         end = str(request.args.get("end") or "").strip()
         limit = max(1, request.args.get("limit", default=50, type=int) or 50)
         include_duplicates = _include_duplicate_captures_requested()
+        startup_session_id = str(request.args.get("startup_session_id") or "").strip() or None
+        if not startup_session_id:
+            return jsonify({"success": False, "error": "startup_session_id is required"}), 400
         rows = get_ready_model_bounds_in_range(start, end, limit=limit)
-        models = [_build_model_bounds_response(row) for row in rows]
+        models = [
+            _build_model_bounds_response(row, startup_session_id=startup_session_id)
+            for row in rows
+        ]
         bounds = models if include_duplicates else _dedupe_display_object_models(models, limit=limit)
         return jsonify(
             {
@@ -1270,7 +1595,8 @@ def model_bounds_range():
 def spatial_query_ray():
     try:
         payload = request.get_json(silent=True) or {}
-        _rows, result = latest_bounds_for_ray(payload)
+        query_payload, startup_session_id = _prepare_spatial_query_payload(payload)
+        _rows, result = latest_bounds_for_ray(query_payload)
         if not result.get("hit"):
             return jsonify(
                 {
@@ -1278,6 +1604,7 @@ def spatial_query_ray():
                     "hit": False,
                     "candidates_checked": result.get("candidates_checked", 0),
                     "max_distance_m": result.get("max_distance_m"),
+                    "coordinate_space": result.get("coordinate_space"),
                 }
             )
 
@@ -1286,7 +1613,13 @@ def spatial_query_ray():
                 "success": True,
                 "hit": True,
                 "candidates_checked": result.get("candidates_checked", 0),
-                "model": _build_model_bounds_response(result["row"], result),
+                "coordinate_space": result.get("coordinate_space"),
+                "hit_point_hololens": result.get("hit_point_hololens"),
+                "model": _build_model_bounds_response(
+                    result["row"],
+                    result,
+                    startup_session_id=startup_session_id,
+                ),
             }
         )
     except ValueError as exc:
@@ -1300,7 +1633,8 @@ def spatial_query_ray():
 def spatial_query_ray_range():
     try:
         payload = request.get_json(silent=True) or {}
-        _rows, result = range_bounds_for_ray(payload)
+        query_payload, startup_session_id = _prepare_spatial_query_payload(payload)
+        _rows, result = range_bounds_for_ray(query_payload)
         if not result.get("hit"):
             return jsonify(
                 {
@@ -1308,6 +1642,7 @@ def spatial_query_ray_range():
                     "hit": False,
                     "candidates_checked": result.get("candidates_checked", 0),
                     "max_distance_m": result.get("max_distance_m"),
+                    "coordinate_space": result.get("coordinate_space"),
                 }
             )
 
@@ -1316,7 +1651,13 @@ def spatial_query_ray_range():
                 "success": True,
                 "hit": True,
                 "candidates_checked": result.get("candidates_checked", 0),
-                "model": _build_model_bounds_response(result["row"], result),
+                "coordinate_space": result.get("coordinate_space"),
+                "hit_point_hololens": result.get("hit_point_hololens"),
+                "model": _build_model_bounds_response(
+                    result["row"],
+                    result,
+                    startup_session_id=startup_session_id,
+                ),
             }
         )
     except ValueError as exc:
@@ -1335,6 +1676,8 @@ def history_placement_restoration_start():
         payload = request.get_json(silent=True) or {}
         task_id = str(payload.get("task_id") or "").strip()
         startup_session_id = str(payload.get("startup_session_id") or "").strip() or None
+        if not startup_session_id:
+            return jsonify({"success": False, "error": "startup_session_id is required"}), 400
         target_time = str(payload.get("target_time") or "").strip() or None
         raw_limit = payload.get("model_limit", payload.get("limit", history_placement_settings.DEFAULT_MODEL_LIMIT))
         try:
@@ -1476,17 +1819,24 @@ def history_placement_restoration_start():
                     "task_timestamp": row.get("task_timestamp"),
                     "success": True,
                     "status": result.get("status"),
-                    "history_placement_restoration": result.get("payload"),
+                    "history_placement_restoration": _public_spatial_payload(
+                        result.get("payload"),
+                        startup_session_id=startup_session_id,
+                    ),
                 }
                 task_response = get_task(row_task_id) if row_task_id else None
                 if task_response:
-                    model_payload = _build_completed_task_response(task_response, host_override=request_host)
+                    model_payload = _build_completed_task_response(
+                        task_response,
+                        host_override=request_host,
+                        startup_session_id=startup_session_id,
+                    )
                     for key in (
                         "fbx_url",
                         "model_instance",
-                        "object_world",
-                        "object_aruco",
-                        "aruco_reference",
+                        "object_hololens_current",
+                        "object_hololens_original",
+                        "coordinate_space",
                         "sam3_spatial_box",
                         "taken_object_detection",
                         "taken_object_detection_urls",

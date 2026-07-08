@@ -9,6 +9,7 @@ import numpy as np
 
 from model_generation_common import resolve_model_source_from_stage, resolve_runtime_or_generated_source
 from coordinate_systems import MODEL_INPUT_TO_FBX_RUNTIME_LOCAL, quat_xyzw_to_rotation_matrix
+from spatial_transforms import aruco_point_to_hololens, hololens_ray_to_aruco_payload
 from object_alignment_common import read_obj_vertices
 from task_db import (
     get_latest_ready_model_bounds,
@@ -178,13 +179,13 @@ def compute_and_store_model_bounds(json_path_arg: str | Path) -> dict:
             "object_aruco",
         )
         if object_scale is None:
-            object_world = task.get("object_world") or {}
+            object_hololens_original = task.get("object_hololens_original") or {}
             _world_position, _world_rotation, object_scale = _pose_components(
-                object_world,
-                "object_world",
+                object_hololens_original,
+                "object_hololens_original",
             )
         if object_scale is None:
-            raise ValueError("object_aruco.scale or object_world.scale must have 3 values")
+            raise ValueError("object_aruco.scale or object_hololens_original.scale must have 3 values")
 
         vertices = read_obj_vertices(source_path).astype(np.float64)
         runtime_local = vertices @ np.asarray(MODEL_INPUT_TO_FBX_RUNTIME_LOCAL, dtype=np.float64).T
@@ -253,15 +254,24 @@ def decode_model_bounds_row(row: dict) -> dict:
 
 def _normalize_ray(
     payload: dict,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, float]:
-    origin = _vector3(payload.get("origin_aruco"), "origin_aruco")
-    direction = _vector3(payload.get("direction_aruco"), "direction_aruco")
+) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, float, dict, str]:
+    aruco_reference = payload.get("aruco_reference") if isinstance(payload.get("aruco_reference"), dict) else None
+    if aruco_reference is None:
+        raise ValueError("aruco_reference is required for HoloLens-coordinate spatial queries")
+    if payload.get("origin_hololens") is None or payload.get("direction_hololens") is None:
+        raise ValueError("origin_hololens and direction_hololens are required")
+
+    working_payload = hololens_ray_to_aruco_payload(payload, aruco_reference)
+    input_space = "hololens_current_local"
+
+    origin = _vector3(working_payload.get("origin_aruco"), "origin_hololens")
+    direction = _vector3(working_payload.get("direction_aruco"), "direction_hololens")
     direction_norm = float(np.linalg.norm(direction))
     if direction_norm <= RAY_EPSILON:
-        raise ValueError("direction_aruco must be non-zero")
+        raise ValueError("direction_hololens must be non-zero")
     direction = direction / direction_norm
 
-    requested_max = payload.get("max_distance_m", DEFAULT_RAY_MAX_DISTANCE_M)
+    requested_max = working_payload.get("max_distance_m", DEFAULT_RAY_MAX_DISTANCE_M)
     try:
         max_distance = float(requested_max)
     except Exception as exc:
@@ -270,14 +280,14 @@ def _normalize_ray(
         max_distance = DEFAULT_RAY_MAX_DISTANCE_M
 
     endpoint = None
-    if payload.get("end_aruco") is not None:
-        endpoint = _vector3(payload.get("end_aruco"), "end_aruco")
+    if working_payload.get("end_aruco") is not None:
+        endpoint = _vector3(working_payload.get("end_aruco"), "end_aruco")
         endpoint_distance = float(np.linalg.norm(endpoint - origin))
         if endpoint_distance <= RAY_EPSILON:
-            raise ValueError("end_aruco must be different from origin_aruco")
+            raise ValueError("end_hololens must be different from origin_hololens")
         max_distance = min(max_distance, endpoint_distance)
 
-    return origin, direction, endpoint, max_distance
+    return origin, direction, endpoint, max_distance, aruco_reference, input_space
 
 
 def ray_aabb_intersection_distance(
@@ -318,7 +328,7 @@ def ray_aabb_intersection_distance(
 
 
 def query_first_ray_hit(payload: dict, rows: list[dict]) -> dict:
-    origin, direction, _endpoint, max_distance = _normalize_ray(payload)
+    origin, direction, _endpoint, max_distance, aruco_reference, input_space = _normalize_ray(payload)
     best_row = None
     best_distance = None
 
@@ -344,17 +354,23 @@ def query_first_ray_hit(payload: dict, rows: list[dict]) -> dict:
             "hit": False,
             "candidates_checked": len(rows),
             "max_distance_m": float(max_distance),
+            "input_coordinate_space": input_space,
+            "coordinate_space": "hololens_current_local",
         }
 
     hit_point = origin + (direction * best_distance)
-    return {
+    result = {
         "hit": True,
         "candidates_checked": len(rows),
         "hit_distance_m": float(best_distance),
-        "hit_point_aruco": [float(v) for v in hit_point],
         "row": best_row,
         "max_distance_m": float(max_distance),
+        "input_coordinate_space": input_space,
     }
+    hit_point_hololens = aruco_point_to_hololens(hit_point, aruco_reference)
+    result["hit_point_hololens"] = [float(v) for v in hit_point_hololens]
+    result["coordinate_space"] = "hololens_current_local"
+    return result
 
 
 def latest_bounds_for_ray(payload: dict) -> tuple[list[dict], dict]:
