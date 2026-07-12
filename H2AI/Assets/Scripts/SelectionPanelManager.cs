@@ -18,6 +18,7 @@ public class SelectionPanelManager : MonoBehaviour
 
     public bool IsBusy => isBusy;
     public bool LastConfirmed { get; private set; }
+    public bool LastForceRebuild { get; private set; }
     public Vector2 LastTopLeftNormalized { get; private set; } = Vector2.zero;
     public Vector2 LastBottomRightNormalized { get; private set; } = Vector2.zero;
 
@@ -99,18 +100,19 @@ public class SelectionPanelManager : MonoBehaviour
     private void ResetResultState()
     {
         LastConfirmed = false;
+        LastForceRebuild = false;
         LastTopLeftNormalized = Vector2.zero;
         LastBottomRightNormalized = Vector2.zero;
     }
 
-    private void HandleConfirmClicked()
+    private void HandleConfirmClicked(bool forceRebuild)
     {
         if (!isBusy)
         {
             return;
         }
 
-        CaptureCurrentResult(true);
+        CaptureCurrentResult(true, forceRebuild);
         waitFinished = true;
     }
 
@@ -121,13 +123,14 @@ public class SelectionPanelManager : MonoBehaviour
             return;
         }
 
-        CaptureCurrentResult(false);
+        CaptureCurrentResult(false, false);
         waitFinished = true;
     }
 
-    private void CaptureCurrentResult(bool confirmed)
+    private void CaptureCurrentResult(bool confirmed, bool forceRebuild)
     {
         LastConfirmed = confirmed;
+        LastForceRebuild = confirmed && forceRebuild;
         selectionBoxController.GetNormalizedTLBR(
             out Vector2 topLeft,
             out Vector2 bottomRight

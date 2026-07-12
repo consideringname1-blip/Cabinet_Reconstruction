@@ -359,30 +359,14 @@ public class ShuJuQingQiu : MonoBehaviour
         StartObjectReconstructionCapture(DepthSensorType.LONGTHROW);
     }
 
-    /// <summary>
-    /// Reserved Unity button entry: upload an AHAT confirmation capture and force the
-    /// matched display object to receive a newly generated 3D model revision.
-    /// </summary>
-    public void UploadConfirmedPositionAndForceRebuild()
-    {
-        StartObjectReconstructionCapture(DepthSensorType.AHAT, true);
-    }
-
-    public void UploadConfirmedPositionAndForceRebuildLongThrow()
-    {
-        StartObjectReconstructionCapture(DepthSensorType.LONGTHROW, true);
-    }
-
-    private void StartObjectReconstructionCapture(
-        DepthSensorType depthSensorType,
-        bool forceNew3dModel = false)
+    private void StartObjectReconstructionCapture(DepthSensorType depthSensorType)
     {
         if (selectionPanelManager != null && selectionPanelManager.IsBusy)
         {
             Game_M.initialize.XianShi("shangchuan_ERR_selection_busy");
             return;
         }
-        StartCoroutine(ShangChuanTuPianCoroutine(depthSensorType, forceNew3dModel));
+        StartCoroutine(ShangChuanTuPianCoroutine(depthSensorType));
     }
 
     public void ShangChuanDingWeiMarkTuPian()
@@ -589,9 +573,7 @@ public class ShuJuQingQiu : MonoBehaviour
         request.Send();
         Game_M.initialize.XianShi("generate");
     }
-    private IEnumerator ShangChuanTuPianCoroutine(
-        DepthSensorType depthSensorType,
-        bool forceNew3dModel)
+    private IEnumerator ShangChuanTuPianCoroutine(DepthSensorType depthSensorType)
     {
         string requestedDepthSensorName = DP_controler != null
             ? DP_controler.GetDepthSensorName(depthSensorType)
@@ -736,7 +718,7 @@ public class ShuJuQingQiu : MonoBehaviour
             sensorType,
             boxTL,
             boxBR,
-            forceNew3dModel
+            selectionPanelManager.LastForceRebuild
         );
     }
 
