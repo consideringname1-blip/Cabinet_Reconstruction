@@ -291,6 +291,12 @@ def _load_marker_pose_cv() -> tuple[np.ndarray, np.ndarray, Path] | None:
 
 
 def _object_center_aruco(task: Mapping[str, Any]) -> tuple[np.ndarray | None, str]:
+    preview = task.get('Sam3SpatialBox') if isinstance(task.get('Sam3SpatialBox'), Mapping) else None
+    if preview and preview.get('center_aruco') is not None:
+        try:
+            return _parse_float_array(preview.get('center_aruco'), 3, 'Sam3SpatialBox.center_aruco'), 'Sam3SpatialBox.center_aruco'
+        except Exception:
+            pass
     bounds = task.get('ModelBounds') if isinstance(task.get('ModelBounds'), Mapping) else None
     if bounds and bounds.get('aabb_min_aruco') is not None and bounds.get('aabb_max_aruco') is not None:
         try:
@@ -413,6 +419,15 @@ def _collect_target_observations(cache: ShigureRgbdCache, events: list[YoloEvent
 
 
 def _model_bounds_corners_aruco(task: Mapping[str, Any]) -> tuple[np.ndarray | None, dict[str, Any]]:
+    preview = task.get('Sam3SpatialBox') if isinstance(task.get('Sam3SpatialBox'), Mapping) else None
+    preview_corners = preview.get('corners_aruco') if preview else None
+    if isinstance(preview_corners, list) and len(preview_corners) >= 8:
+        try:
+            points = np.asarray(preview_corners, dtype=np.float64).reshape(-1, 3)
+            if len(points) >= 8 and np.isfinite(points).all():
+                return points, {'source': 'Sam3SpatialBox.corners_aruco', 'point_count': int(len(points))}
+        except Exception:
+            pass
     bounds = task.get('ModelBounds') if isinstance(task.get('ModelBounds'), Mapping) else None
     if not bounds:
         return None, {'reason': 'model_bounds_missing'}

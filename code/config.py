@@ -9,6 +9,17 @@ IS_RUN_FLASK_SERVER = True
 MODEL_GENERATION_BACKEND = "instantmesh"
 MODEL_SERVICE_PREWARM_ENABLE = os.environ.get("MODEL_SERVICE_PREWARM_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
 SHIGURE_HISTORY_RECORDING_ENABLE = os.environ.get("SHIGURE_HISTORY_RECORDING_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
+MAX_REALTIME_TRACKED_DISPLAY_OBJECTS = 5
+REALTIME_TRACKING_EVENT_POLL_SEC = float(os.environ.get("REALTIME_TRACKING_EVENT_POLL_SEC", "0.25"))
+REALTIME_TRACKING_DEPTH_STABLE_WAIT_SEC = float(os.environ.get("REALTIME_TRACKING_DEPTH_STABLE_WAIT_SEC", "3.0"))
+REALTIME_TRACKING_DEPTH_STABLE_MIN_FRAMES = int(os.environ.get("REALTIME_TRACKING_DEPTH_STABLE_MIN_FRAMES", "3"))
+REALTIME_TRACKING_DEPTH_VALID_RATIO = float(os.environ.get("REALTIME_TRACKING_DEPTH_VALID_RATIO", "0.45"))
+REALTIME_TRACKING_DEPTH_MEDIAN_DRIFT_M = float(os.environ.get("REALTIME_TRACKING_DEPTH_MEDIAN_DRIFT_M", "0.02"))
+REALTIME_TRACKING_DEPTH_MAD_MAX_M = float(os.environ.get("REALTIME_TRACKING_DEPTH_MAD_MAX_M", "0.03"))
+REALTIME_TRACKING_CENTROID_DRIFT_M = float(os.environ.get("REALTIME_TRACKING_CENTROID_DRIFT_M", "0.04"))
+REALTIME_TRACKING_FP_MIN_BBOX_IOU = float(os.environ.get("REALTIME_TRACKING_FP_MIN_BBOX_IOU", "0.20"))
+REALTIME_TRACKING_FP_MAX_DEPTH_RESIDUAL_M = float(os.environ.get("REALTIME_TRACKING_FP_MAX_DEPTH_RESIDUAL_M", "0.20"))
+SHIGURE_AUXILIARY_CONTACT_WAIT_SEC = float(os.environ.get("SHIGURE_AUXILIARY_CONTACT_WAIT_SEC", "600.0"))
 CONSOLE_OUTPUT_LOG_ENABLE = os.environ.get("CONSOLE_OUTPUT_LOG_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
 TASK_DEBUG_OUTPUT_ENABLE = os.environ.get("TASK_DEBUG_OUTPUT_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
 TASK_LOG_OUTPUT_ENABLE = os.environ.get("TASK_LOG_OUTPUT_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
@@ -21,6 +32,23 @@ DINO_IDENTITY_CANDIDATE_LIMIT = int(os.environ.get("DINO_IDENTITY_CANDIDATE_LIMI
 DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD = float(os.environ.get("DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD", "0.20"))
 DINO_IDENTITY_MATCH_SECOND_MARGIN = float(os.environ.get("DINO_IDENTITY_MATCH_SECOND_MARGIN", "0.05"))
 DINO_IDENTITY_MATCH_REQUIRE_MARGIN = os.environ.get("DINO_IDENTITY_MATCH_REQUIRE_MARGIN", "1").strip().lower() in {"1", "true", "yes", "on"}
+
+# Shigure live observations may only bind to an existing persistent display object.
+# The live registry is intentionally limited to the five most-recent distinct
+# display objects; Shigure-local IDs are never persisted as object identity.
+SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS = MAX_REALTIME_TRACKED_DISPLAY_OBJECTS
+SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD = float(
+    os.environ.get("SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD", "0.20")
+)
+SHIGURE_IDENTITY_MATCH_SECOND_MARGIN = float(
+    os.environ.get("SHIGURE_IDENTITY_MATCH_SECOND_MARGIN", "0.05")
+)
+SHIGURE_IDENTITY_MATCH_REQUIRE_MARGIN = os.environ.get(
+    "SHIGURE_IDENTITY_MATCH_REQUIRE_MARGIN", "1"
+).strip().lower() in {"1", "true", "yes", "on"}
+SHIGURE_IDENTITY_GEOMETRY_WEIGHT = float(
+    os.environ.get("SHIGURE_IDENTITY_GEOMETRY_WEIGHT", "0.0")
+)
 
 # Preview 3D box / pending spatial hint
 PREVIEW_3D_BOX_DEPTH_EXPANSION_FACTOR = float(os.environ.get("PREVIEW_3D_BOX_DEPTH_EXPANSION_FACTOR", "2.0"))

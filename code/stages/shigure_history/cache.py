@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import json
 import os
 import socket
 import tempfile
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -97,6 +98,55 @@ class CachedSampleMetadata:
             "yolo_hash": self.yolo_hash,
             "yolo_path": str(self.yolo_path) if self.yolo_path else None,
             "has_yolo": self.yolo is not None,
+        }
+
+
+@dataclass(frozen=True)
+class CachedShigureEvent:
+    """A Shigure event joined by the exact ROS source timestamp.
+
+    ``contacted_state`` and ``object_detection_state`` are deliberately kept
+    separate from the payloads.  This lets consumers distinguish an explicit
+    empty list from a topic that was not received for the source timestamp.
+    """
+
+    source_stamp: RosStamp
+    received_utc: str
+    received_monotonic: float
+    contacted_state: str
+    object_detection_state: str
+    contacted: dict[str, Any] | None = None
+    object_detection: dict[str, Any] | None = None
+    contact_object_matches: list[dict[str, Any]] | None = None
+    sequence: int = 0
+
+    @property
+    def key(self) -> str:
+        return sample_key(self.source_stamp)
+
+    def to_dict(self, *, include_masks: bool = False) -> dict[str, Any]:
+        object_detection = deepcopy(self.object_detection)
+        if object_detection is not None and not include_masks:
+            for item in object_detection.get("objects") or []:
+                if isinstance(item, dict):
+                    item.pop("mask_b64", None)
+        if self.contacted_state == "missing":
+            join_state = "waiting_contacted"
+        elif self.object_detection_state == "missing":
+            join_state = "waiting_object_detection"
+        else:
+            join_state = "complete"
+        return {
+            "source_stamp": self.source_stamp.to_dict(),
+            "sequence": int(self.sequence),
+            "received_utc": self.received_utc,
+            "received_monotonic": float(self.received_monotonic),
+            "contacted_state": self.contacted_state,
+            "object_detection_state": self.object_detection_state,
+            "join_state": join_state,
+            "contacted": deepcopy(self.contacted),
+            "object_detection": object_detection,
+            "contact_object_matches": deepcopy(self.contact_object_matches or []),
         }
 
 
@@ -194,14 +244,102 @@ class RecentRawSampleBuffer:
                     self._samples.pop(key, None)
 
 
-class ShigureMemoryStore:
-    """Thread-safe in-process RGB-D/object-detection ring buffer."""
+class RecentShigureEventBuffer:
+    def __init__(self, *, max_seconds: float, max_events: int) -> None:
+        self.max_seconds = max(0.0, float(max_seconds))
+        self.max_events = max(0, int(max_events))
+        self._events: OrderedDict[str, CachedShigureEvent] = OrderedDict()
 
-    def __init__(self, *, max_seconds: float, max_samples: int) -> None:
+    def __len__(self) -> int:
+        return len(self._events)
+
+    def append(self, event: CachedShigureEvent) -> None:
+        if self.max_events <= 0:
+            return
+        copied = CachedShigureEvent(
+            source_stamp=event.source_stamp,
+            received_utc=str(event.received_utc),
+            received_monotonic=float(event.received_monotonic),
+            contacted_state=str(event.contacted_state),
+            object_detection_state=str(event.object_detection_state),
+            contacted=deepcopy(event.contacted),
+            object_detection=deepcopy(event.object_detection),
+            contact_object_matches=deepcopy(event.contact_object_matches or []),
+            sequence=int(event.sequence),
+        )
+        self._events[copied.key] = copied
+        self._events = OrderedDict(
+            sorted(
+                self._events.items(),
+                key=lambda item: (
+                    item[1].source_stamp.sec,
+                    item[1].source_stamp.nanosec,
+                    item[1].received_monotonic,
+                ),
+            )
+        )
+        newest = self.newest_event()
+        if newest is not None:
+            self._prune(newest_seconds=newest.source_stamp.seconds)
+
+    def iter_events(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedShigureEvent]:
+        start_key = (start.sec, start.nanosec) if start is not None else None
+        end_key = (end.sec, end.nanosec) if end is not None else None
+        for event in list(self._events.values()):
+            event_key = (event.source_stamp.sec, event.source_stamp.nanosec)
+            if start_key is not None and event_key < start_key:
+                continue
+            if end_key is not None and event_key > end_key:
+                continue
+            yield event
+
+    def iter_events_after(self, stamp: RosStamp | None) -> Iterable[CachedShigureEvent]:
+        minimum = (stamp.sec, stamp.nanosec) if stamp is not None else None
+        for event in self.iter_events(start=stamp):
+            event_key = (event.source_stamp.sec, event.source_stamp.nanosec)
+            if minimum is not None and event_key <= minimum:
+                continue
+            yield event
+
+    def iter_event_updates_after(self, sequence: int) -> Iterable[CachedShigureEvent]:
+        minimum = max(0, int(sequence))
+        yield from sorted(
+            (event for event in self._events.values() if int(event.sequence) > minimum),
+            key=lambda event: int(event.sequence),
+        )
+
+    def newest_event(self) -> CachedShigureEvent | None:
+        if not self._events:
+            return None
+        return next(reversed(self._events.values()))
+
+    def get_event(self, stamp: RosStamp) -> CachedShigureEvent | None:
+        return self._events.get(sample_key(stamp))
+
+    def _prune(self, *, newest_seconds: float) -> None:
+        cutoff = newest_seconds - self.max_seconds if self.max_seconds > 0 else None
+        while len(self._events) > self.max_events:
+            self._events.popitem(last=False)
+        if cutoff is not None:
+            for key, event in list(self._events.items()):
+                if event.source_stamp.seconds < cutoff:
+                    self._events.pop(key, None)
+
+
+class ShigureMemoryStore:
+    """Thread-safe in-process RGB-D and correlated Shigure event buffers."""
+
+    def __init__(self, *, max_seconds: float, max_samples: int, max_events: int | None = None) -> None:
         self._buffer = RecentRawSampleBuffer(max_seconds=max_seconds, max_samples=max_samples)
+        self._event_buffer = RecentShigureEventBuffer(
+            max_seconds=max_seconds,
+            max_events=max_samples if max_events is None else max_events,
+        )
         self._lock = RLock()
         self.created_at = utc_now()
         self.last_append_at: str | None = None
+        self.last_event_append_at: str | None = None
+        self._next_event_sequence = 0
 
     def append(self, sample: CachedRgbdSample) -> None:
         with self._lock:
@@ -231,16 +369,50 @@ class ShigureMemoryStore:
         with self._lock:
             return self._buffer.get_sample(stamp, mode=mode)
 
+    def append_event(self, event: CachedShigureEvent) -> CachedShigureEvent:
+        with self._lock:
+            self._next_event_sequence += 1
+            stored = replace(event, sequence=self._next_event_sequence)
+            self._event_buffer.append(stored)
+            self.last_event_append_at = utc_now()
+            return stored
+
+    def iter_events(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> list[CachedShigureEvent]:
+        with self._lock:
+            return list(self._event_buffer.iter_events(start=start, end=end))
+
+    def iter_events_after(self, stamp: RosStamp | None) -> list[CachedShigureEvent]:
+        with self._lock:
+            return list(self._event_buffer.iter_events_after(stamp))
+
+    def iter_event_updates_after(self, sequence: int) -> list[CachedShigureEvent]:
+        with self._lock:
+            return list(self._event_buffer.iter_event_updates_after(sequence))
+
+    def latest_event(self) -> CachedShigureEvent | None:
+        with self._lock:
+            return self._event_buffer.newest_event()
+
+    def get_event(self, stamp: RosStamp) -> CachedShigureEvent | None:
+        with self._lock:
+            return self._event_buffer.get_event(stamp)
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             newest = self._buffer.newest_sample()
+            latest_event = self._event_buffer.newest_event()
             return {
                 "created_at": self.created_at,
                 "last_append_at": self.last_append_at,
+                "last_event_append_at": self.last_event_append_at,
                 "sample_count": len(self._buffer),
+                "event_count": len(self._event_buffer),
                 "retention_seconds": self._buffer.max_seconds,
                 "max_samples": self._buffer.max_samples,
+                "max_events": self._event_buffer.max_events,
+                "latest_event_sequence": int(self._next_event_sequence),
                 "newest_sample": newest.to_dict() if newest is not None else None,
+                "latest_event": latest_event.to_dict() if latest_event is not None else None,
             }
 
 
@@ -388,6 +560,27 @@ def _sample_from_wire(payload: Mapping[str, Any]) -> CachedRgbdSample:
     )
 
 
+def _event_to_wire(event: CachedShigureEvent, *, include_masks: bool = False) -> dict[str, Any]:
+    return event.to_dict(include_masks=include_masks)
+
+
+def _event_from_wire(payload: Mapping[str, Any]) -> CachedShigureEvent:
+    contacted = payload.get("contacted") if isinstance(payload.get("contacted"), dict) else None
+    object_detection = payload.get("object_detection") if isinstance(payload.get("object_detection"), dict) else None
+    matches = payload.get("contact_object_matches") if isinstance(payload.get("contact_object_matches"), list) else []
+    return CachedShigureEvent(
+        source_stamp=RosStamp.from_dict(payload.get("source_stamp") or {}),
+        received_utc=str(payload.get("received_utc") or ""),
+        received_monotonic=float(payload.get("received_monotonic") or 0.0),
+        contacted_state=str(payload.get("contacted_state") or "missing"),
+        object_detection_state=str(payload.get("object_detection_state") or "missing"),
+        contacted=contacted,
+        object_detection=object_detection,
+        contact_object_matches=[dict(item) for item in matches if isinstance(item, Mapping)],
+        sequence=int(payload.get("sequence") or 0),
+    )
+
+
 def store_request(store: ShigureMemoryStore, request: Mapping[str, Any]) -> dict[str, Any]:
     action = str(request.get("action") or "status")
     start = _stamp_from_wire(request.get("start") if isinstance(request.get("start"), Mapping) else None)
@@ -415,6 +608,30 @@ def store_request(store: ShigureMemoryStore, request: Mapping[str, Any]) -> dict
             return {"ok": False, "error": "stamp is required"}
         sample = store.get_sample(stamp, mode=str(request.get("mode") or "nearest"))
         return {"ok": True, "sample": _sample_to_wire(sample, include_rgb=True, include_depth=True) if sample is not None else None}
+    if action == "iter_events":
+        include_masks = bool(request.get("include_masks", False))
+        events = store.iter_events(start=start, end=end)
+        return {"ok": True, "events": [_event_to_wire(item, include_masks=include_masks) for item in events]}
+    if action == "iter_events_after":
+        stamp = _stamp_from_wire(request.get("stamp") if isinstance(request.get("stamp"), Mapping) else None)
+        include_masks = bool(request.get("include_masks", False))
+        events = store.iter_events_after(stamp)
+        return {"ok": True, "events": [_event_to_wire(item, include_masks=include_masks) for item in events]}
+    if action == "iter_event_updates_after":
+        include_masks = bool(request.get("include_masks", False))
+        events = store.iter_event_updates_after(int(request.get("sequence") or 0))
+        return {"ok": True, "events": [_event_to_wire(item, include_masks=include_masks) for item in events]}
+    if action in {"latest_event", "newest_event"}:
+        include_masks = bool(request.get("include_masks", False))
+        event = store.latest_event()
+        return {"ok": True, "event": _event_to_wire(event, include_masks=include_masks) if event is not None else None}
+    if action == "get_event":
+        stamp = _stamp_from_wire(request.get("stamp") if isinstance(request.get("stamp"), Mapping) else None)
+        if stamp is None:
+            return {"ok": False, "error": "stamp is required"}
+        include_masks = bool(request.get("include_masks", False))
+        event = store.get_event(stamp)
+        return {"ok": True, "event": _event_to_wire(event, include_masks=include_masks) if event is not None else None}
     if action in {"prune", "prune_yolo_payloads", "clear_decoded_cache"}:
         return {"ok": True}
     return {"ok": False, "error": f"unsupported action: {action}"}
@@ -450,7 +667,7 @@ def _send_socket_request(socket_path: Path, payload: Mapping[str, Any], *, timeo
 
 
 class ShigureRgbdCache:
-    """Client for the online Shigurei RGB-D/object-detection memory cache."""
+    """Client for the online Shigurei RGB-D and correlated event cache."""
 
     def __init__(
         self,
@@ -527,6 +744,77 @@ class ShigureRgbdCache:
             return None
         sample_payload = response.get("sample")
         return _sample_from_wire(sample_payload) if isinstance(sample_payload, Mapping) else None
+
+    def iter_events(
+        self,
+        *,
+        start: RosStamp | None = None,
+        end: RosStamp | None = None,
+        include_masks: bool = False,
+    ) -> Iterable[CachedShigureEvent]:
+        response = self._request(
+            {
+                "action": "iter_events",
+                "start": _stamp_to_wire(start),
+                "end": _stamp_to_wire(end),
+                "include_masks": bool(include_masks),
+            }
+        )
+        if response is None:
+            return
+        for payload in response.get("events") or []:
+            if isinstance(payload, Mapping):
+                yield _event_from_wire(payload)
+
+    def iter_events_after(self, stamp: RosStamp | None, *, include_masks: bool = False) -> Iterable[CachedShigureEvent]:
+        response = self._request(
+            {
+                "action": "iter_events_after",
+                "stamp": _stamp_to_wire(stamp),
+                "include_masks": bool(include_masks),
+            }
+        )
+        if response is None:
+            return
+        for payload in response.get("events") or []:
+            if isinstance(payload, Mapping):
+                yield _event_from_wire(payload)
+
+    def iter_event_updates_after(self, sequence: int, *, include_masks: bool = False) -> Iterable[CachedShigureEvent]:
+        """Poll event updates without losing a late exact-stamp join update."""
+
+        response = self._request(
+            {
+                "action": "iter_event_updates_after",
+                "sequence": max(0, int(sequence)),
+                "include_masks": bool(include_masks),
+            }
+        )
+        if response is None:
+            return
+        for payload in response.get("events") or []:
+            if isinstance(payload, Mapping):
+                yield _event_from_wire(payload)
+
+    def latest_event(self, *, include_masks: bool = False) -> CachedShigureEvent | None:
+        response = self._request({"action": "latest_event", "include_masks": bool(include_masks)})
+        if response is None or response.get("event") is None:
+            return None
+        event_payload = response.get("event")
+        return _event_from_wire(event_payload) if isinstance(event_payload, Mapping) else None
+
+    def get_event(self, stamp: RosStamp, *, include_masks: bool = False) -> CachedShigureEvent | None:
+        response = self._request(
+            {
+                "action": "get_event",
+                "stamp": stamp.to_dict(),
+                "include_masks": bool(include_masks),
+            }
+        )
+        if response is None or response.get("event") is None:
+            return None
+        event_payload = response.get("event")
+        return _event_from_wire(event_payload) if isinstance(event_payload, Mapping) else None
 
     def status(self) -> dict[str, Any] | None:
         response = self._request({"action": "status"})

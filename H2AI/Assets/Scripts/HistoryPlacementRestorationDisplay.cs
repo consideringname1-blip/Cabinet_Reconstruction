@@ -286,7 +286,10 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         JObject modelInstance = result["model_instance"] as JObject;
         string taskId = result["task_id"]?.ToString() ?? modelInstance?["task_id"]?.ToString() ?? "";
         string modelKey = modelInstance?["model_key"]?.ToString() ?? "";
-        string itemKey = !string.IsNullOrEmpty(taskId) ? taskId : modelKey;
+        string displayObjectId = ReadDisplayObjectId(result, modelInstance);
+        string itemKey = !string.IsNullOrEmpty(displayObjectId)
+            ? displayObjectId
+            : !string.IsNullOrEmpty(taskId) ? taskId : modelKey;
         if (string.IsNullOrEmpty(itemKey))
         {
             return false;
@@ -302,13 +305,30 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             };
         }
 
+        string nextBodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url");
+        long nextBodyRevision = ReadBodyRevision(result);
+        bool bodyChanged = !string.IsNullOrEmpty(item.BodyFbxUrl)
+            && (!string.Equals(item.BodyFbxUrl, nextBodyFbxUrl, StringComparison.Ordinal)
+                || (nextBodyRevision >= 0 && item.BodyRevision != nextBodyRevision));
+        if (bodyChanged)
+        {
+            item.BodyDownloadQueued = false;
+            if (item.BodyVisibilityCoroutine != null)
+            {
+                StopCoroutine(item.BodyVisibilityCoroutine);
+                item.BodyVisibilityCoroutine = null;
+            }
+        }
+
         item.TaskId = taskId;
         item.ModelKey = modelKey;
+        item.DisplayObjectId = displayObjectId;
         item.Status = result["status"]?.ToString() ?? item.Status;
         item.DownloadModel = BuildDownloadModel(taskId, result);
         item.TakenRgbUrl = ReadTakenEvidenceImageUrl(result);
-        item.BodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url");
-        item.BodyModelKey = "body:" + itemKey;
+        item.BodyFbxUrl = nextBodyFbxUrl;
+        item.BodyModelKey = "body:" + (!string.IsNullOrEmpty(displayObjectId) ? displayObjectId : itemKey);
+        item.BodyRevision = nextBodyRevision;
         item.BodyRootHololensPose = ReadNestedJObject(result, "sam3d_body_mesh", "selected_person_pose_hololens");
 
         ResolveRuntimeModelManager();
@@ -422,6 +442,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         float edgeLength = polyhedron != null && polyhedron["edge_length_m"] != null ? polyhedron["edge_length_m"].Value<float>() : 0.12f;
         JObject modelInstance = result != null ? result["model_instance"] as JObject : null;
         string modelKey = modelInstance != null ? modelInstance["model_key"]?.ToString() ?? "" : "";
+        string displayObjectId = ReadDisplayObjectId(result, modelInstance);
         string itemKey = string.IsNullOrEmpty(taskId) ? System.Guid.NewGuid().ToString("N") : taskId;
         GameObject polyObject = CreatePolyhedron(shape, edgeLength, status);
         polyObject.name = "HistoryPlacement_" + shape + "_" + itemKey;
@@ -438,13 +459,15 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             Key = itemKey,
             TaskId = taskId,
             ModelKey = modelKey,
+            DisplayObjectId = displayObjectId,
             Status = status,
             PolyhedronObject = polyObject,
             DurationSeconds = ReadAnimationDuration(display),
             DownloadModel = BuildDownloadModel(taskId, result),
             TakenRgbUrl = ReadTakenEvidenceImageUrl(result),
             BodyFbxUrl = ReadNestedString(result, "sam3d_body_mesh_urls", "selected_person_fbx_url"),
-            BodyModelKey = "body:" + itemKey,
+            BodyModelKey = "body:" + (!string.IsNullOrEmpty(displayObjectId) ? displayObjectId : itemKey),
+            BodyRevision = ReadBodyRevision(result),
             BodyRootHololensPose = ReadNestedJObject(result, "sam3d_body_mesh", "selected_person_pose_hololens"),
             HasEvidenceAnchor = true,
             EvidenceAnchorPosition = polyWorldPosition,
@@ -533,10 +556,11 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             return null;
         }
 
+        JObject clonedModelInstance = (JObject)modelInstance.DeepClone();
         JObject downloadModel = new JObject
         {
             ["task_id"] = string.IsNullOrEmpty(taskId) ? modelInstance["task_id"]?.ToString() ?? "" : taskId,
-            ["model_instance"] = modelInstance.DeepClone(),
+            ["model_instance"] = clonedModelInstance,
         };
         foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space" })
         {
@@ -546,7 +570,67 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
                 downloadModel[key] = value.DeepClone();
             }
         }
+        foreach (string key in new[] { "display_identity", "display_object_id", "capture_instance_id", "model_revision" })
+        {
+            JToken value = result[key];
+            if (value != null && value.Type != JTokenType.Null)
+            {
+                downloadModel[key] = value.DeepClone();
+                if (clonedModelInstance[key] == null)
+                {
+                    clonedModelInstance[key] = value.DeepClone();
+                }
+            }
+        }
         return downloadModel;
+    }
+
+    private string ReadDisplayObjectId(JObject result, JObject modelInstance)
+    {
+        foreach (JToken token in new[]
+        {
+            result?["display_object_id"],
+            result?["display_identity"]?["display_object_id"],
+            modelInstance?["display_object_id"],
+            modelInstance?["display_identity"]?["display_object_id"],
+        })
+        {
+            if (token != null && token.Type != JTokenType.Null)
+            {
+                string value = token.ToString().Trim();
+                if (!string.IsNullOrEmpty(value))
+                {
+                    return value;
+                }
+            }
+        }
+        return "";
+    }
+
+    private long ReadBodyRevision(JObject result)
+    {
+        foreach (JToken token in new[]
+        {
+            result?["latest_body_revision"],
+            result?["body_revision"],
+            result?["sam3d_body_mesh"]?["body_revision"],
+            result?["model_generation"]?["body_revision"],
+        })
+        {
+            if (token == null || token.Type == JTokenType.Null)
+            {
+                continue;
+            }
+            if (token.Type == JTokenType.Integer)
+            {
+                return token.Value<long>();
+            }
+            if (long.TryParse(token.ToString(), out long parsed))
+            {
+                return parsed;
+            }
+        }
+        return -1;
     }
 
     private bool QueueModelDownloadForItem(HistoryPlacementRestorationItem item)
@@ -944,12 +1028,21 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         RuntimeModelRecord bodyRecord;
         if (runtimeModelManager != null && runtimeModelManager.TryGetLoadedRecord(item.BodyModelKey, out bodyRecord))
         {
-            if (bodyRecord != null && bodyRecord.RootGameObject != null)
+            bool revisionMatches = item.BodyRevision >= 0
+                && bodyRecord != null
+                && bodyRecord.ModelRevision == item.BodyRevision
+                && string.Equals(bodyRecord.FbxUrl, item.BodyFbxUrl, StringComparison.Ordinal);
+            bool urlMatches = item.BodyRevision < 0
+                && bodyRecord != null
+                && string.Equals(bodyRecord.FbxUrl, item.BodyFbxUrl, StringComparison.Ordinal);
+            if ((revisionMatches || urlMatches)
+                && bodyRecord != null
+                && bodyRecord.RootGameObject != null)
             {
                 ApplyEvidenceBodyMaterial(bodyRecord.RootGameObject);
                 bodyRecord.RootGameObject.SetActive(item.EvidenceVisibleRequested);
+                return true;
             }
-            return true;
         }
         if (ShuJuQingQiu.initialize == null)
         {
@@ -975,6 +1068,16 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
             ["object_hololens_current"] = bodyRootPose,
             ["coordinate_space"] = "hololens_current_local",
         };
+        if (item.BodyRevision >= 0)
+        {
+            modelInstance["model_revision"] = item.BodyRevision;
+            bodyModel["model_revision"] = item.BodyRevision;
+        }
+        if (!string.IsNullOrEmpty(item.DisplayObjectId))
+        {
+            modelInstance["display_object_id"] = item.DisplayObjectId;
+            bodyModel["display_object_id"] = item.DisplayObjectId;
+        }
 
         if (ShuJuQingQiu.initialize.DownloadRuntimeModelFromSpatialQueryModel(bodyModel))
         {
@@ -1540,6 +1643,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         public string Key = "";
         public string TaskId = "";
         public string ModelKey = "";
+        public string DisplayObjectId = "";
         public string Status = "";
         public GameObject PolyhedronObject;
         public GameObject CloneObject;
@@ -1558,6 +1662,7 @@ public class HistoryPlacementRestorationDisplay : MonoBehaviour
         public string TakenRgbUrl = "";
         public string BodyFbxUrl = "";
         public string BodyModelKey = "";
+        public long BodyRevision = -1;
         public JObject BodyRootHololensPose;
         public bool HasEvidenceAnchor;
         public Vector3 EvidenceAnchorPosition;

@@ -41,6 +41,10 @@ SHIGURE_HISTORY_MAX_SAMPLES = _int_env(
     "SHIGURE_HISTORY_MAX_SAMPLES",
     max(1, int(round(SHIGURE_HISTORY_SECONDS * SHIGURE_HISTORY_HZ))),
 )
+SHIGURE_HISTORY_MAX_EVENTS = _int_env(
+    "SHIGURE_HISTORY_MAX_EVENTS",
+    max(256, int(round(SHIGURE_HISTORY_SECONDS * 30.0))),
+)
 SHIGURE_HISTORY_RECORDER_LOG_INTERVAL = _float_env("SHIGURE_HISTORY_RECORDER_LOG_INTERVAL", 10.0)
 SHIGURE_HISTORY_RGB_DEPTH_MAX_DELTA_SECONDS = _float_env("SHIGURE_HISTORY_RGB_DEPTH_MAX_DELTA_SECONDS", 0.2)
 SHIGURE_HISTORY_OBJECT_DETECTION_MAX_DELTA_SECONDS = _float_env("SHIGURE_HISTORY_OBJECT_DETECTION_MAX_DELTA_SECONDS", 0.5)
@@ -55,6 +59,8 @@ CAMERA_INFO_TOPIC = os.environ.get("SHIGURE_HISTORY_CAMERA_INFO_TOPIC", "/rs/ali
 CAMERA_INFO_TYPE = os.environ.get("SHIGURE_HISTORY_CAMERA_INFO_TYPE", "sensor_msgs/msg/CameraInfo")
 OBJECT_DETECTION_TOPIC = os.environ.get("SHIGURE_HISTORY_OBJECT_DETECTION_TOPIC", "/shigure/object_detection")
 OBJECT_DETECTION_TYPE = os.environ.get("SHIGURE_HISTORY_OBJECT_DETECTION_TYPE", "shigure_core_msgs/msg/DetectedObjectList")
+CONTACTED_TOPIC = os.environ.get("SHIGURE_HISTORY_CONTACTED_TOPIC", "/shigure/contacted")
+CONTACTED_TYPE = os.environ.get("SHIGURE_HISTORY_CONTACTED_TYPE", "shigure_core_msgs/msg/ContactedList")
 
 # Compatibility aliases for downstream code that still calls these payloads
 # "yolo" or "active_objects".
@@ -66,7 +72,17 @@ TOPIC_SPECS: dict[str, tuple[str, str]] = {
     "depth": (DEPTH_TOPIC, DEPTH_TYPE),
     "camera_info": (CAMERA_INFO_TOPIC, CAMERA_INFO_TYPE),
     "object_detection": (OBJECT_DETECTION_TOPIC, OBJECT_DETECTION_TYPE),
+    "contacted": (CONTACTED_TOPIC, CONTACTED_TYPE),
 }
+
+# Subscribe with BEST_EFFORT for every Shigure/RealSense topic.  A
+# BEST_EFFORT reader is compatible with both BEST_EFFORT and RELIABLE writers,
+# while a RELIABLE reader cannot connect to Shigure's BEST_EFFORT writers.
+# Event topics still get a deeper local queue; the exact-stamp join keeps a
+# dropped ContactedList as ``missing`` instead of treating it as an explicit
+# empty contact result.
+BEST_EFFORT_TOPIC_KEYS = frozenset(TOPIC_SPECS)
+CORRELATED_EVENT_TOPIC_KEYS = frozenset({"object_detection", "contacted"})
 
 
 # Shigurei ArMarker history settings are kept; only the offline RGB-D cache was removed.

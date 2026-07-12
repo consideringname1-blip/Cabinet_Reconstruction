@@ -79,6 +79,8 @@ from task_db import (
     get_task_stage_runs,
     get_task_timing_events,
     get_ai_model_timings_for_task,
+    get_auxiliary_jobs,
+    list_auxiliary_jobs,
     get_tasks_for_startup_statuses,
     get_task_by_task_id,
     get_unfinished_tasks,
@@ -89,16 +91,28 @@ from task_db import (
     mark_task_stage_started,
     record_ai_model_timing,
     update_task_status,
+    upsert_auxiliary_job,
+    set_latest_body_revision,
 )
 from task_json import (
     ensure_task_id_in_json,
     load_task_json,
     resolve_task_json_path,
     resolve_task_json_path_from_record,
+    resolve_project_path,
     save_task_json,
 )
 from console_output_log import install_console_output_log
 from artifact_layout import make_timestamp, model_task_json_path
+from foundationpose_dispatcher import (
+    PRIORITY_REALTIME_TRACKING,
+    FoundationPoseDispatcher,
+    request_socket as request_foundationpose_dispatcher,
+)
+from realtime_tracking import coordinator as realtime_tracking_coordinator
+from shigure_realtime_tracking import ShigureRealtimeTrackingEngine
+from shigure_auxiliary_branch import ShigureAuxiliaryBranchManager
+from stages.shigure_history.cache import ShigureRgbdCache
 
 install_console_output_log()
 
@@ -121,10 +135,12 @@ STAGE_ORDER = [
     "runtime_mesh",
     "model_bounds",
     "display_identity",
+]
+LEGACY_DETACHED_STAGES = {
     "history_placement_restoration",
     "taken_object_detection",
     "sam3d_body_mesh",
-]
+}
 
 PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction"
 PURPOSE_ARUCO_REFERENCE = "aruco_reference"
@@ -581,6 +597,10 @@ _foundationpose_service = SocketStageService(
     echo_output=False,
     env_overrides=lambda: _service_gpu_env("foundationpose"),
 )
+_foundationpose_dispatcher = FoundationPoseDispatcher(
+    socket_path=WORKER_SOCKET_ROOT / "foundationpose_dispatcher.sock",
+    backend_socket_path=_foundationpose_service.socket_path,
+)
 _dinov2_identity_service = SocketStageService(
     name="dinov2_identity",
     python_path=DINO_IDENTITY_STAGE_PY,
@@ -591,6 +611,35 @@ _dinov2_identity_service = SocketStageService(
     echo_output=True,
     env_overrides=lambda: _service_gpu_env("dinov2_identity"),
 )
+
+
+def _request_realtime_dinov2(payload: dict[str, Any]) -> dict[str, Any]:
+    return _dinov2_identity_service.request(payload, stage_name="shigure_identity")
+
+
+def _request_realtime_foundationpose(payload: dict[str, Any], display_object_id: str) -> dict[str, Any]:
+    _foundationpose_service.ensure_started(
+        stage_name="realtime_tracking",
+        reason=f"Shigure realtime tracking for {display_object_id}",
+    )
+    _foundationpose_dispatcher.start()
+    request_payload = dict(payload)
+    request_payload["dispatcher_priority"] = PRIORITY_REALTIME_TRACKING
+    request_payload["dispatcher_coalesce_key"] = f"tracking:{display_object_id}"
+    return request_foundationpose_dispatcher(
+        _foundationpose_dispatcher.socket_path,
+        request_payload,
+        timeout=3600.0,
+    )
+
+
+_realtime_tracking_engine = ShigureRealtimeTrackingEngine(
+    coordinator=realtime_tracking_coordinator,
+    dino_request=_request_realtime_dinov2,
+    foundationpose_request=_request_realtime_foundationpose,
+)
+_auxiliary_branch_manager: ShigureAuxiliaryBranchManager | None = None
+_auxiliary_branch_lock = threading.RLock()
 
 
 def _queue_snapshot_no_lock() -> list[str]:
@@ -644,6 +693,16 @@ def _restore_unfinished_tasks() -> None:
     unfinished_tasks = get_unfinished_tasks()
     for task in unfinished_tasks:
         task_id = str(task["task_id"])
+        status_text = str(task.get("status") or "pending")
+        if status_text in LEGACY_DETACHED_STAGES:
+            try:
+                legacy_json_path = resolve_task_json_path_from_record(task)
+                _start_auxiliary_branch_if_needed(task_id, legacy_json_path)
+                update_task_status(task_id, "completed")
+                print(f"[worker] detached legacy post-model stage {status_text}: {task_id}")
+            except Exception as exc:
+                print(f"[worker] failed to detach legacy stage for {task_id}: {exc}")
+            continue
         with _task_lock:
             if task_id in _queued_task_ids or task_id in _running_task_ids:
                 continue
@@ -945,8 +1004,9 @@ def _run_object_alignment(json_path: Path, context: StageWorkerContext | None = 
             stage_name="object_alignment",
             reason="foundationpose object alignment",
         )
+        _foundationpose_dispatcher.start()
         env = os.environ.copy()
-        env["FOUNDATIONPOSE_WORKER_SOCKET"] = str(_foundationpose_service.socket_path)
+        env["FOUNDATIONPOSE_WORKER_SOCKET"] = str(_foundationpose_dispatcher.socket_path)
     _run_python_script(
         python_path=OBJECT_ALIGNMENT_STAGE_PY,
         script_path=OBJECT_ALIGNMENT_STAGE_RUN,
@@ -1004,6 +1064,26 @@ def _run_display_identity(json_path: Path, context: StageWorkerContext | None = 
         json_path=json_path,
         cwd=DISPLAY_IDENTITY_STAGE_RUN.parent,
     )
+    try:
+        task_json = load_task_json(json_path)
+        startup_session_id = _startup_session_id_from_task_json(task_json)
+        if startup_session_id:
+            realtime_tracking_coordinator.mode_status(startup_session_id)
+        identity = task_json.get("DisplayIdentity") if isinstance(task_json.get("DisplayIdentity"), dict) else {}
+        display_object_id = str(identity.get("display_object_id") or task_json.get("display_object_id") or "").strip()
+        if display_object_id:
+            evicted = realtime_tracking_coordinator.activate_display_object(display_object_id, reanchor=True)
+            if evicted:
+                print(f"[worker] realtime tracking capacity evicted: {evicted}")
+            for job in get_auxiliary_jobs(str(task_json.get("task_id") or "")):
+                result_path = str(job.get("result_path") or "").strip()
+                if str(job.get("status") or "") == "completed" and result_path:
+                    _on_auxiliary_branch_complete(
+                        str(task_json.get("task_id") or ""),
+                        resolve_project_path(result_path, require_exists=True),
+                    )
+    except Exception as exc:
+        print(f"[worker] failed to activate display identity for realtime tracking: {exc}")
 
 
 def _run_history_placement_restoration(json_path: Path, context: StageWorkerContext | None = None) -> None:
@@ -1031,6 +1111,106 @@ def _run_sam3d_body_mesh(json_path: Path, context: StageWorkerContext | None = N
         json_path=json_path,
         cwd=SAM3D_BODY_MESH_STAGE_RUN.parent,
     )
+
+
+def _get_auxiliary_branch_manager() -> ShigureAuxiliaryBranchManager:
+    global _auxiliary_branch_manager
+    with _auxiliary_branch_lock:
+        if _auxiliary_branch_manager is None:
+            _auxiliary_branch_manager = ShigureAuxiliaryBranchManager(
+                dino_request=_request_realtime_dinov2,
+                body_runner=lambda path: _run_sam3d_body_mesh(path),
+                on_complete=_on_auxiliary_branch_complete,
+            )
+        return _auxiliary_branch_manager
+
+
+def _on_auxiliary_branch_complete(task_id: str, branch_json_path: Path) -> None:
+    try:
+        task_row = get_task_by_task_id(task_id)
+        if not task_row:
+            return
+        main_task = load_task_json(resolve_task_json_path_from_record(task_row))
+        identity = main_task.get("DisplayIdentity") if isinstance(main_task.get("DisplayIdentity"), dict) else {}
+        display_object_id = str(identity.get("display_object_id") or main_task.get("display_object_id") or "").strip()
+        branch_task = load_task_json(branch_json_path)
+        body = branch_task.get("SAM3DBodyMesh") if isinstance(branch_task.get("SAM3DBodyMesh"), dict) else {}
+        if display_object_id and str(body.get("status") or "") == "SUCCESS":
+            set_latest_body_revision(display_object_id=display_object_id, task_id=task_id)
+    except Exception as exc:
+        print(f"[worker] failed to link auxiliary body for {task_id}: {exc}")
+
+
+def _auxiliary_start_event_sequence() -> int:
+    try:
+        status = ShigureRgbdCache().status() or {}
+        return max(0, int(status.get("latest_event_sequence") or 0))
+    except Exception:
+        return 0
+
+
+def _pending_auxiliary_start_sequence(task_id: str) -> int:
+    for job in get_auxiliary_jobs(task_id):
+        if str(job.get("branch_name") or "") != "shigure_contact_body":
+            continue
+        detail = job.get("detail_json")
+        try:
+            detail = json.loads(detail) if isinstance(detail, str) else dict(detail or {})
+        except Exception:
+            detail = {}
+        return max(0, int(detail.get("start_event_sequence") or 0))
+    return 0
+
+
+def _start_auxiliary_branch_if_needed(task_id: str, json_path: Path) -> None:
+    jobs = get_auxiliary_jobs(task_id)
+    existing = next((job for job in jobs if str(job.get("branch_name") or "") == "shigure_contact_body"), None)
+    manager = _get_auxiliary_branch_manager()
+    if existing and str(existing.get("status") or "") == "completed":
+        return
+    if existing and str(existing.get("status") or "") == "running" and manager.is_running(task_id):
+        return
+    start_sequence = _pending_auxiliary_start_sequence(task_id)
+    manager.start(
+        task_id=task_id,
+        json_path=json_path,
+        start_event_sequence=start_sequence,
+    )
+
+
+def _restore_auxiliary_branches() -> None:
+    if not SHIGURE_HISTORY_SOCKET_PATH.exists():
+        return
+    for job in list_auxiliary_jobs(statuses=("pending", "running")):
+        if str(job.get("branch_name") or "") != "shigure_contact_body":
+            continue
+        task_id = str(job.get("task_id") or "").strip()
+        task_row = get_task_by_task_id(task_id) if task_id else None
+        if not task_row:
+            continue
+        try:
+            _start_auxiliary_branch_if_needed(task_id, resolve_task_json_path_from_record(task_row))
+        except Exception as exc:
+            print(f"[worker] failed to restore auxiliary Shigure branch for {task_id}: {exc}")
+
+
+def _reconcile_completed_auxiliary_outputs() -> None:
+    """Repair the crash window between job completion and body-state linking."""
+
+    for job in list_auxiliary_jobs(statuses=("completed",)):
+        if str(job.get("branch_name") or "") != "shigure_contact_body":
+            continue
+        task_id = str(job.get("task_id") or "").strip()
+        result_path = str(job.get("result_path") or "").strip()
+        if not task_id or not result_path:
+            continue
+        try:
+            _on_auxiliary_branch_complete(
+                task_id,
+                resolve_project_path(result_path, require_exists=True),
+            )
+        except Exception as exc:
+            print(f"[worker] failed to reconcile completed auxiliary output for {task_id}: {exc}")
 
 
 OPTIONAL_NON_BLOCKING_STAGES = {
@@ -1130,6 +1310,11 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
     try:
         STAGE_RUNNERS[stage_name](json_path, context)
         mark_task_stage_completed(task_id, stage_name)
+        if stage_name == "historical_model_match":
+            try:
+                _start_auxiliary_branch_if_needed(task_id, json_path)
+            except Exception as branch_exc:
+                print(f"[worker] failed to start auxiliary Shigure branch for {task_id}: {branch_exc}")
     except Exception as exc:
         if isinstance(exc, subprocess.CalledProcessError):
             error_message = exc.stderr or exc.stdout or str(exc)
@@ -1257,6 +1442,7 @@ def _service_monitor_loop() -> None:
     while True:
         try:
             _start_shigure_history_recorder()
+            _restore_auxiliary_branches()
             _sam3mask_service.maybe_stop_idle(
                 keep_alive=_has_unfinished_at_or_before("sam3mask"),
             )
@@ -1270,6 +1456,10 @@ def _service_monitor_loop() -> None:
                 keep_alive=(
                     OBJECT_ALIGNMENT_MODE == "foundationpose"
                     and _has_unfinished_at_or_before("object_alignment")
+                )
+                or bool(
+                    ((realtime_tracking_coordinator.snapshot().get("mode") or {}).get("running_count") or 0)
+                    or ((realtime_tracking_coordinator.snapshot().get("mode") or {}).get("pending_count") or 0)
                 ),
             )
             _dinov2_identity_service.maybe_stop_idle(
@@ -1287,7 +1477,15 @@ def shutdown_worker() -> None:
     """Stop persistent model services owned by this server process."""
     global _shutdown_requested
     _shutdown_requested = True
+    _realtime_tracking_engine.stop()
+    realtime_tracking_coordinator.reset()
+    if _auxiliary_branch_manager is not None:
+        _auxiliary_branch_manager.stop()
     _stop_shigure_history_recorder()
+    try:
+        _foundationpose_dispatcher.stop()
+    except Exception as exc:
+        print(f"[worker] failed to stop FoundationPose dispatcher: {exc}")
     for service in (_sam3mask_service, _instantmesh_service, _foundationpose_service, _dinov2_identity_service):
         try:
             service.stop()
@@ -1320,8 +1518,11 @@ def start_worker() -> threading.Thread:
 
     _install_shutdown_hooks()
     initialize_task_table()
+    _reconcile_completed_auxiliary_outputs()
     _restore_unfinished_tasks()
     _start_shigure_history_recorder(force=True)
+    _foundationpose_dispatcher.start()
+    _realtime_tracking_engine.start()
     if _worker_thread is not None and _worker_thread.is_alive():
         return _worker_thread
 
@@ -1378,6 +1579,26 @@ def activate_uploaded_task(task_id: str, *, task_json: dict | None = None, front
     task_json = task_json or load_task_json(resolve_task_json_path_from_record(task_record))
     update_task_status(task_id, "pending")
     if _resolve_task_purpose(task_json) == PURPOSE_OBJECT_RECONSTRUCTION:
+        startup_session_id = _startup_session_id_from_task_json(task_json)
+        if startup_session_id:
+            realtime_tracking_coordinator.mode_status(startup_session_id)
+        upsert_auxiliary_job(
+            task_id=task_id,
+            branch_name="shigure_contact_body",
+            status="pending",
+            detail={"start_event_sequence": _auxiliary_start_event_sequence()},
+        )
+        # Start the sparse event watcher as soon as the upload is committed.
+        # It freezes take-out RGB-D evidence while the main branch is still
+        # computing SAM/DINO, so the recorder's short online cache is not the
+        # effective taken-detection deadline.
+        try:
+            _start_auxiliary_branch_if_needed(
+                task_id,
+                resolve_task_json_path_from_record(task_record),
+            )
+        except Exception as branch_exc:
+            print(f"[worker] failed to start upload-time Shigure watcher for {task_id}: {branch_exc}")
         _prewarm_model_pipeline_services("new 3D model task")
     with _task_lock:
         _enqueue_task_no_lock(task_id, _resolve_task_purpose(task_json), front=front, task_json=task_json)
@@ -1424,6 +1645,21 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     task_record["stage_runs"] = get_task_stage_runs(task_id)
     task_record["timing_events"] = get_task_timing_events(task_id)
     task_record["ai_model_timings"] = get_ai_model_timings_for_task(task_id)
+    auxiliary_outputs: dict[str, Any] = {}
+    auxiliary_jobs = get_auxiliary_jobs(task_id)
+    for job in auxiliary_jobs:
+        branch_name = str(job.get("branch_name") or "").strip()
+        result_path = str(job.get("result_path") or "").strip()
+        if not branch_name or not result_path:
+            continue
+        try:
+            auxiliary_outputs[branch_name] = load_task_json(
+                resolve_project_path(result_path, require_exists=True)
+            )
+        except Exception:
+            continue
+    task_record["auxiliary_jobs"] = auxiliary_jobs
+    task_record["auxiliary_outputs"] = auxiliary_outputs
     task_record["outputs"] = {
         "model_generation": task_json.get("ModelGeneration") or {},
         "sam3d_objects": task_json.get("SAM3DObjects") or {},
@@ -1432,8 +1668,16 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
         "blender": task_json.get("Blender") or {},
         "display_identity": task_json.get("DisplayIdentity") or {},
         "history_placement_restoration": task_json.get("HistoryPlacementRestoration") or {},
-        "taken_object_detection": task_json.get("TakenObjectDetection") or {},
-        "sam3d_body_mesh": task_json.get("SAM3DBodyMesh") or {},
+        "taken_object_detection": (
+            (auxiliary_outputs.get("shigure_contact_body") or {}).get("TakenObjectDetection")
+            or task_json.get("TakenObjectDetection")
+            or {}
+        ),
+        "sam3d_body_mesh": (
+            (auxiliary_outputs.get("shigure_contact_body") or {}).get("SAM3DBodyMesh")
+            or task_json.get("SAM3DBodyMesh")
+            or {}
+        ),
     }
     return task_record
 
@@ -1456,7 +1700,11 @@ def _sync_completed_tasks_for_startup(startup_session_id: str | None = None) -> 
         if startup_session_id
         else get_unsynced_completed_tasks()
     )
-    for task_row in task_rows:
+    # The database helpers return newest-first.  Retro-sync must replay captures
+    # in chronological order so each display object's newest HoloLens capture
+    # is committed last.  This also leaves the coordinator's five-entry LRU on
+    # the five newest distinct objects instead of the five oldest ones.
+    for task_row in reversed(task_rows):
         try:
             status = str(task_row.get("status") or "").strip()
             resolved_json_path = resolve_task_json_path_from_record(task_row)
@@ -1513,6 +1761,21 @@ def get_latest_completed_task_data(
     task_record["stage_runs"] = get_task_stage_runs(task_id_str)
     task_record["timing_events"] = get_task_timing_events(task_id_str)
     task_record["ai_model_timings"] = get_ai_model_timings_for_task(task_id_str)
+    auxiliary_outputs: dict[str, Any] = {}
+    auxiliary_jobs = get_auxiliary_jobs(task_id_str)
+    for job in auxiliary_jobs:
+        branch_name = str(job.get("branch_name") or "").strip()
+        result_path = str(job.get("result_path") or "").strip()
+        if not branch_name or not result_path:
+            continue
+        try:
+            auxiliary_outputs[branch_name] = load_task_json(
+                resolve_project_path(result_path, require_exists=True)
+            )
+        except Exception:
+            continue
+    task_record["auxiliary_jobs"] = auxiliary_jobs
+    task_record["auxiliary_outputs"] = auxiliary_outputs
     task_record["outputs"] = {
         "model_generation": task_json.get("ModelGeneration") or {},
         "sam3d_objects": task_json.get("SAM3DObjects") or {},
@@ -1521,7 +1784,15 @@ def get_latest_completed_task_data(
         "blender": task_json.get("Blender") or {},
         "display_identity": task_json.get("DisplayIdentity") or {},
         "history_placement_restoration": task_json.get("HistoryPlacementRestoration") or {},
-        "taken_object_detection": task_json.get("TakenObjectDetection") or {},
-        "sam3d_body_mesh": task_json.get("SAM3DBodyMesh") or {},
+        "taken_object_detection": (
+            (auxiliary_outputs.get("shigure_contact_body") or {}).get("TakenObjectDetection")
+            or task_json.get("TakenObjectDetection")
+            or {}
+        ),
+        "sam3d_body_mesh": (
+            (auxiliary_outputs.get("shigure_contact_body") or {}).get("SAM3DBodyMesh")
+            or task_json.get("SAM3DBodyMesh")
+            or {}
+        ),
     }
     return task_record

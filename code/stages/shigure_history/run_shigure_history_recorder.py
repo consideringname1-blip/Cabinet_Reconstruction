@@ -94,6 +94,7 @@ import numpy as np  # noqa: E402
 from stages.shigure_history import settings  # noqa: E402
 from stages.shigure_history.cache import (  # noqa: E402
     CachedRgbdSample,
+    CachedShigureEvent,
     RosStamp,
     ShigureMemoryStore,
     sample_key,
@@ -111,6 +112,7 @@ class TopicSample:
     message: Any
     stamp: RosStamp | None
     received_at: float
+    received_monotonic: float
     count: int
 
 
@@ -126,16 +128,17 @@ class TopicState:
     def __post_init__(self) -> None:
         self.samples = deque(maxlen=max(1, int(self.maxlen)))
 
-    def append(self, msg: Any) -> None:
+    def append(self, msg: Any) -> TopicSample:
         self.count += 1
-        self.samples.append(
-            TopicSample(
-                message=msg,
-                stamp=stamp_from_message(msg),
-                received_at=time.time(),
-                count=self.count,
-            )
+        sample = TopicSample(
+            message=msg,
+            stamp=stamp_from_message(msg),
+            received_at=time.time(),
+            received_monotonic=time.monotonic(),
+            count=self.count,
         )
+        self.samples.append(sample)
+        return sample
 
     def latest(self) -> TopicSample | None:
         return self.samples[-1] if self.samples else None
@@ -150,6 +153,12 @@ class TopicState:
         if max_delta_seconds is not None and abs(float(selected.stamp.seconds) - float(stamp.seconds)) > float(max_delta_seconds):
             return None
         return selected
+
+    def exact(self, stamp: RosStamp) -> TopicSample | None:
+        for sample in reversed(self.samples):
+            if sample.stamp == stamp:
+                return sample
+        return None
 
 
 def _handle_signal(signum, frame) -> None:  # noqa: ANN001
@@ -271,6 +280,41 @@ def _object_bbox_xyxy(obj: Any) -> tuple[float, float, float, float] | None:
     return x, y, x + width, y + height
 
 
+def _bbox_payload(bbox: Any | None) -> dict[str, Any] | None:
+    if bbox is None:
+        return None
+    try:
+        x = float(getattr(bbox, "x"))
+        y = float(getattr(bbox, "y"))
+        width = float(getattr(bbox, "width"))
+        height = float(getattr(bbox, "height"))
+    except Exception:
+        return None
+    return {
+        "x": x,
+        "y": y,
+        "width": width,
+        "height": height,
+        "xyxy": [x, y, x + width, y + height],
+    }
+
+
+def _cube_payload(cube: Any | None) -> dict[str, Any] | None:
+    if cube is None:
+        return None
+    try:
+        return {
+            "x": float(getattr(cube, "x")),
+            "y": float(getattr(cube, "y")),
+            "z": float(getattr(cube, "z")),
+            "width": float(getattr(cube, "width")),
+            "height": float(getattr(cube, "height")),
+            "depth": float(getattr(cube, "depth")),
+        }
+    except Exception:
+        return None
+
+
 def object_detection_payload(sample: TopicSample, state: TopicState) -> dict[str, Any]:
     msg = sample.message
     objects: list[dict[str, Any]] = []
@@ -298,16 +342,174 @@ def object_detection_payload(sample: TopicSample, state: TopicState) -> dict[str
             }
         )
     header = getattr(msg, "header", None)
+    received_utc = datetime.fromtimestamp(sample.received_at, timezone.utc).isoformat()
+    source_stamp = header_to_dict(header).get("stamp")
     return {
         "source": "shigure_object_detection",
         "topic": state.topic,
         "message_type": state.type_name,
-        "received_at": datetime.fromtimestamp(sample.received_at, timezone.utc).isoformat(),
+        "received_at": received_utc,
+        "received_utc": received_utc,
+        "received_monotonic": float(sample.received_monotonic),
         "header": header_to_dict(header),
-        "stamp": header_to_dict(header).get("stamp"),
+        "stamp": source_stamp,
+        "source_stamp": source_stamp,
         "objects": objects,
         "object_count": len(objects),
+        "explicit_empty": len(objects) == 0,
     }
+
+
+def contacted_payload(sample: TopicSample, state: TopicState) -> dict[str, Any]:
+    msg = sample.message
+    contacts: list[dict[str, Any]] = []
+    for index, contacted in enumerate(getattr(msg, "contacted_list", []) or []):
+        contacts.append(
+            {
+                "index": int(index),
+                "event_id": str(getattr(contacted, "event_id", "") or ""),
+                "people_id": str(getattr(contacted, "people_id", "") or ""),
+                "object_id": str(getattr(contacted, "object_id", "") or ""),
+                "action": str(getattr(contacted, "action", "") or ""),
+                "people_bounding_box": _bbox_payload(getattr(contacted, "people_bounding_box", None)),
+                "object_bounding_box": _bbox_payload(getattr(contacted, "object_bounding_box", None)),
+                "object_cube": _cube_payload(getattr(contacted, "object_cube", None)),
+            }
+        )
+    header = getattr(msg, "header", None)
+    received_utc = datetime.fromtimestamp(sample.received_at, timezone.utc).isoformat()
+    source_stamp = header_to_dict(header).get("stamp")
+    return {
+        "source": "shigure_contacted",
+        "topic": state.topic,
+        "message_type": state.type_name,
+        "received_at": received_utc,
+        "received_utc": received_utc,
+        "received_monotonic": float(sample.received_monotonic),
+        "header": header_to_dict(header),
+        "stamp": source_stamp,
+        "source_stamp": source_stamp,
+        "contacts": contacts,
+        "contact_count": len(contacts),
+        "explicit_empty": len(contacts) == 0,
+    }
+
+
+def _bbox_iou(left: Any, right: Any) -> float:
+    try:
+        ax0, ay0, ax1, ay1 = [float(value) for value in left]
+        bx0, by0, bx1, by1 = [float(value) for value in right]
+    except Exception:
+        return 0.0
+    intersection_width = max(0.0, min(ax1, bx1) - max(ax0, bx0))
+    intersection_height = max(0.0, min(ay1, by1) - max(ay0, by0))
+    intersection = intersection_width * intersection_height
+    area_a = max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0)
+    area_b = max(0.0, bx1 - bx0) * max(0.0, by1 - by0)
+    union = area_a + area_b - intersection
+    return float(intersection / union) if union > 0.0 else 0.0
+
+
+def associate_contacted_objects(
+    contact_payload: dict[str, Any] | None,
+    object_payload: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    """Associate contact entries with detection masks from the exact frame.
+
+    ``DetectedObject`` has no Shigure object id.  Action equality is therefore
+    used as the primary filter and object-bbox IoU resolves multiple candidates.
+    The result remains advisory; persistent identity must be resolved outside
+    this recorder.
+    """
+
+    contacts = (contact_payload or {}).get("contacts") or []
+    objects = (object_payload or {}).get("objects") or []
+    matches: list[dict[str, Any]] = []
+    for contact_index, contact in enumerate(contacts):
+        if not isinstance(contact, dict):
+            continue
+        contact_action = str(contact.get("action") or "")
+        contact_bbox = ((contact.get("object_bounding_box") or {}).get("xyxy")) if isinstance(contact.get("object_bounding_box"), dict) else None
+        candidates: list[dict[str, Any]] = []
+        for object_index, detected in enumerate(objects):
+            if not isinstance(detected, dict):
+                continue
+            action_match = bool(contact_action and contact_action == str(detected.get("action") or ""))
+            iou = _bbox_iou(contact_bbox, detected.get("bbox"))
+            candidates.append(
+                {
+                    "object_detection_index": int(object_index),
+                    "object_detection_id": str(detected.get("object_id") or ""),
+                    "action_match": action_match,
+                    "bbox_iou": iou,
+                }
+            )
+        best = max(candidates, key=lambda item: (bool(item["action_match"]), float(item["bbox_iou"])), default=None)
+        if best is None:
+            match_status = "unmatched"
+        elif best["action_match"] and float(best["bbox_iou"]) > 0.0:
+            match_status = "matched_action_iou"
+        elif best["action_match"]:
+            match_status = "matched_action_only"
+        elif float(best["bbox_iou"]) > 0.0:
+            match_status = "matched_iou_only"
+        else:
+            match_status = "unmatched"
+        matches.append(
+            {
+                "contact_index": int(contact_index),
+                "contact_event_id": str(contact.get("event_id") or ""),
+                "contact_object_id": str(contact.get("object_id") or ""),
+                "contact_action": contact_action,
+                "status": match_status,
+                "candidate_count": len(candidates),
+                "best": best,
+            }
+        )
+    return matches
+
+
+def append_correlated_event(store: ShigureMemoryStore, states: dict[str, TopicState], stamp: RosStamp) -> CachedShigureEvent | None:
+    contacted_state = states.get("contacted")
+    object_state = states.get("object_detection")
+    contacted_sample = contacted_state.exact(stamp) if contacted_state is not None else None
+    object_sample = object_state.exact(stamp) if object_state is not None else None
+    contact_payload = contacted_payload(contacted_sample, contacted_state) if contacted_sample is not None and contacted_state is not None else None
+    object_payload = object_detection_payload(object_sample, object_state) if object_sample is not None and object_state is not None else None
+
+    contact_count = int((contact_payload or {}).get("contact_count") or 0)
+    object_count = int((object_payload or {}).get("object_count") or 0)
+    # Empty/empty frames are the normal steady-state stream and do not need an
+    # event record.  If either side contains an event, the other side's exact
+    # empty/missing state is retained explicitly.
+    if contact_count == 0 and object_count == 0:
+        return None
+
+    contact_status = "missing" if contact_payload is None else ("explicit_empty" if contact_count == 0 else "present")
+    object_status = "missing" if object_payload is None else ("explicit_empty" if object_count == 0 else "present")
+    matches = associate_contacted_objects(contact_payload, object_payload)
+    received_monotonic = max(
+        [
+            value
+            for value in (
+                contacted_sample.received_monotonic if contacted_sample is not None else None,
+                object_sample.received_monotonic if object_sample is not None else None,
+            )
+            if value is not None
+        ],
+        default=time.monotonic(),
+    )
+    event = CachedShigureEvent(
+        source_stamp=stamp,
+        received_utc=datetime.now(timezone.utc).isoformat(),
+        received_monotonic=float(received_monotonic),
+        contacted_state=contact_status,
+        object_detection_state=object_status,
+        contacted=contact_payload,
+        object_detection=object_payload,
+        contact_object_matches=matches,
+    )
+    return store.append_event(event)
 
 
 def payload_hash(payload: dict[str, Any] | None) -> str | None:
@@ -488,6 +690,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sample-hz", type=float, default=settings.SHIGURE_HISTORY_HZ)
     parser.add_argument("--retention-seconds", type=float, default=settings.SHIGURE_HISTORY_SECONDS)
     parser.add_argument("--max-samples", type=int, default=settings.SHIGURE_HISTORY_MAX_SAMPLES)
+    parser.add_argument("--max-events", type=int, default=settings.SHIGURE_HISTORY_MAX_EVENTS)
     parser.add_argument("--log-interval", type=float, default=settings.SHIGURE_HISTORY_RECORDER_LOG_INTERVAL)
     parser.add_argument("--rgb-depth-max-delta-seconds", type=float, default=settings.SHIGURE_HISTORY_RGB_DEPTH_MAX_DELTA_SECONDS)
     parser.add_argument("--object-detection-max-delta-seconds", type=float, default=settings.SHIGURE_HISTORY_OBJECT_DETECTION_MAX_DELTA_SECONDS)
@@ -499,13 +702,18 @@ def main() -> int:
     rclpy, Node, QoSProfile, ReliabilityPolicy, get_message = import_ros_modules()
     rclpy.init(args=None)
     node = Node("shigure_memory_history_recorder")
-    store = ShigureMemoryStore(max_seconds=args.retention_seconds, max_samples=args.max_samples)
+    store = ShigureMemoryStore(
+        max_seconds=args.retention_seconds,
+        max_samples=args.max_samples,
+        max_events=args.max_events,
+    )
     socket_server = ShigureHistorySocketServer(args.socket_server, store)
     socket_server.start()
     states: dict[str, TopicState] = {}
     subscriptions = []
     try:
-        qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
+        best_effort_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
+        event_best_effort_qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.BEST_EFFORT)
         history_len = max(16, int(round(args.sample_hz * max(args.retention_seconds, 1.0))) * 2)
         for key, (topic, type_name) in settings.TOPIC_SPECS.items():
             msg_type = get_message(type_name)
@@ -513,8 +721,11 @@ def main() -> int:
             states[key] = state
 
             def callback(msg: Any, topic_key: str = key) -> None:
-                states[topic_key].append(msg)
+                sample = states[topic_key].append(msg)
+                if topic_key in settings.CORRELATED_EVENT_TOPIC_KEYS and sample.stamp is not None:
+                    append_correlated_event(store, states, sample.stamp)
 
+            qos = event_best_effort_qos if key in settings.CORRELATED_EVENT_TOPIC_KEYS else best_effort_qos
             subscriptions.append(node.create_subscription(msg_type, topic, callback, qos))
 
         interval = 1.0 / max(0.1, float(args.sample_hz))
@@ -536,7 +747,8 @@ def main() -> int:
         print(
             "[shigure_history] started memory recorder: "
             f"socket={args.socket_server} sample_hz={args.sample_hz} "
-            f"retention_seconds={args.retention_seconds} max_samples={args.max_samples}",
+            f"retention_seconds={args.retention_seconds} max_samples={args.max_samples} "
+            f"max_events={args.max_events}",
             flush=True,
         )
         for key, state in states.items():
@@ -557,7 +769,7 @@ def main() -> int:
             if not required_ready(states):
                 if now - last_log >= max(1.0, float(args.log_interval)):
                     missing = [key for key in REQUIRED_KEYS if states[key].latest() is None]
-                    optional_missing = [key for key in ("object_detection",) if states.get(key) is not None and states[key].latest() is None]
+                    optional_missing = [key for key in ("object_detection", "contacted") if states.get(key) is not None and states[key].latest() is None]
                     print(f"[shigure_history] waiting for required topics: {missing}; optional_missing={optional_missing}", flush=True)
                     write_status(
                         args.cache_root,

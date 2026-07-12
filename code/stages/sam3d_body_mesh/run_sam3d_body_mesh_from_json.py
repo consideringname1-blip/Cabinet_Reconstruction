@@ -476,6 +476,40 @@ def _load_backup_paths(taken: Mapping[str, Any]) -> tuple[Path, Path, Path, Path
     return rgb, depth, camera, latest_marker_pose_path()
 
 
+def _contact_people_bbox(taken: Mapping[str, Any]) -> list[float] | None:
+    direct = taken.get("people_bounding_box")
+    if not isinstance(direct, Mapping):
+        contact = taken.get("shigure_contact") if isinstance(taken.get("shigure_contact"), Mapping) else {}
+        direct = contact.get("people_bounding_box")
+    if not isinstance(direct, Mapping):
+        return None
+    raw = direct.get("xyxy")
+    if raw is None and all(key in direct for key in ("x", "y", "width", "height")):
+        x = float(direct["x"])
+        y = float(direct["y"])
+        raw = [x, y, x + float(direct["width"]), y + float(direct["height"])]
+    try:
+        values = [float(value) for value in np.asarray(raw, dtype=np.float64).reshape(4)]
+    except Exception:
+        return None
+    if not np.all(np.isfinite(np.asarray(values, dtype=np.float64))):
+        return None
+    return values if values[2] > values[0] and values[3] > values[1] else None
+
+
+def _requires_remote_contact_bbox(taken: Mapping[str, Any]) -> bool:
+    return str(taken.get("source") or "").strip().lower() == "remote_shigure_contacted"
+
+
+def _contact_bbox_policy(taken: Mapping[str, Any]) -> tuple[list[float] | None, str]:
+    bbox = _contact_people_bbox(taken)
+    if bbox is not None:
+        return bbox, "remote_contact_bbox" if _requires_remote_contact_bbox(taken) else "legacy_contact_bbox"
+    if _requires_remote_contact_bbox(taken):
+        return None, "remote_contact_bbox_missing"
+    return None, "legacy_detector_fallback"
+
+
 def _load_object_mask_from_taken(taken: Mapping[str, Any], image_shape: tuple[int, int]) -> tuple[np.ndarray | None, dict[str, Any]]:
     history = taken.get("history_baseline") if isinstance(taken.get("history_baseline"), Mapping) else {}
     init = taken.get("init") if isinstance(taken.get("init"), Mapping) else {}
@@ -733,8 +767,26 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         # Keep real image dimensions; CameraInfo intrinsics still define projection for this stream.
         pass
 
+    contact_bbox, contact_bbox_policy = _contact_bbox_policy(taken)
+    if contact_bbox_policy == 'remote_contact_bbox_missing':
+        reason = 'remote_shigure_contact_people_bbox_missing_or_invalid'
+        _write_status(
+            json_path,
+            task,
+            'NO_PERSON_DETECTED',
+            result_timestamp=result_timestamp,
+            backup_shigurei_dir=backup_dir,
+            output_dir=str(output_root),
+            reason=reason,
+        )
+        return {'status': 'NO_PERSON_DETECTED', 'reason': reason}
+
     estimator = _build_estimator(settings.SAM3D_BODY_DETECTOR_NAME, settings.SAM3D_BODY_DEVICE)
-    boxes = _detect_boxes(estimator, rgb_bgr)
+    boxes = (
+        np.asarray([contact_bbox], dtype=np.float32)
+        if contact_bbox is not None
+        else _detect_boxes(estimator, rgb_bgr)
+    )
     if boxes.size == 0:
         _write_status(json_path, task, 'NO_PERSON_DETECTED', result_timestamp=result_timestamp, backup_shigurei_dir=backup_dir, output_dir=str(output_root))
         return {'status': 'NO_PERSON_DETECTED'}
@@ -789,7 +841,10 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
 
     people_json_path = model_result_file(task_timestamp, 'body.people')
     _write_json(people_json_path, {'people': people, 'object_center_armarker': object_center.tolist() if object_center is not None else None})
-    valid_people = [p for p in people if isinstance(p.get('nearest_wrist'), Mapping)]
+    if contact_bbox is not None:
+        valid_people = [p for p in people if p.get('mesh_npz_path') and not p.get('error_message')]
+    else:
+        valid_people = [p for p in people if isinstance(p.get('nearest_wrist'), Mapping)]
     if not valid_people:
         _write_status(
             json_path,
@@ -799,11 +854,19 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
             backup_shigurei_dir=backup_dir,
             people=people,
             output_dir=str(output_root),
-            reason='no_sam3d_body_wrist_distance_to_object',
+            reason=(
+                'no_valid_sam3d_body_for_shigure_contact_bbox'
+                if contact_bbox is not None
+                else 'no_sam3d_body_wrist_distance_to_object'
+            ),
         )
         return {'status': 'NO_VALID_WRIST_JOINT'}
 
-    selected = min(valid_people, key=lambda p: float((p.get('nearest_wrist') or {}).get('distance_m', math.inf)))
+    selected = (
+        valid_people[0]
+        if contact_bbox is not None
+        else min(valid_people, key=lambda p: float((p.get('nearest_wrist') or {}).get('distance_m', math.inf)))
+    )
     selected_name = str(selected['person_name'])
     selected_npz = np.load(str(selected['mesh_npz_path']))
     work_obj_path = output_root / f'08_sam3d_body_{task_name}_{selected_name}_armarker.obj'
@@ -891,6 +954,7 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         'selected_person_obj_path': str(obj_path),
         'selected_person_camera_mesh_npz_path': selected_camera_mesh_npz_path,
         'selected_person_bbox_xyxy': selected_body_bbox,
+        'person_selection_source': 'shigure_contact_people_bbox' if contact_bbox is not None else 'nearest_wrist_to_object',
         'subject_crop_path': subject_crop_path,
         'subject_crop_folder': 'model_result' if subject_crop_path else None,
         'subject_crop': subject_crop_info,

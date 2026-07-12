@@ -168,17 +168,21 @@ class Dinov2IdentityRunner:
             "model_name": model_name,
         }
 
-    def embed_task(self, json_path: Path) -> dict[str, Any]:
+    def _embed_rgb_mask(
+        self,
+        rgb: np.ndarray,
+        mask: np.ndarray,
+        *,
+        source: dict[str, Any],
+        start_total: float | None = None,
+    ) -> dict[str, Any]:
         timings: dict[str, Any] = {}
-        start_total = time.perf_counter()
+        if start_total is None:
+            start_total = time.perf_counter()
         model_info = self._load_model()
         timings["model_load"] = model_info
         assert self.torch is not None and self.model is not None and self.device is not None
 
-        task = load_task_json(json_path)
-        color_path, mask_path = _resolve_sam3_artifacts(task)
-        rgb = _read_rgb(color_path)
-        mask = _read_mask(mask_path)
         tensor_np, crop_info = _masked_crop_tensor(rgb, mask, self.image_size, self.padding_ratio)
         tensor = self.torch.from_numpy(tensor_np).unsqueeze(0).to(self.device)
 
@@ -207,13 +211,73 @@ class Dinov2IdentityRunner:
             "device": str(self.device),
             "normalized": True,
             "crop": crop_info,
-            "source": {
-                "json_path": normalize_path_for_storage(json_path),
-                "color_path": normalize_path_for_storage(color_path),
-                "mask_path": normalize_path_for_storage(mask_path),
-            },
+            "source": dict(source),
             "timings": timings,
         }
+
+    def embed_files(
+        self,
+        color_path: Path,
+        mask_path: Path,
+        *,
+        source: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Embed an arbitrary RGB/mask pair with the task embedding pipeline."""
+        start_total = time.perf_counter()
+        color_path = ensure_file(Path(color_path), "DINOv2 color image")
+        mask_path = ensure_file(Path(mask_path), "DINOv2 mask image")
+        rgb = _read_rgb(color_path)
+        mask = _read_mask(mask_path)
+        source_payload = dict(source or {})
+        source_payload.update(
+            {
+                "color_path": normalize_path_for_storage(color_path),
+                "mask_path": normalize_path_for_storage(mask_path),
+            }
+        )
+        return self._embed_rgb_mask(
+            rgb,
+            mask,
+            source=source_payload,
+            start_total=start_total,
+        )
+
+    def embed_task(self, json_path: Path) -> dict[str, Any]:
+        task = load_task_json(json_path)
+        color_path, mask_path = _resolve_sam3_artifacts(task)
+        return self.embed_files(
+            color_path,
+            mask_path,
+            source={"json_path": normalize_path_for_storage(json_path)},
+        )
+
+
+def _request_file(request: dict[str, Any], key: str, label: str) -> Path:
+    raw = str(request.get(key) or "").strip()
+    if not raw:
+        raise ValueError(f"{key} is required for {label}")
+    return ensure_file(Path(raw).expanduser().resolve(), label)
+
+
+def dispatch_embedding_request(
+    runner: Dinov2IdentityRunner,
+    request: dict[str, Any],
+) -> dict[str, Any]:
+    """Dispatch one non-shutdown worker request.
+
+    Requests without an explicit action retain the legacy task-JSON behavior.
+    ``embed_files`` is used by the Shigure adapter and intentionally runs the
+    same reader, masked crop, normalization, model, and payload code as a task.
+    """
+    action = str(request.get("action") or "embed_task").strip().lower()
+    if action == "embed_files":
+        color_path = _request_file(request, "color_file", "DINOv2 color image")
+        mask_path = _request_file(request, "mask_file", "DINOv2 mask image")
+        return runner.embed_files(color_path, mask_path)
+    if action in {"embed_task", "task"}:
+        json_path = ensure_file(resolve_task_json_path(request["json_path"]), "JSON file")
+        return runner.embed_task(json_path)
+    raise ValueError(f"unsupported DINOv2 identity action: {action}")
 
 
 def run_socket_server(socket_path: Path) -> None:
@@ -239,8 +303,7 @@ def run_socket_server(socket_path: Path) -> None:
                     if request.get("action") == "shutdown":
                         _send_socket_json(conn, {"ok": True, "shutdown": True})
                         break
-                    json_path = ensure_file(resolve_task_json_path(request["json_path"]), "JSON file")
-                    result = runner.embed_task(json_path)
+                    result = dispatch_embedding_request(runner, request)
                     _send_socket_json(conn, {"ok": True, **result})
                 except Exception as exc:
                     traceback.print_exc(file=sys.stderr)

@@ -48,12 +48,15 @@ from task_worker import (
     start_worker,
 )
 from task_db import (
+    commit_display_object_capture_state,
     create_history_placement_request,
     get_enabled_aruco_markers,
     get_latest_completed_tasks,
     get_latest_history_placement_request,
     get_latest_aruco_reference,
+    get_latest_realtime_tracking_event,
     get_latest_ready_model_bounds,
+    list_display_object_states,
     get_model_bounds_by_task_id,
     get_ready_model_bounds_in_range,
     get_task_by_task_id,
@@ -62,6 +65,7 @@ from task_db import (
     update_task_status,
     initialize_task_table,
 )
+from realtime_tracking import MODE_HISTORY, MODE_LIVE, coordinator as realtime_tracking_coordinator
 from model_bounds import decode_model_bounds_row, latest_bounds_for_ray, range_bounds_for_ray
 from model_generation_common import resolve_model_generation_source, resolve_runtime_mesh_source
 from stages.history_placement_restoration import settings as history_placement_settings
@@ -509,6 +513,26 @@ def _include_duplicate_captures_requested() -> bool:
     )
 
 
+def _public_sam3_spatial_box(value) -> dict | None:
+    """Strip server-canonical geometry from the Unity preview payload."""
+
+    if not isinstance(value, dict):
+        return None
+    server_only_keys = {
+        "canonical_coordinate_space",
+        "diagonal_m",
+        "aruco_sync_source",
+    }
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in server_only_keys
+        and not str(key).startswith("canonical_")
+        and not str(key).startswith("aruco_")
+        and not str(key).endswith("_aruco")
+    }
+
+
 def _build_model_instance(
     task_data: dict,
     task_json: dict,
@@ -529,9 +553,16 @@ def _build_model_instance(
         task_data=task_data,
         startup_session_id=startup_session_id,
     )
-    if include_spatial_box and task_json.get("Sam3SpatialBox"):
-        instance["sam3_spatial_box"] = task_json.get("Sam3SpatialBox")
+    if include_spatial_box:
+        spatial_box = _public_sam3_spatial_box(task_json.get("Sam3SpatialBox"))
+        if spatial_box:
+            instance["sam3_spatial_box"] = spatial_box
     _append_display_identity_fields(instance, task_json)
+    identity = _display_identity_from_task_json(task_json)
+    if identity.get("model_revision") is not None:
+        instance["model_revision"] = int(identity.get("model_revision") or 0)
+    if identity.get("hololens_pose_revision") is not None:
+        instance["hololens_pose_revision"] = int(identity.get("hololens_pose_revision") or 0)
     return instance
 
 
@@ -560,7 +591,7 @@ def _build_pending_task_response(
     if position is not None:
         response["position"] = int(position)
 
-    spatial_box = task_json.get("Sam3SpatialBox") or None
+    spatial_box = _public_sam3_spatial_box(task_json.get("Sam3SpatialBox"))
     if spatial_box:
         response["sam3_spatial_box"] = spatial_box
         response["model_instance"] = _build_model_instance(
@@ -866,6 +897,8 @@ def _build_completed_task_response(
     if response["display_identity"]:
         response["display_object_id"] = response["display_identity"].get("display_object_id")
         response["capture_instance_id"] = response["display_identity"].get("capture_instance_id")
+        response["model_revision"] = int(response["display_identity"].get("model_revision") or 0)
+        response["hololens_pose_revision"] = int(response["display_identity"].get("hololens_pose_revision") or 0)
     response_startup_session_id = _response_startup_session_id(
         task_data,
         task_json,
@@ -875,14 +908,21 @@ def _build_completed_task_response(
         task_json.get("HistoryPlacementRestoration") or None,
         startup_session_id=response_startup_session_id,
     )
+    auxiliary_outputs = task_data.get("auxiliary_outputs") if isinstance(task_data.get("auxiliary_outputs"), dict) else {}
+    contact_body_branch = (
+        auxiliary_outputs.get("shigure_contact_body")
+        if isinstance(auxiliary_outputs.get("shigure_contact_body"), dict)
+        else {}
+    )
     response["taken_object_detection"] = _public_spatial_payload(
-        task_json.get("TakenObjectDetection") or None,
+        contact_body_branch.get("TakenObjectDetection") or task_json.get("TakenObjectDetection") or None,
         startup_session_id=response_startup_session_id,
     )
     response["sam3d_body_mesh"] = _public_spatial_payload(
-        task_json.get("SAM3DBodyMesh") or None,
+        contact_body_branch.get("SAM3DBodyMesh") or task_json.get("SAM3DBodyMesh") or None,
         startup_session_id=response_startup_session_id,
     )
+    response["auxiliary_jobs"] = task_data.get("auxiliary_jobs") or []
     try:
         generated_source = resolve_model_generation_source(task_json, require_mtl_image=True)
     except Exception as exc:
@@ -1952,6 +1992,248 @@ def history_placement_restoration_latest():
             return jsonify({"success": False, "error": "history_placement_response_missing"}), 404
         with response_path.open("r", encoding="utf-8") as file:
             return jsonify(json.load(file))
+    except Exception as exc:
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+def _json_column(value):
+    if value is None or isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(str(value))
+    except Exception:
+        return None
+
+
+def _backfill_display_object_states() -> None:
+    """Populate revision state for models created before the new registry."""
+
+    rows = get_latest_completed_tasks(limit=50)
+    for row in reversed(rows):
+        task_id = str(row.get("task_id") or "").strip()
+        if not task_id:
+            continue
+        task_data = get_task(task_id)
+        task_json = (task_data or {}).get("task_json") or {}
+        identity = task_json.get("DisplayIdentity") if isinstance(task_json.get("DisplayIdentity"), dict) else {}
+        display_object_id = str(identity.get("display_object_id") or task_json.get("display_object_id") or "").strip()
+        pose_aruco = task_json.get("object_aruco") if isinstance(task_json.get("object_aruco"), dict) else None
+        if not display_object_id or pose_aruco is None:
+            continue
+        historical = task_json.get("HistoricalModelMatch") if isinstance(task_json.get("HistoricalModelMatch"), dict) else {}
+        reused = bool(historical.get("reuse_model"))
+        selected_model_task_id = str(historical.get("selected_model_task_id") or "").strip() or None
+        try:
+            commit_display_object_capture_state(
+                display_object_id=display_object_id,
+                capture_task_id=task_id,
+                pose_aruco=pose_aruco,
+                captured_at=str(task_json.get("server_received_utc") or row.get("created_at") or ""),
+                generated_new_model=not reused,
+                active_model_task_id=selected_model_task_id if reused else task_id,
+            )
+        except Exception as exc:
+            print(f"[WARN] display state backfill failed for {task_id}: {exc}")
+
+
+def _cached_model_revisions(payload: dict) -> dict[str, int]:
+    result: dict[str, int] = {}
+    raw = payload.get("cached_models")
+    items = raw if isinstance(raw, list) else []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        display_object_id = str(item.get("display_object_id") or "").strip()
+        if not display_object_id:
+            continue
+        try:
+            result[display_object_id] = int(item.get("model_revision") or 0)
+        except Exception:
+            result[display_object_id] = 0
+    return result
+
+
+def _tracking_mode_items(
+    *,
+    startup_session_id: str,
+    mode: str,
+    cached_revisions: dict[str, int] | None = None,
+) -> tuple[list[dict], str | None]:
+    states = list_display_object_states(limit=5)
+    if not states:
+        _backfill_display_object_states()
+        states = list_display_object_states(limit=5)
+
+    reference_row = get_latest_aruco_reference(startup_session_id) if startup_session_id else None
+    reference_pose = _load_marker_pose_json((reference_row or {}).get("marker_pose_json")) if reference_row else None
+    coordinate_epoch = str((reference_row or {}).get("task_id") or (reference_row or {}).get("id") or "").strip() or None
+    host = request.host_url.rstrip("/")
+    cached_revisions = cached_revisions or {}
+    items: list[dict] = []
+    for state in states:
+        display_object_id = str(state.get("display_object_id") or "")
+        model_revision = int(state.get("active_model_revision") or 0)
+        hololens_pose_aruco = _json_column(state.get("latest_hololens_pose_aruco_json"))
+        tracking_pose_aruco = _json_column(state.get("latest_tracking_pose_aruco_json"))
+        hololens_pose = None
+        tracking_pose = None
+        if reference_pose is not None and isinstance(hololens_pose_aruco, dict):
+            try:
+                hololens_pose = aruco_pose_to_hololens_pose(hololens_pose_aruco, reference_pose)
+            except Exception as exc:
+                print(f"[WARN] HoloLens snapshot conversion failed for {display_object_id}: {exc}")
+        tracking_model_revision = int(state.get("latest_tracking_model_revision") or 0)
+        if (
+            reference_pose is not None
+            and isinstance(tracking_pose_aruco, dict)
+            and tracking_model_revision == model_revision
+        ):
+            try:
+                tracking_pose = aruco_pose_to_hololens_pose(tracking_pose_aruco, reference_pose)
+            except Exception as exc:
+                print(f"[WARN] tracking snapshot conversion failed for {display_object_id}: {exc}")
+
+        selected_source = "hololens"
+        selected_pose = hololens_pose
+        selected_revision = int(state.get("latest_hololens_pose_revision") or 0)
+        if mode == MODE_LIVE and tracking_pose is not None:
+            selected_source = "tracking"
+            selected_pose = tracking_pose
+            selected_revision = int(state.get("latest_tracking_pose_revision") or 0)
+
+        item = {
+            "display_object_id": display_object_id,
+            "model_revision": model_revision,
+            "active_model_task_id": state.get("active_model_task_id"),
+            "latest_hololens_pose": hololens_pose,
+            "hololens_pose_revision": int(state.get("latest_hololens_pose_revision") or 0),
+            "latest_tracking_pose": tracking_pose,
+            "tracking_pose_revision": int(state.get("latest_tracking_pose_revision") or 0),
+            "tracking_model_revision": tracking_model_revision,
+            "pose_source": selected_source,
+            "source_pose_revision": selected_revision,
+            "pose": selected_pose,
+            "coordinate_space": "hololens_current_local" if selected_pose is not None else None,
+            "latest_body_revision": int(state.get("latest_body_revision") or 0),
+            "body_revision": int(state.get("latest_body_revision") or 0),
+            "latest_body_task_id": state.get("latest_body_task_id"),
+        }
+        latest_tracking_event = get_latest_realtime_tracking_event(display_object_id)
+        if latest_tracking_event is not None:
+            tracking_event_sequence = int(latest_tracking_event.get("id") or 0)
+            item["tracking_status"] = latest_tracking_event.get("status")
+            item["tracking_reason"] = latest_tracking_event.get("reason")
+            item["tracking_event_sequence"] = tracking_event_sequence
+            item["event_sequence"] = tracking_event_sequence
+            item["tracking_observation_seq"] = int(
+                latest_tracking_event.get("observation_seq") or 0
+            )
+        if cached_revisions.get(display_object_id) != model_revision:
+            active_task_id = str(state.get("active_model_task_id") or "").strip()
+            active_task = get_task(active_task_id) if active_task_id else None
+            if active_task and str(active_task.get("status") or "") == "completed":
+                model_payload = _build_completed_task_response(
+                    active_task,
+                    host_override=host,
+                    startup_session_id=startup_session_id,
+                )
+                model_entry = {
+                    key: model_payload.get(key)
+                    for key in ("task_id", "fbx_url")
+                    if model_payload.get(key) is not None
+                }
+                model_entry["display_object_id"] = display_object_id
+                model_entry["model_revision"] = model_revision
+                model_instance = model_payload.get("model_instance")
+                if isinstance(model_instance, dict):
+                    model_instance = dict(model_instance)
+                    model_instance["display_object_id"] = display_object_id
+                    model_instance["model_revision"] = model_revision
+                    model_entry["model_instance"] = model_instance
+                item["model"] = model_entry
+        body_revision = int(state.get("latest_body_revision") or 0)
+        body_task_id = str(state.get("latest_body_task_id") or "").strip()
+        if body_revision > 0 and body_task_id:
+            body_task = get_task(body_task_id)
+            if body_task and str(body_task.get("status") or "") == "completed":
+                body_payload = _build_completed_task_response(
+                    body_task,
+                    host_override=host,
+                    startup_session_id=startup_session_id,
+                )
+                body_evidence = {
+                    key: body_payload.get(key)
+                    for key in (
+                        "task_id",
+                        "display_object_id",
+                        "model_instance",
+                        "taken_object_detection",
+                        "taken_object_detection_urls",
+                        "sam3d_body_mesh",
+                        "sam3d_body_mesh_urls",
+                    )
+                    if body_payload.get(key) is not None
+                }
+                item["body_evidence"] = body_evidence
+                item["latest_body"] = body_evidence
+                item["evidence"] = body_evidence
+        items.append(item)
+    return items, coordinate_epoch
+
+
+@app.route("/realtime-tracking/mode", methods=["POST"], strict_slashes=False)
+def realtime_tracking_mode():
+    try:
+        payload = request.get_json(silent=True) or {}
+        startup_session_id = str(payload.get("startup_session_id") or "").strip()
+        if not startup_session_id:
+            return jsonify({"success": False, "error": "startup_session_id is required"}), 400
+        requested_mode = str(payload.get("mode") or MODE_LIVE).strip().lower()
+        request_generation = int(payload.get("request_generation") or 0)
+        mode_state = realtime_tracking_coordinator.set_mode(
+            startup_session_id=startup_session_id,
+            mode=requested_mode,
+            request_generation=request_generation,
+        )
+        items, coordinate_epoch = _tracking_mode_items(
+            startup_session_id=startup_session_id,
+            mode=str(mode_state["mode"]),
+            cached_revisions=_cached_model_revisions(payload),
+        )
+        return jsonify(
+            {
+                "success": True,
+                **mode_state,
+                "coordinate_epoch": coordinate_epoch,
+                "count": len(items),
+                "items": items,
+            }
+        )
+    except ValueError as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        print(f"Error in realtime_tracking_mode: {exc}")
+        return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route("/realtime-tracking/status", methods=["GET"], strict_slashes=False)
+def realtime_tracking_status():
+    try:
+        startup_session_id = str(request.args.get("startup_session_id") or "").strip()
+        mode_state = realtime_tracking_coordinator.mode_status(startup_session_id)
+        items, coordinate_epoch = _tracking_mode_items(
+            startup_session_id=startup_session_id,
+            mode=str(mode_state["mode"]),
+        )
+        return jsonify(
+            {
+                "success": True,
+                **mode_state,
+                "coordinate_epoch": coordinate_epoch,
+                "count": len(items),
+                "items": items,
+            }
+        )
     except Exception as exc:
         return jsonify({"success": False, "error": str(exc)}), 500
 

@@ -41,6 +41,7 @@ public class RuntimeModelInstance
     public string FbxUrl = "";
     public string DisplayObjectId = "";
     public string CaptureInstanceId = "";
+    public long ModelRevision = -1;
     public bool IsEvidenceOverlay;
     public RuntimeModelPoseData Pose = new RuntimeModelPoseData();
     public RuntimeSpatialBoxData SpatialBox;
@@ -53,6 +54,12 @@ public class RuntimeModelRecord
     public string FbxUrl = "";
     public string DisplayObjectId = "";
     public string CaptureInstanceId = "";
+    public long ModelRevision = -1;
+    public long HololensPoseRevision = -1;
+    public long TrackingPoseRevision = -1;
+    public long LastAppliedModeEpoch = -1;
+    public string CoordinateEpoch = "";
+    public string AppliedPoseSource = "";
     public string LocalPath = "";
     public bool IsEvidenceOverlay;
     public GameObject RootGameObject;
@@ -73,7 +80,9 @@ public class RuntimeModelManager : MonoBehaviour
     private static RuntimeModelManager _instance;
 
     private readonly List<RuntimeModelRecord> _records = new List<RuntimeModelRecord>();
+    private readonly HashSet<string> _protectedCachePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     private string _cacheRootPath = "";
+    private bool _runtimeModelsVisible = true;
 
     public static RuntimeModelManager Instance
     {
@@ -133,7 +142,6 @@ public class RuntimeModelManager : MonoBehaviour
 
         _instance = this;
         EnsureInitialized();
-        ClearRuntimeStateAndCache();
     }
 
     private void EnsureInitialized()
@@ -156,17 +164,6 @@ public class RuntimeModelManager : MonoBehaviour
 #endif
     }
 
-    private void ClearRuntimeStateAndCache()
-    {
-        foreach (RuntimeModelRecord record in new List<RuntimeModelRecord>(_records))
-        {
-            DestroyRecordObject(record);
-        }
-        _records.Clear();
-
-        ClearCacheDirectory();
-    }
-
     public void PrepareForIncomingModel(RuntimeModelInstance instance)
     {
         if (instance == null || string.IsNullOrEmpty(instance.ModelKey))
@@ -175,27 +172,96 @@ public class RuntimeModelManager : MonoBehaviour
         }
 
         EnsureInitialized();
-        RemoveModel(instance.ModelKey);
+        // Keep the current revision alive while the replacement downloads/imports.
+        // Superseded records are removed only after RegisterLoadedModel receives a
+        // successfully staged GameObject.
+    }
 
-        if (!instance.IsEvidenceOverlay)
+    public string CreateStableModelPath(RuntimeModelInstance instance)
+    {
+        if (instance == null)
         {
-            RemoveDisplayObjectModels(instance.DisplayObjectId);
-            while (CountVisibleDisplayModels() >= MaxVisibleModels)
+            throw new ArgumentNullException("instance");
+        }
+        EnsureInitialized();
+
+        string fileName;
+        if (!instance.IsEvidenceOverlay
+            && !string.IsNullOrEmpty(instance.DisplayObjectId)
+            && instance.ModelRevision >= 0)
+        {
+            fileName = "display_" + GetStableDisplayCacheKey(instance.DisplayObjectId)
+                + "_revision_" + instance.ModelRevision.ToString() + ".fbx";
+        }
+        else
+        {
+            string modelIdentity = !string.IsNullOrEmpty(instance.ModelKey)
+                ? instance.ModelKey
+                : instance.TaskId;
+            string prefix;
+            if (instance.IsEvidenceOverlay && !string.IsNullOrEmpty(instance.DisplayObjectId))
             {
-                if (!RemoveOldestVisibleModel())
-                {
-                    break;
-                }
+                prefix = "evidence_display_" + GetStableDisplayCacheKey(instance.DisplayObjectId);
             }
+            else
+            {
+                prefix = (instance.IsEvidenceOverlay ? "evidence_" : "model_")
+                    + ComputeStableIdentityHash(modelIdentity);
+            }
+            string identity = prefix;
+            if (instance.ModelRevision >= 0)
+            {
+                identity += "_revision_" + instance.ModelRevision.ToString();
+            }
+            if (!string.IsNullOrEmpty(instance.FbxUrl)
+                && (instance.IsEvidenceOverlay || instance.ModelRevision < 0))
+            {
+                identity += "_url_" + ComputeStableIdentityHash(instance.FbxUrl);
+            }
+            fileName = SanitizeFileName(identity) + ".fbx";
+        }
+        return Path.Combine(_cacheRootPath, fileName);
+    }
+
+    public bool TryGetCachedModelPath(RuntimeModelInstance instance, out string localPath)
+    {
+        localPath = "";
+        if (instance == null)
+        {
+            return false;
+        }
+        string candidate = CreateStableModelPath(instance);
+        try
+        {
+            FileInfo file = new FileInfo(candidate);
+            if (!file.Exists || file.Length <= 0)
+            {
+                return false;
+            }
+            localPath = candidate;
+            return true;
+        }
+        catch (Exception exc)
+        {
+            Debug.LogWarning("[RuntimeModelManager] Failed to inspect cached model: " + exc.Message);
+            return false;
         }
     }
 
-    public string CreateUniqueModelPath(string modelKey)
+    public void ProtectCachedModelPath(string localPath)
     {
-        EnsureInitialized();
-        string safeKey = SanitizeFileName(string.IsNullOrEmpty(modelKey) ? "model" : modelKey);
-        string fileName = safeKey + "_" + DateTime.UtcNow.Ticks.ToString() + ".fbx";
-        return Path.Combine(_cacheRootPath, fileName);
+        if (!string.IsNullOrEmpty(localPath))
+        {
+            _protectedCachePaths.Add(localPath);
+        }
+    }
+
+    public void UnprotectCachedModelPath(string localPath)
+    {
+        if (!string.IsNullOrEmpty(localPath))
+        {
+            _protectedCachePaths.Remove(localPath);
+        }
     }
 
     public void RegisterLoadedModel(RuntimeModelInstance instance, string localPath, GameObject rootGameObject)
@@ -207,6 +273,13 @@ public class RuntimeModelManager : MonoBehaviour
 
         PrepareForIncomingModel(instance);
 
+        bool replacementWasVisible = _runtimeModelsVisible;
+        RuntimeModelRecord replacedDisplayRecord = FindDisplayObjectRecord(instance.DisplayObjectId);
+        if (replacedDisplayRecord != null && replacedDisplayRecord.RootGameObject != null)
+        {
+            replacementWasVisible = replacementWasVisible && replacedDisplayRecord.RootGameObject.activeSelf;
+        }
+
         RuntimeModelRecord record = new RuntimeModelRecord
         {
             ModelKey = instance.ModelKey,
@@ -214,6 +287,7 @@ public class RuntimeModelManager : MonoBehaviour
             FbxUrl = instance.FbxUrl,
             DisplayObjectId = instance.DisplayObjectId,
             CaptureInstanceId = instance.CaptureInstanceId,
+            ModelRevision = instance.ModelRevision,
             LocalPath = localPath ?? "",
             IsEvidenceOverlay = instance.IsEvidenceOverlay,
             RootGameObject = rootGameObject,
@@ -228,11 +302,22 @@ public class RuntimeModelManager : MonoBehaviour
             AttachEventIdentity(record);
         }
         ApplyResolvedPose(record);
+        rootGameObject.SetActive(replacementWasVisible);
+
+        RemoveSupersededRecordsAfterSuccessfulStage(record);
+        while (CountDisplayObjectBundles() > MaxVisibleModels)
+        {
+            if (!RemoveOldestDisplayObjectBundle())
+            {
+                break;
+            }
+        }
         ModelEventDisplay display = ModelEventDisplay.Instance;
         if (display != null)
         {
             display.CloseForModel(instance);
         }
+        DeleteSupersededStableCacheFiles(record);
         EnforceCachedFileLimit();
     }
 
@@ -383,6 +468,146 @@ public class RuntimeModelManager : MonoBehaviour
         return false;
     }
 
+    /// <summary>
+    /// Applies a server pose to the currently loaded revision of one logical display object.
+    /// Revisions are tracked independently for HoloLens-confirmed and realtime-tracking poses,
+    /// because switching to history mode intentionally changes pose source.
+    /// </summary>
+    public bool UpdateDisplayObjectPose(
+        string displayObjectId,
+        long modelRevision,
+        string poseSource,
+        long sourcePoseRevision,
+        long modeEpoch,
+        string coordinateEpoch,
+        RuntimeModelPoseData pose,
+        out string rejectionReason)
+    {
+        rejectionReason = "";
+        if (string.IsNullOrEmpty(displayObjectId))
+        {
+            rejectionReason = "display_object_id_missing";
+            return false;
+        }
+        if (pose == null || !pose.HasHololensPose)
+        {
+            rejectionReason = "hololens_pose_missing";
+            return false;
+        }
+
+        string normalizedSource = NormalizePoseSource(poseSource);
+        if (string.IsNullOrEmpty(normalizedSource))
+        {
+            rejectionReason = "pose_source_invalid";
+            return false;
+        }
+
+        RuntimeModelRecord record = null;
+        foreach (RuntimeModelRecord candidate in _records)
+        {
+            if (MatchesDisplayObject(candidate, displayObjectId))
+            {
+                record = candidate;
+                break;
+            }
+        }
+        if (record == null || record.RootGameObject == null)
+        {
+            rejectionReason = "display_object_model_not_loaded";
+            return false;
+        }
+
+        if (modelRevision >= 0 && record.ModelRevision >= 0 && modelRevision != record.ModelRevision)
+        {
+            rejectionReason = "model_revision_mismatch";
+            return false;
+        }
+        if (modeEpoch >= 0 && record.LastAppliedModeEpoch >= 0 && modeEpoch < record.LastAppliedModeEpoch)
+        {
+            rejectionReason = "mode_epoch_stale";
+            return false;
+        }
+        if (string.IsNullOrEmpty(coordinateEpoch))
+        {
+            rejectionReason = "coordinate_epoch_missing";
+            return false;
+        }
+
+        long currentSourceRevision = normalizedSource == "tracking"
+            ? record.TrackingPoseRevision
+            : record.HololensPoseRevision;
+        if (sourcePoseRevision >= 0 && currentSourceRevision >= 0 && sourcePoseRevision < currentSourceRevision)
+        {
+            rejectionReason = "pose_revision_stale";
+            return false;
+        }
+
+        bool modeAdvanced = modeEpoch >= 0 && modeEpoch > record.LastAppliedModeEpoch;
+        bool coordinateAdvanced = !string.Equals(record.CoordinateEpoch, coordinateEpoch, StringComparison.Ordinal);
+        bool sourceChanged = !string.Equals(record.AppliedPoseSource, normalizedSource, StringComparison.Ordinal);
+        if (sourcePoseRevision >= 0
+            && sourcePoseRevision == currentSourceRevision
+            && !modeAdvanced
+            && !coordinateAdvanced
+            && !sourceChanged)
+        {
+            rejectionReason = "pose_revision_duplicate";
+            return false;
+        }
+
+        if (record.ModelRevision < 0 && modelRevision >= 0)
+        {
+            // Legacy models loaded before revision metadata was introduced are bound once.
+            record.ModelRevision = modelRevision;
+        }
+        if (normalizedSource == "tracking")
+        {
+            record.TrackingPoseRevision = Math.Max(record.TrackingPoseRevision, sourcePoseRevision);
+        }
+        else
+        {
+            record.HololensPoseRevision = Math.Max(record.HololensPoseRevision, sourcePoseRevision);
+        }
+        record.LastAppliedModeEpoch = Math.Max(record.LastAppliedModeEpoch, modeEpoch);
+        record.CoordinateEpoch = coordinateEpoch;
+        record.AppliedPoseSource = normalizedSource;
+        record.Pose = pose;
+        ApplyResolvedPose(record);
+        return true;
+    }
+
+    public bool TryGetLoadedRecordByDisplayObjectId(string displayObjectId, out RuntimeModelRecord matchedRecord)
+    {
+        matchedRecord = null;
+        if (string.IsNullOrEmpty(displayObjectId))
+        {
+            return false;
+        }
+        foreach (RuntimeModelRecord record in _records)
+        {
+            if (MatchesDisplayObject(record, displayObjectId))
+            {
+                matchedRecord = record;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static string NormalizePoseSource(string poseSource)
+    {
+        string normalized = (poseSource ?? "").Trim().ToLowerInvariant();
+        if (normalized == "tracking" || normalized == "realtime" || normalized == "shigure")
+        {
+            return "tracking";
+        }
+        if (normalized == "hololens" || normalized == "hololens_confirmed" || normalized == "history")
+        {
+            return "hololens";
+        }
+        return "";
+    }
+
     public void DeleteCachedFile(string localPath)
     {
         if (string.IsNullOrEmpty(localPath))
@@ -405,15 +630,52 @@ public class RuntimeModelManager : MonoBehaviour
 
     public int ClearLocalRuntimeModels()
     {
-        EnsureInitialized();
-        int removedCount = _records.Count;
-        foreach (RuntimeModelRecord record in new List<RuntimeModelRecord>(_records))
+        // Compatibility entry: "clear local" now means clear the scene display only.
+        // Records and FBX files remain available for position-only restoration.
+        return HideAllRuntimeModels();
+    }
+
+    public int HideAllRuntimeModels()
+    {
+        _runtimeModelsVisible = false;
+        int hiddenCount = 0;
+        foreach (RuntimeModelRecord record in _records)
         {
-            DestroyRecordObject(record);
+            if (record == null || record.RootGameObject == null)
+            {
+                continue;
+            }
+            record.RootGameObject.SetActive(false);
+            hiddenCount++;
         }
-        _records.Clear();
-        ClearCacheDirectory();
-        return removedCount;
+        return hiddenCount;
+    }
+
+    public int ShowAllRuntimeModels()
+    {
+        _runtimeModelsVisible = true;
+        int shownCount = 0;
+        foreach (RuntimeModelRecord record in _records)
+        {
+            if (record == null || record.RootGameObject == null)
+            {
+                continue;
+            }
+            record.RootGameObject.SetActive(true);
+            shownCount++;
+        }
+        return shownCount;
+    }
+
+    public bool SetDisplayObjectVisibility(string displayObjectId, bool visible)
+    {
+        RuntimeModelRecord record = FindDisplayObjectRecord(displayObjectId);
+        if (record == null || record.RootGameObject == null)
+        {
+            return false;
+        }
+        record.RootGameObject.SetActive(visible);
+        return true;
     }
 
     public bool TryResolveWorldPose(RuntimeModelPoseData pose, out Vector3 position, out Quaternion rotation)
@@ -487,6 +749,137 @@ public class RuntimeModelManager : MonoBehaviour
             DestroyRecordObject(record);
             DeleteCachedFile(record.LocalPath);
         }
+    }
+
+    private RuntimeModelRecord FindDisplayObjectRecord(string displayObjectId)
+    {
+        if (string.IsNullOrEmpty(displayObjectId))
+        {
+            return null;
+        }
+        foreach (RuntimeModelRecord record in _records)
+        {
+            if (MatchesDisplayObject(record, displayObjectId))
+            {
+                return record;
+            }
+        }
+        return null;
+    }
+
+    private void RemoveSupersededRecordsAfterSuccessfulStage(RuntimeModelRecord stagedRecord)
+    {
+        if (stagedRecord == null)
+        {
+            return;
+        }
+        for (int i = _records.Count - 1; i >= 0; i--)
+        {
+            RuntimeModelRecord candidate = _records[i];
+            if (candidate == null || ReferenceEquals(candidate, stagedRecord))
+            {
+                continue;
+            }
+
+            bool superseded;
+            if (stagedRecord.IsEvidenceOverlay)
+            {
+                superseded = candidate.IsEvidenceOverlay
+                    && !string.IsNullOrEmpty(stagedRecord.ModelKey)
+                    && string.Equals(candidate.ModelKey, stagedRecord.ModelKey, StringComparison.Ordinal);
+            }
+            else if (!string.IsNullOrEmpty(stagedRecord.DisplayObjectId))
+            {
+                superseded = MatchesDisplayObject(candidate, stagedRecord.DisplayObjectId);
+            }
+            else
+            {
+                superseded = !candidate.IsEvidenceOverlay
+                    && ((!string.IsNullOrEmpty(stagedRecord.TaskId)
+                            && string.Equals(candidate.TaskId, stagedRecord.TaskId, StringComparison.Ordinal))
+                        || (!string.IsNullOrEmpty(stagedRecord.ModelKey)
+                            && string.Equals(candidate.ModelKey, stagedRecord.ModelKey, StringComparison.Ordinal)));
+            }
+            if (!superseded)
+            {
+                continue;
+            }
+
+            _records.RemoveAt(i);
+            DestroyRecordObject(candidate);
+            DeleteCachedFile(candidate.LocalPath);
+        }
+    }
+
+    private string GetDisplayObjectBundleKey(RuntimeModelRecord record)
+    {
+        if (record == null)
+        {
+            return "";
+        }
+        if (!string.IsNullOrEmpty(record.DisplayObjectId))
+        {
+            return "display:" + record.DisplayObjectId;
+        }
+        if (!string.IsNullOrEmpty(record.TaskId))
+        {
+            return "task:" + record.TaskId;
+        }
+        return string.IsNullOrEmpty(record.ModelKey) ? "" : "model:" + record.ModelKey;
+    }
+
+    private int CountDisplayObjectBundles()
+    {
+        HashSet<string> bundleKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (RuntimeModelRecord record in _records)
+        {
+            if (record == null || record.IsEvidenceOverlay)
+            {
+                continue;
+            }
+            string bundleKey = GetDisplayObjectBundleKey(record);
+            if (!string.IsNullOrEmpty(bundleKey))
+            {
+                bundleKeys.Add(bundleKey);
+            }
+        }
+        return bundleKeys.Count;
+    }
+
+    private bool RemoveOldestDisplayObjectBundle()
+    {
+        string oldestBundleKey = "";
+        DateTime oldestTime = DateTime.MaxValue;
+        foreach (RuntimeModelRecord record in _records)
+        {
+            string bundleKey = GetDisplayObjectBundleKey(record);
+            if (string.IsNullOrEmpty(bundleKey))
+            {
+                continue;
+            }
+            if (string.IsNullOrEmpty(oldestBundleKey) || record.CreatedAtUtc < oldestTime)
+            {
+                oldestBundleKey = bundleKey;
+                oldestTime = record.CreatedAtUtc;
+            }
+        }
+        if (string.IsNullOrEmpty(oldestBundleKey))
+        {
+            return false;
+        }
+
+        for (int i = _records.Count - 1; i >= 0; i--)
+        {
+            RuntimeModelRecord record = _records[i];
+            if (!string.Equals(GetDisplayObjectBundleKey(record), oldestBundleKey, StringComparison.Ordinal))
+            {
+                continue;
+            }
+            _records.RemoveAt(i);
+            DestroyRecordObject(record);
+            DeleteCachedFile(record.LocalPath);
+        }
+        return true;
     }
 
     private bool MatchesRuntimeModelIdentity(RuntimeModelRecord record, RuntimeModelInstance instance)
@@ -565,6 +958,7 @@ public class RuntimeModelManager : MonoBehaviour
             return;
         }
 
+        record.RootGameObject.SetActive(false);
         Destroy(record.RootGameObject);
         record.RootGameObject = null;
     }
@@ -590,28 +984,152 @@ public class RuntimeModelManager : MonoBehaviour
         EnsureInitialized();
         DirectoryInfo directory = new DirectoryInfo(_cacheRootPath);
         FileInfo[] files = directory.Exists ? directory.GetFiles("*.fbx") : new FileInfo[0];
-        if (files.Length <= MaxCachedModelFiles)
+        Dictionary<string, List<FileInfo>> bundles = new Dictionary<string, List<FileInfo>>(StringComparer.Ordinal);
+        foreach (FileInfo file in files)
+        {
+            string bundleKey = GetCacheBundleKeyFromFileName(file.Name);
+            if (!bundles.TryGetValue(bundleKey, out List<FileInfo> bundleFiles))
+            {
+                bundleFiles = new List<FileInfo>();
+                bundles[bundleKey] = bundleFiles;
+            }
+            bundleFiles.Add(file);
+        }
+        if (bundles.Count <= MaxCachedModelFiles)
         {
             return;
         }
 
-        Array.Sort(files, (left, right) => left.CreationTimeUtc.CompareTo(right.CreationTimeUtc));
-        int removeCount = files.Length - MaxCachedModelFiles;
-        int removed = 0;
-        for (int i = 0; i < files.Length && removed < removeCount; i++)
+        List<KeyValuePair<string, List<FileInfo>>> orderedBundles =
+            new List<KeyValuePair<string, List<FileInfo>>>(bundles);
+        orderedBundles.Sort((left, right) =>
+            GetCacheBundleLastWriteUtc(left.Value).CompareTo(GetCacheBundleLastWriteUtc(right.Value)));
+        int remainingBundleCount = bundles.Count;
+        foreach (KeyValuePair<string, List<FileInfo>> bundle in orderedBundles)
         {
-            string path = files[i].FullName;
-            if (IsActiveModelPath(path))
+            if (remainingBundleCount <= MaxCachedModelFiles)
+            {
+                break;
+            }
+            bool protectedBundle = false;
+            foreach (FileInfo file in bundle.Value)
+            {
+                if (IsActiveModelPath(file.FullName))
+                {
+                    protectedBundle = true;
+                    break;
+                }
+            }
+            if (protectedBundle)
             {
                 continue;
             }
-            DeleteCachedFile(path);
-            removed++;
+            foreach (FileInfo file in bundle.Value)
+            {
+                DeleteCachedFile(file.FullName);
+            }
+            remainingBundleCount--;
         }
+    }
+
+    private void DeleteSupersededStableCacheFiles(RuntimeModelRecord record)
+    {
+        if (record == null || string.IsNullOrEmpty(record.LocalPath))
+        {
+            return;
+        }
+        string currentFileName = Path.GetFileName(record.LocalPath);
+        string currentFamily = GetCacheFileFamilyKey(currentFileName);
+        if (string.IsNullOrEmpty(currentFamily))
+        {
+            return;
+        }
+
+        DirectoryInfo directory = new DirectoryInfo(_cacheRootPath);
+        if (!directory.Exists)
+        {
+            return;
+        }
+        foreach (FileInfo file in directory.GetFiles("*.fbx"))
+        {
+            if (string.Equals(file.FullName, record.LocalPath, StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(GetCacheFileFamilyKey(file.Name), currentFamily, StringComparison.Ordinal)
+                || IsActiveModelPath(file.FullName))
+            {
+                continue;
+            }
+            DeleteCachedFile(file.FullName);
+        }
+    }
+
+    private string GetCacheBundleKeyFromFileName(string fileName)
+    {
+        string stem = Path.GetFileNameWithoutExtension(fileName) ?? "";
+        const string mainPrefix = "display_";
+        const string evidencePrefix = "evidence_display_";
+        if (stem.StartsWith(mainPrefix, StringComparison.Ordinal))
+        {
+            string rest = stem.Substring(mainPrefix.Length);
+            int separator = rest.IndexOf("_revision_", StringComparison.Ordinal);
+            if (separator > 0)
+            {
+                return "display:" + rest.Substring(0, separator);
+            }
+        }
+        if (stem.StartsWith(evidencePrefix, StringComparison.Ordinal))
+        {
+            string rest = stem.Substring(evidencePrefix.Length);
+            int revisionSeparator = rest.IndexOf("_revision_", StringComparison.Ordinal);
+            int urlSeparator = rest.IndexOf("_url_", StringComparison.Ordinal);
+            int separator = revisionSeparator >= 0 ? revisionSeparator : urlSeparator;
+            if (separator > 0)
+            {
+                return "display:" + rest.Substring(0, separator);
+            }
+        }
+        return "file:" + stem;
+    }
+
+    private string GetCacheFileFamilyKey(string fileName)
+    {
+        string stem = Path.GetFileNameWithoutExtension(fileName) ?? "";
+        int revisionSeparator = stem.IndexOf("_revision_", StringComparison.Ordinal);
+        int urlSeparator = stem.IndexOf("_url_", StringComparison.Ordinal);
+        int separator;
+        if (revisionSeparator >= 0 && urlSeparator >= 0)
+        {
+            separator = Math.Min(revisionSeparator, urlSeparator);
+        }
+        else
+        {
+            separator = Math.Max(revisionSeparator, urlSeparator);
+        }
+        return separator > 0 ? stem.Substring(0, separator) : stem;
+    }
+
+    private DateTime GetCacheBundleLastWriteUtc(List<FileInfo> files)
+    {
+        DateTime latest = DateTime.MinValue;
+        if (files == null)
+        {
+            return latest;
+        }
+        foreach (FileInfo file in files)
+        {
+            if (file != null && file.LastWriteTimeUtc > latest)
+            {
+                latest = file.LastWriteTimeUtc;
+            }
+        }
+        return latest;
     }
 
     private bool IsActiveModelPath(string path)
     {
+        if (_protectedCachePaths.Contains(path))
+        {
+            return true;
+        }
         foreach (RuntimeModelRecord record in _records)
         {
             if (!string.IsNullOrEmpty(record.LocalPath)
@@ -621,29 +1139,6 @@ public class RuntimeModelManager : MonoBehaviour
             }
         }
         return false;
-    }
-
-    private void ClearCacheDirectory()
-    {
-        EnsureInitialized();
-        try
-        {
-            if (!Directory.Exists(_cacheRootPath))
-            {
-                Directory.CreateDirectory(_cacheRootPath);
-                return;
-            }
-
-            DirectoryInfo directory = new DirectoryInfo(_cacheRootPath);
-            foreach (FileInfo file in directory.GetFiles())
-            {
-                file.Delete();
-            }
-        }
-        catch (Exception exc)
-        {
-            Debug.LogWarning("[RuntimeModelManager] Failed to clear runtime model cache: " + exc.Message);
-        }
     }
 
     private string SanitizeFileName(string raw)
@@ -668,5 +1163,31 @@ public class RuntimeModelManager : MonoBehaviour
             safe = safe.Substring(0, 80);
         }
         return string.IsNullOrEmpty(safe) ? "model" : safe;
+    }
+
+    private string ComputeStableIdentityHash(string raw)
+    {
+        // FNV-1a over UTF-16 code units: deterministic across Unity sessions/platforms.
+        ulong hash = 14695981039346656037UL;
+        string value = raw ?? "";
+        for (int i = 0; i < value.Length; i++)
+        {
+            ushort codeUnit = value[i];
+            hash ^= (byte)(codeUnit & 0xff);
+            hash *= 1099511628211UL;
+            hash ^= (byte)(codeUnit >> 8);
+            hash *= 1099511628211UL;
+        }
+        return hash.ToString("x16");
+    }
+
+    private string GetStableDisplayCacheKey(string displayObjectId)
+    {
+        string readable = SanitizeFileName(displayObjectId ?? "display");
+        if (readable.Length > 48)
+        {
+            readable = readable.Substring(0, 48);
+        }
+        return readable + "_" + ComputeStableIdentityHash(displayObjectId);
     }
 }

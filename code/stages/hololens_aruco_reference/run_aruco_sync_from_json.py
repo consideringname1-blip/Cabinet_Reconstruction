@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sys
 
+import numpy as np
+
 try:
     import _bootstrap  # type: ignore
 except ModuleNotFoundError:
@@ -15,6 +17,7 @@ from task_json import load_task_json, resolve_task_json_path, save_task_json
 from model_bounds import compute_and_store_model_bounds
 from spatial_transforms import (
     aruco_pose_to_hololens_pose,
+    hololens_point_to_aruco,
     hololens_pose_to_aruco_pose,
     minimal_pose_payload,
     resolve_hololens_original_pose,
@@ -46,6 +49,49 @@ def _sync_model_bounds(json_path) -> bool:
     except Exception as exc:
         print(f"[WARN] aruco_sync : model_bounds refresh failed: {exc}", file=sys.stderr)
         return False
+
+
+def _sync_sam3_spatial_box_to_aruco(task: dict, aruco_reference: dict) -> dict | None:
+    """Persist the preview box in the server's canonical ArUco space.
+
+    ``Sam3SpatialBox`` is produced before model alignment and its ``*_world``
+    fields are HoloLens-local coordinates for the capture startup.  Keeping the
+    original fields and deriving canonical corners here makes the early box
+    usable by Shigure candidate gating, and rerunning ArUco sync refreshes the
+    derivation from the immutable HoloLens values.
+    """
+
+    raw = task.get("Sam3SpatialBox")
+    if not isinstance(raw, dict) or str(raw.get("status") or "") != "ready":
+        return None
+    try:
+        minimum = np.asarray(raw.get("aabb_min_world"), dtype=np.float64).reshape(3)
+        maximum = np.asarray(raw.get("aabb_max_world"), dtype=np.float64).reshape(3)
+    except Exception:
+        return None
+    if not np.isfinite(minimum).all() or not np.isfinite(maximum).all():
+        return None
+
+    corners_hololens = np.asarray(
+        [[x, y, z] for x in (minimum[0], maximum[0]) for y in (minimum[1], maximum[1]) for z in (minimum[2], maximum[2])],
+        dtype=np.float64,
+    )
+    corners_aruco = np.asarray(
+        [hololens_point_to_aruco(point, aruco_reference) for point in corners_hololens],
+        dtype=np.float64,
+    )
+    center_hololens = (minimum + maximum) * 0.5
+    center_aruco = hololens_point_to_aruco(center_hololens, aruco_reference)
+    diagonal_m = float(np.linalg.norm(maximum - minimum))
+
+    spatial_box = dict(raw)
+    spatial_box["canonical_coordinate_space"] = "aruco_local"
+    spatial_box["corners_aruco"] = corners_aruco.astype(float).tolist()
+    spatial_box["center_aruco"] = center_aruco.astype(float).tolist()
+    spatial_box["diagonal_m"] = diagonal_m
+    spatial_box["aruco_sync_source"] = "holoLens_aabb_min_max_world"
+    task["Sam3SpatialBox"] = spatial_box
+    return spatial_box
 
 
 def sync_task_json_with_latest_reference(json_path_arg: str, *, refresh_model_bounds: bool = False) -> bool:
@@ -103,6 +149,7 @@ def sync_task_json_with_latest_reference(json_path_arg: str, *, refresh_model_bo
     task["object_hololens_current"] = object_hololens_current
     task["aruco_reference"] = aruco_reference
     task["object_aruco"] = object_aruco
+    synced_spatial_box = _sync_sam3_spatial_box_to_aruco(task, aruco_reference)
 
     aruco_stage["reference_task_id"] = latest_reference_row.get("task_id")
     aruco_stage["reference_created_at"] = latest_reference_row.get("created_at")
@@ -111,6 +158,7 @@ def sync_task_json_with_latest_reference(json_path_arg: str, *, refresh_model_bo
     aruco_stage["sync_reason"] = "reference_applied_from_hololens_original"
     aruco_stage["object_aruco"] = object_aruco
     aruco_stage["object_hololens_current"] = object_hololens_current
+    aruco_stage["sam3_spatial_box_aruco_synced"] = synced_spatial_box is not None
 
     _write_debug(task, aruco_stage)
     save_task_json(json_path, task)

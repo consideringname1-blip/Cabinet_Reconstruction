@@ -1,9 +1,10 @@
 import json
 import re
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 from config import (
     ARUCO_ANCHOR_MARKER_ID,
@@ -30,6 +31,11 @@ DISPLAY_OBJECT_TABLE = "display_objects"
 CAPTURE_INSTANCE_TABLE = "capture_instances"
 CAPTURE_BINDING_LOG_TABLE = "capture_binding_logs"
 HISTORY_PLACEMENT_REQUEST_TABLE = "history_placement_requests"
+DISPLAY_OBJECT_STATE_TABLE = "display_object_states"
+DISPLAY_OBJECT_MODEL_REVISION_TABLE = "display_object_model_revisions"
+DISPLAY_OBJECT_POSE_HISTORY_TABLE = "display_object_pose_history"
+REALTIME_TRACKING_EVENT_TABLE = "realtime_tracking_events"
+AUXILIARY_JOB_TABLE = "auxiliary_jobs"
 MODEL_BOUNDS_STATUSES = (
     "pending",
     "ready",
@@ -69,12 +75,25 @@ TERMINAL_STATUSES = ("completed", "aruco_completed", "failed", "upload_failed")
 _SCHEMA_INITIALIZED = False
 
 
-def _get_connection() -> sqlite3.Connection:
+@contextmanager
+def _get_connection() -> Iterator[sqlite3.Connection]:
+    """Yield a transactional SQLite connection and always close its handle.
+
+    ``sqlite3.Connection.__exit__`` commits or rolls back but does not close the
+    connection.  Every caller in this module uses ``with _get_connection()``,
+    so owning the close here avoids descriptor/file-lock leaks without changing
+    transaction semantics at the call sites.
+    """
+
     ensure_database_root()
     conn = sqlite3.connect(DATABASE_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 5000")
-    return conn
+    try:
+        with conn:
+            yield conn
+    finally:
+        conn.close()
 
 
 def _row_to_dict(row: Optional[sqlite3.Row]) -> Optional[Dict[str, Any]]:
@@ -334,6 +353,104 @@ def _create_history_placement_request_table_sql() -> str:
             completed_at TEXT,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             error_message TEXT
+        )
+    """
+
+
+def _create_display_object_state_table_sql() -> str:
+    return f"""
+        CREATE TABLE {DISPLAY_OBJECT_STATE_TABLE} (
+            display_object_id TEXT PRIMARY KEY,
+            active_model_revision INTEGER NOT NULL DEFAULT 0,
+            active_model_task_id TEXT,
+            active_model_asset_hash TEXT,
+            latest_hololens_pose_revision INTEGER NOT NULL DEFAULT 0,
+            latest_hololens_pose_aruco_json TEXT,
+            latest_hololens_task_id TEXT,
+            latest_hololens_captured_at TEXT,
+            latest_tracking_pose_revision INTEGER NOT NULL DEFAULT 0,
+            latest_tracking_model_revision INTEGER NOT NULL DEFAULT 0,
+            latest_tracking_pose_aruco_json TEXT,
+            latest_tracking_observation_seq INTEGER NOT NULL DEFAULT 0,
+            latest_body_revision INTEGER NOT NULL DEFAULT 0,
+            latest_body_task_id TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+
+
+def _create_display_object_model_revision_table_sql() -> str:
+    return f"""
+        CREATE TABLE {DISPLAY_OBJECT_MODEL_REVISION_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            display_object_id TEXT NOT NULL,
+            model_revision INTEGER NOT NULL,
+            task_id TEXT NOT NULL UNIQUE,
+            asset_hash TEXT,
+            source TEXT NOT NULL DEFAULT 'hololens',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(display_object_id, model_revision)
+        )
+    """
+
+
+def _create_display_object_pose_history_table_sql() -> str:
+    return f"""
+        CREATE TABLE {DISPLAY_OBJECT_POSE_HISTORY_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            display_object_id TEXT NOT NULL,
+            task_id TEXT NOT NULL UNIQUE,
+            model_revision INTEGER NOT NULL,
+            pose_revision INTEGER NOT NULL,
+            pose_aruco_json TEXT NOT NULL,
+            body_revision INTEGER,
+            captured_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+
+
+def _create_realtime_tracking_event_table_sql() -> str:
+    return f"""
+        CREATE TABLE {REALTIME_TRACKING_EVENT_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            display_object_id TEXT,
+            startup_session_id TEXT,
+            ingress_session_id TEXT,
+            shigure_object_id TEXT,
+            observation_seq INTEGER NOT NULL DEFAULT 0,
+            tracking_epoch INTEGER NOT NULL DEFAULT 0,
+            mode_epoch INTEGER NOT NULL DEFAULT 0,
+            model_revision INTEGER NOT NULL DEFAULT 0,
+            status TEXT NOT NULL,
+            reason TEXT,
+            source_stamp_json TEXT,
+            pose_aruco_json TEXT,
+            detail_json TEXT NOT NULL DEFAULT '{{}}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+    """
+
+
+def _create_auxiliary_job_table_sql() -> str:
+    return f"""
+        CREATE TABLE {AUXILIARY_JOB_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id TEXT NOT NULL UNIQUE,
+            task_id TEXT NOT NULL,
+            branch_name TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
+            result_path TEXT,
+            detail_json TEXT NOT NULL DEFAULT '{{}}',
+            error_message TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            started_at TEXT,
+            completed_at TEXT,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(task_id, branch_name)
         )
     """
 
@@ -613,6 +730,8 @@ def _sync_marker_registry_from_reference_folder(conn: sqlite3.Connection) -> int
 
 def initialize_task_table() -> None:
     global _SCHEMA_INITIALIZED
+    if _SCHEMA_INITIALIZED:
+        return
     with _get_connection() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
 
@@ -726,6 +845,41 @@ def initialize_task_table() -> None:
             f"""
             CREATE INDEX IF NOT EXISTS idx_{HISTORY_PLACEMENT_REQUEST_TABLE}_status_created
             ON {HISTORY_PLACEMENT_REQUEST_TABLE} (status, created_at)
+            """
+        )
+
+        if _table_sql(conn, DISPLAY_OBJECT_STATE_TABLE) is None:
+            conn.execute(_create_display_object_state_table_sql())
+        if _table_sql(conn, DISPLAY_OBJECT_MODEL_REVISION_TABLE) is None:
+            conn.execute(_create_display_object_model_revision_table_sql())
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{DISPLAY_OBJECT_MODEL_REVISION_TABLE}_display_revision
+            ON {DISPLAY_OBJECT_MODEL_REVISION_TABLE} (display_object_id, model_revision DESC)
+            """
+        )
+        if _table_sql(conn, DISPLAY_OBJECT_POSE_HISTORY_TABLE) is None:
+            conn.execute(_create_display_object_pose_history_table_sql())
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{DISPLAY_OBJECT_POSE_HISTORY_TABLE}_display_revision
+            ON {DISPLAY_OBJECT_POSE_HISTORY_TABLE} (display_object_id, pose_revision DESC)
+            """
+        )
+        if _table_sql(conn, REALTIME_TRACKING_EVENT_TABLE) is None:
+            conn.execute(_create_realtime_tracking_event_table_sql())
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{REALTIME_TRACKING_EVENT_TABLE}_display_created
+            ON {REALTIME_TRACKING_EVENT_TABLE} (display_object_id, created_at DESC)
+            """
+        )
+        if _table_sql(conn, AUXILIARY_JOB_TABLE) is None:
+            conn.execute(_create_auxiliary_job_table_sql())
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{AUXILIARY_JOB_TABLE}_task_branch
+            ON {AUXILIARY_JOB_TABLE} (task_id, branch_name, updated_at DESC)
             """
         )
 
@@ -1998,5 +2152,520 @@ def get_ready_model_bounds_in_range(
             LIMIT ?
             """,
             (start, end, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def commit_display_object_capture_state(
+    *,
+    display_object_id: str,
+    capture_task_id: str,
+    pose_aruco: Any,
+    captured_at: str | None = None,
+    generated_new_model: bool,
+    active_model_task_id: str | None = None,
+    asset_hash: str | None = None,
+) -> Dict[str, Any]:
+    """Atomically commit a HoloLens capture and its pinned model revision.
+
+    A reused geometry capture advances only the HoloLens pose revision.  A
+    successfully regenerated geometry advances both the model and pose
+    revisions.  Replaying the same capture task is idempotent.
+    """
+
+    initialize_task_table()
+    display_object_id = str(display_object_id or "").strip()
+    capture_task_id = str(capture_task_id or "").strip()
+    if not display_object_id or not capture_task_id:
+        raise ValueError("display_object_id and capture_task_id are required")
+    if not isinstance(pose_aruco, dict):
+        raise ValueError("pose_aruco is required")
+    model_task_id = str(active_model_task_id or capture_task_id).strip()
+    capture_time = str(captured_at or _utc_now_text())
+    now = _utc_now_text()
+
+    with _get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            f"""
+            INSERT INTO {DISPLAY_OBJECT_STATE_TABLE} (display_object_id, updated_at)
+            VALUES (?, ?)
+            ON CONFLICT(display_object_id) DO NOTHING
+            """,
+            (display_object_id, now),
+        )
+        state = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
+            (display_object_id,),
+        ).fetchone()
+        existing_history = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_POSE_HISTORY_TABLE} WHERE task_id = ?",
+            (capture_task_id,),
+        ).fetchone()
+        if existing_history is not None:
+            existing_display_object_id = str(existing_history["display_object_id"] or "").strip()
+            if existing_display_object_id != display_object_id:
+                conn.rollback()
+                raise ValueError(
+                    f"capture task {capture_task_id} is already committed to "
+                    f"display object {existing_display_object_id}"
+                )
+            serialized_pose = json.dumps(pose_aruco, ensure_ascii=False)
+            conn.execute(
+                f"""
+                UPDATE {DISPLAY_OBJECT_POSE_HISTORY_TABLE}
+                SET pose_aruco_json = ?, updated_at = ?
+                WHERE task_id = ?
+                """,
+                (serialized_pose, now, capture_task_id),
+            )
+            # ArUco retro-sync can legitimately re-express an already committed
+            # capture.  Refresh the latest pointer without allocating another
+            # user-visible pose revision.
+            if str(state["latest_hololens_task_id"] or "").strip() == capture_task_id:
+                conn.execute(
+                    f"""
+                    UPDATE {DISPLAY_OBJECT_STATE_TABLE}
+                    SET latest_hololens_pose_aruco_json = ?, updated_at = ?
+                    WHERE display_object_id = ?
+                    """,
+                    (serialized_pose, now, display_object_id),
+                )
+            conn.commit()
+            row = conn.execute(
+                f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
+                (display_object_id,),
+            ).fetchone()
+            return dict(row)
+
+        active_revision = int(state["active_model_revision"] or 0)
+        resolved_model_task_id = str(state["active_model_task_id"] or "").strip() or None
+        if generated_new_model or active_revision <= 0:
+            revision_row = conn.execute(
+                f"SELECT * FROM {DISPLAY_OBJECT_MODEL_REVISION_TABLE} WHERE task_id = ?",
+                (model_task_id,),
+            ).fetchone()
+            if revision_row is None:
+                maximum = conn.execute(
+                    f"SELECT COALESCE(MAX(model_revision), 0) AS value FROM {DISPLAY_OBJECT_MODEL_REVISION_TABLE} WHERE display_object_id = ?",
+                    (display_object_id,),
+                ).fetchone()
+                active_revision = int(maximum["value"] or 0) + 1
+                conn.execute(
+                    f"""
+                    INSERT INTO {DISPLAY_OBJECT_MODEL_REVISION_TABLE} (
+                        display_object_id, model_revision, task_id, asset_hash, source
+                    ) VALUES (?, ?, ?, ?, 'hololens')
+                    """,
+                    (display_object_id, active_revision, model_task_id, asset_hash),
+                )
+            else:
+                if str(revision_row["display_object_id"] or "").strip() != display_object_id:
+                    conn.rollback()
+                    raise ValueError(
+                        f"model task {model_task_id} is already committed to another display object"
+                    )
+                active_revision = int(revision_row["model_revision"])
+            resolved_model_task_id = model_task_id
+        elif model_task_id:
+            revision_row = conn.execute(
+                f"SELECT * FROM {DISPLAY_OBJECT_MODEL_REVISION_TABLE} WHERE task_id = ?",
+                (model_task_id,),
+            ).fetchone()
+            if revision_row is not None:
+                if str(revision_row["display_object_id"] or "").strip() != display_object_id:
+                    conn.rollback()
+                    raise ValueError(
+                        f"model task {model_task_id} is already committed to another display object"
+                    )
+                active_revision = int(revision_row["model_revision"])
+                resolved_model_task_id = model_task_id
+
+        pose_revision = int(state["latest_hololens_pose_revision"] or 0) + 1
+        conn.execute(
+            f"""
+            INSERT INTO {DISPLAY_OBJECT_POSE_HISTORY_TABLE} (
+                display_object_id, task_id, model_revision, pose_revision,
+                pose_aruco_json, body_revision, captured_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                display_object_id,
+                capture_task_id,
+                active_revision,
+                pose_revision,
+                json.dumps(pose_aruco, ensure_ascii=False),
+                capture_time,
+                now,
+            ),
+        )
+        conn.execute(
+            f"""
+            UPDATE {DISPLAY_OBJECT_STATE_TABLE}
+            SET active_model_revision = ?,
+                active_model_task_id = ?,
+                active_model_asset_hash = COALESCE(?, active_model_asset_hash),
+                latest_hololens_pose_revision = ?,
+                latest_hololens_pose_aruco_json = ?,
+                latest_hololens_task_id = ?,
+                latest_hololens_captured_at = ?,
+                latest_tracking_model_revision = 0,
+                latest_tracking_pose_aruco_json = NULL,
+                latest_tracking_observation_seq = 0,
+                updated_at = ?
+            WHERE display_object_id = ?
+            """,
+            (
+                active_revision,
+                resolved_model_task_id,
+                asset_hash,
+                pose_revision,
+                json.dumps(pose_aruco, ensure_ascii=False),
+                capture_task_id,
+                capture_time,
+                now,
+                display_object_id,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
+            (display_object_id,),
+        ).fetchone()
+    return dict(row)
+
+
+def get_display_object_state(display_object_id: str) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
+            (str(display_object_id),),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def list_display_object_states(limit: int = 5) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    limit = max(1, min(int(limit or 5), 50))
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {DISPLAY_OBJECT_STATE_TABLE}
+            WHERE latest_hololens_pose_aruco_json IS NOT NULL
+            ORDER BY latest_hololens_captured_at DESC, created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_display_object_pose_history(display_object_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    limit = max(1, min(int(limit or 50), 1000))
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM {DISPLAY_OBJECT_POSE_HISTORY_TABLE}
+            WHERE display_object_id = ?
+            ORDER BY pose_revision DESC
+            LIMIT ?
+            """,
+            (str(display_object_id), limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def commit_realtime_tracking_pose(
+    *,
+    display_object_id: str,
+    model_revision: int,
+    hololens_pose_revision: int,
+    observation_seq: int,
+    pose_aruco: Any,
+) -> Optional[Dict[str, Any]]:
+    """Commit a live pose only against its exact HoloLens anchor revision."""
+
+    initialize_task_table()
+    if not isinstance(pose_aruco, dict):
+        raise ValueError("pose_aruco is required")
+    now = _utc_now_text()
+    with _get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        state = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
+            (str(display_object_id),),
+        ).fetchone()
+        if (
+            state is None
+            or int(state["active_model_revision"] or 0) != int(model_revision)
+            or int(state["latest_hololens_pose_revision"] or 0) != int(hololens_pose_revision)
+        ):
+            conn.rollback()
+            return None
+        pose_revision = int(state["latest_tracking_pose_revision"] or 0) + 1
+        conn.execute(
+            f"""
+            UPDATE {DISPLAY_OBJECT_STATE_TABLE}
+            SET latest_tracking_pose_revision = ?,
+                latest_tracking_model_revision = ?,
+                latest_tracking_pose_aruco_json = ?,
+                latest_tracking_observation_seq = ?,
+                updated_at = ?
+            WHERE display_object_id = ?
+                AND active_model_revision = ?
+                AND latest_hololens_pose_revision = ?
+            """,
+            (
+                pose_revision,
+                int(model_revision),
+                json.dumps(pose_aruco, ensure_ascii=False),
+                int(observation_seq),
+                now,
+                str(display_object_id),
+                int(model_revision),
+                int(hololens_pose_revision),
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
+            (str(display_object_id),),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def record_realtime_tracking_event(
+    *,
+    status: str,
+    display_object_id: str | None = None,
+    startup_session_id: str | None = None,
+    ingress_session_id: str | None = None,
+    shigure_object_id: str | None = None,
+    observation_seq: int = 0,
+    tracking_epoch: int = 0,
+    mode_epoch: int = 0,
+    model_revision: int = 0,
+    reason: str | None = None,
+    source_stamp: Any = None,
+    pose_aruco: Any = None,
+    detail: Any = None,
+) -> int:
+    initialize_task_table()
+    with _get_connection() as conn:
+        cursor = conn.execute(
+            f"""
+            INSERT INTO {REALTIME_TRACKING_EVENT_TABLE} (
+                display_object_id, startup_session_id, ingress_session_id,
+                shigure_object_id, observation_seq, tracking_epoch, mode_epoch,
+                model_revision, status, reason, source_stamp_json,
+                pose_aruco_json, detail_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                display_object_id,
+                startup_session_id,
+                ingress_session_id,
+                shigure_object_id,
+                int(observation_seq),
+                int(tracking_epoch),
+                int(mode_epoch),
+                int(model_revision),
+                str(status),
+                reason,
+                _dump_optional_json(source_stamp),
+                _dump_optional_json(pose_aruco),
+                json.dumps(detail if detail is not None else {}, ensure_ascii=False),
+            ),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+
+
+def get_latest_realtime_tracking_event(display_object_id: str) -> Optional[Dict[str, Any]]:
+    """Return the newest durable tracking diagnostic for one display object."""
+
+    initialize_task_table()
+    display_object_id = str(display_object_id or "").strip()
+    if not display_object_id:
+        return None
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"""
+            SELECT *
+            FROM {REALTIME_TRACKING_EVENT_TABLE}
+            WHERE display_object_id = ?
+            ORDER BY id DESC
+            LIMIT 1
+            """,
+            (display_object_id,),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def set_latest_body_revision(
+    *, display_object_id: str, task_id: str, body_revision: int | None = None
+) -> Optional[Dict[str, Any]]:
+    """Attach a body result to its capture without letting late jobs win.
+
+    Auxiliary body jobs can finish out of order.  The durable "latest" pointer
+    therefore follows capture ``pose_revision`` order, not completion order.
+    Replaying the same successful auxiliary job is idempotent.
+    """
+
+    initialize_task_table()
+    display_object_id = str(display_object_id or "").strip()
+    task_id = str(task_id or "").strip()
+    if not display_object_id or not task_id:
+        raise ValueError("display_object_id and task_id are required")
+    now = _utc_now_text()
+    with _get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        state = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
+            (display_object_id,),
+        ).fetchone()
+        if state is None:
+            conn.rollback()
+            return None
+
+        capture = conn.execute(
+            f"""
+            SELECT *
+            FROM {DISPLAY_OBJECT_POSE_HISTORY_TABLE}
+            WHERE display_object_id = ? AND task_id = ?
+            """,
+            (display_object_id, task_id),
+        ).fetchone()
+        if capture is None:
+            # The auxiliary branch may complete before DisplayIdentity commits
+            # this capture.  Its caller replays the link after that stage.
+            conn.rollback()
+            return None
+
+        existing_revision = capture["body_revision"]
+        revision = int(
+            existing_revision
+            if existing_revision is not None
+            else (body_revision if body_revision is not None else capture["pose_revision"])
+        )
+        conn.execute(
+            f"""
+            UPDATE {DISPLAY_OBJECT_POSE_HISTORY_TABLE}
+            SET body_revision = ?, updated_at = ?
+            WHERE display_object_id = ? AND task_id = ?
+            """,
+            (revision, now, display_object_id, task_id),
+        )
+
+        current_body_capture = None
+        current_body_task_id = str(state["latest_body_task_id"] or "").strip()
+        if current_body_task_id:
+            current_body_capture = conn.execute(
+                f"""
+                SELECT pose_revision
+                FROM {DISPLAY_OBJECT_POSE_HISTORY_TABLE}
+                WHERE display_object_id = ? AND task_id = ?
+                """,
+                (display_object_id, current_body_task_id),
+            ).fetchone()
+        current_pose_revision = (
+            int(current_body_capture["pose_revision"])
+            if current_body_capture is not None
+            else -1
+        )
+        if int(capture["pose_revision"]) >= current_pose_revision:
+            conn.execute(
+                f"""
+                UPDATE {DISPLAY_OBJECT_STATE_TABLE}
+                SET latest_body_revision = ?, latest_body_task_id = ?, updated_at = ?
+                WHERE display_object_id = ?
+                """,
+                (revision, task_id, now, display_object_id),
+            )
+        conn.commit()
+        row = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
+            (display_object_id,),
+        ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def upsert_auxiliary_job(
+    *,
+    task_id: str,
+    branch_name: str,
+    status: str,
+    result_path: str | Path | None = None,
+    detail: Any = None,
+    error_message: str | None = None,
+) -> Dict[str, Any]:
+    allowed = {"pending", "running", "completed", "failed", "cancelled"}
+    if status not in allowed:
+        raise ValueError(f"Invalid auxiliary job status: {status}")
+    initialize_task_table()
+    now = _utc_now_text()
+    job_id = f"{task_id}:{branch_name}"
+    started_at = now if status == "running" else None
+    completed_at = now if status in {"completed", "failed", "cancelled"} else None
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {AUXILIARY_JOB_TABLE} (
+                job_id, task_id, branch_name, status, result_path, detail_json,
+                error_message, started_at, completed_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(task_id, branch_name) DO UPDATE SET
+                status = excluded.status,
+                result_path = COALESCE(excluded.result_path, result_path),
+                detail_json = excluded.detail_json,
+                error_message = excluded.error_message,
+                started_at = COALESCE(started_at, excluded.started_at),
+                completed_at = excluded.completed_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                job_id,
+                str(task_id),
+                str(branch_name),
+                status,
+                normalize_path_for_storage(result_path) if result_path else None,
+                json.dumps(detail if detail is not None else {}, ensure_ascii=False),
+                error_message,
+                started_at,
+                completed_at,
+                now,
+            ),
+        )
+        conn.commit()
+        row = conn.execute(
+            f"SELECT * FROM {AUXILIARY_JOB_TABLE} WHERE task_id = ? AND branch_name = ?",
+            (str(task_id), str(branch_name)),
+        ).fetchone()
+    return dict(row)
+
+
+def get_auxiliary_jobs(task_id: str) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM {AUXILIARY_JOB_TABLE} WHERE task_id = ? ORDER BY id ASC",
+            (str(task_id),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_auxiliary_jobs(*, statuses: Iterable[str] = ("pending", "running")) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    requested = tuple(dict.fromkeys(str(value).strip() for value in statuses if str(value).strip()))
+    if not requested:
+        return []
+    placeholders = ", ".join("?" for _ in requested)
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM {AUXILIARY_JOB_TABLE} WHERE status IN ({placeholders}) ORDER BY id ASC",
+            requested,
         ).fetchall()
     return [dict(row) for row in rows]
