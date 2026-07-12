@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 
 import _bootstrap
-from object_alignment_common import (
+from stages.hololens3d_reconstruction.object_alignment_common import (
     compute_front_view_extents,
     obj_vertices_to_canonical_rh,
     read_obj_vertices,

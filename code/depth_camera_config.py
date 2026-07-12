@@ -17,19 +17,6 @@ class DepthSensorLimits:
     upload_guard_enabled: bool
 
 
-DEPTH_SENSOR_ALIASES = {
-    "AHAT": DEPTH_SENSOR_AHAT,
-    "NEAR": DEPTH_SENSOR_AHAT,
-    "NEAR_DEPTH": DEPTH_SENSOR_AHAT,
-    "RM_DEPTH_AHAT": DEPTH_SENSOR_AHAT,
-    "LONGTHROW": DEPTH_SENSOR_LONGTHROW,
-    "LONG_THROW": DEPTH_SENSOR_LONGTHROW,
-    "FAR": DEPTH_SENSOR_LONGTHROW,
-    "FAR_DEPTH": DEPTH_SENSOR_LONGTHROW,
-    "RM_DEPTH_LONGTHROW": DEPTH_SENSOR_LONGTHROW,
-}
-
-
 DEPTH_SENSOR_LIMITS = {
     DEPTH_SENSOR_AHAT: DepthSensorLimits(
         sensor=DEPTH_SENSOR_AHAT,
@@ -51,14 +38,11 @@ DEPTH_SENSOR_LIMITS = {
 
 
 def normalize_depth_sensor_name(value: str | None) -> str:
-    raw = str(value or DEPTH_SENSOR_AHAT).strip().upper().replace("-", "_").replace(" ", "_")
-    if not raw:
-        raw = DEPTH_SENSOR_AHAT
-    normalized = DEPTH_SENSOR_ALIASES.get(raw)
-    if not normalized:
+    sensor = str(value or "").strip()
+    if sensor not in DEPTH_SENSOR_LIMITS:
         supported = ", ".join(sorted(DEPTH_SENSOR_LIMITS.keys()))
         raise ValueError(f"Unsupported depth sensor: {value!r}. Supported sensors: {supported}")
-    return normalized
+    return sensor
 
 
 def get_depth_sensor_limits(value: str | None) -> DepthSensorLimits:

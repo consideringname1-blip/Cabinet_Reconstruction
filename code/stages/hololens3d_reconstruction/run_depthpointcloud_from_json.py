@@ -6,7 +6,7 @@ import _bootstrap
 from settings import ICP_TARGET_FRONT_MAX_POINTS
 import numpy as np
 
-from object_alignment_common import (
+from stages.hololens3d_reconstruction.object_alignment_common import (
     build_depth_border_keep_mask,
     build_depth_pointcloud,
     build_depth_pointcloud_from_valid_mask,

@@ -70,32 +70,21 @@ DEFAULT_BUDGETS_MIB: dict[str, ServiceGpuBudget] = {
 }
 
 
-ALIASES = {
-    "sam3mask": "sam3_image_mask",
-    "sam3_mask": "sam3_image_mask",
-    "dino_identity": "dinov2_identity",
-    "dinov2": "dinov2_identity",
-}
-
-
 def _env_name(service: str) -> str:
     return "GPU_BUDGET_" + service.upper().replace("-", "_") + "_MIB"
 
 
 def normalize_service_name(service: str) -> str:
     key = str(service).strip().lower()
-    return ALIASES.get(key, key)
+    if key not in DEFAULT_BUDGETS_MIB:
+        raise ValueError(f"unknown GPU service: {service}")
+    return key
 
 
 def service_budget(service: str) -> ServiceGpuBudget:
     key = normalize_service_name(service)
-    default = DEFAULT_BUDGETS_MIB.get(key)
-    if default is None:
-        default = ServiceGpuBudget(service=key, required_mib=8 * 1024, note="Fallback GPU budget.")
-    try:
-        required = int(os.environ.get(_env_name(key), str(default.required_mib)))
-    except Exception:
-        required = default.required_mib
+    default = DEFAULT_BUDGETS_MIB[key]
+    required = int(os.environ.get(_env_name(key), str(default.required_mib)))
     return ServiceGpuBudget(service=key, required_mib=max(1, required), note=default.note)
 
 

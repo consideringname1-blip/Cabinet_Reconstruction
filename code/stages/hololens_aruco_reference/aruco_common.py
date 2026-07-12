@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -11,9 +10,8 @@ try:
 except ModuleNotFoundError:
     from . import _bootstrap  # type: ignore
 
-from artifact_layout import ARUCO_TEMPLATE_PATH, aruco_worker_frame_color
+from artifact_layout import aruco_worker_frame_color
 from hololens3d_reconstruction.pose_math import (
-    quat_xyzw_to_rotation_matrix,
     serialize_pose,
 )
 from coordinate_systems import (
@@ -22,143 +20,49 @@ from coordinate_systems import (
 )
 
 
-def default_aruco_template() -> dict[str, Any]:
-    return {
-        "enabled": False,
-        "dictionary": "",
-        "marker_id": None,
-        "marker_size_mm": None,
-        "reference_image_name": "",
-        "markers": [],
-        "notes": "",
-    }
-
-
-def load_aruco_template() -> dict[str, Any]:
-    if not ARUCO_TEMPLATE_PATH.is_file():
-        return default_aruco_template()
-
-    with ARUCO_TEMPLATE_PATH.open("r", encoding="utf-8") as file:
-        loaded = json.load(file)
-    if not isinstance(loaded, dict):
-        raise ValueError(f"ArUco template must be a JSON object: {ARUCO_TEMPLATE_PATH}")
-    template = default_aruco_template()
-    template.update(loaded)
-    return template
-
-
-def evaluate_aruco_template(template: dict[str, Any]) -> dict[str, Any]:
-    enabled = bool(template.get("enabled"))
-    dictionary = str(template.get("dictionary") or "").strip()
-    marker_id = template.get("marker_id")
-    marker_size_mm = template.get("marker_size_mm")
-
-    configured = (
-        enabled
-        and bool(dictionary)
-        and marker_id is not None
-        and marker_size_mm is not None
-        and float(marker_size_mm) > 0.0
-    )
-
-    reason = ""
-    if not enabled:
-        reason = "template_disabled"
-    elif not dictionary:
-        reason = "dictionary_missing"
-    elif marker_id is None:
-        reason = "marker_id_missing"
-    elif marker_size_mm is None:
-        reason = "marker_size_mm_missing"
-    elif float(marker_size_mm) <= 0.0:
-        reason = "marker_size_mm_invalid"
-
-    return {
-        "enabled": enabled,
-        "configured": configured,
-        "reason": reason,
-    }
-
-
-def resolve_marker_configs(template: dict[str, Any], db_markers: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+def resolve_marker_configs(db_markers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     markers: list[dict[str, Any]] = []
-    for marker in db_markers or []:
+    for marker in db_markers:
+        if not isinstance(marker, dict):
+            raise ValueError("ArUco marker database row must be an object")
         try:
-            marker_id = int(marker.get("marker_id"))
-            marker_size_mm = float(marker.get("marker_size_mm"))
-        except Exception:
-            continue
+            marker_id = int(marker["marker_id"])
+            marker_size_mm = float(marker["marker_size_mm"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("ArUco marker requires marker_id and marker_size_mm") from exc
         dictionary = str(marker.get("dictionary") or "").strip()
         if not dictionary or marker_size_mm <= 0.0:
-            continue
+            raise ValueError(f"invalid ArUco marker configuration: {marker_id}")
         markers.append(
             {
                 "marker_id": marker_id,
                 "dictionary": dictionary,
                 "marker_size_mm": marker_size_mm,
                 "reference_image_name": marker.get("reference_image_name") or "",
-                "source": "database",
-            }
-        )
-
-    if markers:
-        return markers
-
-    configured_markers = template.get("markers")
-    if isinstance(configured_markers, list):
-        for marker in configured_markers:
-            if not isinstance(marker, dict) or not bool(marker.get("enabled", True)):
-                continue
-            try:
-                marker_id = int(marker.get("marker_id", marker.get("id")))
-                marker_size_mm = float(marker.get("marker_size_mm") or template.get("marker_size_mm"))
-            except Exception:
-                continue
-            dictionary = str(marker.get("dictionary") or template.get("dictionary") or "").strip()
-            if not dictionary or marker_size_mm <= 0.0:
-                continue
-            markers.append(
-                {
-                    "marker_id": marker_id,
-                    "dictionary": dictionary,
-                    "marker_size_mm": marker_size_mm,
-                    "reference_image_name": marker.get("reference_image_name") or "",
-                    "source": "template",
-                }
-            )
-
-    template_state = evaluate_aruco_template(template)
-    if not markers and template_state["configured"]:
-        markers.append(
-            {
-                "marker_id": int(template["marker_id"]),
-                "dictionary": str(template["dictionary"]),
-                "marker_size_mm": float(template["marker_size_mm"]),
-                "reference_image_name": template.get("reference_image_name") or "",
-                "source": "template_legacy",
             }
         )
     return markers
 
 
-def resolve_task_name(task: dict[str, Any], fallback: str) -> str:
-    return str(task.get("task_name") or fallback)
+def resolve_task_name(task: dict[str, Any]) -> str:
+    task_name = str(task.get("task_name") or "").strip()
+    if not task_name:
+        raise ValueError("task_name is required")
+    return task_name
 
 
 def resolve_pv_frames(task: dict[str, Any]) -> list[dict[str, Any]]:
     frames = task.get("PVCameraFrames")
-    if isinstance(frames, list) and frames:
-        return [dict(frame) for frame in frames if isinstance(frame, dict)]
-    pv_info = task.get("PVCamera") or {}
-    return [dict(pv_info)] if pv_info else []
+    if not isinstance(frames, list) or not frames or not all(isinstance(frame, dict) for frame in frames):
+        raise ValueError("PVCameraFrames must contain at least one frame object")
+    return [dict(frame) for frame in frames]
 
 
-def resolve_pv_image_path(task_or_frame: dict[str, Any]) -> Path:
-    pv_info = task_or_frame.get("PVCamera") or task_or_frame
-    if str(pv_info.get("artifact_root") or "").strip() != "aruco_worker":
+def resolve_pv_image_path(frame: dict[str, Any]) -> Path:
+    if str(frame.get("artifact_root") or "").strip() != "aruco_worker":
         raise ValueError("PVCamera frame must reference aruco_worker artifacts")
-    task_timestamp = str(pv_info.get("task_timestamp") or "").strip()
-    frame_timestamp = str(pv_info.get("artifact_timestamp") or "").strip()
+    task_timestamp = str(frame.get("task_timestamp") or "").strip()
+    frame_timestamp = str(frame.get("artifact_timestamp") or "").strip()
     if not task_timestamp or not frame_timestamp:
         raise ValueError("aruco_worker frame requires task_timestamp and artifact_timestamp")
     artifact_candidate = aruco_worker_frame_color(task_timestamp, frame_timestamp).resolve()
@@ -167,20 +71,11 @@ def resolve_pv_image_path(task_or_frame: dict[str, Any]) -> Path:
     raise FileNotFoundError(f"PVCamera image not found: {artifact_candidate}")
 
 
-def resolve_pv_camera_matrix(task_or_frame: dict[str, Any]) -> np.ndarray:
-    pv_info = task_or_frame.get("PVCamera") or task_or_frame
-    k = np.asarray(pv_info.get("k"), dtype=np.float64)
-    if k.shape == (3, 3):
-        return k.astype(np.float64)
-    if k.ndim == 2 and k.shape[0] >= 3 and k.shape[1] >= 3:
-        return k[:3, :3].astype(np.float64)
-
-    raw_k = pv_info.get("k")
-    flat = np.asarray([] if raw_k is None else raw_k, dtype=np.float64).reshape(-1)
-    if flat.size == 9:
-        return flat.reshape(3, 3).astype(np.float64)
-
-    raise ValueError("PVCamera.k must be a 3x3 matrix or contain at least 9 values")
+def resolve_pv_camera_matrix(frame: dict[str, Any]) -> np.ndarray:
+    matrix = np.asarray(frame.get("k"), dtype=np.float64)
+    if matrix.shape != (3, 3) or not np.isfinite(matrix).all():
+        raise ValueError("PVCamera frame k must be a finite 3x3 matrix")
+    return matrix
 
 
 def resolve_selection_roi(task: dict[str, Any], image_width: int, image_height: int) -> tuple[int, int, int, int]:
@@ -219,25 +114,12 @@ def orthonormalize_rotation(rotation: np.ndarray) -> np.ndarray:
     return normalized.astype(np.float64)
 
 
-def resolve_pv_camera_world_pose(task_or_frame: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
-    pv_info = task_or_frame.get("PVCamera") or task_or_frame
-    pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
-    if pv_pose.shape == (4, 4):
-        translation, rotation, _quat_xyzw = convert_hololens_pv_pose_matrix_to_unity_pose_components(
-            pv_pose
-        )
-        return translation.astype(np.float64), rotation.astype(np.float64)
-
-    translation = np.asarray(pv_info.get("position"), dtype=np.float64)
-    quat_xyzw = np.asarray(pv_info.get("rotation_quaternion_xyzw"), dtype=np.float64)
-
-    if translation.shape == (3,) and quat_xyzw.shape == (4,):
-        rotation = quat_xyzw_to_rotation_matrix(quat_xyzw)
-        return translation.astype(np.float64), rotation.astype(np.float64)
-
-    raise ValueError(
-        "PVCamera must include either pose(4x4) or position+rotation_quaternion_xyzw"
-    )
+def resolve_pv_camera_world_pose(frame: dict[str, Any]) -> tuple[np.ndarray, np.ndarray]:
+    pv_pose = np.asarray(frame.get("pose"), dtype=np.float64)
+    if pv_pose.shape != (4, 4) or not np.isfinite(pv_pose).all():
+        raise ValueError("PVCamera frame pose must be a finite 4x4 matrix")
+    translation, rotation, _quat_xyzw = convert_hololens_pv_pose_matrix_to_unity_pose_components(pv_pose)
+    return translation.astype(np.float64), rotation.astype(np.float64)
 
 
 def convert_cv_pose_to_unity_pose(rotation_cv: np.ndarray, translation_cv: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

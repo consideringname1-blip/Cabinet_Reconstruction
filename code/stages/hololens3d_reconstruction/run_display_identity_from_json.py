@@ -5,7 +5,7 @@ import sys
 
 import _bootstrap
 
-from display_identity import bind_capture_identity
+from stages.hololens3d_reconstruction.display_identity import bind_capture_identity
 from stage_common import load_stage_task
 
 

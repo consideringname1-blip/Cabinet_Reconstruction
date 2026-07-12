@@ -17,10 +17,11 @@ os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 import _bootstrap
 from config import PREVIEW_3D_BOX_DEPTH_EXPANSION_FACTOR, TASK_DEBUG_OUTPUT_ENABLE
 from artifact_layout import model_debug_file, model_worker_dir, model_worker_file
+from coordinate_systems import convert_hololens_pv_pose_matrix_to_unity_pose_components
 from path_config import SAM3_BEP, SAM3_ROOT
 import numpy as np
 from PIL import Image, ImageDraw
-from object_alignment_common import compute_mask_border_crop, depth_limits_for_task, get_depth_border_crop_ratio
+from stages.hololens3d_reconstruction.object_alignment_common import compute_mask_border_crop, depth_limits_for_task, get_depth_border_crop_ratio
 from stage_common import ensure_file, load_stage_task
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
@@ -170,44 +171,6 @@ def _depth_raw_to_m(depth_raw: np.ndarray) -> np.ndarray:
     return depth.astype(np.float32)
 
 
-def _parse_vector3(value: Any, name: str) -> np.ndarray | None:
-    try:
-        array = np.asarray(value, dtype=np.float64).reshape(-1)
-    except Exception:
-        return None
-    if array.size < 3:
-        return None
-    return array[:3].astype(np.float64)
-
-
-def _parse_quaternion_xyzw(value: Any) -> np.ndarray | None:
-    try:
-        array = np.asarray(value, dtype=np.float64).reshape(-1)
-    except Exception:
-        return None
-    if array.size < 4:
-        return None
-    norm = float(np.linalg.norm(array[:4]))
-    if norm <= 1e-9:
-        return None
-    return (array[:4] / norm).astype(np.float64)
-
-
-def _quat_xyzw_to_matrix(q: np.ndarray) -> np.ndarray:
-    x, y, z, w = [float(v) for v in q]
-    xx, yy, zz = x * x, y * y, z * z
-    xy, xz, yz = x * y, x * z, y * z
-    wx, wy, wz = w * x, w * y, w * z
-    return np.array(
-        [
-            [1.0 - 2.0 * (yy + zz), 2.0 * (xy - wz), 2.0 * (xz + wy)],
-            [2.0 * (xy + wz), 1.0 - 2.0 * (xx + zz), 2.0 * (yz - wx)],
-            [2.0 * (xz - wy), 2.0 * (yz + wx), 1.0 - 2.0 * (xx + yy)],
-        ],
-        dtype=np.float64,
-    )
-
-
 def _camera_box_corners(box_min: np.ndarray, box_max: np.ndarray) -> np.ndarray:
     x0, y0, z0 = [float(v) for v in box_min]
     x1, y1, z1 = [float(v) for v in box_max]
@@ -244,7 +207,7 @@ def _percentile_camera_box(points_camera: np.ndarray) -> tuple[np.ndarray, np.nd
 
 def _camera_matrix_from_task(task: dict[str, Any]) -> np.ndarray | None:
     pvcamera = task.get("PVCamera") or {}
-    raw = pvcamera.get("k") or pvcamera.get("K") or pvcamera.get("camera_matrix")
+    raw = pvcamera.get("k")
     if raw is None:
         return None
     try:
@@ -259,9 +222,19 @@ def _camera_matrix_from_task(task: dict[str, Any]) -> np.ndarray | None:
 def compute_sam3_spatial_box(task: dict[str, Any], mask_bool: np.ndarray, depth_raw: np.ndarray) -> dict[str, Any]:
     camera_matrix = _camera_matrix_from_task(task)
     pvcamera = task.get("PVCamera") or {}
-    camera_position = _parse_vector3(pvcamera.get("position"), "PVCamera.position")
-    camera_rotation = _parse_quaternion_xyzw(pvcamera.get("rotation_quaternion_xyzw"))
-    if camera_matrix is None or camera_position is None or camera_rotation is None:
+    try:
+        pv_pose = np.asarray(pvcamera["pose"], dtype=np.float64)
+        if pv_pose.shape != (4, 4) or not np.isfinite(pv_pose).all():
+            raise ValueError("PVCamera.pose must be a finite 4x4 matrix")
+        camera_position, rotation_world_from_camera, _quaternion = (
+            convert_hololens_pv_pose_matrix_to_unity_pose_components(pv_pose)
+        )
+    except (KeyError, TypeError, ValueError):
+        return {
+            "status": "unavailable",
+            "reason": "missing_pv_intrinsics_or_pose",
+        }
+    if camera_matrix is None:
         return {
             "status": "unavailable",
             "reason": "missing_pv_intrinsics_or_pose",
@@ -322,7 +295,6 @@ def compute_sam3_spatial_box(task: dict[str, Any], mask_bool: np.ndarray, depth_
     y_cv = (ys - cy) * zs / fy
     # OpenCV camera: +X right, +Y down, +Z forward. Unity camera: +X right, +Y up, +Z forward.
     points_camera_unity = np.stack([x_cv, -y_cv, zs], axis=1)
-    rotation_world_from_camera = _quat_xyzw_to_matrix(camera_rotation)
 
     base_camera_min, base_camera_max = _percentile_camera_box(points_camera_unity)
     base_camera_size = base_camera_max - base_camera_min

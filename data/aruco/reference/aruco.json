@@ -1,9 +1,4 @@
 {
-  "enabled": true,
-  "dictionary": "DICT_7X7_1000",
-  "marker_id": 1,
-  "marker_size_mm": 200.0,
-  "reference_image_name": "raw/ar_marker_7x7_1.png",
   "markers": [
     {
       "marker_id": 1,
@@ -12,6 +7,5 @@
       "reference_image_name": "ar_marker_7x7_1.png",
       "enabled": true
     }
-  ],
-  "notes": "Configured from local ar_marker_detection-master files. Printed marker side length is 20 cm. Image validates as id=1 when padded with a white border."
+  ]
 }

@@ -1,37 +1,20 @@
 # Documentation Index
 
-更新日期：2026-07-08
-状态：当前实现说明
+更新日期：2026-07-12
+状态：当前协议
 
-本文是 `docs/` 目录索引。流程图只记录大致数据流；实际触发、接口和失败处理以 Markdown 文档和代码为准。
+## 系统与 API
 
-## Flow Diagram
+- [`task-processing-flow.md`](task-processing-flow.md)：主任务、Shigure 辅助分支、实时追踪与模式切换。
+- [`server-processing-output-contract.md`](server-processing-output-contract.md)：严格 HTTP、multipart、canonical model 和 body evidence 契约。
+- [`coordinate-systems.md`](coordinate-systems.md)：HoloLens、ArUco、Shigure 与 Unity 的坐标边界。
+- [`identity-management.md`](identity-management.md)：`display_object_id`、DINOv2、模型复用和 revision。
+- [`code-organization.md`](code-organization.md)：代码目录与模块职责。
+- [`implementation-coverage-notes.md`](implementation-coverage-notes.md)：辅助接口、worker service 和 Unity 层覆盖说明。
 
-- [`hwang-project-flow.drawio`](hwang-project-flow.drawio): 项目数据流参考图。
+## Shigure 与 Unity
 
-## System Contracts
-
-- [`task-processing-flow.md`](task-processing-flow.md): 任务处理流程、stage 顺序、目录布局。
-- [`server-processing-output-contract.md`](server-processing-output-contract.md): API 输入输出、artifact 和 JSON 契约。
-- [`code-organization.md`](code-organization.md): 代码目录、模块职责和新增代码放置规则。
-- [`implementation-coverage-notes.md`](implementation-coverage-notes.md): 代码中辅助接口、worker service、helper 脚本和 Unity 辅助层覆盖说明。
-- [`coordinate-systems.md`](coordinate-systems.md): HoloLens、ArUco、Shigure、Unity 坐标边界和统一投影函数。
-
-## Object And History Pipeline
-
-- [`identity-management.md`](identity-management.md): DINOv2 历史模型复用、force-new 规则。
-- [`taken-object-detection-state-machine.md`](taken-object-detection-state-machine.md): Shigure object mask 初始化和拿取判断状态机。
-- [`history-position-restoration.md`](history-position-restoration.md): fixed Shigure 历史位置再现和 direct compare。
-- [`history-placement-restoration-review.md`](history-placement-restoration-review.md): 历史再现审查结论。
-- [`history-placement-coordinate-review.md`](history-placement-coordinate-review.md): 历史再现坐标链路审查。
-- [`model-event-tracking-state-machine.md`](model-event-tracking-state-machine.md): Unity pending/completed/history 显示状态机。
-
-## Shigure And Body Evidence
-
-- [`shigure-core-ros-messages.md`](shigure-core-ros-messages.md): Shigure RGB-D、CameraInfo、object_detection 缓存与 socket 访问。
-- [`sam3d-body-workflow.md`](sam3d-body-workflow.md): SAM3D Body 人体 mesh、距离修正和 subject crop 流程。
-- [`sam3d-body-setup.md`](sam3d-body-setup.md): SAM3D Body stage 运行依赖、配置和排查入口。
-
-## Naming Rule
-
-文档文件名统一使用英文 lowercase kebab-case。保留 `.drawio` 作为流程图格式；新 Markdown 文档优先放到本索引对应章节中。
+- [`shigure-core-ros-messages.md`](shigure-core-ros-messages.md)：远端 Shigure topics、exact-stamp event 和内存 socket cache。
+- [`sam3d-body-workflow.md`](sam3d-body-workflow.md)：`ShigureContactEvidence` 到 SAM3D Body mesh/crop 的流程。
+- [`sam3d-body-setup.md`](sam3d-body-setup.md)：SAM3D Body 依赖、配置和排查。
+- [`model-event-tracking-state-machine.md`](model-event-tracking-state-machine.md)：Unity 模型缓存、History/Live、revision 和证据显示。

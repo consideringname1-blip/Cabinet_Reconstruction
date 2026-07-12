@@ -1,112 +1,80 @@
-# SAM3D Body 人体 mesh 与拿取证据裁切
+# SAM3D Body 人体 mesh 与拿取证据
 
-更新日期：2026-07-08
-状态：当前实现说明
+更新日期：2026-07-12
+状态：当前协议
 
-实现文件：`code/stages/sam3d_body_mesh/run_sam3d_body_mesh_from_json.py`。
+实现入口：`code/stages/sam3d_body_mesh/run_sam3d_body_mesh_from_json.py`。
 
-## 目标
+## 触发边界
 
-当 taken object detection 判断物体被拿走后，SAM3D Body stage 负责：
+SAM3D Body 属于 `shigure_contact_body` 辅助分支，不在 object reconstruction 的串行 stage 列表中。该分支随 HoloLens 物体上传启动，并与主链并行等待远端 Shigure contact。
 
-1. 在 Shigure taken frame 上生成人体 mesh。
-2. 通过 depth 对人体 mesh 做轻量距离修正和缩放。
-3. 选择最可能拿走物体的人体。
-4. 保存人体 mesh、人体 bbox、people JSON。
-5. 结合人体和物体位置裁切出给 HoloLens 显示的证据图。
+只有 `ShigureContactEvidence.status=TAKEN` 才运行人体推理。实时 `obj_move`/`bring_in` 位置更新不生成人体 mesh。
 
-## 输入
+## 必需输入
 
-来自 `TakenObjectDetection`：
+`ShigureContactEvidence` 提供：
 
 ```text
-result_rgb
-result_depth
-camera_info
-active_objects
-marker_pose
-history_baseline.old_mask
+result_timestamp
+backup_shigurei_dir
+people_bounding_box.xyxy
+object_bounding_box
+shigure_object_id
+people_id
+event_id
+identity_distance
 ```
 
-来自模型任务：
+`backup_shigurei_dir` 必须包含同一 Shigure 事件对应的：
 
 ```text
-object_aruco
-ModelBounds
-aruco_reference
+rgb.png                   # uint8 BGR
+depth.png                 # uint16 millimetres
+camera_info.json          # k, width, height
+object_mask.png
+marker_6d_pose.json       # opencv_camera_pose.rotation_matrix + tvec_m
 ```
 
-## 坐标链路
+RGB、depth 和 CameraInfo 尺寸必须完全一致。人体输入 box 只接受远端 contact 的 `people_bounding_box.xyxy`；缺失或无效时返回 `NO_PERSON_DETECTED`。
 
-SAM3D Body 模型初始在 Shigure camera 坐标中。服务器转换：
+## 人体生成与 depth 对齐
+
+1. 将一个 Shigure 人体 bbox 直接传给 SAM3D Body。
+2. 把预测 mesh rasterize 到 Shigure 图像。
+3. 在 mesh 可见区域与 depth 有效像素的重叠区计算 depth residual 中位数。
+4. 沿人体 bbox 中心相机射线平移 mesh。
+5. 按修正前后距离比例缩放 mesh；比例限制由 `DEPTH_SCALE_MIN/MAX` 控制。
+6. 使用 `marker_6d_pose.json` 将 mesh 顶点从 Shigure OpenCV camera 坐标转换为 ArUco 坐标。
+
+重叠像素不足时不猜测偏移或缩放，保留 SAM3D Body 原始结果并记录 `insufficient_body_mask_depth_overlap_no_translation_or_scale`。
+
+## 证据裁切
+
+裁切范围是两个区域的并集：
+
+- SAM3D Body rasterized body mask；没有可用 body mask 时使用选中人体 bbox。
+- 同一 Shigure event 的 `object_mask.png`。
+
+对并集取外接矩形并添加 `SUBJECT_CROP_PAD_PX`。object mask 缺失、为空或裁切写入失败时，人体结果不能标记为 `SUCCESS`。
+
+## 内部输出
+
+任务辅助 JSON 写入 `SAM3DBodyMesh`：
 
 ```text
-Shigure camera -> ArUco -> 当前 HoloLens local
+status
+selected_person_name
+selected_person_fbx_path
+selected_person_obj_path
+selected_person_pose_aruco
+selected_person_bbox_xyxy
+subject_crop_path
+people_json_path
+coordinate_space=aruco
 ```
 
-公开 API 输出必须是：
-
-```text
-selected_person_pose_hololens
-coordinate_space = hololens_current_local
-```
-
-内部可保存 `selected_person_pose_aruco` 和 ArUco mesh 文件，但 Unity 不直接消费 ArUco 坐标。
-
-## 深度修正
-
-当前修正只做轻量相机距离调整：
-
-1. 用 SAM3D Body 输出的 body mask 找 mask 内 depth。
-2. 对 mesh 可见区域和 depth 做抽样/中位数估计。
-3. 只沿相机距离方向修正 offset。
-4. 根据调整前后距离比例缩放人体 mesh。
-5. 不做完整 ICP，不做重型全点云优化。
-
-输出 debug 字段包含：
-
-```text
-depth_offset_m
-distance_scale
-valid_depth_pixels
-method
-```
-
-## 最近人体选择
-
-选择逻辑：
-
-1. 将人体 keypoints/mesh 转到 ArUco。
-2. 计算物体中心 `object_center_aruco`。
-3. 比较左右手腕到物体中心距离。
-4. 选择最近手腕对应人体。
-
-如果没有可用手腕或物体中心，stage 返回对应失败状态，不应猜测。
-
-## Subject Crop
-
-裁切输出：
-
-```text
-08_sam3d_body_subject_crop.png
-```
-
-裁切 mask 由以下来源组合：
-
-- selected body mask。
-- selected body bbox fallback。
-- taken baseline old_mask。
-- object center projection mask。
-
-裁切规则：
-
-- 合并人体和物体区域。
-- 取最小外接矩形。
-- 加 padding。
-- 输出 `subject_crop_path`。
-- Unity 端按窗口最大约束等比显示。
-
-## 输出文件
+结果文件：
 
 ```text
 result/08_sam3d_body_result.json
@@ -116,25 +84,25 @@ result/08_sam3d_body_selected_person.fbx
 result/08_sam3d_body_subject_crop.png
 ```
 
-API URL：
+服务器把人体 pose 按当前 startup 的最新 ArUco reference 转为 `hololens_current_local`，再通过 canonical `body_evidence` 下发。Unity 不读取内部 ArUco 字段。
 
-```json
-"sam3d_body_mesh_urls": {
-  "selected_person_fbx_url": "...",
-  "selected_person_obj_url": "...",
-  "people_url": "...",
-  "subject_crop_url": "..."
-}
+## Revision 规则
+
+- 每个 `display_object_id` 只发布一个最新 `body_revision`。
+- 新的成功人体结果替换该对象的当前人体证据引用。
+- 已生成的人体 mesh、裁切图和任务历史继续保存在服务器 artifact 中。
+- Unity 只接受 `body_evidence.body_revision` 与 tracking item `body_revision` 相同的结果。
+
+## 状态
+
+主要状态：
+
+```text
+SUCCESS
+SKIPPED_NOT_TAKEN
+INPUT_MISSING
+NO_PERSON_DETECTED
+NO_VALID_BODY_MESH
 ```
 
-## Unity 行为
-
-- 历史证据图优先使用 `subject_crop_url`。
-- 人体 mesh overlay 使用 `selected_person_pose_hololens`。
-- 如果 pose 缺失，不应使用 ArUco 或 identity pose 在 Unity 端猜测。
-
-## 不做的事
-
-- 不在 Unity 端处理人体 ArUco 坐标。
-- 不做完整 ICP。
-- 不用人体 mesh 判断历史物体 still/missing；历史物体状态仍由 old_mask RGB-D direct compare 决定。
+任何缺失的 contact person、marker pose、RGB-D、CameraInfo 或 object mask 都产生明确失败状态，不使用本地人体检测、物体中心或默认 pose 补全。

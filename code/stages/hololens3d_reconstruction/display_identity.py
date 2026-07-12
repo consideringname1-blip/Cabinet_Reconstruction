@@ -1,8 +1,9 @@
+"""Persistent display identity for the HoloLens reconstruction stage."""
+
 from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,13 +18,9 @@ from task_db import (
 from task_json import load_task_json, normalize_path_for_storage, resolve_task_json_path, save_task_json
 
 
-DEFAULT_CANDIDATE_LIMIT = 500
 DINO_IDENTITY_VERSION = 2
 MATCHED_STATUSES = {"matched", "matched_force_new"}
-
-
-def _utc_now_text() -> str:
-    return datetime.now(timezone.utc).replace(tzinfo=None).isoformat(timespec="milliseconds")
+IDENTITY_STATUSES = MATCHED_STATUSES | {"miss"}
 
 
 def _task_id(task: dict[str, Any]) -> str:
@@ -35,7 +32,7 @@ def _task_id(task: dict[str, Any]) -> str:
 
 def _capture_instance_id(task: dict[str, Any]) -> str:
     existing = task.get("DisplayIdentity") if isinstance(task.get("DisplayIdentity"), dict) else {}
-    raw = task.get("capture_instance_id") or existing.get("capture_instance_id")
+    raw = existing.get("capture_instance_id")
     if raw:
         return str(raw)
     return f"capture_{_task_id(task)}"
@@ -103,7 +100,7 @@ def _candidate_scores(payload: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _selected_distance(payload: dict[str, Any], display_object_id: str | None) -> float | None:
-    value = payload.get("dinov2_distance") or payload.get("best_candidate_distance")
+    value = payload.get("dinov2_distance")
     try:
         if value is not None:
             return float(value)
@@ -174,19 +171,13 @@ def _evidence(json_path: Path, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _store_result_in_task_json(json_path: Path, task: dict[str, Any], result: dict[str, Any]) -> None:
-    task["capture_instance_id"] = result.get("capture_instance_id")
-    task["display_object_id"] = result.get("display_object_id")
     task["DisplayIdentity"] = result
     save_task_json(json_path, task)
 
 
 def bind_capture_identity(
     json_path_arg: str | Path,
-    *,
-    force_rebind: bool = False,
-    candidate_limit: int = DEFAULT_CANDIDATE_LIMIT,
 ) -> dict[str, Any]:
-    del candidate_limit
     json_path = resolve_task_json_path(json_path_arg)
     task = load_task_json(json_path)
     task_id = _task_id(task)
@@ -195,16 +186,26 @@ def bind_capture_identity(
     if existing_capture and existing_capture.get("capture_instance_id"):
         capture_instance_id = str(existing_capture["capture_instance_id"])
     existing_display_object_id = _resolve_existing_binding(existing_capture)
-    timestamp = str(task.get("server_received_utc") or (task.get("device") or {}).get("time") or _utc_now_text())
+    timestamp_value = task.get("server_received_utc")
+    if not isinstance(timestamp_value, str) or not timestamp_value.strip():
+        raise ValueError("server_received_utc is required")
+    timestamp = timestamp_value.strip()
 
     historical_payload = _historical_match_payload(task)
+    historical_status = str(historical_payload.get("status") or "").strip()
+    if historical_status not in IDENTITY_STATUSES:
+        raise RuntimeError(f"invalid HistoricalModelMatch.status: {historical_status or 'missing'}")
+    if _historical_match_current_dinov2(historical_payload) is None:
+        raise RuntimeError("HistoricalModelMatch.current_dinov2 is missing or invalid")
     historical_display_object_id = _historical_match_display_object_id(historical_payload)
+    if historical_status in MATCHED_STATUSES and historical_display_object_id is None:
+        raise RuntimeError("matched HistoricalModelMatch is missing display_object_id")
     feature = _feature_from_historical_match(historical_payload)
     evidence = _evidence(json_path, historical_payload)
     candidate_scores = _candidate_scores(historical_payload)
     selected_distance = _selected_distance(historical_payload, historical_display_object_id)
 
-    if historical_display_object_id and not force_rebind:
+    if historical_display_object_id:
         display_object_id = historical_display_object_id
         is_new_display_object = False
         binding_status = "bound"
@@ -214,7 +215,7 @@ def bind_capture_identity(
         else:
             decision = "bind_historical_dinov2_match"
             reason = "dinov2_match_generate_new_model"
-    elif existing_display_object_id and not force_rebind and _existing_capture_uses_dinov2(existing_capture):
+    elif existing_display_object_id and _existing_capture_uses_dinov2(existing_capture):
         display_object_id = existing_display_object_id
         is_new_display_object = False
         binding_status = "bound"

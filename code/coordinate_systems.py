@@ -51,7 +51,7 @@ COORDINATE_SYSTEMS = {
         "x": "generated OBJ X",
         "y": "generated OBJ Y",
         "z": "generated OBJ Z",
-        "forward": "legacy pose remap",
+        "forward": "runtime-local axis remap",
         "usage": "RuntimeMesh/FBX local asset contract; pose stage remaps this basis for Unity.",
     },
     "blender_world": {
@@ -123,7 +123,7 @@ MODEL_INPUT_TO_CANONICAL_RH_BASIS = np.array(
 CANONICAL_RH_TO_MODEL_INPUT_BASIS = MODEL_INPUT_TO_CANONICAL_RH_BASIS.T
 
 MODEL_INPUT_AXIS_CONTRACT = "model_input_minus_x_forward_z_up"
-RUNTIME_AXIS_CONTRACT = "legacy_model_input_local_pose_remapped"
+RUNTIME_AXIS_CONTRACT = "runtime_mesh_local_to_unity_pose"
 SOURCE_AXIS_CONTRACT = MODEL_INPUT_AXIS_CONTRACT
 MODEL_INPUT_TO_UNITY_RUNTIME_LOCAL = np.eye(3, dtype=np.float32)
 RUNTIME_LOCAL_TO_UNITY_POSE_ROTATION = np.array(

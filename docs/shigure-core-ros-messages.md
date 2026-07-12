@@ -1,122 +1,145 @@
-# Shigure ROS 数据与内存缓存
+# 远端 Shigure 数据入口与内存缓存
 
-更新日期：2026-07-08
-状态：当前实现说明
+更新日期：2026-07-12
+状态：当前协议
 
-Shigure 侧数据由 `code/stages/shigure_history` 负责接收、对齐和缓存。缓存常驻在 recorder 子进程内，业务 stage 通过本地 Unix socket 读取，不能依赖 Python 全局内存。
+Shigure 在独立服务器运行。本仓库不修改 `code/reconstruction/shigure_core`；`code/stages/shigure_history` 只订阅已配置的远端 ROS 数据流、规范化消息并向本服务器业务线程提供内存缓存。
 
-## 目标
-
-固定 Shigure 视角提供：
-
-- RGB 图像。
-- Depth 图像。
-- CameraInfo。
-- `/shigure/object_detection` 输出。
-- ArUco marker pose 历史。
-
-这些数据服务于：
-
-- taken object 初始化 old_mask。
-- fixed Shigure history restoration。
-- SAM3D Body 输入帧和裁切。
-
-## 启动方式
-
-`task_worker.start_worker()` 会在服务启动时启动 Shigure history recorder：
-
-```text
-code/stages/shigure_history/run_shigure_history_recorder.py --socket-server data/worker_sockets/shigure_history.sock
-```
-
-开关：
-
-```text
-SHIGURE_HISTORY_RECORDING_ENABLE=1
-```
-
-如果 recorder 退出，worker monitor 会尝试重启。
-
-## Topic 配置
+## 输入 topics
 
 默认配置位于 `code/stages/shigure_history/settings.py`：
 
 ```text
-SHIGURE_HISTORY_SECONDS=60
-SHIGURE_HISTORY_HZ=5
-SHIGURE_HISTORY_OBJECT_DETECTION_TOPIC=/shigure/object_detection
+RGB                 /rs/color/compressed
+Depth               /rs/aligned_depth_to_color/compressedDepth
+CameraInfo          /rs/aligned_depth_to_color/cameraInfo
+object_detection    /shigure/object_detection
+contacted           /shigure/contacted
 ```
 
-缓存目标是约 1 分钟最近数据。object_detection 是可选 topic，但拿取初始化依赖它，如果没有有效 object mask 会初始化失败。
+topic 名和消息类型可通过对应 `SHIGURE_HISTORY_*` 环境变量配置。RGB、depth、CameraInfo 是 RGB-D sample 的必要输入；两个 Shigure event topic 独立保留缺失/空列表状态。
 
-## 对齐策略
+## Recorder 生命周期
 
-recorder 以 RGB 时间戳为主样本：
-
-1. 取最近 RGB。
-2. 在允许 delta 内取最近 depth。
-3. 取最近 camera_info。
-4. 取最近 object_detection。
-5. 打包成 `CachedRgbdSample` 放入 `ShigureMemoryStore`。
-
-样本 metadata 包含 stamp、路径、object_detection hash、chunk/frame index 等信息。业务 stage 可以按 stamp 取 nearest sample 或遍历时间窗口。
-
-## Unix Socket API
-
-业务端使用：
-
-```python
-cache = ShigureRgbdCache(SHIGURE_HISTORY_CACHE_ROOT)
-sample = cache.get_sample(stamp, mode="nearest")
-metadata = cache.iter_sample_metadata(start=start, end=end)
-```
-
-底层通过 Unix socket 请求 recorder 进程。这样 stage 即使作为子进程运行，也能读取同一份内存缓存。
-
-## CachedRgbdSample 字段
-
-典型字段：
+`task_worker.start_worker()` 启动：
 
 ```text
-stamp
-rgb_bgr
-depth
-camera_info
-yolo / object_detection
-camera_info_path
-yolo_path
-yolo_hash
-chunk_id
-frame_index
+code/stages/shigure_history/run_shigure_history_recorder.py
+  --socket-server data/worker_sockets/shigure_history.sock
 ```
 
-`yolo` 字段当前也代表 Shigure object_detection payload。历史命名兼容保留，但新文档和新逻辑应使用 object_detection 语义。
+`SHIGURE_HISTORY_RECORDING_ENABLE=1` 时 worker 监控并重启 recorder。缓存属于 recorder 进程内存；服务器/recorder 重启后缓存和 event sequence 重新开始。
 
-## object_detection 语义
+## RGB-D sample
 
-拿取初始化会读取 object_detection 中的候选 object mask：
-
-- mask 必须能转换为与 depth 同尺寸的 bool mask。
-- 候选 mask 会与模型中心对角圆投影比较，并校验 mask 有效 depth 中位数和模型中心 depth 的偏差。
-- 选择规则见 `docs/taken-object-detection-state-machine.md`。
-
-## Marker Pose
-
-Shigure ArUco marker pose 存储在：
+RGB 时间戳是 sample 主时间戳。recorder 在 `SHIGURE_HISTORY_RGB_DEPTH_MAX_DELTA_SECONDS` 内选择最近 depth，并读取 CameraInfo，构造：
 
 ```text
-data/aruco/shigure_marker_history/
+CachedRgbdSample
+  stamp.sec
+  stamp.nanosec
+  rgb_bgr        uint8 HxWx3
+  depth          uint16 HxW, millimetres
+  camera_info.k  3x3
+  camera_info.width
+  camera_info.height
 ```
 
-最新 marker pose 用于：
+RGB、depth 和 CameraInfo 尺寸必须一致，焦距必须为正。没有 ROS source timestamp 的 RGB 不进入缓存。
 
-- HoloLens/ArUco 模型中心和 bounds corners 投影到 Shigure 图像，生成模型对角圆。
-- Shigure camera point 反投影到 ArUco。
-- SAM3D Body mesh 从 Shigure camera 坐标转 ArUco，再由服务器转换到 HoloLens current。
+## Correlated Shigure event
 
-## 使用边界
+`/shigure/object_detection` 与 `/shigure/contacted` 只按完全相同的 ROS source stamp join：
 
-- Shigure fixed view 的历史再现不做 3D 投影扫描。
-- 初始化 old_mask 使用模型对角圆内占比、depth 偏差阈值，并在 accepted 候选中选择最大 object mask。
-- 一旦 old_mask 保存，后续 still/missing/occluded 判断只在 old_mask 内比较 RGB/depth。
-- 不要让 stage 直接读取 recorder 内部全局变量；统一走 `ShigureRgbdCache`。
+```text
+CachedShigureEvent
+  source_stamp
+  sequence
+  contacted_state
+  object_detection_state
+  contacted
+  object_detection
+  contact_object_matches
+```
+
+topic state 只有：
+
+```text
+missing
+explicit_empty
+present
+```
+
+因此“该 stamp 确认没有 contact”和“该 stamp 没收到 contact topic”不会混为一谈。
+
+规范化 detection object：
+
+```json
+{
+  "object_id": "obj_move:0",
+  "action": "obj_move",
+  "bbox_xyxy": [10, 20, 100, 160],
+  "mask_b64": "...",
+  "mask_format": "png",
+  "mask_bytes": 1234
+}
+```
+
+规范化 contact：
+
+```json
+{
+  "event_id": "...",
+  "people_id": "...",
+  "object_id": "...",
+  "action": "take_out",
+  "people_bounding_box": {"xyxy": [0, 0, 10, 10]},
+  "object_bounding_box": {"xyxy": [0, 0, 10, 10]},
+  "object_cube": {"x": 0, "y": 0, "z": 0, "width": 1, "height": 1, "depth": 1}
+}
+```
+
+contact 与 detection 的关联先要求 action 相同，再用 object bbox IoU 消除同 action 多候选。拿取证据分支只接受 `matched_action_iou`。
+
+## Socket API
+
+业务代码使用 `ShigureRgbdCache`，可调用：
+
+```text
+status()
+iter_samples(start, end)
+newest_sample()
+get_sample(stamp)                  # 返回缓存中时间最近的 RGB-D
+iter_event_updates_after(sequence)
+latest_event()
+```
+
+event mask 默认不通过 socket 返回；需要身份匹配或 FoundationPose 时显式设置 `include_masks=True`。
+
+## 身份边界
+
+Shigure `object_id` 只用于当前 `startup_session_id + ingress_session_id` 的临时绑定：
+
+1. 将每个活动 `display_object_id` 最新 HoloLens `Sam3SpatialBox` 投影为 Shigure 图像中的对角圆。
+2. 过滤 mask-inside ratio 与中心 depth 差。
+3. 几何候选唯一时绑定；多个候选用 DINOv2。
+4. 同一 startup 中一个临时 Shigure ID 只绑定一个 display object；HoloLens 重新拍摄该对象时释放并重新匹配。
+
+服务器重启、startup 改变或对象重新锚定后，临时绑定失效。持久记录只使用 `display_object_id`、模型 revision 和 ArUco/HoloLens pose。
+
+## Marker pose
+
+Shigure camera 到 ArUco 的 marker pose 存放在：
+
+```text
+data/aruco/shigure_marker_history/latest_marker_6d_pose.json
+```
+
+当前结构只读取：
+
+```text
+opencv_camera_pose.rotation_matrix
+opencv_camera_pose.tvec_m
+```
+
+它用于 HoloLens box 投影、FoundationPose 结果转换和人体 mesh 从 Shigure camera 转到 ArUco。Unity 不接收该文件或 ArUco pose。

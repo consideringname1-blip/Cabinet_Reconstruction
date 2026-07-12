@@ -5,77 +5,27 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from path_config import PROJECT_ROOT
-from artifact_layout import model_task_json_path
-
-
-_PROJECT_PATH_HINTS = ("data/", "code/", "H2AI/", "models/")
-
-
-def _iter_candidate_paths(path_arg: str | Path, *, default_base: Path | None = None) -> list[Path]:
-    raw = str(path_arg or "").strip()
-    if not raw:
-        return []
-
-    path = Path(raw).expanduser()
-    if path.is_absolute():
-        return [path]
-
-    candidates: list[Path] = []
-
-    def add(candidate: Path) -> None:
-        if candidate not in candidates:
-            candidates.append(candidate)
-
-    if default_base is not None:
-        add(Path(default_base) / path)
-
-    add(PROJECT_ROOT / path)
-
-    if not raw.startswith(_PROJECT_PATH_HINTS):
-        for hint in _PROJECT_PATH_HINTS:
-            add(PROJECT_ROOT / hint / path)
-
-    add(path)
-    return candidates
 
 
 def resolve_project_path(
     path_arg: str | Path,
     *,
-    default_base: Path | None = None,
     require_exists: bool = True,
 ) -> Path:
-    if not str(path_arg or "").strip():
+    raw = str(path_arg or "").strip()
+    if not raw:
         raise ValueError("path is empty")
-
-    fallback: Path | None = None
-    project_fallback: Path | None = None
-    for candidate in _iter_candidate_paths(path_arg, default_base=default_base) or []:
-        resolved = candidate.expanduser().resolve()
-        fallback = fallback or resolved
-        if resolved.exists():
-            return resolved
-        try:
-            resolved.relative_to(PROJECT_ROOT)
-            project_fallback = project_fallback or resolved
-        except ValueError:
-            pass
-
-    if require_exists:
+    path = Path(raw).expanduser()
+    resolved = (path if path.is_absolute() else PROJECT_ROOT / path).resolve()
+    if require_exists and not resolved.exists():
         raise FileNotFoundError(f"Path not found: {path_arg}")
-    if project_fallback is not None:
-        return project_fallback
-    if fallback is None:
-        raise ValueError("path is empty")
-    return fallback
+    return resolved
 
 
 def normalize_path_for_storage(
     path_arg: str | Path,
-    *,
-    default_base: Path | None = None,
 ) -> str:
-    resolved = resolve_project_path(path_arg, default_base=default_base, require_exists=False)
+    resolved = resolve_project_path(path_arg, require_exists=False)
     try:
         return resolved.relative_to(PROJECT_ROOT).as_posix()
     except ValueError:
@@ -88,15 +38,9 @@ def resolve_task_json_path(json_arg: str | Path) -> Path:
 
 def resolve_task_json_path_from_record(task_record: Mapping[str, Any]) -> Path:
     json_path = str(task_record.get("json_path") or "").strip()
-    if json_path:
-        return resolve_task_json_path(json_path)
-
-    task_timestamp = str(task_record.get("task_timestamp") or "").strip()
-    if task_timestamp:
-        candidate = model_task_json_path(task_timestamp).resolve()
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError(f"Task JSON not found for task_timestamp={task_timestamp!r}")
+    if not json_path:
+        raise ValueError("task record is missing json_path")
+    return resolve_task_json_path(json_path)
 
 
 def load_task_json(json_path: str | Path) -> dict[str, Any]:

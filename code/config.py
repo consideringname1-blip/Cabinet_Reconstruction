@@ -7,6 +7,8 @@ IS_RUN_FLASK_SERVER = True
 # Model generation backend for the shared model-generation stage slot.
 # Use "sam3d_objects" or "instantmesh".
 MODEL_GENERATION_BACKEND = "instantmesh"
+if MODEL_GENERATION_BACKEND not in {"instantmesh", "sam3d_objects"}:
+    raise ValueError("MODEL_GENERATION_BACKEND must be 'instantmesh' or 'sam3d_objects'")
 MODEL_SERVICE_PREWARM_ENABLE = os.environ.get("MODEL_SERVICE_PREWARM_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
 SHIGURE_HISTORY_RECORDING_ENABLE = os.environ.get("SHIGURE_HISTORY_RECORDING_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
 MAX_REALTIME_TRACKED_DISPLAY_OBJECTS = 5
@@ -25,8 +27,6 @@ TASK_DEBUG_OUTPUT_ENABLE = os.environ.get("TASK_DEBUG_OUTPUT_ENABLE", "1").strip
 TASK_LOG_OUTPUT_ENABLE = os.environ.get("TASK_LOG_OUTPUT_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
 
 # Historical model reuse / DINOv2 identity matching
-HISTORICAL_MODEL_REUSE_ENABLE = os.environ.get("HISTORICAL_MODEL_REUSE_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
-FORCE_NEW_3D_MODEL = os.environ.get("FORCE_NEW_3D_MODEL", "0").strip().lower() in {"1", "true", "yes", "on"}
 DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC = int(os.environ.get("DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC", "300"))
 DINO_IDENTITY_CANDIDATE_LIMIT = int(os.environ.get("DINO_IDENTITY_CANDIDATE_LIMIT", "500"))
 DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD = float(os.environ.get("DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD", "0.20"))
@@ -37,6 +37,8 @@ DINO_IDENTITY_MATCH_REQUIRE_MARGIN = os.environ.get("DINO_IDENTITY_MATCH_REQUIRE
 # The live registry is intentionally limited to the five most-recent distinct
 # display objects; Shigure-local IDs are never persisted as object identity.
 SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS = MAX_REALTIME_TRACKED_DISPLAY_OBJECTS
+SHIGURE_IDENTITY_MIN_MASK_INSIDE_RATIO = 0.80
+SHIGURE_IDENTITY_MAX_CENTER_DEPTH_DIFF_M = 0.18
 SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD = float(
     os.environ.get("SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD", "0.20")
 )
@@ -66,7 +68,6 @@ ARUCO_ANCHOR_MARKER_ID = 1
 ARUCO_SYNC_MARKER_REGISTRY_ON_START = False
 
 # Persistent model/service settings
-INSTANTMESH_MAX_WORKERS = int(os.environ.get("INSTANTMESH_MAX_WORKERS", "1"))
 _instantmesh_gpu_ids = []
 for gpu_id in os.environ.get("INSTANTMESH_GPU_IDS", "0,1,2").split(","):
     gpu_id = gpu_id.strip()

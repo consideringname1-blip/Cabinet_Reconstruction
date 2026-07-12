@@ -1,5 +1,5 @@
 import json
-import re
+import math
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -20,6 +20,7 @@ from task_json import normalize_path_for_storage
 
 
 TABLE_NAME = "tasks"
+_TASK_SCHEMA_UPGRADE_TABLE = "tasks__current_schema"
 STAGE_RUN_TABLE = "task_stage_runs"
 ARUCO_REFERENCE_TABLE = "aruco_references"
 ARUCO_MARKER_TABLE = "aruco_markers"
@@ -30,7 +31,6 @@ AI_MODEL_TIMING_TABLE = "ai_model_timings"
 DISPLAY_OBJECT_TABLE = "display_objects"
 CAPTURE_INSTANCE_TABLE = "capture_instances"
 CAPTURE_BINDING_LOG_TABLE = "capture_binding_logs"
-HISTORY_PLACEMENT_REQUEST_TABLE = "history_placement_requests"
 DISPLAY_OBJECT_STATE_TABLE = "display_object_states"
 DISPLAY_OBJECT_MODEL_REVISION_TABLE = "display_object_model_revisions"
 DISPLAY_OBJECT_POSE_HISTORY_TABLE = "display_object_pose_history"
@@ -55,7 +55,7 @@ ALLOWED_STATUSES = (
     "aruco_detect",
     "sam3mask",
     "historical_model_match",
-    "instantmesh",
+    "model_generation",
     "depthpointcloud",
     "modelscale",
     "object_alignment",
@@ -64,14 +64,27 @@ ALLOWED_STATUSES = (
     "runtime_mesh",
     "model_bounds",
     "display_identity",
-    "history_placement_restoration",
-    "taken_object_detection",
-    "sam3d_body_mesh",
     "completed",
     "aruco_completed",
     "failed",
 )
 TERMINAL_STATUSES = ("completed", "aruco_completed", "failed", "upload_failed")
+_TASK_TABLE_COLUMNS = (
+    "id",
+    "task_id",
+    "status",
+    "json_path",
+    "task_timestamp",
+    "startup_session_id",
+    "aruco_coordinate_synced",
+    "debug_enabled",
+    "logs_enabled",
+    "created_at",
+    "started_at",
+    "completed_at",
+    "updated_at",
+    "error_message",
+)
 _SCHEMA_INITIALIZED = False
 
 
@@ -119,9 +132,11 @@ def _status_list_sql() -> str:
     return ", ".join(f"'{status}'" for status in ALLOWED_STATUSES)
 
 
-def _create_task_table_sql() -> str:
+def _create_task_table_sql(table_name: str = TABLE_NAME) -> str:
+    if table_name not in {TABLE_NAME, _TASK_SCHEMA_UPGRADE_TABLE}:
+        raise ValueError(f"Unsupported task table name: {table_name}")
     return f"""
-        CREATE TABLE {TABLE_NAME} (
+        CREATE TABLE {table_name} (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             task_id TEXT NOT NULL UNIQUE,
             status TEXT NOT NULL DEFAULT 'pending'
@@ -130,7 +145,6 @@ def _create_task_table_sql() -> str:
             task_timestamp TEXT,
             startup_session_id TEXT,
             aruco_coordinate_synced INTEGER NOT NULL DEFAULT 0,
-            artifact_schema_version INTEGER NOT NULL DEFAULT 1,
             debug_enabled INTEGER NOT NULL DEFAULT 1,
             logs_enabled INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -336,27 +350,6 @@ def _create_capture_binding_log_table_sql() -> str:
     """
 
 
-def _create_history_placement_request_table_sql() -> str:
-    return f"""
-        CREATE TABLE {HISTORY_PLACEMENT_REQUEST_TABLE} (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            request_id TEXT NOT NULL UNIQUE,
-            request_timestamp TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'running'
-                CHECK (status IN ('running', 'completed', 'cancelled', 'failed', 'cleanup_pending')),
-            startup_session_id TEXT,
-            target_time TEXT,
-            model_limit INTEGER,
-            selected_task_count INTEGER NOT NULL DEFAULT 0,
-            result_count INTEGER NOT NULL DEFAULT 0,
-            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            completed_at TEXT,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            error_message TEXT
-        )
-    """
-
-
 def _create_display_object_state_table_sql() -> str:
     return f"""
         CREATE TABLE {DISPLAY_OBJECT_STATE_TABLE} (
@@ -467,212 +460,166 @@ def _table_sql(conn: sqlite3.Connection, table_name: str) -> Optional[str]:
     return row["sql"] if row else None
 
 
-def _get_table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
-    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
-    return {str(row["name"]) for row in rows}
+def _normalized_table_definition(sql: str) -> str:
+    definition_start = sql.find("(")
+    if definition_start < 0:
+        return ""
+    return " ".join(sql[definition_start:].split())
 
 
-def _task_table_needs_migration(conn: sqlite3.Connection) -> bool:
-    sql = _table_sql(conn, TABLE_NAME)
-    if not sql:
+def _task_table_schema_is_current(conn: sqlite3.Connection) -> bool:
+    current_sql = _table_sql(conn, TABLE_NAME)
+    if current_sql is None:
         return False
+    expected_sql = _create_task_table_sql()
+    return _normalized_table_definition(current_sql) == _normalized_table_definition(expected_sql)
 
-    required_columns = {
-        "startup_session_id",
-        "aruco_coordinate_synced",
-        "task_timestamp",
-        "artifact_schema_version",
-        "debug_enabled",
-        "logs_enabled",
-    }
-    existing_columns = _get_table_columns(conn, TABLE_NAME)
+
+def _unsupported_task_status_error(status: str) -> str:
     return (
-        any(f"'{status}'" not in sql for status in ALLOWED_STATUSES)
-        or not required_columns.issubset(existing_columns)
+        f'Task was failed during schema upgrade because status "{status}" '
+        "is not part of the current protocol."
     )
 
 
-def _migrate_task_table(conn: sqlite3.Connection) -> None:
-    legacy_table = f"{TABLE_NAME}_legacy"
-    conn.execute(f"DROP TABLE IF EXISTS {legacy_table}")
-    conn.execute(f"ALTER TABLE {TABLE_NAME} RENAME TO {legacy_table}")
-    conn.execute(_create_task_table_sql())
-
-    legacy_columns = _get_table_columns(conn, legacy_table)
-    has_startup_session_id = "startup_session_id" in legacy_columns
-    has_aruco_coordinate_synced = "aruco_coordinate_synced" in legacy_columns
-    has_task_timestamp = "task_timestamp" in legacy_columns
-    has_artifact_schema_version = "artifact_schema_version" in legacy_columns
-    has_debug_enabled = "debug_enabled" in legacy_columns
-    has_logs_enabled = "logs_enabled" in legacy_columns
-
-    startup_select = "startup_session_id" if has_startup_session_id else "NULL"
-    synced_select = "aruco_coordinate_synced" if has_aruco_coordinate_synced else "0"
-    timestamp_select = "task_timestamp" if has_task_timestamp else "NULL"
-    schema_version_select = "artifact_schema_version" if has_artifact_schema_version else "1"
-    debug_enabled_select = "debug_enabled" if has_debug_enabled else "1"
-    logs_enabled_select = "logs_enabled" if has_logs_enabled else "1"
-
-    conn.execute(
-        f"""
-        INSERT INTO {TABLE_NAME} (
-            id,
-            task_id,
-            status,
-            json_path,
-            task_timestamp,
-            startup_session_id,
-            aruco_coordinate_synced,
-            artifact_schema_version,
-            debug_enabled,
-            logs_enabled,
-            created_at,
-            started_at,
-            completed_at,
-            updated_at,
-            error_message
-        )
-        SELECT
-            id,
-            task_id,
-            status,
-            json_path,
-            {timestamp_select},
-            {startup_select},
-            {synced_select},
-            {schema_version_select},
-            {debug_enabled_select},
-            {logs_enabled_select},
-            created_at,
-            started_at,
-            completed_at,
-            updated_at,
-            error_message
-        FROM {legacy_table}
-        """
-    )
-    conn.execute(f"DROP TABLE {legacy_table}")
-
-
-def _normalize_stored_paths(conn: sqlite3.Connection) -> None:
-    task_rows = conn.execute(f"SELECT id, json_path FROM {TABLE_NAME}").fetchall()
-    for row in task_rows:
-        current = str(row["json_path"])
-        normalized = normalize_path_for_storage(current)
-        if normalized == current:
-            continue
-        conn.execute(
-            f"UPDATE {TABLE_NAME} SET json_path = ? WHERE id = ?",
-            (normalized, int(row["id"])),
+def _rebuild_task_table_with_current_schema(conn: sqlite3.Connection) -> None:
+    existing_columns = {
+        str(row["name"])
+        for row in conn.execute(f"PRAGMA table_info({TABLE_NAME})").fetchall()
+    }
+    missing_columns = set(_TASK_TABLE_COLUMNS) - existing_columns
+    if missing_columns:
+        raise RuntimeError(
+            "Cannot upgrade tasks table; required columns are missing: "
+            + ", ".join(sorted(missing_columns))
         )
 
-    if _table_sql(conn, ARUCO_REFERENCE_TABLE) is None:
-        return
-
-    ref_rows = conn.execute(
-        f"SELECT id, raw_record_path FROM {ARUCO_REFERENCE_TABLE}"
+    rows = conn.execute(
+        f"SELECT {', '.join(_TASK_TABLE_COLUMNS)} FROM {TABLE_NAME} ORDER BY id ASC"
     ).fetchall()
-    for row in ref_rows:
-        current = str(row["raw_record_path"])
-        normalized = normalize_path_for_storage(current)
-        if normalized == current:
-            continue
-        conn.execute(
-            f"UPDATE {ARUCO_REFERENCE_TABLE} SET raw_record_path = ? WHERE id = ?",
-            (normalized, int(row["id"])),
+    migrated_rows = []
+    allowed_statuses = set(ALLOWED_STATUSES)
+    migration_time = _utc_now_text()
+    for row in rows:
+        values = dict(row)
+        old_status = str(values["status"])
+        if old_status not in allowed_statuses:
+            reason = _unsupported_task_status_error(old_status)
+            existing_error = str(values["error_message"] or "").strip()
+            values["status"] = "failed"
+            values["updated_at"] = migration_time
+            values["error_message"] = f"{existing_error}\n{reason}" if existing_error else reason
+        migrated_rows.append(tuple(values[column] for column in _TASK_TABLE_COLUMNS))
+
+    conn.execute(f"DROP TABLE IF EXISTS {_TASK_SCHEMA_UPGRADE_TABLE}")
+    conn.execute(_create_task_table_sql(_TASK_SCHEMA_UPGRADE_TABLE))
+    if migrated_rows:
+        placeholders = ", ".join("?" for _ in _TASK_TABLE_COLUMNS)
+        conn.executemany(
+            f"""
+            INSERT INTO {_TASK_SCHEMA_UPGRADE_TABLE} ({', '.join(_TASK_TABLE_COLUMNS)})
+            VALUES ({placeholders})
+            """,
+            migrated_rows,
         )
-
-    if _table_sql(conn, ARUCO_MARKER_TABLE) is not None:
-        marker_rows = conn.execute(
-            f"SELECT marker_id, source_path FROM {ARUCO_MARKER_TABLE} WHERE source_path IS NOT NULL"
-        ).fetchall()
-        for row in marker_rows:
-            current = str(row["source_path"] or "")
-            if not current:
-                continue
-            normalized = normalize_path_for_storage(current)
-            if normalized == current:
-                continue
-            conn.execute(
-                f"UPDATE {ARUCO_MARKER_TABLE} SET source_path = ? WHERE marker_id = ?",
-                (normalized, int(row["marker_id"])),
-            )
-
-    if _table_sql(conn, ARUCO_MARKER_RELATION_TABLE) is not None:
-        relation_rows = conn.execute(
-            f"SELECT anchor_marker_id, marker_id, raw_record_path FROM {ARUCO_MARKER_RELATION_TABLE} WHERE raw_record_path IS NOT NULL"
-        ).fetchall()
-        for row in relation_rows:
-            current = str(row["raw_record_path"] or "")
-            if not current:
-                continue
-            normalized = normalize_path_for_storage(current)
-            if normalized == current:
-                continue
-            conn.execute(
-                f"""
-                UPDATE {ARUCO_MARKER_RELATION_TABLE}
-                SET raw_record_path = ?
-                WHERE anchor_marker_id = ? AND marker_id = ?
-                """,
-                (normalized, int(row["anchor_marker_id"]), int(row["marker_id"])),
-            )
+    conn.execute(f"DROP TABLE {TABLE_NAME}")
+    conn.execute(
+        f"ALTER TABLE {_TASK_SCHEMA_UPGRADE_TABLE} RENAME TO {TABLE_NAME}"
+    )
 
 
 def _load_aruco_template_config() -> Dict[str, Any]:
     if not ARUCO_TEMPLATE_PATH.is_file():
-        return {}
+        raise FileNotFoundError(f"ArUco marker config not found: {ARUCO_TEMPLATE_PATH}")
     try:
         with ARUCO_TEMPLATE_PATH.open("r", encoding="utf-8") as file:
             loaded = json.load(file)
-        return loaded if isinstance(loaded, dict) else {}
-    except Exception:
-        return {}
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid ArUco marker config JSON: {exc}") from exc
+
+    if not isinstance(loaded, dict) or set(loaded) != {"markers"}:
+        raise ValueError("ArUco marker config must contain exactly one top-level field: markers")
+    if not isinstance(loaded["markers"], list) or not loaded["markers"]:
+        raise ValueError("ArUco marker config markers must be a non-empty array")
+    return loaded
 
 
-def _infer_marker_id_from_path(path: Path) -> Optional[int]:
-    matches = re.findall(r"\d+", path.stem)
-    if not matches:
-        return None
-    return int(matches[-1])
+def _marker_configs_by_id(template: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
+    required_fields = {
+        "marker_id",
+        "dictionary",
+        "marker_size_mm",
+        "reference_image_name",
+        "enabled",
+    }
+    configs: Dict[int, Dict[str, Any]] = {}
+    image_names: set[str] = set()
+    for index, marker in enumerate(template["markers"]):
+        field_name = f"markers[{index}]"
+        if not isinstance(marker, dict) or set(marker) != required_fields:
+            raise ValueError(
+                f"{field_name} must contain exactly: {', '.join(sorted(required_fields))}"
+            )
 
+        marker_id = marker["marker_id"]
+        if isinstance(marker_id, bool) or not isinstance(marker_id, int) or marker_id < 0:
+            raise ValueError(f"{field_name}.marker_id must be a non-negative integer")
+        if marker_id in configs:
+            raise ValueError(f"Duplicate ArUco marker_id: {marker_id}")
 
-def _marker_overrides_by_id(template: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
-    overrides: Dict[int, Dict[str, Any]] = {}
-    markers = template.get("markers")
-    if isinstance(markers, list):
-        for marker in markers:
-            if not isinstance(marker, dict):
-                continue
-            marker_id = marker.get("marker_id", marker.get("id"))
-            try:
-                marker_id_int = int(marker_id)
-            except Exception:
-                continue
-            overrides[marker_id_int] = marker
-    return overrides
+        dictionary = marker["dictionary"]
+        if not isinstance(dictionary, str) or not dictionary.strip():
+            raise ValueError(f"{field_name}.dictionary must be a non-empty string")
+
+        marker_size_mm = marker["marker_size_mm"]
+        if (
+            isinstance(marker_size_mm, bool)
+            or not isinstance(marker_size_mm, (int, float))
+            or not math.isfinite(float(marker_size_mm))
+            or float(marker_size_mm) <= 0.0
+        ):
+            raise ValueError(f"{field_name}.marker_size_mm must be a positive finite number")
+
+        image_name = marker["reference_image_name"]
+        if (
+            not isinstance(image_name, str)
+            or not image_name.strip()
+            or Path(image_name).name != image_name
+            or Path(image_name).suffix.lower() not in {".png", ".jpg", ".jpeg"}
+        ):
+            raise ValueError(f"{field_name}.reference_image_name must be a local PNG or JPEG filename")
+        if image_name in image_names:
+            raise ValueError(f"Duplicate ArUco reference_image_name: {image_name}")
+
+        enabled = marker["enabled"]
+        if not isinstance(enabled, bool):
+            raise ValueError(f"{field_name}.enabled must be a boolean")
+
+        normalized = {
+            "marker_id": marker_id,
+            "dictionary": dictionary.strip(),
+            "marker_size_mm": float(marker_size_mm),
+            "reference_image_name": image_name,
+            "enabled": enabled,
+        }
+        configs[marker_id] = normalized
+        image_names.add(image_name)
+    return configs
 
 
 def _sync_marker_registry_from_reference_folder(conn: sqlite3.Connection) -> int:
     template = _load_aruco_template_config()
-    overrides = _marker_overrides_by_id(template)
-    default_dictionary = str(template.get("dictionary") or "DICT_7X7_1000")
-    default_marker_size_mm = float(template.get("marker_size_mm") or 200.0)
+    marker_configs = _marker_configs_by_id(template)
 
     seen_marker_ids: set[int] = set()
     synced_count = 0
-    for image_path in sorted(ARUCO_REFERENCE_ROOT.glob("*")):
-        if not image_path.is_file() or image_path.suffix.lower() not in {".png", ".jpg", ".jpeg"}:
-            continue
-        marker_id = _infer_marker_id_from_path(image_path)
-        if marker_id is None:
-            continue
-
-        marker_config = dict(overrides.get(marker_id) or {})
-        dictionary = str(marker_config.get("dictionary") or default_dictionary)
-        marker_size_mm = float(marker_config.get("marker_size_mm") or default_marker_size_mm)
-        enabled = bool(marker_config.get("enabled", True))
-        reference_image_name = str(marker_config.get("reference_image_name") or image_path.name)
+    for marker_id, marker_config in marker_configs.items():
+        reference_image_name = marker_config["reference_image_name"]
+        image_path = ARUCO_REFERENCE_ROOT / reference_image_name
+        if not image_path.is_file():
+            raise FileNotFoundError(
+                f"ArUco reference image for marker {marker_id} not found: {image_path}"
+            )
         source_path = normalize_path_for_storage(image_path)
 
         conn.execute(
@@ -699,10 +646,10 @@ def _sync_marker_registry_from_reference_folder(conn: sqlite3.Connection) -> int
             """,
             (
                 marker_id,
-                dictionary,
-                marker_size_mm,
+                marker_config["dictionary"],
+                marker_config["marker_size_mm"],
                 reference_image_name,
-                1 if enabled else 0,
+                1 if marker_config["enabled"] else 0,
                 source_path,
                 json.dumps(marker_config, ensure_ascii=False),
             ),
@@ -734,11 +681,17 @@ def initialize_task_table() -> None:
         return
     with _get_connection() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("BEGIN IMMEDIATE")
 
         if _table_sql(conn, TABLE_NAME) is None:
             conn.execute(_create_task_table_sql())
-        elif _task_table_needs_migration(conn):
-            _migrate_task_table(conn)
+        elif not _task_table_schema_is_current(conn):
+            _rebuild_task_table_with_current_schema(conn)
+
+        # This request table belonged to the removed server-side history placement
+        # pipeline.  Current history/live mode is represented by display-object
+        # state, so keeping this table would imply a protocol that no longer exists.
+        conn.execute("DROP TABLE IF EXISTS history_placement_requests")
 
         if _table_sql(conn, ARUCO_REFERENCE_TABLE) is None:
             conn.execute(_create_aruco_reference_table_sql())
@@ -839,15 +792,6 @@ def initialize_task_table() -> None:
             """
         )
 
-        if _table_sql(conn, HISTORY_PLACEMENT_REQUEST_TABLE) is None:
-            conn.execute(_create_history_placement_request_table_sql())
-        conn.execute(
-            f"""
-            CREATE INDEX IF NOT EXISTS idx_{HISTORY_PLACEMENT_REQUEST_TABLE}_status_created
-            ON {HISTORY_PLACEMENT_REQUEST_TABLE} (status, created_at)
-            """
-        )
-
         if _table_sql(conn, DISPLAY_OBJECT_STATE_TABLE) is None:
             conn.execute(_create_display_object_state_table_sql())
         if _table_sql(conn, DISPLAY_OBJECT_MODEL_REVISION_TABLE) is None:
@@ -886,7 +830,6 @@ def initialize_task_table() -> None:
         if ARUCO_SYNC_MARKER_REGISTRY_ON_START:
             _sync_marker_registry_from_reference_folder(conn)
 
-        _normalize_stored_paths(conn)
         conn.commit()
         _SCHEMA_INITIALIZED = True
 
@@ -1548,84 +1491,6 @@ def get_capture_binding_logs(capture_instance_id: str, *, limit: int = 50) -> Li
     return [dict(row) for row in rows]
 
 
-def create_history_placement_request(
-    *,
-    request_id: str,
-    request_timestamp: str,
-    startup_session_id: str | None = None,
-    target_time: str | None = None,
-    model_limit: int | None = None,
-) -> Dict[str, Any]:
-    initialize_task_table()
-    with _get_connection() as conn:
-        conn.execute(
-            f"""
-            INSERT INTO {HISTORY_PLACEMENT_REQUEST_TABLE} (
-                request_id, request_timestamp, status, startup_session_id, target_time, model_limit
-            )
-            VALUES (?, ?, 'running', ?, ?, ?)
-            """,
-            (request_id, request_timestamp, startup_session_id, target_time, model_limit),
-        )
-        conn.commit()
-        row = conn.execute(
-            f"SELECT * FROM {HISTORY_PLACEMENT_REQUEST_TABLE} WHERE request_id = ?",
-            (request_id,),
-        ).fetchone()
-    return dict(row)
-
-
-def update_history_placement_request(
-    request_id: str,
-    *,
-    status: str,
-    selected_task_count: int | None = None,
-    result_count: int | None = None,
-    error_message: str | None = None,
-) -> bool:
-    if status not in {'running', 'completed', 'cancelled', 'failed', 'cleanup_pending'}:
-        raise ValueError(f"Invalid history placement request status: {status}")
-    initialize_task_table()
-    set_parts = ["status = ?", "updated_at = CURRENT_TIMESTAMP", "error_message = ?"]
-    params: List[Any] = [status, error_message]
-    if selected_task_count is not None:
-        set_parts.append("selected_task_count = ?")
-        params.append(int(selected_task_count))
-    if result_count is not None:
-        set_parts.append("result_count = ?")
-        params.append(int(result_count))
-    if status in {"completed", "cancelled", "failed", "cleanup_pending"}:
-        set_parts.append("completed_at = CURRENT_TIMESTAMP")
-    params.append(request_id)
-    with _get_connection() as conn:
-        cursor = conn.execute(
-            f"""
-            UPDATE {HISTORY_PLACEMENT_REQUEST_TABLE}
-            SET {', '.join(set_parts)}
-            WHERE request_id = ?
-            """,
-            tuple(params),
-        )
-        conn.commit()
-    return cursor.rowcount > 0
-
-
-def get_latest_history_placement_request(status: str = "completed") -> Optional[Dict[str, Any]]:
-    initialize_task_table()
-    with _get_connection() as conn:
-        row = conn.execute(
-            f"""
-            SELECT *
-            FROM {HISTORY_PLACEMENT_REQUEST_TABLE}
-            WHERE status = ?
-            ORDER BY request_timestamp DESC, id DESC
-            LIMIT 1
-            """,
-            (status,),
-        ).fetchone()
-    return _row_to_dict(row)
-
-
 def get_status_by_task_id(task_id: str) -> Optional[str]:
     initialize_task_table()
     with _get_connection() as conn:
@@ -1653,7 +1518,6 @@ def create_task(
     startup_session_id: str | None = None,
     task_timestamp: str | None = None,
     status: str = "pending",
-    artifact_schema_version: int = 1,
     debug_enabled: bool = True,
     logs_enabled: bool = True,
 ) -> Dict[str, Any]:
@@ -1673,11 +1537,10 @@ def create_task(
                 task_timestamp,
                 startup_session_id,
                 aruco_coordinate_synced,
-                artifact_schema_version,
                 debug_enabled,
                 logs_enabled
             )
-            VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, 0, ?, ?)
             """,
             (
                 task_id,
@@ -1685,7 +1548,6 @@ def create_task(
                 json_path_str,
                 task_timestamp,
                 startup_session_id,
-                int(artifact_schema_version),
                 1 if debug_enabled else 0,
                 1 if logs_enabled else 0,
             ),
@@ -1696,89 +1558,6 @@ def create_task(
             (task_id,),
         ).fetchone()
     return dict(row)
-
-
-def get_latest_unfinished_task() -> Optional[Dict[str, Any]]:
-    initialize_task_table()
-    terminal_list = ", ".join(f"'{status}'" for status in TERMINAL_STATUSES)
-    with _get_connection() as conn:
-        row = conn.execute(
-            f"""
-            SELECT task_id, json_path, status
-            FROM {TABLE_NAME}
-            WHERE status NOT IN ({terminal_list})
-              AND status != 'uploading'
-            ORDER BY id DESC
-            LIMIT 1
-            """
-        ).fetchone()
-    return _row_to_dict(row)
-
-
-def get_latest_completed_task(
-    startup_session_id: str | None = None,
-    require_aruco_coordinate_synced: bool = False,
-    history_offset: int = 0,
-) -> Optional[Dict[str, Any]]:
-    initialize_task_table()
-    startup_session_id = str(startup_session_id or "").strip()
-    history_offset = max(0, int(history_offset or 0))
-    where_clauses = ["status = 'completed'"]
-    params: List[Any] = []
-    if startup_session_id:
-        where_clauses.append("startup_session_id = ?")
-        params.append(startup_session_id)
-    if require_aruco_coordinate_synced:
-        where_clauses.append("aruco_coordinate_synced = 1")
-
-    with _get_connection() as conn:
-        row = conn.execute(
-            f"""
-            SELECT *
-            FROM {TABLE_NAME}
-            WHERE {' AND '.join(where_clauses)}
-            ORDER BY id DESC
-            LIMIT 1 OFFSET ?
-            """,
-            tuple(params + [history_offset]),
-        ).fetchone()
-    return _row_to_dict(row)
-
-
-def get_latest_completed_tasks(
-    startup_session_id: str | None = None,
-    require_aruco_coordinate_synced: bool = False,
-    limit: int = 5,
-) -> List[Dict[str, Any]]:
-    initialize_task_table()
-    startup_session_id = str(startup_session_id or "").strip()
-    raw_limit = int(limit if limit is not None else 5)
-    bounded_limit = None if raw_limit <= 0 else max(1, min(raw_limit, 50))
-    where_clauses = ["status = 'completed'"]
-    params: List[Any] = []
-    if startup_session_id:
-        where_clauses.append("startup_session_id = ?")
-        params.append(startup_session_id)
-    if require_aruco_coordinate_synced:
-        where_clauses.append("aruco_coordinate_synced = 1")
-
-    limit_sql = "" if bounded_limit is None else "LIMIT ?"
-    query_params = list(params)
-    if bounded_limit is not None:
-        query_params.append(bounded_limit)
-
-    with _get_connection() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT *
-            FROM {TABLE_NAME}
-            WHERE {' AND '.join(where_clauses)}
-            ORDER BY id DESC
-            {limit_sql}
-            """,
-            tuple(query_params),
-        ).fetchall()
-    return [dict(row) for row in rows]
 
 
 def get_latest_completed_task_for_display_object(display_object_id: str) -> Optional[Dict[str, Any]]:
@@ -2101,61 +1880,6 @@ def upsert_model_bounds(
     return dict(row)
 
 
-def get_model_bounds_by_task_id(task_id: str) -> Optional[Dict[str, Any]]:
-    initialize_task_table()
-    with _get_connection() as conn:
-        row = conn.execute(
-            f"SELECT * FROM {MODEL_BOUNDS_TABLE} WHERE task_id = ?",
-            (str(task_id),),
-        ).fetchone()
-    return _row_to_dict(row)
-
-
-def get_latest_ready_model_bounds(limit: int = 5) -> List[Dict[str, Any]]:
-    initialize_task_table()
-    limit = max(1, min(int(limit or 5), 50))
-    with _get_connection() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT *
-            FROM {MODEL_BOUNDS_TABLE}
-            WHERE status = 'ready'
-            ORDER BY uploaded_at DESC, id DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def get_ready_model_bounds_in_range(
-    start: str,
-    end: str,
-    *,
-    limit: int = 50,
-) -> List[Dict[str, Any]]:
-    initialize_task_table()
-    start = str(start or "").strip()
-    end = str(end or "").strip()
-    if not start or not end:
-        raise ValueError("start and end are required")
-    limit = max(1, min(int(limit or 50), 200))
-    with _get_connection() as conn:
-        rows = conn.execute(
-            f"""
-            SELECT *
-            FROM {MODEL_BOUNDS_TABLE}
-            WHERE status = 'ready'
-                AND uploaded_at >= ?
-                AND uploaded_at <= ?
-            ORDER BY uploaded_at DESC, id DESC
-            LIMIT ?
-            """,
-            (start, end, limit),
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
 def commit_display_object_capture_state(
     *,
     display_object_id: str,
@@ -2345,9 +2069,9 @@ def get_display_object_state(display_object_id: str) -> Optional[Dict[str, Any]]
     return _row_to_dict(row)
 
 
-def list_display_object_states(limit: int = 5) -> List[Dict[str, Any]]:
+def list_display_object_states(*, limit: int) -> List[Dict[str, Any]]:
     initialize_task_table()
-    limit = max(1, min(int(limit or 5), 50))
+    limit = max(1, min(int(limit), 50))
     with _get_connection() as conn:
         rows = conn.execute(
             f"""

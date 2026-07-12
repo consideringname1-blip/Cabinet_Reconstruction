@@ -1,4 +1,3 @@
-import shutil
 import sys
 from pathlib import Path
 
@@ -17,13 +16,26 @@ import bpy
 
 from artifact_layout import model_worker_file
 from blender_common import clean_scene, ensure_file
+from blender_mesh_postprocess import (
+    clean_connected_components,
+    ensure_source_materials,
+    repair_black_or_transparent_faces,
+    select_objects,
+)
 from settings import (
+    MODEL_FBX_CLEAN_COMPONENT_MIN_FACE_RATIO,
+    MODEL_FBX_CLEAN_COMPONENT_MIN_FACES,
+    MODEL_FBX_CLEAN_ENABLE,
     RUNTIME_MESH_BAKE_MARGIN_PX,
     RUNTIME_MESH_DECIMATE_RATIO,
     RUNTIME_MESH_TEXTURE_SIZE,
     RUNTIME_MESH_UV_ISLAND_MARGIN,
+    SAM3D_OBJECTS_BLACK_FACE_ALPHA_THRESHOLD,
+    SAM3D_OBJECTS_BLACK_FACE_MAX_REMOVE_RATIO,
+    SAM3D_OBJECTS_BLACK_FACE_RGB_THRESHOLD,
+    SAM3D_OBJECTS_REPAIR_BLACK_FACES,
 )
-from model_generation_common import MODEL_STAGE_SAM3D_OBJECTS, ModelFileSource, resolve_model_generation_source
+from stages.hololens3d_reconstruction.model_generation_common import BACKEND_SAM3D_OBJECTS, ModelFileSource, resolve_model_generation_source
 from stage_common import parse_blender_stage_args
 from task_json import load_task_json, resolve_task_json_path, save_task_json
 
@@ -46,6 +58,65 @@ def _import_obj(obj_path: Path):
     bpy.context.view_layer.objects.active = obj
     obj.select_set(True)
     return obj
+
+
+def _import_obj_into_scene(obj_path: Path):
+    bpy.ops.object.select_all(action="DESELECT")
+    bpy.ops.wm.obj_import(filepath=str(obj_path))
+    meshes = [obj for obj in bpy.context.selected_objects if obj.type == "MESH"]
+    if not meshes:
+        raise RuntimeError(f"No mesh object was imported from {obj_path.name}")
+    if len(meshes) > 1:
+        selected = select_objects(meshes, active=meshes[0])
+        if not selected:
+            raise RuntimeError(f"No mesh object was selected from {obj_path.name}")
+        bpy.ops.object.join()
+        meshes = [bpy.context.view_layer.objects.active]
+    return meshes[0]
+
+
+def _apply_imported_glb_scale(objects: list) -> None:
+    for obj in objects:
+        if obj.type != "MESH":
+            continue
+        select_objects([obj], active=obj)
+        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+
+
+def _import_sam3d_color_sources(source: ModelFileSource) -> tuple[list, dict]:
+    raw_glb_name = str(source.payload.get("raw_glb") or "").strip()
+    if not raw_glb_name:
+        raise ValueError("ModelGeneration.raw_glb is required for sam3d_objects")
+    raw_glb_path = ensure_file(source.root / raw_glb_name, "SAM3D Objects raw GLB")
+
+    clean_scene(purge_orphans=True)
+    bpy.ops.import_scene.gltf(filepath=str(raw_glb_path))
+    objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
+    if not objects:
+        raise RuntimeError(f"No mesh objects were imported from {raw_glb_path}")
+    _apply_imported_glb_scale(objects)
+    ensure_source_materials(objects)
+    objects, black_repair = repair_black_or_transparent_faces(
+        objects,
+        enabled=bool(SAM3D_OBJECTS_REPAIR_BLACK_FACES),
+        rgb_threshold=float(SAM3D_OBJECTS_BLACK_FACE_RGB_THRESHOLD),
+        alpha_threshold=float(SAM3D_OBJECTS_BLACK_FACE_ALPHA_THRESHOLD),
+        max_repair_ratio=float(SAM3D_OBJECTS_BLACK_FACE_MAX_REMOVE_RATIO),
+    )
+    objects, component_cleanup = clean_connected_components(
+        objects,
+        enabled=bool(MODEL_FBX_CLEAN_ENABLE),
+        min_face_ratio=float(MODEL_FBX_CLEAN_COMPONENT_MIN_FACE_RATIO),
+        min_faces=int(MODEL_FBX_CLEAN_COMPONENT_MIN_FACES),
+    )
+    if not objects:
+        raise RuntimeError("SAM3D Objects color-source cleanup removed all geometry")
+    ensure_source_materials(objects)
+    return objects, {
+        "raw_glb": raw_glb_name,
+        "black_repair": black_repair,
+        "component_cleanup": component_cleanup,
+    }
 
 
 def _duplicate_mesh(obj, name: str):
@@ -98,7 +169,10 @@ def _make_bake_material(name: str, image):
     return material
 
 
-def _bake_texture(high, low, texture_path: Path) -> None:
+def _bake_texture(high_objects: list, low, texture_path: Path) -> None:
+    high_objects = [obj for obj in high_objects if obj is not None and obj.type == "MESH"]
+    if not high_objects:
+        raise RuntimeError("No high-resolution mesh is available for runtime texture baking")
     texture_path.parent.mkdir(parents=True, exist_ok=True)
     image = bpy.data.images.new(
         name=texture_path.stem,
@@ -122,7 +196,8 @@ def _bake_texture(high, low, texture_path: Path) -> None:
     bpy.context.scene.render.bake.use_clear = True
 
     bpy.ops.object.select_all(action="DESELECT")
-    high.select_set(True)
+    for high in high_objects:
+        high.select_set(True)
     low.select_set(True)
     bpy.context.view_layer.objects.active = low
     bpy.ops.object.bake(type="DIFFUSE", pass_filter={"COLOR"})
@@ -165,69 +240,11 @@ def _fix_mtl_texture(mtl_path: Path, texture_name: str) -> None:
     mtl_path.write_text("\n".join(fixed) + "\n", encoding="utf-8")
 
 
-def _reuse_runtime_ready_sam3d_mesh(
-    json_path: Path,
-    task: dict,
-    source: ModelFileSource,
-) -> dict:
-    if not source.mtl or not source.image or source.mtl_path is None or source.image_path is None:
-        raise ValueError(f"{source.source_stage}.mesh / mtl / image is missing")
-
-    source_mesh = ensure_file(source.mesh_path, f"{source.source_stage} processed obj")
-    source_mtl = ensure_file(source.mtl_path, f"{source.source_stage} processed mtl")
-    source_texture = ensure_file(source.image_path, f"{source.source_stage} processed texture")
-
-    task_timestamp = str(task.get("task_timestamp") or "").strip()
-    if not task_timestamp:
-        raise ValueError("task_timestamp is required for runtime mesh artifacts")
-    output_obj = model_worker_file(task_timestamp, "model.runtime_obj")
-    output_mtl = model_worker_file(task_timestamp, "model.runtime_mtl")
-    output_texture = model_worker_file(task_timestamp, "model.runtime_texture")
-    output_obj.parent.mkdir(parents=True, exist_ok=True)
-
-    shutil.copy2(source_mesh, output_obj)
-    shutil.copy2(source_mtl, output_mtl)
-    shutil.copy2(source_texture, output_texture)
-    _fix_mtl_texture(output_mtl, output_texture.name)
-    postprocess = source.payload.get("postprocess") if isinstance(source.payload.get("postprocess"), dict) else {}
-    runtime_mesh = {
-        "mesh": output_obj.name,
-        "mtl": output_mtl.name,
-        "image": output_texture.name,
-        "artifact_root": "model_worker",
-        "source_stage": source.source_stage,
-        "source_backend": source.backend,
-        "source_mesh_folder": source.folder,
-        "source_mesh": source.mesh,
-        "source_mtl": source.mtl,
-        "source_image": source.image,
-        "reused_processed_mesh": True,
-        "decimate_ratio": postprocess.get("decimate_ratio"),
-        "texture_size": postprocess.get("texture_size"),
-        "bake_margin_px": postprocess.get("bake_margin_px"),
-        "uv_island_margin": postprocess.get("uv_island_margin"),
-        "original_vertices": postprocess.get("original_vertices"),
-        "original_faces": postprocess.get("original_faces"),
-        "joined_vertices": postprocess.get("joined_vertices"),
-        "joined_faces": postprocess.get("joined_faces"),
-        "outer_vertices": postprocess.get("outer_vertices"),
-        "outer_faces": postprocess.get("outer_faces"),
-        "vertices": postprocess.get("vertices"),
-        "faces": postprocess.get("faces"),
-    }
-    task["RuntimeMesh"] = runtime_mesh
-    save_task_json(json_path, task)
-    return runtime_mesh
-
-
 def build_runtime_mesh_from_json(json_path: Path) -> dict:
     task = load_task_json(json_path)
     source = resolve_model_generation_source(task, require_mtl_image=True)
     if not source.mtl or not source.image or source.mtl_path is None or source.image_path is None:
         raise ValueError(f"{source.source_stage}.mesh / mtl / image is missing")
-
-    if source.source_stage == MODEL_STAGE_SAM3D_OBJECTS and bool(source.payload.get("runtime_ready")):
-        return _reuse_runtime_ready_sam3d_mesh(json_path, task, source)
 
     source_mesh = ensure_file(source.mesh_path, f"{source.source_stage} obj")
     source_mtl = ensure_file(source.mtl_path, f"{source.source_stage} mtl")
@@ -246,12 +263,20 @@ def build_runtime_mesh_from_json(json_path: Path) -> dict:
     output_texture = model_worker_file(task_timestamp, "model.runtime_texture")
     output_obj.parent.mkdir(parents=True, exist_ok=True)
 
-    high = _import_obj(source_mesh)
-    original_vertices, original_faces = _count_mesh(high)
-    low = _duplicate_mesh(high, output_stem)
+    backend_detail = {}
+    if source.backend == BACKEND_SAM3D_OBJECTS:
+        high_objects, backend_detail = _import_sam3d_color_sources(source)
+        low_source = _import_obj_into_scene(source_mesh)
+        original_vertices, original_faces = _count_mesh(low_source)
+        low = _duplicate_mesh(low_source, output_stem)
+    else:
+        high = _import_obj(source_mesh)
+        high_objects = [high]
+        original_vertices, original_faces = _count_mesh(high)
+        low = _duplicate_mesh(high, output_stem)
     _apply_decimate(low, ratio)
     _smart_unwrap(low)
-    _bake_texture(high, low, output_texture)
+    _bake_texture(high_objects, low, output_texture)
     _export_obj(low, output_obj)
     _fix_mtl_texture(output_mtl, output_texture.name)
     output_vertices, output_faces = _count_mesh(low)
@@ -264,16 +289,12 @@ def build_runtime_mesh_from_json(json_path: Path) -> dict:
         ensure_file(output_path, label)
 
     runtime_mesh = {
+        "backend": source.backend,
         "mesh": output_obj.name,
         "mtl": output_mtl.name,
         "image": output_texture.name,
         "artifact_root": "model_worker",
-        "source_stage": source.source_stage,
-        "source_backend": source.backend,
-        "source_mesh_folder": source.folder,
         "source_mesh": source.mesh,
-        "source_mtl": source.mtl,
-        "source_image": source.image,
         "decimate_ratio": ratio,
         "texture_size": texture_size,
         "bake_margin_px": int(RUNTIME_MESH_BAKE_MARGIN_PX),
@@ -282,6 +303,7 @@ def build_runtime_mesh_from_json(json_path: Path) -> dict:
         "original_faces": int(original_faces),
         "vertices": int(output_vertices),
         "faces": int(output_faces),
+        **backend_detail,
     }
     task["RuntimeMesh"] = runtime_mesh
     save_task_json(json_path, task)

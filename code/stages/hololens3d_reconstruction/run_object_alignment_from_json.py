@@ -44,7 +44,7 @@ from scipy.spatial import cKDTree
 from scipy.spatial.transform import Rotation
 
 from coordinate_systems import OPENCV_CAMERA_TO_CANONICAL_RH_BASIS
-from object_alignment_common import (
+from stages.hololens3d_reconstruction.object_alignment_common import (
     build_depth_pointcloud,
     build_depth_border_keep_mask,
     build_depth_pointcloud_from_valid_mask,
@@ -1148,10 +1148,10 @@ def build_bbox_surface_alignment(
     if len(target_front_fit) == 0:
         raise ValueError("target_front_fit must be non-empty for bbox surface alignment")
 
-    ray_source = str(ICP_BBOX_SURFACE_RAY_SOURCE or "all_points").strip().lower()
-    if ray_source in {"all", "all_points", "pointcloud"}:
+    ray_source = str(ICP_BBOX_SURFACE_RAY_SOURCE).strip().lower()
+    if ray_source == "all_points":
         ray_points = target_points
-    elif ray_source in {"front", "front_points", "target_front"}:
+    elif ray_source == "front_points":
         ray_points = target_front_fit
     else:
         raise ValueError(
@@ -1165,19 +1165,19 @@ def build_bbox_surface_alignment(
     else:
         ray_direction = (target_centroid / ray_norm).astype(np.float32)
 
-    distance_mode = str(ICP_BBOX_SURFACE_DISTANCE_MODE or "mean_depth").strip().lower()
-    if distance_mode in {"centroid_norm", "ray_centroid"}:
+    distance_mode = str(ICP_BBOX_SURFACE_DISTANCE_MODE).strip().lower()
+    if distance_mode == "centroid_norm":
         front_surface_distance = ray_norm
-    elif distance_mode in {"mean_depth", "pointcloud_mean_depth"}:
+    elif distance_mode == "mean_depth":
         front_depth = float(np.mean(-target_points[:, 2]))
         front_surface_distance = front_depth / max(-float(ray_direction[2]), 1e-6)
-    elif distance_mode in {"median_depth", "pointcloud_median_depth"}:
+    elif distance_mode == "median_depth":
         front_depth = float(np.median(-target_points[:, 2]))
         front_surface_distance = front_depth / max(-float(ray_direction[2]), 1e-6)
-    elif distance_mode in {"front_median_depth", "front_depth"}:
+    elif distance_mode == "front_median_depth":
         front_depth = float(np.median(-target_front_fit[:, 2]))
         front_surface_distance = front_depth / max(-float(ray_direction[2]), 1e-6)
-    elif distance_mode in {"front_median_norm", "front_norm"}:
+    elif distance_mode == "front_median_norm":
         front_surface_distance = float(np.median(np.linalg.norm(target_front_fit, axis=1)))
     else:
         raise ValueError(
@@ -1189,11 +1189,11 @@ def build_bbox_surface_alignment(
     bbox_thickness = float(np.dot(np.abs(ray_direction), bbox_size))
     thickness_offset = thickness_factor * max(bbox_thickness, 0.0)
     desired_bbox_center = ray_direction * (front_surface_distance + thickness_offset)
-    lateral_mode = str(ICP_BBOX_SURFACE_LATERAL_MODE or "centroid_xy").strip().lower()
-    if lateral_mode in {"centroid_xy", "pointcloud_xy"}:
+    lateral_mode = str(ICP_BBOX_SURFACE_LATERAL_MODE).strip().lower()
+    if lateral_mode == "centroid_xy":
         desired_bbox_center[0] = target_centroid[0]
         desired_bbox_center[1] = target_centroid[1]
-    elif lateral_mode in {"ray", "ray_xy"}:
+    elif lateral_mode == "ray":
         pass
     else:
         raise ValueError(
@@ -1282,7 +1282,7 @@ def main(argv: list[str]) -> int:
         raise ValueError("model is missing. Run model scale stage first.")
 
     paths = resolve_task_paths(task)
-    prefix = task_prefix(task, json_path)
+    prefix = task_prefix(task)
 
     k = np.asarray((task.get("PVCamera") or {}).get("k"), dtype=np.float32)
     if k.shape != (3, 3):
@@ -1402,15 +1402,12 @@ def main(argv: list[str]) -> int:
         "alignment_device": str(best.get("alignment_device") or ""),
         "alignment_device_name": str(best.get("alignment_device_name") or ""),
         "geometry_backend": str(icp_backend["actual"]),
-        "icp_mode": str(OBJECT_ALIGNMENT_MODE),
         "icp_enabled": bool(ICP_ENABLE),
         "preview_image_name": preview_image_name,
         "preview_image_unaligned_name": preview_image_unaligned_name,
         "confidence": confidence,
         "alignment_rmse": float(best["rmse"]),
         "alignment_fit_model_point_count": int(len(alignment_model_points)) if bool(ICP_ENABLE) else 0,
-        "icp_rmse": float(best["rmse"]),
-        "icp_fit_model_point_count": int(len(alignment_model_points)) if bool(ICP_ENABLE) else 0,
         "target_point_count": int(len(pointcloud_points_unity)),
         "target_front_point_count": int(len(target_front_fit)),
         "discarded_point_count": int(len(discarded_points_export)),
@@ -1538,7 +1535,7 @@ def main(argv: list[str]) -> int:
         f"points={len(pointcloud_points_export)}/{len(target_front_fit)} "
         f"model_fit_points={len(alignment_model_points)} discarded={len(discarded_points_export)} "
         f"scale={object_alignment['model_real_scale']:.6f} confidence={confidence:.3f} "
-        f"rmse={object_alignment['icp_rmse']:.6f} preview={object_alignment.get('preview_image_name') or 'not-generated'}"
+        f"rmse={object_alignment['alignment_rmse']:.6f} preview={object_alignment.get('preview_image_name') or 'not-generated'}"
     )
     print(
         "[INFO] pose-local-rh   : "

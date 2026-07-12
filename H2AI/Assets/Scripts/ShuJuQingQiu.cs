@@ -20,7 +20,7 @@ public enum HistoryTrackingMode
 }
 
 /// <summary>
-/// 鏁版嵁璇锋眰
+/// Coordinates HoloLens capture uploads, task polling, and runtime model delivery.
 /// </summary>
 public class ShuJuQingQiu : MonoBehaviour
 {
@@ -28,12 +28,10 @@ public class ShuJuQingQiu : MonoBehaviour
     // aruco_reference: marker localization/reference upload with PV image + camera pose only.
     const string TASK_PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction";
     const string TASK_PURPOSE_ARUCO_REFERENCE = "aruco_reference";
-    const string TASK_PURPOSE_EXISTING_MODEL_REFRESH = "existing_model_refresh";
     const float MARKER_CAPTURE_TOTAL_SECONDS = 3.0f;
     const float MARKER_CAPTURE_INTERVAL_SECONDS = 0.5f;
     const int MARKER_CAPTURE_MIN_SUCCESS = 1;
     const int STARTUP_CAMERA_MARKER_RETRY_FRAMES = 90;
-    const int COMPLETED_MODEL_HISTORY_LIMIT = 5;
     const float ASYNC_TASK_QUEUE_POLL_INTERVAL_SECONDS = 3.0f;
 
     public static ShuJuQingQiu initialize;
@@ -65,8 +63,6 @@ public class ShuJuQingQiu : MonoBehaviour
         public ushort pvHeight;
         public float[,] pvK;
         public float[,] pvPose;
-        public Vector3 camPos;
-        public Quaternion camRot;
         public string photoTimeUtc;
     }
 
@@ -95,7 +91,6 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         public string taskId;
         public string purpose;
-        public bool modelDownloadStarted;
         public long displayGeneration;
     }
 
@@ -110,8 +105,7 @@ public class ShuJuQingQiu : MonoBehaviour
         public long requestGeneration;
         public HistoryTrackingMode targetMode;
         public HistoryTrackingMode previousStableMode;
-        public string expectedIngressSessionId;
-        public bool isAutomaticIngressRehandshake;
+        public bool isAutomaticRehandshake;
     }
 
     private class RealtimeTrackingStatusRequestContext
@@ -119,8 +113,6 @@ public class ShuJuQingQiu : MonoBehaviour
         public long transportGeneration;
         public long requestGeneration;
         public long modeEpoch;
-        public string coordinateEpoch;
-        public string ingressSessionId;
     }
 
     private RuntimeModelInstance pendingModelInstance;
@@ -136,9 +128,6 @@ public class ShuJuQingQiu : MonoBehaviour
     private readonly HashSet<HTTPRequest> realtimeTrackingModelDownloadRequests = new HashSet<HTTPRequest>();
     private bool asyncTaskQueueCheckInFlight = false;
     private bool asyncTaskQueuePaused = false;
-    private string asyncTaskQueueActiveTaskId = "";
-    private bool historyPlacementRestorationActive = false;
-    private HTTPRequest historyPlacementRestorationRequest;
     private HistoryTrackingMode historyTrackingMode = HistoryTrackingMode.Live;
     private HTTPRequest historyTrackingModeRequest;
     private HTTPRequest realtimeTrackingStatusRequest;
@@ -148,10 +137,6 @@ public class ShuJuQingQiu : MonoBehaviour
     private long localModelDisplayGeneration = 0;
     private long historyTrackingRequestGeneration = 0;
     private long acceptedHistoryTrackingModeEpoch = -1;
-    private string acceptedHistoryTrackingCoordinateEpoch = "";
-    private string acceptedHistoryTrackingIngressSessionId = "";
-    private readonly HashSet<string> retiredHistoryTrackingIngressSessionIds =
-        new HashSet<string>(StringComparer.Ordinal);
     private readonly Dictionary<HTTPRequest, float> httpRequestStartedAt = new Dictionary<HTTPRequest, float>();
 
     public HistoryTrackingMode CurrentHistoryTrackingMode
@@ -166,10 +151,7 @@ public class ShuJuQingQiu : MonoBehaviour
         StartCoroutine(PlaceStartupCameraMarkerWhenReady());
         realtimeTrackingStatusPollingCoroutine = StartCoroutine(PollRealtimeTrackingStatus());
 
-        // =========================
-        // 鏂板锛氬紑濮嬮噰鏍疯澶囦綅濮匡紙ring buffer锛?
-        // =========================
-        //StartPoseSampling();
+        // Pose sampling is started explicitly by the capture flow.
     }
 
     private static string BuildStartupSessionId()
@@ -197,7 +179,6 @@ public class ShuJuQingQiu : MonoBehaviour
         Debug.LogWarning("[ARUCO] Startup camera marker could not be placed; camera or debug marker is missing.");
     }
 
-    const string DEVICE_TYPE = "HoloLens2";
     string _cachedDeviceIp = null;
 
     string GetDeviceIpCached()
@@ -353,10 +334,7 @@ public class ShuJuQingQiu : MonoBehaviour
         GenerateRequestContext context = request != null
             ? request.Tag as GenerateRequestContext
             : null;
-        string purpose = context != null
-            ? context.purpose
-            : request != null ? request.Tag as string : null;
-        return string.IsNullOrEmpty(purpose) ? TASK_PURPOSE_OBJECT_RECONSTRUCTION : purpose;
+        return context != null ? context.purpose : "";
     }
 
     long GetRequestDisplayGeneration(HTTPRequest request)
@@ -364,18 +342,12 @@ public class ShuJuQingQiu : MonoBehaviour
         GenerateRequestContext context = request != null
             ? request.Tag as GenerateRequestContext
             : null;
-        return context != null ? context.displayGeneration : localModelDisplayGeneration;
+        return context != null ? context.displayGeneration : -1;
     }
 
     /// <summary>
-    /// 涓婁紶鍥剧墖
+    /// Upload a near-range AHAT capture.
     /// </summary>
-    // 涓婁紶鍥剧墖
-
-    public void ShangChuanTuPian()
-    {
-        ShangChuanJinJingTuPian();
-    }
 
     public void ShangChuanJinJingTuPian()
     {
@@ -394,11 +366,6 @@ public class ShuJuQingQiu : MonoBehaviour
     public void UploadConfirmedPositionAndForceRebuild()
     {
         StartObjectReconstructionCapture(DepthSensorType.AHAT, true);
-    }
-
-    public void UploadConfirmedPositionAndForceRebuild(DepthSensorType depthSensorType)
-    {
-        StartObjectReconstructionCapture(depthSensorType, true);
     }
 
     public void UploadConfirmedPositionAndForceRebuildLongThrow()
@@ -440,7 +407,6 @@ public class ShuJuQingQiu : MonoBehaviour
         isMarkerCaptureActive = true;
         Game_M.initialize.XianShi("shangchuan_mark");
 
-        string ip = GetDeviceIpCached();
         int targetFrameCount = Mathf.Max(
             MARKER_CAPTURE_MIN_SUCCESS,
             Mathf.FloorToInt(MARKER_CAPTURE_TOTAL_SECONDS / MARKER_CAPTURE_INTERVAL_SECONDS)
@@ -452,13 +418,6 @@ public class ShuJuQingQiu : MonoBehaviour
             float remaining = Mathf.Max(0f, MARKER_CAPTURE_TOTAL_SECONDS - (i * MARKER_CAPTURE_INTERVAL_SECONDS));
             Game_M.initialize.XianShi($"shangchuan_mark_wait_{remaining:F1}");
             yield return new WaitForSeconds(MARKER_CAPTURE_INTERVAL_SECONDS);
-
-            Camera cam = Camera.main;
-            if (cam == null)
-            {
-                Game_M.initialize.XianShi("select_box_no_main_camera");
-                continue;
-            }
 
             Game_M.initialize.XianShi($"shangchuan_mark_capture_{i + 1}_{targetFrameCount}");
             bool pvFrozen = PV_controler != null && PV_controler.FreezeCurrentFrame();
@@ -489,8 +448,6 @@ public class ShuJuQingQiu : MonoBehaviour
                 pvHeight = PV_controler.height_pv_frozen,
                 pvK = CloneFloat2D(PV_controler.k_pv_frozen),
                 pvPose = CloneFloat2D(PV_controler.pose_pv_frozen),
-                camPos = cam.transform.position,
-                camRot = cam.transform.rotation,
                 photoTimeUtc = DateTime.UtcNow.ToString("o"),
             });
         }
@@ -502,15 +459,19 @@ public class ShuJuQingQiu : MonoBehaviour
             yield break;
         }
 
-        SendArucoBatchGenerateRequest(frames, ip);
+        SendArucoBatchGenerateRequest(frames);
         isMarkerCaptureActive = false;
     }
 
-    void SendArucoBatchGenerateRequest(List<MarkerCaptureFrame> frames, string ip)
+    void SendArucoBatchGenerateRequest(List<MarkerCaptureFrame> frames)
     {
         string url = "http://10.40.1.122:7355/generate";
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnRequestFinished);
-        request.Tag = TASK_PURPOSE_ARUCO_REFERENCE;
+        request.Tag = new GenerateRequestContext
+        {
+            purpose = TASK_PURPOSE_ARUCO_REFERENCE,
+            displayGeneration = localModelDisplayGeneration,
+        };
 
         Game_M.initialize.XianShi("shangchuan_Dabao");
         request.AddField("purpose", TASK_PURPOSE_ARUCO_REFERENCE);
@@ -521,14 +482,11 @@ public class ShuJuQingQiu : MonoBehaviour
             MarkerCaptureFrame frame = frames[i];
             JObject frameJ = new JObject
             {
-                ["index"] = i,
                 ["width"] = frame.pvWidth,
                 ["height"] = frame.pvHeight,
                 ["k"] = Float2DToJArray(frame.pvK),
                 ["pose"] = Float2DToJArray(frame.pvPose),
                 ["time"] = frame.photoTimeUtc,
-                ["device_pose"] = new JArray(frame.camPos.x, frame.camPos.y, frame.camPos.z),
-                ["device_rotation"] = new JArray(frame.camRot.x, frame.camRot.y, frame.camRot.z, frame.camRot.w),
             };
             frameArray.Add(frameJ);
             request.AddBinaryData("pv_image_" + i, frame.pvPng, "pv_" + i + ".png", "image/png");
@@ -536,14 +494,8 @@ public class ShuJuQingQiu : MonoBehaviour
         }
         request.AddField("PVCameraFramesJ", frameArray.ToString(Formatting.None));
 
-        MarkerCaptureFrame deviceFrame = frames[frames.Count - 1];
         JObject deviceJ = new JObject
         {
-            ["type"] = DEVICE_TYPE,
-            ["ip"] = string.IsNullOrEmpty(ip) ? "" : ip,
-            ["time"] = deviceFrame.photoTimeUtc,
-            ["pose"] = new JArray(deviceFrame.camPos.x, deviceFrame.camPos.y, deviceFrame.camPos.z),
-            ["rotation"] = new JArray(deviceFrame.camRot.x, deviceFrame.camRot.y, deviceFrame.camRot.z, deviceFrame.camRot.w),
             ["startup_session_id"] = startup_session_id,
         };
         request.AddField("deviceJ", deviceJ.ToString(Formatting.None));
@@ -560,8 +512,6 @@ public class ShuJuQingQiu : MonoBehaviour
         ushort pvHeight,
         float[,] pvK,
         float[,] pvPose,
-        Vector3 camPos,
-        Quaternion camRot,
         string ip,
         string photoTimeUtc,
         byte[] depthPng = null,
@@ -593,6 +543,7 @@ public class ShuJuQingQiu : MonoBehaviour
             ["height"] = pvHeight,
             ["k"] = Float2DToJArray(pvK),
             ["pose"] = Float2DToJArray(pvPose),
+            ["time"] = photoTimeUtc,
         };
         request.AddField("PVCameraJ", PVCameraJ.ToString(Formatting.None));
         request.AddBinaryData("pv_image", texPvPng, "pv.png", "image/png");
@@ -600,11 +551,7 @@ public class ShuJuQingQiu : MonoBehaviour
 
         JObject deviceJ = new JObject
         {
-            ["type"] = DEVICE_TYPE,
             ["ip"] = string.IsNullOrEmpty(ip) ? "" : ip,
-            ["time"] = photoTimeUtc,
-            ["pose"] = new JArray(camPos.x, camPos.y, camPos.z),
-            ["rotation"] = new JArray(camRot.x, camRot.y, camRot.z, camRot.w),
             ["startup_session_id"] = startup_session_id,
         };
         request.AddField("deviceJ", deviceJ.ToString(Formatting.None));
@@ -651,9 +598,7 @@ public class ShuJuQingQiu : MonoBehaviour
             : depthSensorType.ToString();
         Game_M.initialize.XianShi("shangchuan_" + requestedDepthSensorName);
 
-        // ==========================================================
-        // 璁惧鐩稿叧淇℃伅
-        // ==========================================================
+        // Freeze one consistent PV/depth pair before encoding the upload.
         Game_M.initialize.XianShi("shangchuan_Device");
         bool pvFrozen = PV_controler.FreezeCurrentFrame();
         bool depthFrozen = DP_controler != null && DP_controler.FreezeCurrentFrame(depthSensorType);
@@ -690,12 +635,8 @@ public class ShuJuQingQiu : MonoBehaviour
             Game_M.initialize.XianShi("select_box_no_main_camera");
             yield break;
         }
-        Vector3 camPos = cam.transform.position;
-        Quaternion camRot = cam.transform.rotation;
         //request.AddHeader("Content-Type", "multipart/form-data");
-        // ==========================================================
-        // PV鍥剧墖瀛樺偍涓庤浆鎹?
-        // ==========================================================
+        // Encode the frozen PV frame and its camera parameters.
         Game_M.initialize.XianShi("shangchuan_PV");
         yield return null;
         byte[] tex_pv_P_C_F = ImageConversion.EncodeToPNG(PV_controler.tex_pv_frozen);
@@ -706,9 +647,7 @@ public class ShuJuQingQiu : MonoBehaviour
         float[,] pose_pv_C_F = PV_controler.pose_pv_frozen;
 
 
-        // ==========================================================
-        // DP鍥剧墖瀛樺偍涓庤浆鎹?
-        // ==========================================================
+        // Encode the aligned frozen depth frame.
         Game_M.initialize.XianShi("shangchuan_DP");
         if (DP_controler.tex_grayscale_publish == null)
         {
@@ -736,9 +675,7 @@ public class ShuJuQingQiu : MonoBehaviour
         }
         float[,] pose_dp_C_F = DP_controler.pose_publish;
         string sensorType = DP_controler.GetPublishedDepthSensorName();
-        // ==========================================================
-        // PV妗嗛€夛紝鍏堝脊鍑烘閫夌獥鍙ｏ紝绛夊緟鐢ㄦ埛纭/鍙栨秷
-        // ==========================================================
+        // Ask the user to confirm the object selection box on the frozen PV frame.
         Game_M.initialize.XianShi("select_box_open_before_call");
 
         if (selectionPanelManager == null)
@@ -761,26 +698,21 @@ public class ShuJuQingQiu : MonoBehaviour
 
         Game_M.initialize.XianShi("select_box_02_before_startcoroutine");
 
-        // 杩欓噷浼氾細
-        // 1. 鎵撳紑 Canvas Selection box
-        // 2. 鏄剧ず tex_pv_P_C
-        // 3. 鍒濆鍖栦袱涓?handle
-        // 4. 绛夌敤鎴风偣 Confirm / Cancel
-        // 5. 鑷姩鍏抽棴闈㈡澘
+        // The selection panel owns preview, interaction, and confirmation.
         yield return StartCoroutine(
             selectionPanelManager.RequestSelection(PV_controler.tex_pv_frozen, cam.transform)
         );
 
         Game_M.initialize.XianShi("select_box_03_after_startcoroutine");
 
-        // 鐢ㄦ埛鍙栨秷
+        // Cancelled selections do not create a server task.
         if (!selectionPanelManager.LastConfirmed)
         {
             Game_M.initialize.XianShi("select_box_cancel");
             yield break;
         }
 
-        // 鐢ㄦ埛纭鍚庣殑妗嗛€夌粨鏋?
+        // Read the confirmed normalized rectangle.
         Vector2 boxTL = selectionPanelManager.LastTopLeftNormalized;
         Vector2 boxBR = selectionPanelManager.LastBottomRightNormalized;
 
@@ -797,8 +729,6 @@ public class ShuJuQingQiu : MonoBehaviour
             height_pv_C_F,
             k_pv_C_F,
             pose_pv_C_F,
-            camPos,
-            camRot,
             ip,
             photoTimeUtc,
             image_dp_P_C_F,
@@ -820,7 +750,7 @@ public class ShuJuQingQiu : MonoBehaviour
         {
             Debug.Log("Response: " + System.Text.Encoding.UTF8.GetString(response.Data));
             JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
-            string returnedTaskId = jo["task_id"]?.ToString();
+            string returnedTaskId = ReadString(jo, "task_id");
             if (string.IsNullOrEmpty(returnedTaskId))
             {
                 ShowFrontMessage("generate_ERR_missing_task_id");
@@ -874,10 +804,10 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         ClearRealtimeTrackingTransfersForLocalHide();
 
-        HistoryPlacementRestorationDisplay historyDisplay = HistoryPlacementRestorationDisplay.Instance;
-        if (historyDisplay != null)
+        ObjectEvidenceDisplay evidenceDisplay = ObjectEvidenceDisplay.Instance;
+        if (evidenceDisplay != null)
         {
-            historyDisplay.Clear();
+            evidenceDisplay.Clear();
         }
 
         RuntimeModelManager manager = RuntimeModelManager.Instance;
@@ -965,12 +895,14 @@ public class ShuJuQingQiu : MonoBehaviour
         bool insertAtFront,
         long displayGeneration)
     {
-        if (string.IsNullOrEmpty(queuedTaskId))
+        if (string.IsNullOrEmpty(queuedTaskId)
+            || (purpose != TASK_PURPOSE_OBJECT_RECONSTRUCTION
+                && purpose != TASK_PURPOSE_ARUCO_REFERENCE))
         {
+            Debug.LogWarning("[ASYNC_QUEUE] Reject task without a canonical purpose.");
             return;
         }
 
-        string resolvedPurpose = string.IsNullOrEmpty(purpose) ? TASK_PURPOSE_OBJECT_RECONSTRUCTION : purpose;
         for (int i = asyncTaskQueue.Count - 1; i >= 0; i--)
         {
             PendingAsyncTask pendingTask = asyncTaskQueue[i];
@@ -988,7 +920,7 @@ public class ShuJuQingQiu : MonoBehaviour
         PendingAsyncTask task = new PendingAsyncTask
         {
             taskId = queuedTaskId,
-            purpose = resolvedPurpose,
+            purpose = purpose,
             displayGeneration = displayGeneration,
         };
         if (insertAtFront)
@@ -1080,27 +1012,9 @@ public class ShuJuQingQiu : MonoBehaviour
         return false;
     }
 
-    private string ResolvePurposeForReadyTask(string taskId, string serverPurpose, string queuedPurpose)
-    {
-        if (queuedPurpose == TASK_PURPOSE_EXISTING_MODEL_REFRESH)
-        {
-            return queuedPurpose;
-        }
-        if (!string.IsNullOrEmpty(serverPurpose))
-        {
-            return serverPurpose;
-        }
-        if (!string.IsNullOrEmpty(queuedPurpose))
-        {
-            return queuedPurpose;
-        }
-        return TASK_PURPOSE_OBJECT_RECONSTRUCTION;
-    }
-
     private void ResumeAsyncTaskQueuePolling()
     {
         asyncTaskQueuePaused = false;
-        asyncTaskQueueActiveTaskId = "";
         EnsureAsyncTaskQueuePolling();
     }
 
@@ -1128,7 +1042,7 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
-        string completedTaskId = wrapper["task_id"]?.ToString();
+        string completedTaskId = ReadString(wrapper, "task_id");
         JObject taskResponse = wrapper["task"] as JObject;
         if (taskResponse == null)
         {
@@ -1142,57 +1056,32 @@ public class ShuJuQingQiu : MonoBehaviour
 
         PendingAsyncTask pendingEntry = FindPendingAsyncTask(completedTaskId);
         string queuedPurpose = pendingEntry != null ? pendingEntry.purpose : "";
-        string serverPurpose = wrapper["purpose"]?.ToString() ?? taskResponse["purpose"]?.ToString();
-        string purpose = ResolvePurposeForReadyTask(completedTaskId, serverPurpose, queuedPurpose);
-        string status = taskResponse["status"]?.ToString() ?? wrapper["status"]?.ToString();
+        string purpose = ReadString(wrapper, "purpose");
+        string status = ReadString(wrapper, "status");
+        if (string.IsNullOrEmpty(purpose)
+            || string.IsNullOrEmpty(status)
+            || (!string.IsNullOrEmpty(queuedPurpose) && purpose != queuedPurpose)
+            || ReadString(taskResponse, "task_id") != completedTaskId
+            || ReadString(taskResponse, "status") != status
+            || ReadString(taskResponse, "purpose") != purpose)
+        {
+            Debug.LogWarning("[ASYNC_QUEUE] Reject non-canonical task envelope.");
+            string ignoredPurpose;
+            RemoveAsyncUpdateTask(completedTaskId, out ignoredPurpose);
+            EnsureAsyncTaskQueuePolling();
+            return;
+        }
         long taskDisplayGeneration = pendingEntry != null
             ? pendingEntry.displayGeneration
             : localModelDisplayGeneration;
         bool allowAutomaticModelDelivery = taskDisplayGeneration == localModelDisplayGeneration;
 
-        if (status == "model_ready")
-        {
-            if (pendingEntry != null && pendingEntry.modelDownloadStarted)
-            {
-                EnsureAsyncTaskQueuePolling();
-                return;
-            }
-            if (!allowAutomaticModelDelivery)
-            {
-                string ignoredPurpose;
-                RemoveAsyncUpdateTask(completedTaskId, out ignoredPurpose);
-                Debug.Log("[ASYNC_QUEUE] Keep completed model server-side after local display clear: "
-                    + completedTaskId);
-                EnsureAsyncTaskQueuePolling();
-                return;
-            }
-            asyncTaskQueuePaused = true;
-            asyncTaskQueueActiveTaskId = completedTaskId;
-            task_id = completedTaskId;
-            pendingModelShouldPlaceDebugMarkers = false;
-            pendingModelDisplayGeneration = taskDisplayGeneration;
-            if (!ApplyCompletedTaskResponse(taskResponse, "ASYNC_QUEUE_MODEL_READY"))
-            {
-                Debug.LogWarning("[ASYNC_QUEUE] model_ready response missing runtime model outputs.");
-                ResumeAsyncTaskQueuePolling();
-                return;
-            }
-            if (pendingEntry != null)
-            {
-                pendingEntry.modelDownloadStarted = true;
-            }
-            DownloadPendingRuntimeModel();
-            return;
-        }
-
         RemoveAsyncUpdateTask(completedTaskId, out queuedPurpose);
-        purpose = ResolvePurposeForReadyTask(completedTaskId, serverPurpose, queuedPurpose);
 
         asyncTaskQueuePaused = true;
-        asyncTaskQueueActiveTaskId = completedTaskId;
         task_id = completedTaskId;
 
-        if (status == "failed")
+        if (status == "failed" || status == "upload_failed")
         {
             string err = taskResponse["error"]?.ToString();
             Debug.LogError("[ASYNC_QUEUE] task failed: " + err);
@@ -1201,39 +1090,28 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
-        if (purpose == TASK_PURPOSE_ARUCO_REFERENCE || status == "aruco_completed")
+        if (purpose == TASK_PURPOSE_ARUCO_REFERENCE)
         {
-            ApplyDebugInfo(taskResponse);
-            bool arucoDetected = ResponseReportsArucoDetected(taskResponse);
-            ShowFrontMessage(arucoDetected ? "aruco_completed" : "aruco_ERR_missing_reference");
-            if (arucoDetected)
+            if (status != "aruco_completed")
             {
-                RequestModelResultAfterArucoIfNeeded(taskResponse);
+                Debug.LogWarning("[ASYNC_QUEUE] Reject invalid ArUco terminal status: " + status);
+                ShowFrontMessage("check_ERR_unknown_terminal_status");
+                ResumeAsyncTaskQueuePolling();
+                return;
             }
+            ApplyDebugInfo(taskResponse);
+            bool arucoDetected = IsArucoDetected(taskResponse);
+            ShowFrontMessage(arucoDetected ? "aruco_completed" : "aruco_ERR_missing_reference");
             ResumeAsyncTaskQueuePolling();
             return;
         }
 
-        if (status != "completed")
+        if (purpose != TASK_PURPOSE_OBJECT_RECONSTRUCTION || status != "completed")
         {
             Debug.LogWarning("[ASYNC_QUEUE] unsupported ready status: " + status);
             ShowFrontMessage("check_ERR_unknown_terminal_status");
             ResumeAsyncTaskQueuePolling();
             return;
-        }
-
-        if (purpose == TASK_PURPOSE_EXISTING_MODEL_REFRESH)
-        {
-            bool refreshedExistingModel = TryRefreshExistingRuntimeModelPoseFromResponse(taskResponse, "ASYNC_QUEUE");
-            ShowFrontMessage(refreshedExistingModel ? "model_refresh_done" : "model_refresh_skip_missing_local");
-            ResumeAsyncTaskQueuePolling();
-            return;
-        }
-
-        HistoryPlacementRestorationDisplay evidenceDisplay = HistoryPlacementRestorationDisplay.Instance;
-        if (evidenceDisplay != null)
-        {
-            evidenceDisplay.RegisterEvidenceForModel(taskResponse);
         }
 
         pendingModelShouldPlaceDebugMarkers = false;
@@ -1259,10 +1137,9 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         RuntimeModelManager completedManager = RuntimeModelManager.Instance;
-        if (completedManager != null && completedManager.HasModel(completedTaskId))
+        if (completedManager != null && completedManager.HasMatchingModel(pendingModelInstance))
         {
-            bool refreshedExistingModel = TryRefreshExistingRuntimeModelPoseFromResponse(taskResponse, "ASYNC_QUEUE_COMPLETED");
-            Debug.Log("[ASYNC_QUEUE] completed model already local; refreshed=" + refreshedExistingModel.ToString());
+            Debug.Log("[ASYNC_QUEUE] completed model revision is already local.");
             ResumeAsyncTaskQueuePolling();
             return;
         }
@@ -1286,16 +1163,20 @@ public class ShuJuQingQiu : MonoBehaviour
                 continue;
             }
 
-            string taskId = pendingTask["task_id"]?.ToString() ?? "";
+            string taskId = ReadString(pendingTask, "task_id");
             string queuedPurpose = FindQueuedPurpose(taskId);
-            string purpose = ResolvePurposeForReadyTask(taskId, pendingTask["purpose"]?.ToString(), queuedPurpose);
+            string purpose = ReadString(pendingTask, "purpose");
+            if (!string.IsNullOrEmpty(queuedPurpose) && purpose != queuedPurpose)
+            {
+                continue;
+            }
             if (purpose != TASK_PURPOSE_OBJECT_RECONSTRUCTION)
             {
                 continue;
             }
 
             RuntimeModelInstance hintInstance;
-            if (!TryBuildPendingSpatialHintInstance(pendingTask, taskId, out hintInstance))
+            if (!TryBuildPendingSpatialHintInstance(pendingTask, out hintInstance))
             {
                 continue;
             }
@@ -1344,33 +1225,11 @@ public class ShuJuQingQiu : MonoBehaviour
 
     private string BuildPendingProgressMessage(JObject pendingTask)
     {
-        string progressText = pendingTask != null ? pendingTask["progress_text"]?.ToString() : "";
-        if (!string.IsNullOrEmpty(progressText))
-        {
-            return progressText;
-        }
-
-        string status = pendingTask != null ? pendingTask["stage_name"]?.ToString() : "";
-        if (string.IsNullOrEmpty(status) && pendingTask != null)
-        {
-            status = pendingTask["status"]?.ToString();
-        }
-
-        JToken progressToken = pendingTask != null ? pendingTask["progress"] : null;
-        if (progressToken != null && progressToken.Type != JTokenType.Null)
-        {
-            int percent = Mathf.RoundToInt(Mathf.Clamp01(progressToken.Value<float>()) * 100f);
-            if (!string.IsNullOrEmpty(status))
-            {
-                return status + " " + percent.ToString(CultureInfo.InvariantCulture) + "%";
-            }
-            return percent.ToString(CultureInfo.InvariantCulture) + "%";
-        }
-
-        return string.IsNullOrEmpty(status) ? "processing" : status;
+        string progressText = ReadString(pendingTask, "progress_text");
+        return string.IsNullOrEmpty(progressText) ? "processing" : progressText;
     }
 
-    private bool TryBuildPendingSpatialHintInstance(JObject pendingTask, string fallbackTaskId, out RuntimeModelInstance instance)
+    private bool TryBuildPendingSpatialHintInstance(JObject pendingTask, out RuntimeModelInstance instance)
     {
         instance = null;
         if (pendingTask == null)
@@ -1378,196 +1237,42 @@ public class ShuJuQingQiu : MonoBehaviour
             return false;
         }
 
-        JObject modelJ = pendingTask["model_instance"] as JObject;
         RuntimeSpatialBoxData spatialBox;
-        if (!TryParseSpatialBoxToken(
-            NonNullToken(modelJ?["sam3_spatial_box"]) ?? NonNullToken(pendingTask["sam3_spatial_box"]),
-            out spatialBox
-        ))
+        if (!TryParseSpatialBoxToken(pendingTask["sam3_spatial_box"], out spatialBox))
         {
             return false;
         }
 
-        string taskId = modelJ?["task_id"]?.ToString() ?? pendingTask["task_id"]?.ToString() ?? fallbackTaskId ?? "";
-        string modelKey = modelJ?["model_key"]?.ToString() ?? taskId;
-        if (string.IsNullOrEmpty(modelKey))
+        string taskId = pendingTask["task_id"]?.ToString().Trim() ?? "";
+        if (string.IsNullOrEmpty(taskId))
         {
             return false;
         }
 
         instance = new RuntimeModelInstance
         {
-            ModelKey = modelKey,
+            ModelKey = taskId,
             TaskId = taskId,
             FbxUrl = "",
-            DisplayObjectId = ReadFirstString(
-                modelJ?["display_object_id"],
-                modelJ?["display_identity"]?["display_object_id"],
-                pendingTask["display_object_id"],
-                pendingTask["display_identity"]?["display_object_id"]
-            ),
-            CaptureInstanceId = ReadFirstString(
-                modelJ?["capture_instance_id"],
-                modelJ?["display_identity"]?["capture_instance_id"],
-                pendingTask["capture_instance_id"],
-                pendingTask["display_identity"]?["capture_instance_id"]
-            ),
-            IsEvidenceOverlay = pendingTask["is_evidence_overlay"] != null && pendingTask["is_evidence_overlay"].Value<bool>(),
             Pose = new RuntimeModelPoseData(),
             SpatialBox = spatialBox,
         };
         return true;
     }
 
-    private bool IsResponseArucoSynced(JObject jo)
-    {
-        JToken token = jo != null ? jo["aruco_coordinate_synced"] : null;
-        return token != null && token.Type == JTokenType.Boolean && token.Value<bool>();
-    }
-
-    private bool TryRefreshExistingRuntimeModelPoseFromResponse(JObject jo, string sourceTag)
-    {
-        if (!IsResponseArucoSynced(jo))
-        {
-            Debug.Log("[MODEL_REFRESH] Skip unsynced completed model response from " + sourceTag + ".");
-            return false;
-        }
-
-        if (!TryBuildRuntimeModelInstance(jo, out RuntimeModelInstance instance, out string errorMessage))
-        {
-            Debug.LogWarning("[MODEL_REFRESH] invalid completed response from " + sourceTag + ": " + errorMessage);
-            return false;
-        }
-
-        RuntimeModelManager manager = RuntimeModelManager.Instance;
-        if (manager == null)
-        {
-            ShowFrontMessage("runtime_model_mgr_missing");
-            return false;
-        }
-
-        string taskId = instance.TaskId;
-        string modelKey = instance.ModelKey;
-        bool hasLocalModel =
-            manager.HasModel(taskId)
-            || manager.HasModel(modelKey);
-        if (!hasLocalModel)
-        {
-            Debug.Log("[MODEL_REFRESH] Skip non-local completed model: task_id="
-                + (string.IsNullOrEmpty(taskId) ? "<empty>" : taskId));
-            return false;
-        }
-
-        string updateKey = !string.IsNullOrEmpty(taskId) ? taskId : modelKey;
-        if (!manager.UpdateModelPose(updateKey, instance.Pose))
-        {
-            return false;
-        }
-
-        Debug.Log("[MODEL_REFRESH] Refreshed local model pose from " + sourceTag + ": " + updateKey);
-        return true;
-    }
-
-    private void RequestModelResultAfterArucoIfNeeded(JObject jo)
-    {
-        int refreshedLoadedModelCount = EnqueueLoadedRuntimeModelRefreshesAfterAruco();
-        if (refreshedLoadedModelCount <= 0)
-        {
-            Debug.Log("[ARUCO] Reference updated; no loaded local model needs server pose refresh.");
-        }
-    }
-
-    private int EnqueueLoadedRuntimeModelRefreshesAfterAruco()
-    {
-        RuntimeModelManager manager = RuntimeModelManager.Instance;
-        if (manager == null)
-        {
-            return 0;
-        }
-
-        int requestCount = 0;
-        List<string> loadedTaskIds = manager.GetLoadedTaskIds();
-        for (int i = loadedTaskIds.Count - 1; i >= 0; i--)
-        {
-            string loadedTaskId = loadedTaskIds[i];
-            if (string.IsNullOrEmpty(loadedTaskId))
-            {
-                continue;
-            }
-
-            EnqueueAsyncUpdateTask(loadedTaskId, TASK_PURPOSE_EXISTING_MODEL_REFRESH, true);
-            requestCount++;
-        }
-
-        if (requestCount > 0)
-        {
-            Debug.Log("[ARUCO] Refreshing loaded local models after ArUco update: count="
-                + requestCount.ToString(CultureInfo.InvariantCulture));
-        }
-        return requestCount;
-    }
-
-    public void RefreshArucoReferenceFromServer()
-    {
-        string session = startup_session_id ?? "";
-        if (string.IsNullOrEmpty(session))
-        {
-            ShowFrontMessage("aruco_ERR_no_startup_session");
-            return;
-        }
-
-        string url =
-            "http://10.40.1.122:7355/aruco/latest-reference?startup_session_id="
-            + Uri.EscapeDataString(session);
-        var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRequestLatestArucoReference);
-        request.AddHeader("Content-Type", "application/json;charset=UTF-8");
-        LogHttpRequestStart("latest-aruco-reference", request);
-        request.Send();
-        ShowFrontMessage("aruco_reference_refresh");
-    }
-
-    public void XiaZaiZuiXinChengGongMoXing()
-    {
-        QueueLatestCompletedModelsForDownload();
-    }
-
-    public void XiaZaiLiShiWuGeKeYongMoXing()
-    {
-        QueueLatestCompletedModelsForDownload();
-    }
-
-    public void StartHistoryPlacementRestoration()
-    {
-        // Compatibility entry retained for existing Unity button bindings.
-        ToggleHistoryTrackingMode();
-    }
-
     public void ToggleHistoryTrackingMode()
     {
         bool enterHistory = historyTrackingMode == HistoryTrackingMode.Live
             || historyTrackingMode == HistoryTrackingMode.EnteringLive;
-        SetHistoryTrackingMode(enterHistory);
+        RequestHistoryTrackingMode(enterHistory, false);
     }
 
-    /// <summary>
-    /// true enters the HoloLens-confirmed history pose; false resumes realtime tracking.
-    /// This only controls the realtime tracking queue/delivery contract. It does not touch
-    /// HoloLens reconstruction uploads, model downloads, or HoloLens FoundationPose work.
-    /// </summary>
-    public void SetHistoryTrackingMode(bool historyModeEnabled)
-    {
-        RequestHistoryTrackingMode(historyModeEnabled, false, "");
-    }
-
-    private void RequestHistoryTrackingMode(
-        bool historyModeEnabled,
-        bool isAutomaticIngressRehandshake,
-        string expectedIngressSessionId)
+    private void RequestHistoryTrackingMode(bool historyModeEnabled, bool isAutomaticRehandshake)
     {
         HistoryTrackingMode targetMode = historyModeEnabled
             ? HistoryTrackingMode.History
             : HistoryTrackingMode.Live;
-        if (!isAutomaticIngressRehandshake
+        if (!isAutomaticRehandshake
             && historyTrackingMode == targetMode
             && historyTrackingModeRequest == null
             && !(targetMode == HistoryTrackingMode.Live
@@ -1581,7 +1286,6 @@ public class ShuJuQingQiu : MonoBehaviour
         CancelRealtimeTrackingStatusRequest();
         historyTrackingRequestGeneration++;
         long requestGeneration = historyTrackingRequestGeneration;
-
         if (historyTrackingModeRequest != null)
         {
             historyTrackingModeRequest.Abort();
@@ -1591,10 +1295,9 @@ public class ShuJuQingQiu : MonoBehaviour
         historyTrackingMode = historyModeEnabled
             ? HistoryTrackingMode.EnteringHistory
             : HistoryTrackingMode.EnteringLive;
-
         JObject payload = new JObject
         {
-            ["startup_session_id"] = string.IsNullOrEmpty(startup_session_id) ? "" : startup_session_id,
+            ["startup_session_id"] = startup_session_id,
             ["mode"] = historyModeEnabled ? "history" : "live",
             ["request_generation"] = requestGeneration,
         };
@@ -1603,8 +1306,7 @@ public class ShuJuQingQiu : MonoBehaviour
             requestGeneration = requestGeneration,
             targetMode = targetMode,
             previousStableMode = previousStableMode,
-            expectedIngressSessionId = expectedIngressSessionId ?? "",
-            isAutomaticIngressRehandshake = isAutomaticIngressRehandshake,
+            isAutomaticRehandshake = isAutomaticRehandshake,
         };
 
         string url = string.IsNullOrWhiteSpace(realtimeTrackingModeUrl)
@@ -1617,20 +1319,20 @@ public class ShuJuQingQiu : MonoBehaviour
         historyTrackingModeRequest = request;
         LogHttpRequestStart("realtime-tracking/mode", request);
         request.Send();
-        if (!isAutomaticIngressRehandshake)
+        if (!isAutomaticRehandshake)
         {
-            ShowFrontMessage(historyModeEnabled ? "history_tracking_entering_history" : "history_tracking_entering_live");
+            ShowFrontMessage(historyModeEnabled
+                ? "history_tracking_entering_history"
+                : "history_tracking_entering_live");
         }
     }
 
     private HistoryTrackingMode ResolvePreviousStableHistoryTrackingMode()
     {
-        if (historyTrackingMode == HistoryTrackingMode.History
-            || historyTrackingMode == HistoryTrackingMode.EnteringLive)
-        {
-            return HistoryTrackingMode.History;
-        }
-        return HistoryTrackingMode.Live;
+        return historyTrackingMode == HistoryTrackingMode.History
+            || historyTrackingMode == HistoryTrackingMode.EnteringLive
+            ? HistoryTrackingMode.History
+            : HistoryTrackingMode.Live;
     }
 
     private IEnumerator PollRealtimeTrackingStatus()
@@ -1645,9 +1347,8 @@ public class ShuJuQingQiu : MonoBehaviour
             {
                 RequestRealtimeTrackingStatus();
             }
-
-            float delaySeconds = Mathf.Max(0.25f, realtimeTrackingStatusPollIntervalSeconds);
-            yield return new WaitForSecondsRealtime(delaySeconds);
+            yield return new WaitForSecondsRealtime(
+                Mathf.Max(0.25f, realtimeTrackingStatusPollIntervalSeconds));
         }
     }
 
@@ -1666,17 +1367,13 @@ public class ShuJuQingQiu : MonoBehaviour
             ? "http://10.40.1.122:7355/realtime-tracking/status"
             : realtimeTrackingStatusUrl.Trim();
         string separator = baseUrl.IndexOf('?') >= 0 ? "&" : "?";
-        string url = baseUrl
-            + separator
-            + "startup_session_id="
+        string url = baseUrl + separator + "startup_session_id="
             + Uri.EscapeDataString(startup_session_id);
         RealtimeTrackingStatusRequestContext context = new RealtimeTrackingStatusRequestContext
         {
             transportGeneration = realtimeTrackingTransportGeneration,
             requestGeneration = historyTrackingRequestGeneration,
             modeEpoch = acceptedHistoryTrackingModeEpoch,
-            coordinateEpoch = acceptedHistoryTrackingCoordinateEpoch,
-            ingressSessionId = acceptedHistoryTrackingIngressSessionId,
         };
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnRealtimeTrackingStatusFinished);
         request.Tag = context;
@@ -1696,49 +1393,14 @@ public class ShuJuQingQiu : MonoBehaviour
         }
     }
 
-    private void ResetAcceptedHistoryTrackingIngressBaseline(string ingressSessionId)
+    private void BeginAutomaticLiveRehandshake()
     {
-        string nextIngressSessionId = ingressSessionId ?? "";
-        if (!string.IsNullOrEmpty(acceptedHistoryTrackingIngressSessionId)
-            && !string.Equals(
-                acceptedHistoryTrackingIngressSessionId,
-                nextIngressSessionId,
-                StringComparison.Ordinal))
-        {
-            retiredHistoryTrackingIngressSessionIds.Add(acceptedHistoryTrackingIngressSessionId);
-        }
-        acceptedHistoryTrackingIngressSessionId = nextIngressSessionId;
-        acceptedHistoryTrackingModeEpoch = -1;
-        acceptedHistoryTrackingCoordinateEpoch = "";
-        realtimeTrackingTransportGeneration++;
-        CancelRealtimeTrackingStatusRequest();
-    }
-
-    private bool RequiresLiveIngressRehandshake(string responseIngressSessionId)
-    {
-        return !string.IsNullOrEmpty(responseIngressSessionId)
-            && (!string.Equals(
-                    responseIngressSessionId,
-                    acceptedHistoryTrackingIngressSessionId,
-                    StringComparison.Ordinal)
-                || acceptedHistoryTrackingModeEpoch < 0);
-    }
-
-    private void BeginAutomaticLiveIngressRehandshake(string responseIngressSessionId)
-    {
-        if (historyTrackingMode != HistoryTrackingMode.Live
-            || string.IsNullOrEmpty(responseIngressSessionId))
+        if (historyTrackingMode != HistoryTrackingMode.Live || historyTrackingModeRequest != null)
         {
             return;
         }
-
-        string previousIngressSessionId = acceptedHistoryTrackingIngressSessionId;
-        ResetAcceptedHistoryTrackingIngressBaseline(responseIngressSessionId);
-        Debug.Log("[HISTORY_TRACKING] Rehandshake Live mode for ingress change: "
-            + (string.IsNullOrEmpty(previousIngressSessionId) ? "<unbound>" : previousIngressSessionId)
-            + " -> "
-            + responseIngressSessionId);
-        RequestHistoryTrackingMode(false, true, responseIngressSessionId);
+        Debug.Log("[HISTORY_TRACKING] Re-handshake Live mode after server state changed.");
+        RequestHistoryTrackingMode(false, true);
     }
 
     private void OnRealtimeTrackingStatusFinished(HTTPRequest request, HTTPResponse response)
@@ -1749,7 +1411,6 @@ public class ShuJuQingQiu : MonoBehaviour
             : null;
         if (request != realtimeTrackingStatusRequest)
         {
-            Debug.Log("[HISTORY_TRACKING] Ignore cancelled/superseded status response.");
             return;
         }
         realtimeTrackingStatusRequest = null;
@@ -1760,16 +1421,11 @@ public class ShuJuQingQiu : MonoBehaviour
             || historyTrackingModeRequest != null
             || context.requestGeneration != historyTrackingRequestGeneration)
         {
-            Debug.Log("[HISTORY_TRACKING] Ignore status response outside its Live generation.");
             return;
         }
         if (response == null || !response.IsSuccess)
         {
-            string statusCode = response != null
-                ? response.StatusCode.ToString(CultureInfo.InvariantCulture)
-                : "no_response";
-            string message = response != null ? response.Message : "No response from server";
-            Debug.LogWarning("[HISTORY_TRACKING] status request failed: " + statusCode + " - " + message);
+            Debug.LogWarning("[HISTORY_TRACKING] status request failed.");
             return;
         }
 
@@ -1784,90 +1440,30 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
-        JObject payload = root["data"] as JObject ?? root;
-        if (root["success"] != null && !root["success"].Value<bool>())
+        if (!ValidateTrackingResponseHeader(
+                root,
+                HistoryTrackingMode.Live,
+                out long modeEpoch,
+                out string coordinateEpoch))
         {
-            Debug.LogWarning("[HISTORY_TRACKING] server rejected status request.");
+            if (root != null
+                && ReadString(root, "startup_session_id") == startup_session_id
+                && ReadString(root, "mode") == "live")
+            {
+                BeginAutomaticLiveRehandshake();
+            }
+            return;
+        }
+        if (modeEpoch != context.modeEpoch
+            || ReadLong(root, "request_generation") != context.requestGeneration)
+        {
+            BeginAutomaticLiveRehandshake();
             return;
         }
 
-        long responseGeneration = ReadFirstLong(
-            -1,
-            payload["request_generation"],
-            root["request_generation"]);
-        string responseMode = ReadFirstString(payload["mode"], root["mode"]);
-        long responseModeEpoch = ReadFirstLong(-1, payload["mode_epoch"], root["mode_epoch"]);
-        string responseCoordinateEpoch = ReadFirstString(
-            payload["coordinate_epoch"],
-            root["coordinate_epoch"]);
-        string responseIngressSessionId = ReadFirstString(
-            payload["ingress_session_id"],
-            root["ingress_session_id"]);
-        if (string.IsNullOrEmpty(responseIngressSessionId))
-        {
-            Debug.LogWarning("[HISTORY_TRACKING] Reject status response without ingress_session_id.");
-            return;
-        }
-        if (retiredHistoryTrackingIngressSessionIds.Contains(responseIngressSessionId)
-            && !string.Equals(
-                responseIngressSessionId,
-                acceptedHistoryTrackingIngressSessionId,
-                StringComparison.Ordinal))
-        {
-            Debug.LogWarning("[HISTORY_TRACKING] Ignore delayed status from retired ingress session: "
-                + responseIngressSessionId);
-            return;
-        }
-        if (RequiresLiveIngressRehandshake(responseIngressSessionId))
-        {
-            BeginAutomaticLiveIngressRehandshake(responseIngressSessionId);
-            return;
-        }
-        if (!string.Equals(
-                context.ingressSessionId,
-                acceptedHistoryTrackingIngressSessionId,
-                StringComparison.Ordinal)
-            || !string.Equals(
-                responseIngressSessionId,
-                acceptedHistoryTrackingIngressSessionId,
-                StringComparison.Ordinal))
-        {
-            Debug.LogWarning("[HISTORY_TRACKING] Reject status response from a stale ingress session.");
-            return;
-        }
-        if (responseGeneration != context.requestGeneration
-            || !ServerModeMatchesTarget(responseMode, HistoryTrackingMode.Live)
-            || responseModeEpoch < 0
-            || (context.modeEpoch >= 0 && responseModeEpoch != context.modeEpoch)
-            || (acceptedHistoryTrackingModeEpoch >= 0
-                && responseModeEpoch != acceptedHistoryTrackingModeEpoch)
-            || (!string.IsNullOrEmpty(context.coordinateEpoch)
-                && !string.Equals(
-                    responseCoordinateEpoch,
-                    context.coordinateEpoch,
-                    StringComparison.Ordinal))
-            || (!string.IsNullOrEmpty(acceptedHistoryTrackingCoordinateEpoch)
-                && !string.Equals(
-                    responseCoordinateEpoch,
-                    acceptedHistoryTrackingCoordinateEpoch,
-                    StringComparison.Ordinal)))
-        {
-            Debug.LogWarning("[HISTORY_TRACKING] Reject status response with mismatched generation/mode/epoch.");
-            return;
-        }
-
-        // Coordinate data may appear after the mode handshake when the first ArUco
-        // reference finishes; bind it once, then require exact equality thereafter.
-        if (string.IsNullOrEmpty(responseCoordinateEpoch))
-        {
-            return;
-        }
-        if (string.IsNullOrEmpty(acceptedHistoryTrackingCoordinateEpoch))
-        {
-            acceptedHistoryTrackingCoordinateEpoch = responseCoordinateEpoch;
-        }
-
-        ApplyRealtimeTrackingUpdateJson(response.DataAsText);
+        ApplyTrackingSnapshot(root, modeEpoch, coordinateEpoch);
+        QueueMissingRealtimeTrackingModels(root);
+        RegisterRealtimeTrackingEvidence(root);
     }
 
     private void OnDestroy()
@@ -1886,7 +1482,6 @@ public class ShuJuQingQiu : MonoBehaviour
             || context.requestGeneration != historyTrackingRequestGeneration
             || request != historyTrackingModeRequest)
         {
-            Debug.Log("[HISTORY_TRACKING] Ignore superseded mode response.");
             return;
         }
         historyTrackingModeRequest = null;
@@ -1894,19 +1489,14 @@ public class ShuJuQingQiu : MonoBehaviour
         if (response == null || !response.IsSuccess)
         {
             historyTrackingMode = context.previousStableMode;
-            string statusCode = response != null
-                ? response.StatusCode.ToString(CultureInfo.InvariantCulture)
-                : "no_response";
-            string message = response != null ? response.Message : "No response from server";
-            Debug.LogError("[HISTORY_TRACKING] mode request failed: " + statusCode + " - " + message);
             ShowFrontMessage("history_tracking_ERR_request_failed");
             return;
         }
 
-        JObject responseRoot;
+        JObject root;
         try
         {
-            responseRoot = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
+            root = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
         }
         catch (Exception exc)
         {
@@ -1916,126 +1506,44 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
-        JObject responsePayload = responseRoot["data"] as JObject ?? responseRoot;
-        if (responseRoot["success"] != null && !responseRoot["success"].Value<bool>())
+        if (!ValidateTrackingResponseHeader(
+                root,
+                context.targetMode,
+                out long modeEpoch,
+                out string coordinateEpoch)
+            || ReadLong(root, "request_generation") != context.requestGeneration)
         {
             historyTrackingMode = context.previousStableMode;
-            Debug.LogError("[HISTORY_TRACKING] server rejected mode change: " + response.DataAsText);
-            ShowFrontMessage("history_tracking_ERR_server");
+            ShowFrontMessage("history_tracking_ERR_invalid_response");
             return;
         }
 
-        long echoedGeneration = ReadFirstLong(
-            -1,
-            responsePayload["request_generation"],
-            responseRoot["request_generation"]);
-        if (echoedGeneration != context.requestGeneration)
-        {
-            historyTrackingMode = context.previousStableMode;
-            Debug.LogWarning("[HISTORY_TRACKING] Reject response with mismatched request_generation.");
-            ShowFrontMessage("history_tracking_ERR_stale_response");
-            return;
-        }
-
-        string responseMode = ReadFirstString(responsePayload["mode"], responseRoot["mode"]);
-        if (!ServerModeMatchesTarget(responseMode, context.targetMode))
-        {
-            historyTrackingMode = context.previousStableMode;
-            Debug.LogWarning("[HISTORY_TRACKING] Reject response with mismatched mode: " + responseMode);
-            ShowFrontMessage("history_tracking_ERR_mode_mismatch");
-            return;
-        }
-
-        string responseIngressSessionId = ReadFirstString(
-            responsePayload["ingress_session_id"],
-            responseRoot["ingress_session_id"]);
-        if (string.IsNullOrEmpty(responseIngressSessionId)
-            || (retiredHistoryTrackingIngressSessionIds.Contains(responseIngressSessionId)
-                && !string.Equals(
-                    responseIngressSessionId,
-                    acceptedHistoryTrackingIngressSessionId,
-                    StringComparison.Ordinal))
-            || (!string.IsNullOrEmpty(context.expectedIngressSessionId)
-                && !string.Equals(
-                    responseIngressSessionId,
-                    context.expectedIngressSessionId,
-                    StringComparison.Ordinal)))
-        {
-            historyTrackingMode = context.previousStableMode;
-            Debug.LogWarning("[HISTORY_TRACKING] Reject mode response from unexpected ingress session: "
-                + responseIngressSessionId);
-            if (!context.isAutomaticIngressRehandshake)
-            {
-                ShowFrontMessage("history_tracking_ERR_ingress_mismatch");
-            }
-            return;
-        }
-        if (!string.Equals(
-                responseIngressSessionId,
-                acceptedHistoryTrackingIngressSessionId,
-                StringComparison.Ordinal))
-        {
-            ResetAcceptedHistoryTrackingIngressBaseline(responseIngressSessionId);
-        }
-
-        long modeEpoch = ReadFirstLong(-1, responsePayload["mode_epoch"], responseRoot["mode_epoch"]);
-        string coordinateEpoch = ReadFirstString(
-            responsePayload["coordinate_epoch"],
-            responseRoot["coordinate_epoch"]);
-        if (modeEpoch < 0 || modeEpoch < acceptedHistoryTrackingModeEpoch
-            || (modeEpoch == acceptedHistoryTrackingModeEpoch
-                && !string.IsNullOrEmpty(acceptedHistoryTrackingCoordinateEpoch)
-                && !string.Equals(
-                    coordinateEpoch,
-                    acceptedHistoryTrackingCoordinateEpoch,
-                    StringComparison.Ordinal)))
-        {
-            historyTrackingMode = context.previousStableMode;
-            Debug.LogWarning("[HISTORY_TRACKING] Reject stale mode_epoch/coordinate_epoch pair.");
-            ShowFrontMessage("history_tracking_ERR_epoch_mismatch");
-            return;
-        }
-
-        int appliedCount = ApplyHistoryTrackingModeSnapshot(
-            responsePayload,
-            context.targetMode,
-            modeEpoch,
-            coordinateEpoch);
         acceptedHistoryTrackingModeEpoch = modeEpoch;
-        acceptedHistoryTrackingCoordinateEpoch = coordinateEpoch;
-        acceptedHistoryTrackingIngressSessionId = responseIngressSessionId;
         historyTrackingMode = context.targetMode;
         realtimeTrackingStatusDeliveryEnabled = context.targetMode == HistoryTrackingMode.Live;
-        if (!context.isAutomaticIngressRehandshake)
+        if (!context.isAutomaticRehandshake)
         {
             automaticModelDeliverySuppressed = false;
-            RuntimeModelManager retainedModelManager = RuntimeModelManager.Instance;
-            if (retainedModelManager != null)
+            RuntimeModelManager manager = RuntimeModelManager.Instance;
+            if (manager != null)
             {
-                retainedModelManager.ShowAllRuntimeModels();
-            }
-        }
-        int queuedModelCount = QueueMissingRealtimeTrackingModels(responsePayload, context.targetMode);
-        int registeredEvidenceCount = RegisterRealtimeTrackingEvidence(responsePayload);
-
-        if (!context.isAutomaticIngressRehandshake)
-        {
-            HistoryPlacementRestorationDisplay oldHistoryDisplay = HistoryPlacementRestorationDisplay.Instance;
-            if (oldHistoryDisplay != null)
-            {
-                oldHistoryDisplay.Clear();
+                manager.ShowAllRuntimeModels();
             }
         }
 
-        Debug.Log("[HISTORY_TRACKING] mode=" + context.targetMode
+        int appliedCount = ApplyTrackingSnapshot(root, modeEpoch, coordinateEpoch);
+        int queuedModelCount = QueueMissingRealtimeTrackingModels(root);
+        int registeredEvidenceCount = RegisterRealtimeTrackingEvidence(root);
+        Debug.Log(
+            "[HISTORY_TRACKING] mode=" + ReadString(root, "mode")
             + " generation=" + context.requestGeneration.ToString(CultureInfo.InvariantCulture)
-            + " ingress_session_id=" + responseIngressSessionId
             + " mode_epoch=" + modeEpoch.ToString(CultureInfo.InvariantCulture)
-            + " coordinate_epoch=" + (string.IsNullOrEmpty(coordinateEpoch) ? "<missing>" : coordinateEpoch)
+            + " coordinate_epoch=" + coordinateEpoch
             + " applied=" + appliedCount.ToString(CultureInfo.InvariantCulture)
             + " model_downloads=" + queuedModelCount.ToString(CultureInfo.InvariantCulture)
             + " evidence=" + registeredEvidenceCount.ToString(CultureInfo.InvariantCulture));
-        if (!context.isAutomaticIngressRehandshake)
+
+        if (!context.isAutomaticRehandshake)
         {
             ShowFrontMessage(
                 context.targetMode == HistoryTrackingMode.History
@@ -2044,175 +1552,53 @@ public class ShuJuQingQiu : MonoBehaviour
         }
     }
 
-    /// <summary>
-    /// Future websocket/polling transports can pass realtime update JSON through this entry.
-    /// Updates are ignored unless the client is in Live mode and epochs match the latest mode ACK.
-    /// </summary>
-    public bool ApplyRealtimeTrackingUpdateJson(string responseJson)
+    private bool ValidateTrackingResponseHeader(
+        JObject root,
+        HistoryTrackingMode expectedMode,
+        out long modeEpoch,
+        out string coordinateEpoch)
     {
-        if (historyTrackingMode != HistoryTrackingMode.Live
-            || !realtimeTrackingStatusDeliveryEnabled
-            || string.IsNullOrWhiteSpace(responseJson))
+        modeEpoch = -1;
+        coordinateEpoch = "";
+        if (root == null
+            || root["success"] == null
+            || root["success"].Type != JTokenType.Boolean
+            || !root["success"].Value<bool>()
+            || ReadString(root, "startup_session_id") != startup_session_id
+            || !ServerModeMatchesTarget(ReadString(root, "mode"), expectedMode))
         {
             return false;
         }
-        try
-        {
-            JObject root = (JObject)JsonConvert.DeserializeObject(responseJson);
-            JObject payload = root["data"] as JObject ?? root;
-            if (root["success"] != null && !root["success"].Value<bool>())
-            {
-                return false;
-            }
-            long responseGeneration = ReadFirstLong(
-                -1,
-                payload["request_generation"],
-                root["request_generation"]);
-            string responseMode = ReadFirstString(payload["mode"], root["mode"]);
-            long modeEpoch = ReadFirstLong(-1, payload["mode_epoch"], root["mode_epoch"]);
-            string coordinateEpoch = ReadFirstString(payload["coordinate_epoch"], root["coordinate_epoch"]);
-            string ingressSessionId = ReadFirstString(
-                payload["ingress_session_id"],
-                root["ingress_session_id"]);
-            if (string.IsNullOrEmpty(ingressSessionId)
-                || !string.Equals(
-                    ingressSessionId,
-                    acceptedHistoryTrackingIngressSessionId,
-                    StringComparison.Ordinal)
-                || responseGeneration != historyTrackingRequestGeneration
-                || !ServerModeMatchesTarget(responseMode, HistoryTrackingMode.Live)
-                || modeEpoch != acceptedHistoryTrackingModeEpoch
-                || string.IsNullOrEmpty(coordinateEpoch)
-                || !string.Equals(
-                    coordinateEpoch,
-                    acceptedHistoryTrackingCoordinateEpoch,
-                    StringComparison.Ordinal))
-            {
-                return false;
-            }
-            int applied = ApplyHistoryTrackingModeSnapshot(
-                payload,
-                HistoryTrackingMode.Live,
-                modeEpoch,
-                coordinateEpoch);
-            int queuedModels = QueueMissingRealtimeTrackingModels(payload, HistoryTrackingMode.Live);
-            int registeredEvidence = RegisterRealtimeTrackingEvidence(payload);
-            return applied > 0 || queuedModels > 0 || registeredEvidence > 0;
-        }
-        catch (Exception exc)
-        {
-            Debug.LogWarning("[HISTORY_TRACKING] invalid realtime update: " + exc.Message);
-            return false;
-        }
+
+        modeEpoch = ReadLong(root, "mode_epoch");
+        coordinateEpoch = ReadString(root, "coordinate_epoch");
+        return modeEpoch >= 0;
     }
 
-    private int ApplyHistoryTrackingModeSnapshot(
-        JObject responsePayload,
-        HistoryTrackingMode targetMode,
-        long modeEpoch,
-        string coordinateEpoch)
+    private int ApplyTrackingSnapshot(JObject response, long modeEpoch, string coordinateEpoch)
     {
         RuntimeModelManager manager = RuntimeModelManager.Instance;
-        if (manager == null)
+        if (manager == null || string.IsNullOrEmpty(coordinateEpoch))
         {
-            Debug.LogWarning("[HISTORY_TRACKING] RuntimeModelManager is unavailable.");
             return 0;
         }
 
-        bool useHistoryPose = targetMode == HistoryTrackingMode.History;
         int appliedCount = 0;
-        foreach (JObject item in EnumerateHistoryTrackingSnapshotItems(responsePayload))
+        foreach (JObject item in EnumerateTrackingItems(response))
         {
-            string displayObjectId = ReadFirstString(
-                item["display_object_id"],
-                item["display_identity"]?["display_object_id"],
-                item["model_instance"]?["display_object_id"],
-                item["model_instance"]?["display_identity"]?["display_object_id"]);
-            if (string.IsNullOrEmpty(displayObjectId))
+            string displayObjectId = ReadString(item, "display_object_id");
+            long modelRevision = ReadLong(item, "model_revision");
+            string poseSource = ReadString(item, "pose_source");
+            long poseRevision = ReadLong(item, "pose_revision");
+            string coordinateSpace = ReadString(item, "coordinate_space");
+            JObject poseObject = item["pose"] as JObject;
+            if (string.IsNullOrEmpty(displayObjectId)
+                || modelRevision <= 0
+                || poseRevision <= 0
+                || (poseSource != "hololens" && poseSource != "tracking")
+                || coordinateSpace != "hololens_current_local"
+                || !TryParsePoseToken(poseObject, out Vector3 position, out Quaternion rotation))
             {
-                Debug.LogWarning("[HISTORY_TRACKING] Skip snapshot without display_object_id.");
-                continue;
-            }
-
-            string poseSource;
-            JToken poseEnvelope;
-            long poseRevision;
-            if (useHistoryPose)
-            {
-                // History is always the latest HoloLens-confirmed placement, regardless
-                // of the selected source carried by a Live snapshot.
-                poseSource = "hololens";
-                poseEnvelope = ResolveHistoryTrackingPoseEnvelope(item, true);
-                poseRevision = ReadFirstLong(
-                    -1,
-                    item["latest_hololens_pose_revision"],
-                    item["hololens_pose_revision"],
-                    poseEnvelope?["pose_revision"],
-                    poseEnvelope?["revision"],
-                    item["source_pose_revision"]);
-            }
-            else
-            {
-                poseSource = NormalizeHistoryTrackingPoseSource(ReadFirstString(
-                    item["pose_source"],
-                    item["pose"]?["pose_source"]));
-                if (string.IsNullOrEmpty(poseSource))
-                {
-                    // Compatibility for older responses that predate pose_source.
-                    poseSource = NonNullToken(item["latest_tracking_pose"]) != null
-                        || NonNullToken(item["tracking_pose"]) != null
-                        ? "tracking"
-                        : "hololens";
-                }
-
-                if (poseSource == "tracking")
-                {
-                    poseEnvelope = NonNullToken(item["latest_tracking_pose"])
-                        ?? NonNullToken(item["tracking_pose"])
-                        ?? NonNullToken(item["pose"]);
-                    poseRevision = ReadFirstLong(
-                        -1,
-                        item["source_pose_revision"],
-                        item["latest_tracking_pose_revision"],
-                        item["tracking_pose_revision"],
-                        poseEnvelope?["pose_revision"],
-                        poseEnvelope?["revision"]);
-                }
-                else
-                {
-                    poseEnvelope = NonNullToken(item["pose"])
-                        ?? NonNullToken(item["latest_hololens_pose"])
-                        ?? NonNullToken(item["hololens_pose"])
-                        ?? NonNullToken(item["object_hololens_current"]);
-                    poseRevision = ReadFirstLong(
-                        -1,
-                        item["source_pose_revision"],
-                        item["latest_hololens_pose_revision"],
-                        item["hololens_pose_revision"],
-                        poseEnvelope?["pose_revision"],
-                        poseEnvelope?["revision"]);
-                }
-            }
-            JToken poseToken = ResolveHistoryTrackingPoseToken(poseEnvelope);
-            long modelRevision = ReadFirstLong(
-                -1,
-                item["model_revision"],
-                item["model"]?["model_revision"],
-                item["model_instance"]?["model_revision"],
-                poseEnvelope?["model_revision"]);
-            string itemCoordinateEpoch = ReadFirstString(
-                item["coordinate_epoch"],
-                poseEnvelope?["coordinate_epoch"],
-                string.IsNullOrEmpty(coordinateEpoch) ? null : new JValue(coordinateEpoch));
-            bool compatible = item["compatible"] == null || item["compatible"].Value<bool>();
-            if (!compatible || modelRevision < 0 || poseRevision < 0 || string.IsNullOrEmpty(itemCoordinateEpoch))
-            {
-                Debug.LogWarning("[HISTORY_TRACKING] Skip incompatible/incomplete snapshot for " + displayObjectId);
-                continue;
-            }
-            if (!TryParsePoseToken(poseToken, out Vector3 position, out Quaternion rotation))
-            {
-                Debug.LogWarning("[HISTORY_TRACKING] Skip invalid pose for " + displayObjectId);
                 continue;
             }
 
@@ -2228,23 +1614,23 @@ public class ShuJuQingQiu : MonoBehaviour
                 poseSource,
                 poseRevision,
                 modeEpoch,
-                itemCoordinateEpoch,
+                coordinateEpoch,
                 pose,
                 out string rejectionReason))
             {
                 appliedCount++;
             }
-            else
+            else if (rejectionReason != "display_object_model_not_loaded"
+                && rejectionReason != "pose_revision_duplicate")
             {
-                Debug.Log("[HISTORY_TRACKING] Pose not applied for " + displayObjectId + ": " + rejectionReason);
+                Debug.Log("[HISTORY_TRACKING] Pose rejected for "
+                    + displayObjectId + ": " + rejectionReason);
             }
         }
         return appliedCount;
     }
 
-    private int QueueMissingRealtimeTrackingModels(
-        JObject responsePayload,
-        HistoryTrackingMode targetMode)
+    private int QueueMissingRealtimeTrackingModels(JObject response)
     {
         if (automaticModelDeliverySuppressed)
         {
@@ -2257,104 +1643,60 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         int queuedCount = 0;
-        foreach (JObject item in EnumerateHistoryTrackingSnapshotItems(responsePayload))
+        foreach (JObject item in EnumerateTrackingItems(response))
         {
-            JObject model = NonNullToken(item["model"]) as JObject;
+            JObject model = item["model"] as JObject;
             if (model == null)
             {
                 continue;
             }
 
-            string displayObjectId = ReadFirstString(
-                item["display_object_id"],
-                model["display_object_id"],
-                model["model_instance"]?["display_object_id"]);
-            long modelRevision = ReadFirstLong(
-                -1,
-                item["model_revision"],
-                model["model_revision"],
-                model["model_instance"]?["model_revision"]);
-            string taskId = ReadFirstString(
-                model["task_id"],
-                model["model_instance"]?["task_id"],
-                item["active_model_task_id"]);
-            if (HasLoadedRealtimeTrackingModel(manager, displayObjectId, modelRevision, taskId))
+            string displayObjectId = ReadString(item, "display_object_id");
+            long modelRevision = ReadLong(item, "model_revision");
+            string taskId = ReadString(model, "task_id");
+            string modelKey = ReadString(model, "model_key");
+            string fbxUrl = ReadString(model, "fbx_url");
+            JObject pose = item["pose"] as JObject;
+            if (!HasExactKeys(
+                    model,
+                    "model_key",
+                    "task_id",
+                    "display_object_id",
+                    "model_revision",
+                    "fbx_url",
+                    "pose",
+                    "coordinate_space")
+                || string.IsNullOrEmpty(displayObjectId)
+                || modelRevision <= 0
+                || string.IsNullOrEmpty(taskId)
+                || string.IsNullOrEmpty(modelKey)
+                || string.IsNullOrEmpty(fbxUrl)
+                || pose == null
+                || ReadString(item, "coordinate_space") != "hololens_current_local"
+                || ReadString(model, "display_object_id") != displayObjectId
+                || ReadLong(model, "model_revision") != modelRevision
+                || ReadString(model, "coordinate_space") != "hololens_current_local"
+                || !JToken.DeepEquals(model["pose"], pose))
+            {
+                Debug.LogWarning("[HISTORY_TRACKING] Reject non-canonical model payload.");
+                continue;
+            }
+            if (manager.TryGetLoadedRecordByDisplayObjectId(
+                    displayObjectId,
+                    out RuntimeModelRecord loaded)
+                && loaded != null
+                && loaded.ModelRevision == modelRevision)
             {
                 continue;
             }
 
-            JObject downloadModel = (JObject)model.DeepClone();
-            JObject modelInstance = downloadModel["model_instance"] as JObject;
-            if (modelInstance == null)
-            {
-                modelInstance = BuildSpatialQueryModelInstance(downloadModel);
-            }
-            if (modelInstance == null)
-            {
-                Debug.LogWarning("[HISTORY_TRACKING] Skip downloadable model without model_instance/fbx_url.");
-                continue;
-            }
-
-            if (!string.IsNullOrEmpty(displayObjectId))
-            {
-                downloadModel["display_object_id"] = displayObjectId;
-                modelInstance["display_object_id"] = displayObjectId;
-            }
-            if (modelRevision >= 0)
-            {
-                downloadModel["model_revision"] = modelRevision;
-                modelInstance["model_revision"] = modelRevision;
-            }
-            if (!string.IsNullOrEmpty(taskId))
-            {
-                downloadModel["task_id"] = taskId;
-                modelInstance["task_id"] = taskId;
-            }
-            if (string.IsNullOrEmpty(modelInstance["model_key"]?.ToString()))
-            {
-                modelInstance["model_key"] = !string.IsNullOrEmpty(taskId)
-                    ? taskId
-                    : displayObjectId + "_revision_" + modelRevision.ToString(CultureInfo.InvariantCulture);
-            }
-            if (string.IsNullOrEmpty(modelInstance["fbx_url"]?.ToString())
-                && !string.IsNullOrEmpty(downloadModel["fbx_url"]?.ToString()))
-            {
-                modelInstance["fbx_url"] = downloadModel["fbx_url"].DeepClone();
-            }
-
-            JToken poseEnvelope = ResolveHistoryTrackingPoseEnvelope(
-                item,
-                targetMode == HistoryTrackingMode.History);
-            if (poseEnvelope == null && targetMode == HistoryTrackingMode.Live)
-            {
-                poseEnvelope = NonNullToken(item["pose"])
-                    ?? NonNullToken(item["latest_hololens_pose"]);
-            }
-            JToken poseToken = ResolveHistoryTrackingPoseToken(poseEnvelope);
-            if (poseToken != null)
-            {
-                downloadModel["object_hololens_current"] = poseToken.DeepClone();
-                modelInstance["object_hololens_current"] = poseToken.DeepClone();
-            }
-            JToken coordinateSpace = NonNullToken(item["coordinate_space"]);
-            if (coordinateSpace != null)
-            {
-                downloadModel["coordinate_space"] = coordinateSpace.DeepClone();
-                modelInstance["coordinate_space"] = coordinateSpace.DeepClone();
-            }
-            downloadModel["model_instance"] = modelInstance;
-
-            string downloadIdentityKey = BuildRuntimeModelDownloadIdentityKey(
-                displayObjectId,
-                modelRevision,
-                taskId,
-                modelInstance["model_key"]?.ToString());
-            if (!string.IsNullOrEmpty(downloadIdentityKey)
-                && runtimeModelDownloadsInFlight.Contains(downloadIdentityKey))
+            string identityKey = "display:" + displayObjectId
+                + ":revision:" + modelRevision.ToString(CultureInfo.InvariantCulture);
+            if (runtimeModelDownloadsInFlight.Contains(identityKey))
             {
                 continue;
             }
-            if (DownloadRuntimeModelFromSpatialQueryModel(downloadModel, downloadIdentityKey))
+            if (QueueRuntimeModelDownload(model, false, identityKey))
             {
                 queuedCount++;
             }
@@ -2362,87 +1704,34 @@ public class ShuJuQingQiu : MonoBehaviour
         return queuedCount;
     }
 
-    private int RegisterRealtimeTrackingEvidence(JObject responsePayload)
+    private int RegisterRealtimeTrackingEvidence(JObject response)
     {
+        ObjectEvidenceDisplay display = null;
         int registeredCount = 0;
-        HistoryPlacementRestorationDisplay evidenceDisplay = null;
-        foreach (JObject item in EnumerateHistoryTrackingSnapshotItems(responsePayload))
+        foreach (JObject item in EnumerateTrackingItems(response))
         {
-            JObject latestBody = NonNullToken(item["latest_body"]) as JObject
-                ?? NonNullToken(item["body_evidence"]) as JObject
-                ?? NonNullToken(item["body"]) as JObject;
-            JObject evidence = (JObject)item.DeepClone();
-            if (latestBody != null)
-            {
-                foreach (JProperty property in latestBody.Properties())
-                {
-                    evidence[property.Name] = property.Value.DeepClone();
-                }
-            }
-
-            JObject bodyUrls = NonNullToken(evidence["sam3d_body_mesh_urls"]) as JObject;
-            if (bodyUrls == null)
-            {
-                string flatBodyUrl = ReadFirstString(
-                    evidence["selected_person_fbx_url"],
-                    latestBody?["selected_person_fbx_url"]);
-                if (!string.IsNullOrEmpty(flatBodyUrl))
-                {
-                    bodyUrls = new JObject
-                    {
-                        ["selected_person_fbx_url"] = flatBodyUrl,
-                    };
-                    evidence["sam3d_body_mesh_urls"] = bodyUrls;
-                }
-            }
-            if (string.IsNullOrEmpty(bodyUrls?["selected_person_fbx_url"]?.ToString()))
+            JObject bodyEvidence = item["body_evidence"] as JObject;
+            if (bodyEvidence == null)
             {
                 continue;
             }
 
-            string displayObjectId = ReadFirstString(
-                evidence["display_object_id"],
-                item["display_object_id"]);
-            string bodyTaskId = ReadFirstString(
-                evidence["task_id"],
-                item["latest_body_task_id"],
-                item["active_model_task_id"]);
-            evidence["task_id"] = bodyTaskId;
-            if (!string.IsNullOrEmpty(displayObjectId))
+            string displayObjectId = ReadString(item, "display_object_id");
+            long bodyRevision = ReadLong(item, "body_revision");
+            if (string.IsNullOrEmpty(displayObjectId)
+                || bodyRevision <= 0
+                || ReadString(bodyEvidence, "display_object_id") != displayObjectId
+                || ReadLong(bodyEvidence, "body_revision") != bodyRevision)
             {
-                evidence["display_object_id"] = displayObjectId;
-            }
-            if (evidence["body_revision"] == null && item["latest_body_revision"] != null)
-            {
-                evidence["body_revision"] = item["latest_body_revision"].DeepClone();
+                Debug.LogWarning("[ObjectEvidence] Reject non-canonical tracking evidence.");
+                continue;
             }
 
-            JObject modelInstance = NonNullToken(evidence["model_instance"]) as JObject
-                ?? NonNullToken(item["model"]?["model_instance"]) as JObject;
-            modelInstance = modelInstance != null
-                ? (JObject)modelInstance.DeepClone()
-                : new JObject();
-            if (string.IsNullOrEmpty(modelInstance["task_id"]?.ToString()))
+            if (display == null)
             {
-                modelInstance["task_id"] = bodyTaskId;
+                display = ObjectEvidenceDisplay.Instance;
             }
-            if (string.IsNullOrEmpty(modelInstance["model_key"]?.ToString()))
-            {
-                modelInstance["model_key"] = !string.IsNullOrEmpty(bodyTaskId)
-                    ? bodyTaskId
-                    : displayObjectId;
-            }
-            if (!string.IsNullOrEmpty(displayObjectId))
-            {
-                modelInstance["display_object_id"] = displayObjectId;
-            }
-            evidence["model_instance"] = modelInstance;
-
-            if (evidenceDisplay == null)
-            {
-                evidenceDisplay = HistoryPlacementRestorationDisplay.Instance;
-            }
-            if (evidenceDisplay != null && evidenceDisplay.RegisterEvidenceForModel(evidence))
+            if (display != null && display.RegisterEvidence(bodyEvidence))
             {
                 registeredCount++;
             }
@@ -2450,434 +1739,60 @@ public class ShuJuQingQiu : MonoBehaviour
         return registeredCount;
     }
 
-    private bool HasLoadedRealtimeTrackingModel(
-        RuntimeModelManager manager,
-        string displayObjectId,
-        long modelRevision,
-        string taskId)
+    private IEnumerable<JObject> EnumerateTrackingItems(JObject response)
     {
-        if (manager == null)
-        {
-            return false;
-        }
-        if (!string.IsNullOrEmpty(displayObjectId)
-            && manager.TryGetLoadedRecordByDisplayObjectId(displayObjectId, out RuntimeModelRecord displayRecord))
-        {
-            if (modelRevision < 0 || displayRecord.ModelRevision == modelRevision)
-            {
-                return true;
-            }
-            if (displayRecord.ModelRevision < 0
-                && !string.IsNullOrEmpty(taskId)
-                && string.Equals(displayRecord.TaskId, taskId, StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-        if (!string.IsNullOrEmpty(taskId)
-            && manager.TryGetLoadedRecord(taskId, out RuntimeModelRecord taskRecord))
-        {
-            return modelRevision < 0
-                || taskRecord.ModelRevision < 0
-                || taskRecord.ModelRevision == modelRevision;
-        }
-        return false;
-    }
-
-    private string BuildRuntimeModelDownloadIdentityKey(RuntimeModelInstance instance)
-    {
-        if (instance == null)
-        {
-            return "";
-        }
-        if (instance.IsEvidenceOverlay)
-        {
-            string evidenceIdentity = !string.IsNullOrEmpty(instance.ModelKey)
-                ? instance.ModelKey
-                : instance.TaskId;
-            return string.IsNullOrEmpty(evidenceIdentity)
-                ? ""
-                : "evidence:" + evidenceIdentity
-                    + ":revision:" + instance.ModelRevision.ToString(CultureInfo.InvariantCulture)
-                    + ":url:" + (instance.FbxUrl ?? "");
-        }
-        return BuildRuntimeModelDownloadIdentityKey(
-            instance.DisplayObjectId,
-            instance.ModelRevision,
-            instance.TaskId,
-            instance.ModelKey);
-    }
-
-    private string BuildRuntimeModelDownloadIdentityKey(
-        string displayObjectId,
-        long modelRevision,
-        string taskId,
-        string modelKey)
-    {
-        if (!string.IsNullOrEmpty(displayObjectId))
-        {
-            return "display:" + displayObjectId + ":revision:" + modelRevision.ToString(CultureInfo.InvariantCulture);
-        }
-        if (!string.IsNullOrEmpty(taskId))
-        {
-            return "task:" + taskId;
-        }
-        return string.IsNullOrEmpty(modelKey) ? "" : "model:" + modelKey;
-    }
-
-    private IEnumerable<JObject> EnumerateHistoryTrackingSnapshotItems(JObject responsePayload)
-    {
-        if (responsePayload == null)
+        JArray items = response != null ? response["items"] as JArray : null;
+        if (items == null)
         {
             yield break;
         }
-        JObject snapshot = responsePayload["snapshot"] as JObject;
-        JToken container = NonNullToken(responsePayload["objects"])
-            ?? NonNullToken(responsePayload["items"])
-            ?? NonNullToken(responsePayload["snapshots"])
-            ?? NonNullToken(responsePayload["results"])
-            ?? NonNullToken(snapshot?["objects"])
-            ?? NonNullToken(snapshot?["items"]);
-        JArray array = container as JArray;
-        if (array != null)
+        foreach (JToken token in items)
         {
-            foreach (JToken token in array)
+            if (token is JObject item)
             {
-                JObject item = token as JObject;
-                if (item != null)
-                {
-                    yield return item;
-                }
+                yield return item;
             }
-            yield break;
         }
-
-        JObject objectMap = container as JObject;
-        if (objectMap != null)
-        {
-            foreach (JProperty property in objectMap.Properties())
-            {
-                JObject item = property.Value as JObject;
-                if (item == null)
-                {
-                    continue;
-                }
-                JObject resolved = (JObject)item.DeepClone();
-                if (resolved["display_object_id"] == null)
-                {
-                    resolved["display_object_id"] = property.Name;
-                }
-                yield return resolved;
-            }
-            yield break;
-        }
-
-        if (responsePayload["display_object_id"] != null)
-        {
-            yield return responsePayload;
-        }
-    }
-
-    private JToken ResolveHistoryTrackingPoseEnvelope(JObject item, bool useHistoryPose)
-    {
-        if (item == null)
-        {
-            return null;
-        }
-        return useHistoryPose
-            ? NonNullToken(item["latest_hololens_pose"])
-                ?? NonNullToken(item["hololens_pose"])
-                ?? NonNullToken(item["object_hololens_current"])
-            : NonNullToken(item["latest_tracking_pose"])
-                ?? NonNullToken(item["tracking_pose"]);
-    }
-
-    private JToken ResolveHistoryTrackingPoseToken(JToken poseEnvelope)
-    {
-        return NonNullToken(poseEnvelope?["object_hololens_current"])
-            ?? NonNullToken(poseEnvelope?["pose_hololens"])
-            ?? NonNullToken(poseEnvelope?["pose"])
-            ?? NonNullToken(poseEnvelope);
-    }
-
-    private string NormalizeHistoryTrackingPoseSource(string poseSource)
-    {
-        string normalized = (poseSource ?? "").Trim().ToLowerInvariant();
-        if (normalized == "tracking" || normalized == "realtime" || normalized == "shigure")
-        {
-            return "tracking";
-        }
-        if (normalized == "hololens" || normalized == "hololens_confirmed" || normalized == "history")
-        {
-            return "hololens";
-        }
-        return "";
     }
 
     private bool ServerModeMatchesTarget(string serverMode, HistoryTrackingMode targetMode)
     {
-        string normalized = (serverMode ?? "").Trim().ToLowerInvariant();
-        if (targetMode == HistoryTrackingMode.History)
-        {
-            return normalized == "history" || normalized == "paused" || normalized == "history_paused";
-        }
-        return normalized == "live" || normalized == "tracking" || normalized == "realtime";
+        return targetMode == HistoryTrackingMode.History
+            ? serverMode == "history"
+            : serverMode == "live";
     }
 
-    private long ReadFirstLong(long fallback, params JToken[] tokens)
+    private static string ReadString(JObject payload, string key)
     {
-        if (tokens != null)
-        {
-            foreach (JToken token in tokens)
-            {
-                JToken value = NonNullToken(token);
-                if (value == null)
-                {
-                    continue;
-                }
-                if (value.Type == JTokenType.Integer)
-                {
-                    return value.Value<long>();
-                }
-                if (long.TryParse(value.ToString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long parsed))
-                {
-                    return parsed;
-                }
-            }
-        }
-        return fallback;
+        JToken token = payload != null ? payload[key] : null;
+        return token != null && token.Type == JTokenType.String
+            ? token.Value<string>().Trim()
+            : "";
     }
 
-    private int QueueHistoryPlacementRestorationModelsForDownload(JObject jo)
+    private static long ReadLong(JObject payload, string key)
     {
-        JArray results = jo != null ? jo["results"] as JArray : null;
-        if (results == null || results.Count == 0)
-        {
-            return 0;
-        }
-
-        RuntimeModelManager manager = RuntimeModelManager.Instance;
-        int queuedCount = 0;
-        foreach (JToken token in results)
-        {
-            JObject result = token as JObject;
-            if (result == null || result["success"] == null || !result["success"].Value<bool>())
-            {
-                continue;
-            }
-
-            JObject modelInstance = result["model_instance"] as JObject;
-            if (modelInstance == null)
-            {
-                continue;
-            }
-
-            if (!ShouldAutoDownloadHistoryPlacementModel(result))
-            {
-                HistoryPlacementRestorationDisplay evidenceDisplayOnly = HistoryPlacementRestorationDisplay.Instance;
-                if (evidenceDisplayOnly != null)
-                {
-                    evidenceDisplayOnly.RegisterEvidenceForModel(result);
-                }
-                continue;
-            }
-
-            string taskId = modelInstance["task_id"]?.ToString() ?? result["task_id"]?.ToString() ?? "";
-            string modelKey = modelInstance["model_key"]?.ToString() ?? "";
-            bool alreadyLoaded = manager != null
-                && ((!string.IsNullOrEmpty(taskId) && manager.HasModel(taskId))
-                    || (!string.IsNullOrEmpty(modelKey) && manager.HasModel(modelKey)));
-            if (alreadyLoaded)
-            {
-                continue;
-            }
-
-            JObject downloadModel = new JObject
-            {
-                ["task_id"] = taskId,
-                ["model_instance"] = modelInstance.DeepClone(),
-            };
-            foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space" })
-            {
-                JToken extra = NonNullToken(result[key]);
-                if (extra != null)
-                {
-                    downloadModel[key] = extra.DeepClone();
-                }
-            }
-
-            HistoryPlacementRestorationDisplay evidenceDisplay = HistoryPlacementRestorationDisplay.Instance;
-            if (evidenceDisplay != null)
-            {
-                evidenceDisplay.RegisterEvidenceForModel(result);
-            }
-
-            if (DownloadRuntimeModelFromSpatialQueryModel(downloadModel))
-            {
-                queuedCount++;
-            }
-        }
-        return queuedCount;
+        JToken token = payload != null ? payload[key] : null;
+        return token != null && token.Type == JTokenType.Integer
+            ? token.Value<long>()
+            : -1;
     }
 
-
-    private bool ShouldAutoDownloadHistoryPlacementModel(JObject result)
+    private static bool HasExactKeys(JObject payload, params string[] expectedKeys)
     {
-        if (result == null)
+        if (payload == null || payload.Count != expectedKeys.Length)
         {
             return false;
         }
-
-        JObject history = result["history_placement_restoration"] as JObject;
-        JObject display = history != null ? history["display"] as JObject : result["display"] as JObject;
-        bool showModel = display != null && display["show_model"] != null && display["show_model"].Value<bool>();
-        if (!showModel)
+        HashSet<string> expected = new HashSet<string>(expectedKeys, StringComparer.Ordinal);
+        foreach (JProperty property in payload.Properties())
         {
-            return false;
-        }
-
-        string status = result["status"]?.ToString() ?? history?["status"]?.ToString() ?? "";
-        string normalizedStatus = status.ToUpperInvariant();
-        if (normalizedStatus == "MOVED" || normalizedStatus == "ORIGINAL" || normalizedStatus == "STABLE")
-        {
-            return false;
-        }
-
-        string takenStatus = result["taken_object_detection"]?["status"]?.ToString() ?? "";
-        if (normalizedStatus == "MISSING" && string.Equals(takenStatus, "NOT_TAKEN", StringComparison.OrdinalIgnoreCase))
-        {
-            return false;
-        }
-
-        return true;
-    }
-
-    private void OnHistoryPlacementRestorationFinished(HTTPRequest request, HTTPResponse response)
-    {
-        LogHttpRequestEnd("history-placement-restoration/start", request, response);
-        if (request == historyPlacementRestorationRequest)
-        {
-            historyPlacementRestorationRequest = null;
-        }
-        if (!historyPlacementRestorationActive)
-        {
-            return;
-        }
-        if (response == null || !response.IsSuccess)
-        {
-            historyPlacementRestorationActive = false;
-            string statusCode = response != null ? response.StatusCode.ToString(CultureInfo.InvariantCulture) : "no_response";
-            string message = response != null ? response.Message : "No response from server";
-            Debug.LogError("[HistoryPlacementRestoration] request failed: " + statusCode + " - " + message);
-            ShowFrontMessage("history_placement_restoration_ERR_request_failed");
-            return;
-        }
-
-        JObject jo;
-        try
-        {
-            jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
-        }
-        catch (Exception exc)
-        {
-            historyPlacementRestorationActive = false;
-            Debug.LogError("[HistoryPlacementRestoration] invalid JSON response: " + exc.Message);
-            ShowFrontMessage("history_placement_restoration_ERR_server");
-            return;
-        }
-
-        bool success = jo["success"] == null || jo["success"].Value<bool>();
-        if (!success)
-        {
-            historyPlacementRestorationActive = false;
-            Debug.LogWarning("[HistoryPlacementRestoration] server returned success=false: " + response.DataAsText);
-            ShowFrontMessage("history_placement_restoration_ERR_server");
-            return;
-        }
-
-        HistoryPlacementRestorationDisplay display = HistoryPlacementRestorationDisplay.Instance;
-        int displayCount = display != null ? display.ShowFromServerResponse(jo) : 0;
-        int queuedDownloadCount = QueueHistoryPlacementRestorationModelsForDownload(jo);
-        if (displayCount <= 0 && queuedDownloadCount <= 0)
-        {
-            historyPlacementRestorationActive = false;
-        }
-        int count = jo["count"] != null ? jo["count"].Value<int>() : displayCount;
-        Debug.Log("[HistoryPlacementRestoration] refreshed " + count.ToString(CultureInfo.InvariantCulture)
-            + " model(s), displayed " + displayCount.ToString(CultureInfo.InvariantCulture)
-            + ", queued downloads " + queuedDownloadCount.ToString(CultureInfo.InvariantCulture)
-            + ": " + response.DataAsText);
-        if (displayCount > 0)
-        {
-            ShowFrontMessage("history_placement_restoration_ready_" + displayCount.ToString(CultureInfo.InvariantCulture));
-        }
-        else if (queuedDownloadCount > 0)
-        {
-            ShowFrontMessage("history_placement_restoration_downloading_model");
-        }
-        else
-        {
-            ShowFrontMessage("history_placement_restoration_no_result");
-        }
-    }
-
-    private void QueueLatestCompletedModelsForDownload()
-    {
-        string url =
-            "http://10.40.1.122:7355/latest-completed-task-ids?require_aruco_coordinate_synced=1"
-            + "&limit="
-            + COMPLETED_MODEL_HISTORY_LIMIT.ToString(CultureInfo.InvariantCulture);
-        var request = new HTTPRequest(new Uri(url), HTTPMethods.Get, OnLatestCompletedTaskIds);
-        request.AddHeader("Content-Type", "application/json;charset=UTF-8");
-        LogHttpRequestStart("latest-completed-task-ids", request);
-        request.Send();
-        ShowFrontMessage("latest_completed_queue_loading");
-    }
-
-    private void OnLatestCompletedTaskIds(HTTPRequest request, HTTPResponse response)
-    {
-        LogHttpRequestEnd("latest-completed-task-ids", request, response);
-        if (response == null || !response.IsSuccess)
-        {
-            string statusCode = response != null ? response.StatusCode.ToString(CultureInfo.InvariantCulture) : "no_response";
-            string message = response != null ? response.Message : "No response from server";
-            Debug.LogError("[LATEST_QUEUE] latest task ids failed: " + statusCode + " - " + message);
-            ShowFrontMessage("latest_completed_ERR_request_failed");
-            return;
-        }
-
-        JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
-        bool success = jo["success"] == null || jo["success"].Value<bool>();
-        if (!success)
-        {
-            Debug.LogWarning("[LATEST_QUEUE] latest task ids returned success=false: " + response.DataAsText);
-            ShowFrontMessage("latest_completed_ERR_request_failed");
-            return;
-        }
-
-        JArray taskIds = jo["task_ids"] as JArray;
-        if (taskIds == null || taskIds.Count == 0)
-        {
-            ShowFrontMessage("latest_completed_ERR_no_model");
-            return;
-        }
-
-        int queuedCount = 0;
-        foreach (JToken token in taskIds)
-        {
-            string latestTaskId = token.Type == JTokenType.Object
-                ? token["task_id"]?.ToString()
-                : token.ToString();
-            if (string.IsNullOrEmpty(latestTaskId))
+            if (!expected.Remove(property.Name))
             {
-                continue;
+                return false;
             }
-
-            EnqueueAsyncUpdateTask(latestTaskId, TASK_PURPOSE_OBJECT_RECONSTRUCTION);
-            queuedCount++;
         }
-
-        ShowFrontMessage("latest_completed_queued_" + queuedCount.ToString(CultureInfo.InvariantCulture));
+        return expected.Count == 0;
     }
 
     [Header("Debug JSON")]
@@ -2940,7 +1855,11 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         value = Vector3.zero;
         JArray arr = token as JArray;
-        if (arr == null || arr.Count < 3)
+        if (arr == null
+            || arr.Count != 3
+            || !IsJsonNumber(arr[0])
+            || !IsJsonNumber(arr[1])
+            || !IsJsonNumber(arr[2]))
         {
             return false;
         }
@@ -2957,7 +1876,12 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         value = Quaternion.identity;
         JArray arr = token as JArray;
-        if (arr == null || arr.Count < 4)
+        if (arr == null
+            || arr.Count != 4
+            || !IsJsonNumber(arr[0])
+            || !IsJsonNumber(arr[1])
+            || !IsJsonNumber(arr[2])
+            || !IsJsonNumber(arr[3]))
         {
             return false;
         }
@@ -2985,6 +1909,12 @@ public class ShuJuQingQiu : MonoBehaviour
         return TryReadVector3(positionToken, out position) && TryReadQuaternion(rotationToken, out rotation);
     }
 
+    private static bool IsJsonNumber(JToken token)
+    {
+        return token != null
+            && (token.Type == JTokenType.Integer || token.Type == JTokenType.Float);
+    }
+
     bool TryParseSpatialBoxToken(JToken boxToken, out RuntimeSpatialBoxData spatialBox)
     {
         spatialBox = null;
@@ -2993,8 +1923,13 @@ public class ShuJuQingQiu : MonoBehaviour
             return false;
         }
 
-        string status = boxToken["status"]?.ToString() ?? "";
-        string coordinateSpace = boxToken["coordinate_space"]?.ToString() ?? "unity_world";
+        JObject box = boxToken as JObject;
+        if (box == null)
+        {
+            return false;
+        }
+        string status = ReadString(box, "status");
+        string coordinateSpace = ReadString(box, "coordinate_space");
         if (status != "ready" || coordinateSpace != "unity_world")
         {
             return false;
@@ -3002,24 +1937,10 @@ public class ShuJuQingQiu : MonoBehaviour
 
         Vector3 minWorld;
         Vector3 maxWorld;
-        if (!TryReadVector3(boxToken["aabb_min_world"], out minWorld)
-            || !TryReadVector3(boxToken["aabb_max_world"], out maxWorld))
+        if (!TryReadVector3(box["aabb_min_world"], out minWorld)
+            || !TryReadVector3(box["aabb_max_world"], out maxWorld))
         {
-            Vector3 centerWorld;
-            Vector3 sizeWorld;
-            if (!TryReadVector3(boxToken["center_world"], out centerWorld)
-                || !TryReadVector3(boxToken["size_world"], out sizeWorld))
-            {
-                return false;
-            }
-
-            Vector3 half = new Vector3(
-                Mathf.Abs(sizeWorld.x) * 0.5f,
-                Mathf.Abs(sizeWorld.y) * 0.5f,
-                Mathf.Abs(sizeWorld.z) * 0.5f
-            );
-            minWorld = centerWorld - half;
-            maxWorld = centerWorld + half;
+            return false;
         }
 
         Vector3 sortedMin = new Vector3(
@@ -3044,137 +1965,80 @@ public class ShuJuQingQiu : MonoBehaviour
         return true;
     }
 
-    JToken NonNullToken(JToken token)
+    bool IsArucoDetected(JObject response)
     {
-        return token == null || token.Type == JTokenType.Null ? null : token;
+        JToken detected = response != null ? response["aruco_detected"] : null;
+        return detected != null
+            && detected.Type == JTokenType.Boolean
+            && detected.Value<bool>();
     }
 
-    string ReadFirstString(params JToken[] tokens)
-    {
-        if (tokens == null)
-        {
-            return "";
-        }
-
-        foreach (JToken token in tokens)
-        {
-            JToken value = NonNullToken(token);
-            if (value == null)
-            {
-                continue;
-            }
-
-            string textValue = value.ToString();
-            if (!string.IsNullOrEmpty(textValue))
-            {
-                return textValue;
-            }
-        }
-
-        return "";
-    }
-
-    bool ResponseReportsArucoDetected(JObject jo)
-    {
-        if (jo == null)
-        {
-            return false;
-        }
-        JToken detectedToken = NonNullToken(jo["aruco_detected"]);
-        if (detectedToken != null && detectedToken.Type == JTokenType.Boolean)
-        {
-            return detectedToken.Value<bool>();
-        }
-        string status = jo["status"]?.ToString() ?? "";
-        return status == "aruco_completed" || status == "aruco_reference";
-    }
-
-    bool TryResolveObjectHololensPose(JObject jo, out Vector3 position, out Quaternion rotation)
-    {
-        position = Vector3.zero;
-        rotation = Quaternion.identity;
-        if (jo == null)
-        {
-            return false;
-        }
-
-        JToken modelInstanceToken = NonNullToken(jo["model_instance"]);
-        JToken objectHololensToken = NonNullToken(jo["object_hololens_current"])
-            ?? NonNullToken(modelInstanceToken?["object_hololens_current"]);
-        return TryParsePoseToken(objectHololensToken, out position, out rotation);
-    }
-
-    bool TryBuildRuntimeModelInstance(JObject jo, out RuntimeModelInstance instance, out string errorMessage)
+    bool TryBuildRuntimeModelInstance(
+        JObject model,
+        bool isEvidenceOverlay,
+        out RuntimeModelInstance instance,
+        out string errorMessage)
     {
         instance = null;
         errorMessage = "";
-
-        JObject modelJ = jo["model_instance"] as JObject;
-        if (modelJ == null)
+        if (model == null)
         {
             errorMessage = "download_ERR_missing_model_instance";
             return false;
         }
 
-        string modelKey = modelJ["model_key"]?.ToString();
-        string fbxUrl = modelJ["fbx_url"]?.ToString();
-        if (string.IsNullOrEmpty(modelKey))
+        string modelKey = ReadString(model, "model_key");
+        string taskId = ReadString(model, "task_id");
+        string displayObjectId = ReadString(model, "display_object_id");
+        string fbxUrl = ReadString(model, "fbx_url");
+        long modelRevision = ReadLong(model, "model_revision");
+        string coordinateSpace = ReadString(model, "coordinate_space");
+        JObject poseObject = model["pose"] as JObject;
+        if (!HasExactKeys(
+                model,
+                "model_key",
+                "task_id",
+                "display_object_id",
+                "model_revision",
+                "fbx_url",
+                "pose",
+                "coordinate_space")
+            || string.IsNullOrEmpty(modelKey)
+            || string.IsNullOrEmpty(taskId)
+            || string.IsNullOrEmpty(displayObjectId)
+            || string.IsNullOrEmpty(fbxUrl)
+            || modelRevision <= 0
+            || coordinateSpace != "hololens_current_local"
+            || !TryParsePoseToken(poseObject, out Vector3 position, out Quaternion rotation))
         {
-            errorMessage = "download_ERR_missing_model_key";
+            errorMessage = "download_ERR_invalid_model_contract";
             return false;
         }
-        if (string.IsNullOrEmpty(fbxUrl))
-        {
-            errorMessage = "download_ERR_missing_fbx_url";
-            return false;
-        }
-
-        RuntimeModelPoseData poseData = new RuntimeModelPoseData();
-        JToken hololensPoseToken = NonNullToken(modelJ["object_hololens_current"])
-            ?? NonNullToken(jo["object_hololens_current"]);
-        if (!TryParsePoseToken(hololensPoseToken, out Vector3 hololensPosition, out Quaternion hololensRotation))
-        {
-            errorMessage = "download_ERR_missing_object_pose";
-            return false;
-        }
-        poseData.HasHololensPose = true;
-        poseData.HololensPosition = hololensPosition;
-        poseData.HololensRotation = hololensRotation;
 
         instance = new RuntimeModelInstance
         {
             ModelKey = modelKey,
-            TaskId = modelJ["task_id"]?.ToString() ?? jo["task_id"]?.ToString() ?? "",
+            TaskId = taskId,
             FbxUrl = fbxUrl,
-            DisplayObjectId = ReadFirstString(
-                modelJ["display_object_id"],
-                modelJ["display_identity"]?["display_object_id"],
-                jo["display_object_id"],
-                jo["display_identity"]?["display_object_id"]
-            ),
-            CaptureInstanceId = ReadFirstString(
-                modelJ["capture_instance_id"],
-                modelJ["display_identity"]?["capture_instance_id"],
-                jo["capture_instance_id"],
-                jo["display_identity"]?["capture_instance_id"]
-            ),
-            ModelRevision = ReadFirstLong(
-                -1,
-                modelJ["model_revision"],
-                jo["model_revision"],
-                jo["model_generation"]?["model_revision"]),
-            IsEvidenceOverlay = modelJ["is_evidence_overlay"] != null && modelJ["is_evidence_overlay"].Value<bool>(),
-            Pose = poseData,
+            DisplayObjectId = displayObjectId,
+            ModelRevision = modelRevision,
+            IsEvidenceOverlay = isEvidenceOverlay,
+            Pose = new RuntimeModelPoseData
+            {
+                HasHololensPose = true,
+                HololensPosition = position,
+                HololensRotation = rotation,
+            },
         };
         return true;
     }
 
-    void ApplyResponsePoses(JObject jo)
+    void ApplyResponsePoses(JObject response, RuntimeModelInstance instance)
     {
-        if (TryResolveObjectHololensPose(jo, out Vector3 objectPosition, out Quaternion objectRotation))
+        if (instance != null && instance.Pose != null && instance.Pose.HasHololensPose)
         {
-            serverObjectPosition = objectPosition;
-            serverObjectRotation = objectRotation;
+            serverObjectPosition = instance.Pose.HololensPosition;
+            serverObjectRotation = instance.Pose.HololensRotation;
             hasServerPose = true;
         }
         else
@@ -3182,8 +2046,8 @@ public class ShuJuQingQiu : MonoBehaviour
             hasServerPose = false;
         }
 
-        JToken pvCameraPoseToken = jo["debug"]?["pose_transform_stages"]?["pose_stage"]?["pv_camera_world"]?["pose"];
-        if (TryParsePoseToken(pvCameraPoseToken, out Vector3 cameraPosition, out Quaternion cameraRotation))
+        JToken cameraPose = response?["debug"]?["pose_transform_stages"]?["pose_stage"]?["pv_camera_world"]?["pose"];
+        if (TryParsePoseToken(cameraPose, out Vector3 cameraPosition, out Quaternion cameraRotation))
         {
             serverCameraPosition = cameraPosition;
             serverCameraRotation = cameraRotation;
@@ -3195,163 +2059,65 @@ public class ShuJuQingQiu : MonoBehaviour
         }
     }
 
-    bool ApplyCompletedTaskResponse(JObject jo, string sourceTag)
+    bool ApplyCompletedTaskResponse(JObject response, string sourceTag)
     {
-        if (!TryBuildRuntimeModelInstance(jo, out RuntimeModelInstance modelInstance, out string errorMessage))
+        JObject model = response != null ? response["model_instance"] as JObject : null;
+        if (!TryBuildRuntimeModelInstance(
+                model,
+                false,
+                out RuntimeModelInstance modelInstance,
+                out string errorMessage))
         {
-            Debug.LogWarning("[" + sourceTag + "] completed response invalid model_instance: " + errorMessage);
+            Debug.LogWarning("[" + sourceTag + "] invalid canonical model_instance: " + errorMessage);
             ShowFrontMessage(errorMessage);
             return false;
         }
 
         pendingModelInstance = modelInstance;
-        ApplyDebugInfo(jo);
-        ApplyResponsePoses(jo);
-
+        ApplyDebugInfo(response);
+        ApplyResponsePoses(response, modelInstance);
         return true;
     }
 
-    JObject BuildSpatialQueryModelInstance(JObject modelJ)
+    internal bool QueueRuntimeModelDownload(
+        JObject model,
+        bool isEvidenceOverlay,
+        string explicitDownloadIdentityKey = "")
     {
-        if (modelJ == null)
+        if (!TryBuildRuntimeModelInstance(
+                model,
+                isEvidenceOverlay,
+                out RuntimeModelInstance instance,
+                out string errorMessage))
         {
-            return null;
-        }
-
-        string taskId = modelJ["task_id"]?.ToString() ?? "";
-        string fbxUrl = modelJ["fbx_url"]?.ToString();
-        if (string.IsNullOrEmpty(fbxUrl))
-        {
-            fbxUrl = modelJ["download_urls"]?["fbx"]?.ToString();
-        }
-        if (string.IsNullOrEmpty(fbxUrl))
-        {
-            return null;
-        }
-
-        string modelKey = modelJ["model_key"]?.ToString();
-        if (string.IsNullOrEmpty(modelKey))
-        {
-            modelKey = string.IsNullOrEmpty(taskId) ? fbxUrl : taskId;
-        }
-
-        JObject modelInstance = new JObject
-        {
-            ["model_key"] = modelKey,
-            ["task_id"] = taskId,
-            ["fbx_url"] = fbxUrl,
-        };
-        JToken modelRevision = NonNullToken(modelJ["model_revision"]);
-        if (modelRevision != null)
-        {
-            modelInstance["model_revision"] = modelRevision.DeepClone();
-        }
-        if (modelJ["is_evidence_overlay"] != null)
-        {
-            modelInstance["is_evidence_overlay"] = modelJ["is_evidence_overlay"].DeepClone();
-        }
-
-        foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space" })
-        {
-            JToken value = NonNullToken(modelJ[key]);
-            if (value != null)
-            {
-                modelInstance[key] = value.DeepClone();
-            }
-        }
-        foreach (string key in new[] { "display_identity", "display_object_id", "capture_instance_id" })
-        {
-            JToken value = NonNullToken(modelJ[key]);
-            if (value != null)
-            {
-                modelInstance[key] = value.DeepClone();
-            }
-        }
-
-        return modelInstance;
-    }
-
-    public bool DownloadRuntimeModelFromSpatialQueryModel(JObject modelJ)
-    {
-        return DownloadRuntimeModelFromSpatialQueryModel(modelJ, "", true);
-    }
-
-    private bool DownloadRuntimeModelFromSpatialQueryModel(
-        JObject modelJ,
-        string downloadIdentityKey)
-    {
-        return DownloadRuntimeModelFromSpatialQueryModel(modelJ, downloadIdentityKey, false);
-    }
-
-    private bool DownloadRuntimeModelFromSpatialQueryModel(
-        JObject modelJ,
-        string downloadIdentityKey,
-        bool resumeAsyncTaskQueueWhenComplete)
-    {
-        if (modelJ == null)
-        {
-            ShowFrontMessage("spatial_query_ERR_missing_model");
+            ShowFrontMessage(errorMessage);
             return false;
         }
 
-        JObject wrapper = new JObject
-        {
-            ["status"] = "completed",
-            ["task_id"] = modelJ["task_id"]?.ToString() ?? "",
-        };
-
-        JToken modelInstanceToken = NonNullToken(modelJ["model_instance"]);
-        JObject modelInstance = modelInstanceToken as JObject ?? BuildSpatialQueryModelInstance(modelJ);
-        if (modelInstance == null)
-        {
-            ShowFrontMessage("download_ERR_missing_model_instance");
-            return false;
-        }
-        wrapper["model_instance"] = modelInstance.DeepClone();
-
-        foreach (string key in new[] { "object_hololens_current", "object_hololens_original", "coordinate_space" })
-        {
-            JToken value = NonNullToken(modelJ[key]);
-            if (value != null)
-            {
-                wrapper[key] = value.DeepClone();
-                if (modelInstance[key] == null)
-                {
-                    modelInstance[key] = value.DeepClone();
-                }
-            }
-        }
-        foreach (string key in new[] { "display_identity", "display_object_id", "capture_instance_id" })
-        {
-            JToken value = NonNullToken(modelJ[key]);
-            if (value != null)
-            {
-                wrapper[key] = value.DeepClone();
-                if (modelInstance[key] == null)
-                {
-                    modelInstance[key] = value.DeepClone();
-                }
-            }
-        }
-        wrapper["model_instance"] = modelInstance.DeepClone();
-
+        pendingModelInstance = instance;
         pendingModelShouldPlaceDebugMarkers = false;
         pendingModelDisplayGeneration = localModelDisplayGeneration;
-        if (!ApplyCompletedTaskResponse(wrapper, "SPATIAL"))
-        {
-            return false;
-        }
-
-        task_id = wrapper["task_id"]?.ToString();
-        if (TryQueueCachedRuntimeModelLoad(
-            pendingModelInstance,
-            downloadIdentityKey,
-            resumeAsyncTaskQueueWhenComplete))
+        task_id = instance.TaskId;
+        if (TryQueueCachedRuntimeModelLoad(instance, explicitDownloadIdentityKey, false))
         {
             return true;
         }
-        DownloadPendingRuntimeModel(resumeAsyncTaskQueueWhenComplete, downloadIdentityKey);
+        DownloadPendingRuntimeModel(false, explicitDownloadIdentityKey);
         return true;
+    }
+
+    private string BuildRuntimeModelDownloadIdentityKey(RuntimeModelInstance instance)
+    {
+        if (instance == null
+            || string.IsNullOrEmpty(instance.DisplayObjectId)
+            || instance.ModelRevision <= 0)
+        {
+            return "";
+        }
+        return (instance.IsEvidenceOverlay ? "evidence:" : "display:")
+            + instance.DisplayObjectId
+            + ":revision:"
+            + instance.ModelRevision.ToString(CultureInfo.InvariantCulture);
     }
 
     private bool TryQueueCachedRuntimeModelLoad(
@@ -3402,29 +2168,8 @@ public class ShuJuQingQiu : MonoBehaviour
         return true;
     }
 
-    private void OnRequestLatestArucoReference(HTTPRequest request, HTTPResponse response)
-    {
-        LogHttpRequestEnd("latest-aruco-reference", request, response);
-        if (response == null || !response.IsSuccess)
-        {
-            string statusCode = response != null ? response.StatusCode.ToString(CultureInfo.InvariantCulture) : "no_response";
-            string message = response != null ? response.Message : "No response from server";
-            Debug.LogWarning("[ARUCO] latest-reference failed: " + statusCode + " - " + message);
-            ShowFrontMessage("aruco_reference_ERR_request_failed");
-            return;
-        }
-
-        JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
-        bool arucoDetected = ResponseReportsArucoDetected(jo);
-        ShowFrontMessage(arucoDetected ? "aruco_reference_refreshed" : "aruco_ERR_missing_reference");
-        if (arucoDetected)
-        {
-            RequestModelResultAfterArucoIfNeeded(jo);
-        }
-    }
-
     /// <summary>
-    /// 涓嬭浇妯″瀷
+    /// Download or reuse the canonical runtime model and enqueue it for loading.
     /// </summary>
     private void DownloadPendingRuntimeModel(
         bool resumeAsyncTaskQueueWhenComplete = true,
@@ -3558,7 +2303,6 @@ public class ShuJuQingQiu : MonoBehaviour
                 ResumeAsyncTaskQueueForDownload(pendingDownload);
                 return;
             }
-            print("淇濆瓨");
             if (pendingDownload.showDebugMarkers)
             {
                 CameraPoseDebugMarker debugMarker = CameraPoseDebugMarker.Instance;
@@ -3730,10 +2474,8 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
         RuntimeModelRecord record;
-        if ((!string.IsNullOrEmpty(completedLoad.instance.ModelKey)
-                && manager.TryGetLoadedRecord(completedLoad.instance.ModelKey, out record))
-            || (!string.IsNullOrEmpty(completedLoad.instance.TaskId)
-                && manager.TryGetLoadedRecord(completedLoad.instance.TaskId, out record)))
+        if (!string.IsNullOrEmpty(completedLoad.instance.ModelKey)
+            && manager.TryGetLoadedRecord(completedLoad.instance.ModelKey, out record))
         {
             if (record != null && record.RootGameObject != null)
             {

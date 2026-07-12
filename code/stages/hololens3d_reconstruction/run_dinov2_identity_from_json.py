@@ -263,18 +263,15 @@ def dispatch_embedding_request(
     runner: Dinov2IdentityRunner,
     request: dict[str, Any],
 ) -> dict[str, Any]:
-    """Dispatch one non-shutdown worker request.
-
-    Requests without an explicit action retain the legacy task-JSON behavior.
-    ``embed_files`` is used by the Shigure adapter and intentionally runs the
-    same reader, masked crop, normalization, model, and payload code as a task.
-    """
-    action = str(request.get("action") or "embed_task").strip().lower()
+    """Dispatch one explicit embedding request."""
+    action = str(request.get("action") or "").strip().lower()
+    if not action:
+        raise ValueError("action is required for DINOv2 identity requests")
     if action == "embed_files":
         color_path = _request_file(request, "color_file", "DINOv2 color image")
         mask_path = _request_file(request, "mask_file", "DINOv2 mask image")
         return runner.embed_files(color_path, mask_path)
-    if action in {"embed_task", "task"}:
+    if action == "embed_task":
         json_path = ensure_file(resolve_task_json_path(request["json_path"]), "JSON file")
         return runner.embed_task(json_path)
     raise ValueError(f"unsupported DINOv2 identity action: {action}")

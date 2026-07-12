@@ -1,3 +1,5 @@
+"""Geometry and alignment helpers for the reconstruction stage."""
+
 from __future__ import annotations
 
 import os
@@ -19,7 +21,7 @@ from depth_camera_config import (
     depth_sensor_limits_for_task,
     get_depth_sensor_limits,
 )
-from model_generation_common import resolve_model_generation_source
+from stages.hololens3d_reconstruction.model_generation_common import resolve_model_generation_source
 from task_json import (
     load_task_json as load_json,
     resolve_task_json_path as resolve_json_path,
@@ -80,25 +82,27 @@ def ensure_file(path: Path, label: str) -> Path:
     return path
 
 
-def task_prefix(task: dict, json_path: Path) -> str:
-    return str(task.get("task_name") or json_path.stem)
+def task_prefix(task: dict) -> str:
+    value = task.get("task_name")
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("task_name is required")
+    return value.strip()
 
 
 def resolve_task_paths(task: dict) -> dict[str, Path]:
-    pv_info = task.get("PVCamera") or {}
     sam3_info = task.get("sam3Name") or {}
     model_source = resolve_model_generation_source(task)
 
     mask_name = sam3_info.get("mask")
     depth_name = sam3_info.get("depth")
-    color_name = sam3_info.get("color") or pv_info.get("name")
+    color_name = sam3_info.get("color")
 
     if not mask_name:
         raise ValueError("sam3Name.mask is missing")
     if not depth_name:
         raise ValueError("sam3Name.depth is missing")
     if not color_name:
-        raise ValueError("sam3Name.color and PVCamera.name are both missing")
+        raise ValueError("sam3Name.color is missing")
 
     task_timestamp = str(task.get("task_timestamp") or "").strip()
     if not task_timestamp:

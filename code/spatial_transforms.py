@@ -22,19 +22,6 @@ def vector3(value: Any, label: str = "vector") -> np.ndarray:
     return vector.astype(np.float64)
 
 
-def camera_info_message(camera_info: Mapping[str, Any] | None) -> dict[str, Any]:
-    if not isinstance(camera_info, Mapping):
-        return {}
-    message = camera_info.get("message")
-    if isinstance(message, Mapping):
-        merged = dict(message)
-        for key, value in camera_info.items():
-            if key != "message" and key not in merged:
-                merged[key] = value
-        return merged
-    return dict(camera_info)
-
-
 def parse_camera_matrix(raw: Any) -> np.ndarray | None:
     if raw is None:
         return None
@@ -54,16 +41,17 @@ def parse_camera_matrix(raw: Any) -> np.ndarray | None:
 
 
 def camera_matrix_from_info(camera_info: Mapping[str, Any] | None) -> np.ndarray | None:
-    info = camera_info_message(camera_info)
-    raw = info.get("k") or info.get("K") or info.get("camera_matrix")
-    return parse_camera_matrix(raw)
+    if not isinstance(camera_info, Mapping):
+        return None
+    return parse_camera_matrix(camera_info.get("k"))
 
 
 def camera_info_image_shape(camera_info: Mapping[str, Any] | None) -> tuple[int, int] | None:
-    info = camera_info_message(camera_info)
+    if not isinstance(camera_info, Mapping):
+        return None
     try:
-        height = int(info.get("height") or 0)
-        width = int(info.get("width") or 0)
+        height = int(camera_info.get("height") or 0)
+        width = int(camera_info.get("width") or 0)
     except Exception:
         return None
     return (height, width) if height > 0 and width > 0 else None

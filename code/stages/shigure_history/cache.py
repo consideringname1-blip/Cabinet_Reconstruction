@@ -3,7 +3,6 @@ from __future__ import annotations
 import base64
 from copy import deepcopy
 import json
-import os
 import socket
 import tempfile
 import time
@@ -24,6 +23,10 @@ class RosStamp:
     sec: int
     nanosec: int = 0
 
+    def __post_init__(self) -> None:
+        if int(self.sec) < 0 or not 0 <= int(self.nanosec) < 1_000_000_000:
+            raise ValueError("ROS stamp values are out of range")
+
     @property
     def seconds(self) -> float:
         return float(self.sec) + float(self.nanosec) / 1_000_000_000.0
@@ -33,7 +36,9 @@ class RosStamp:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "RosStamp":
-        return cls(sec=int(payload.get("sec", 0)), nanosec=int(payload.get("nanosec", 0)))
+        if "sec" not in payload or "nanosec" not in payload:
+            raise ValueError("ROS stamp requires sec and nanosec")
+        return cls(sec=int(payload["sec"]), nanosec=int(payload["nanosec"]))
 
 
 @dataclass(frozen=True)
@@ -41,64 +46,38 @@ class CachedRgbdSample:
     stamp: RosStamp
     rgb_bgr: np.ndarray
     depth: np.ndarray
-    camera_info_path: Path | None
-    camera_info: dict[str, Any] | None = None
-    yolo_path: Path | None = None
-    yolo: dict[str, Any] | None = None
-    yolo_hash: str | None = None
-    chunk_id: str | None = None
-    frame_index: int = 0
-    rgb_path: Path | None = None
-    depth_path: Path | None = None
+    camera_info: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        rgb = np.asarray(self.rgb_bgr)
+        depth = np.asarray(self.depth)
+        if rgb.dtype != np.uint8 or rgb.ndim != 3 or rgb.shape[2] != 3 or rgb.size == 0:
+            raise ValueError("RGB cache frame must be a non-empty uint8 HxWx3 array")
+        if depth.dtype != np.uint16 or depth.ndim != 2 or depth.size == 0:
+            raise ValueError("depth cache frame must be a non-empty uint16 HxW array")
+        if depth.shape != rgb.shape[:2]:
+            raise ValueError("RGB and depth cache frame dimensions must match")
+        camera_info = self.camera_info
+        try:
+            matrix = np.asarray(camera_info["k"], dtype=np.float64).reshape(3, 3)
+            width = int(camera_info["width"])
+            height = int(camera_info["height"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("camera_info requires k, width, and height") from exc
+        if (
+            not np.isfinite(matrix).all()
+            or matrix[0, 0] <= 0.0
+            or matrix[1, 1] <= 0.0
+            or (height, width) != depth.shape
+        ):
+            raise ValueError("camera_info does not match the RGB-D frame")
 
     @property
     def key(self) -> str:
         return sample_key(self.stamp)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "stamp": self.stamp.to_dict(),
-            "chunk_id": self.chunk_id,
-            "frame_index": self.frame_index,
-            "camera_info_path": str(self.camera_info_path) if self.camera_info_path else None,
-            "yolo_hash": self.yolo_hash,
-            "yolo_path": str(self.yolo_path) if self.yolo_path else None,
-            "has_yolo": self.yolo is not None,
-        }
-
-
-@dataclass(frozen=True)
-class CachedSampleMetadata:
-    stamp: RosStamp
-    camera_info_path: Path | None
-    camera_info: dict[str, Any] | None = None
-    yolo_path: Path | None = None
-    yolo_hash: str | None = None
-    chunk_id: str | None = None
-    frame_index: int = 0
-    yolo: dict[str, Any] | None = None
-
-    @property
-    def key(self) -> str:
-        return sample_key(self.stamp)
-
-    def load_yolo(self) -> dict[str, Any] | None:
-        if self.yolo is not None:
-            return dict(self.yolo)
-        if self.yolo_path is None or not self.yolo_path.is_file():
-            return None
-        return load_json(self.yolo_path)
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "stamp": self.stamp.to_dict(),
-            "chunk_id": self.chunk_id,
-            "frame_index": self.frame_index,
-            "camera_info_path": str(self.camera_info_path) if self.camera_info_path else None,
-            "yolo_hash": self.yolo_hash,
-            "yolo_path": str(self.yolo_path) if self.yolo_path else None,
-            "has_yolo": self.yolo is not None,
-        }
+        return {"stamp": self.stamp.to_dict()}
 
 
 @dataclass(frozen=True)
@@ -119,6 +98,32 @@ class CachedShigureEvent:
     object_detection: dict[str, Any] | None = None
     contact_object_matches: list[dict[str, Any]] | None = None
     sequence: int = 0
+
+    def __post_init__(self) -> None:
+        valid_states = {"missing", "explicit_empty", "present"}
+        if self.contacted_state not in valid_states or self.object_detection_state not in valid_states:
+            raise ValueError("invalid Shigure event topic state")
+        self._validate_payload(self.contacted_state, self.contacted, "contact_count", "contacted")
+        self._validate_payload(
+            self.object_detection_state,
+            self.object_detection,
+            "object_count",
+            "object_detection",
+        )
+        if int(self.sequence) < 0:
+            raise ValueError("Shigure event sequence must be non-negative")
+
+    @staticmethod
+    def _validate_payload(state: str, payload: dict[str, Any] | None, count_key: str, label: str) -> None:
+        if state == "missing":
+            if payload is not None:
+                raise ValueError(f"{label} payload must be absent when state is missing")
+            return
+        if not isinstance(payload, dict) or count_key not in payload:
+            raise ValueError(f"{label} payload requires {count_key}")
+        count = int(payload[count_key])
+        if (state == "explicit_empty") != (count == 0):
+            raise ValueError(f"{label} state does not match {count_key}")
 
     @property
     def key(self) -> str:
@@ -166,15 +171,7 @@ class RecentRawSampleBuffer:
             stamp=sample.stamp,
             rgb_bgr=np.asarray(sample.rgb_bgr).copy(),
             depth=np.asarray(sample.depth).copy(),
-            camera_info_path=sample.camera_info_path,
-            camera_info=dict(sample.camera_info) if sample.camera_info is not None else None,
-            yolo_path=sample.yolo_path,
-            yolo=dict(sample.yolo) if sample.yolo is not None else None,
-            yolo_hash=sample.yolo_hash,
-            chunk_id=sample.chunk_id,
-            frame_index=sample.frame_index,
-            rgb_path=sample.rgb_path,
-            depth_path=sample.depth_path,
+            camera_info=dict(sample.camera_info),
         )
         self._samples[copied.key] = copied
         self._samples.move_to_end(copied.key)
@@ -191,43 +188,15 @@ class RecentRawSampleBuffer:
                 continue
             yield sample
 
-    def iter_sample_metadata(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedSampleMetadata]:
-        for sample in self.iter_samples(start=start, end=end):
-            yield CachedSampleMetadata(
-                stamp=sample.stamp,
-                camera_info_path=sample.camera_info_path,
-                camera_info=dict(sample.camera_info) if sample.camera_info is not None else None,
-                yolo_path=sample.yolo_path,
-                yolo_hash=sample.yolo_hash,
-                chunk_id=sample.chunk_id,
-                frame_index=sample.frame_index,
-                yolo=dict(sample.yolo) if sample.yolo is not None else None,
-            )
-
-    def iter_samples_after(self, stamp: RosStamp | None) -> Iterable[CachedRgbdSample]:
-        minimum = stamp.seconds if stamp is not None else None
-        for sample in self.iter_samples(start=stamp):
-            if minimum is not None and sample.stamp.seconds <= minimum:
-                continue
-            yield sample
-
     def newest_sample(self) -> CachedRgbdSample | None:
         if not self._samples:
             return None
         return next(reversed(self._samples.values()))
 
-    def get_sample(self, stamp: RosStamp, *, mode: str = "nearest") -> CachedRgbdSample | None:
+    def get_sample(self, stamp: RosStamp) -> CachedRgbdSample | None:
         target = stamp.seconds
         samples = list(self._samples.values())
         if not samples:
-            return None
-        if mode == "before":
-            before = [sample for sample in samples if sample.stamp.seconds <= target]
-            return before[-1] if before else None
-        if mode == "after":
-            for sample in samples:
-                if sample.stamp.seconds >= target:
-                    return sample
             return None
         return min(samples, key=lambda sample: abs(sample.stamp.seconds - target))
 
@@ -282,25 +251,6 @@ class RecentShigureEventBuffer:
         if newest is not None:
             self._prune(newest_seconds=newest.source_stamp.seconds)
 
-    def iter_events(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedShigureEvent]:
-        start_key = (start.sec, start.nanosec) if start is not None else None
-        end_key = (end.sec, end.nanosec) if end is not None else None
-        for event in list(self._events.values()):
-            event_key = (event.source_stamp.sec, event.source_stamp.nanosec)
-            if start_key is not None and event_key < start_key:
-                continue
-            if end_key is not None and event_key > end_key:
-                continue
-            yield event
-
-    def iter_events_after(self, stamp: RosStamp | None) -> Iterable[CachedShigureEvent]:
-        minimum = (stamp.sec, stamp.nanosec) if stamp is not None else None
-        for event in self.iter_events(start=stamp):
-            event_key = (event.source_stamp.sec, event.source_stamp.nanosec)
-            if minimum is not None and event_key <= minimum:
-                continue
-            yield event
-
     def iter_event_updates_after(self, sequence: int) -> Iterable[CachedShigureEvent]:
         minimum = max(0, int(sequence))
         yield from sorted(
@@ -312,9 +262,6 @@ class RecentShigureEventBuffer:
         if not self._events:
             return None
         return next(reversed(self._events.values()))
-
-    def get_event(self, stamp: RosStamp) -> CachedShigureEvent | None:
-        return self._events.get(sample_key(stamp))
 
     def _prune(self, *, newest_seconds: float) -> None:
         cutoff = newest_seconds - self.max_seconds if self.max_seconds > 0 else None
@@ -346,28 +293,17 @@ class ShigureMemoryStore:
             self._buffer.append(sample)
             self.last_append_at = utc_now()
 
-    def iter_sample_metadata(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> list[CachedSampleMetadata]:
-        with self._lock:
-            return list(self._buffer.iter_sample_metadata(start=start, end=end))
-
     def iter_samples(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> list[CachedRgbdSample]:
         with self._lock:
             return list(self._buffer.iter_samples(start=start, end=end))
-
-    def iter_samples_after(self, stamp: RosStamp | None) -> list[CachedRgbdSample]:
-        with self._lock:
-            return list(self._buffer.iter_samples_after(stamp))
-
-    def iter_depth_samples(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> list[CachedRgbdSample]:
-        return self.iter_samples(start=start, end=end)
 
     def newest_sample(self) -> CachedRgbdSample | None:
         with self._lock:
             return self._buffer.newest_sample()
 
-    def get_sample(self, stamp: RosStamp, *, mode: str = "nearest") -> CachedRgbdSample | None:
+    def get_sample(self, stamp: RosStamp) -> CachedRgbdSample | None:
         with self._lock:
-            return self._buffer.get_sample(stamp, mode=mode)
+            return self._buffer.get_sample(stamp)
 
     def append_event(self, event: CachedShigureEvent) -> CachedShigureEvent:
         with self._lock:
@@ -377,14 +313,6 @@ class ShigureMemoryStore:
             self.last_event_append_at = utc_now()
             return stored
 
-    def iter_events(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> list[CachedShigureEvent]:
-        with self._lock:
-            return list(self._event_buffer.iter_events(start=start, end=end))
-
-    def iter_events_after(self, stamp: RosStamp | None) -> list[CachedShigureEvent]:
-        with self._lock:
-            return list(self._event_buffer.iter_events_after(stamp))
-
     def iter_event_updates_after(self, sequence: int) -> list[CachedShigureEvent]:
         with self._lock:
             return list(self._event_buffer.iter_event_updates_after(sequence))
@@ -392,10 +320,6 @@ class ShigureMemoryStore:
     def latest_event(self) -> CachedShigureEvent | None:
         with self._lock:
             return self._event_buffer.newest_event()
-
-    def get_event(self, stamp: RosStamp) -> CachedShigureEvent | None:
-        with self._lock:
-            return self._event_buffer.get_event(stamp)
 
     def status(self) -> dict[str, Any]:
         with self._lock:
@@ -445,11 +369,6 @@ def write_json(path: str | Path, payload: Mapping[str, Any]) -> None:
                 pass
 
 
-def load_json(path: str | Path) -> dict[str, Any]:
-    with Path(path).open("r", encoding="utf-8") as file:
-        return json.load(file)
-
-
 def utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -471,45 +390,20 @@ def _array_to_wire(array: np.ndarray) -> dict[str, Any]:
     }
 
 
-def _array_from_wire(payload: Mapping[str, Any] | None, *, default: np.ndarray) -> np.ndarray:
+def _array_from_wire(payload: Mapping[str, Any] | None) -> np.ndarray:
     if not isinstance(payload, Mapping):
-        return default
-    data = base64.b64decode(str(payload.get("data_b64") or ""))
-    dtype = np.dtype(str(payload.get("dtype") or default.dtype))
-    shape = tuple(int(value) for value in payload.get("shape") or default.shape)
+        raise ValueError("array payload is required")
+    if "data_b64" not in payload or "dtype" not in payload or "shape" not in payload:
+        raise ValueError("array payload requires data_b64, dtype, and shape")
+    data = base64.b64decode(str(payload["data_b64"]), validate=True)
+    dtype = np.dtype(str(payload["dtype"]))
+    shape = tuple(int(value) for value in payload["shape"])
     if not shape:
-        return default
+        raise ValueError("array shape cannot be empty")
+    expected_bytes = int(np.prod(shape, dtype=np.int64)) * int(dtype.itemsize)
+    if len(data) != expected_bytes:
+        raise ValueError("array byte length does not match dtype and shape")
     return np.frombuffer(data, dtype=dtype).reshape(shape).copy()
-
-
-def _metadata_to_wire(metadata: CachedSampleMetadata) -> dict[str, Any]:
-    return {
-        "stamp": metadata.stamp.to_dict(),
-        "camera_info": metadata.camera_info,
-        "camera_info_path": str(metadata.camera_info_path) if metadata.camera_info_path else None,
-        "yolo": metadata.yolo,
-        "yolo_hash": metadata.yolo_hash,
-        "yolo_path": str(metadata.yolo_path) if metadata.yolo_path else None,
-        "chunk_id": metadata.chunk_id,
-        "frame_index": int(metadata.frame_index),
-    }
-
-
-def _metadata_from_wire(payload: Mapping[str, Any]) -> CachedSampleMetadata:
-    camera_info_path = payload.get("camera_info_path")
-    yolo_path = payload.get("yolo_path")
-    yolo = payload.get("yolo") if isinstance(payload.get("yolo"), dict) else None
-    camera_info = payload.get("camera_info") if isinstance(payload.get("camera_info"), dict) else None
-    return CachedSampleMetadata(
-        stamp=RosStamp.from_dict(payload.get("stamp") or {}),
-        camera_info_path=Path(str(camera_info_path)) if camera_info_path else None,
-        camera_info=camera_info,
-        yolo_path=Path(str(yolo_path)) if yolo_path else None,
-        yolo_hash=str(payload.get("yolo_hash")) if payload.get("yolo_hash") else None,
-        chunk_id=str(payload.get("chunk_id")) if payload.get("chunk_id") else None,
-        frame_index=int(payload.get("frame_index") or 0),
-        yolo=yolo,
-    )
 
 
 def _sample_to_wire(
@@ -521,14 +415,6 @@ def _sample_to_wire(
     payload: dict[str, Any] = {
         "stamp": sample.stamp.to_dict(),
         "camera_info": sample.camera_info,
-        "camera_info_path": str(sample.camera_info_path) if sample.camera_info_path else None,
-        "yolo": sample.yolo,
-        "yolo_hash": sample.yolo_hash,
-        "yolo_path": str(sample.yolo_path) if sample.yolo_path else None,
-        "chunk_id": sample.chunk_id,
-        "frame_index": int(sample.frame_index),
-        "rgb_path": str(sample.rgb_path) if sample.rgb_path else None,
-        "depth_path": str(sample.depth_path) if sample.depth_path else None,
     }
     if include_rgb:
         payload["rgb_bgr"] = _array_to_wire(sample.rgb_bgr)
@@ -538,25 +424,14 @@ def _sample_to_wire(
 
 
 def _sample_from_wire(payload: Mapping[str, Any]) -> CachedRgbdSample:
-    camera_info_path = payload.get("camera_info_path")
-    yolo_path = payload.get("yolo_path")
-    rgb_path = payload.get("rgb_path")
-    depth_path = payload.get("depth_path")
-    yolo = payload.get("yolo") if isinstance(payload.get("yolo"), dict) else None
-    camera_info = payload.get("camera_info") if isinstance(payload.get("camera_info"), dict) else None
+    camera_info = payload.get("camera_info")
+    if not isinstance(camera_info, dict):
+        raise ValueError("RGB-D cache sample is missing camera_info")
     return CachedRgbdSample(
-        stamp=RosStamp.from_dict(payload.get("stamp") or {}),
-        rgb_bgr=_array_from_wire(payload.get("rgb_bgr"), default=np.empty((0, 0, 3), dtype=np.uint8)),
-        depth=_array_from_wire(payload.get("depth"), default=np.empty((0, 0), dtype=np.uint16)),
-        camera_info_path=Path(str(camera_info_path)) if camera_info_path else None,
+        stamp=RosStamp.from_dict(payload.get("stamp") if isinstance(payload.get("stamp"), Mapping) else {}),
+        rgb_bgr=_array_from_wire(payload.get("rgb_bgr") if isinstance(payload.get("rgb_bgr"), Mapping) else None),
+        depth=_array_from_wire(payload.get("depth") if isinstance(payload.get("depth"), Mapping) else None),
         camera_info=camera_info,
-        yolo_path=Path(str(yolo_path)) if yolo_path else None,
-        yolo=yolo,
-        yolo_hash=str(payload.get("yolo_hash")) if payload.get("yolo_hash") else None,
-        chunk_id=str(payload.get("chunk_id")) if payload.get("chunk_id") else None,
-        frame_index=int(payload.get("frame_index") or 0),
-        rgb_path=Path(str(rgb_path)) if rgb_path else None,
-        depth_path=Path(str(depth_path)) if depth_path else None,
     )
 
 
@@ -565,39 +440,50 @@ def _event_to_wire(event: CachedShigureEvent, *, include_masks: bool = False) ->
 
 
 def _event_from_wire(payload: Mapping[str, Any]) -> CachedShigureEvent:
-    contacted = payload.get("contacted") if isinstance(payload.get("contacted"), dict) else None
-    object_detection = payload.get("object_detection") if isinstance(payload.get("object_detection"), dict) else None
-    matches = payload.get("contact_object_matches") if isinstance(payload.get("contact_object_matches"), list) else []
+    required = {
+        "source_stamp",
+        "received_utc",
+        "received_monotonic",
+        "contacted_state",
+        "object_detection_state",
+        "contacted",
+        "object_detection",
+        "contact_object_matches",
+        "sequence",
+    }
+    missing = required.difference(payload)
+    if missing:
+        raise ValueError(f"Shigure event is missing fields: {sorted(missing)}")
+    contacted = payload["contacted"]
+    object_detection = payload["object_detection"]
+    matches = payload["contact_object_matches"]
+    if contacted is not None and not isinstance(contacted, dict):
+        raise ValueError("contacted must be an object or null")
+    if object_detection is not None and not isinstance(object_detection, dict):
+        raise ValueError("object_detection must be an object or null")
+    if not isinstance(matches, list):
+        raise ValueError("contact_object_matches must be an array")
     return CachedShigureEvent(
-        source_stamp=RosStamp.from_dict(payload.get("source_stamp") or {}),
-        received_utc=str(payload.get("received_utc") or ""),
-        received_monotonic=float(payload.get("received_monotonic") or 0.0),
-        contacted_state=str(payload.get("contacted_state") or "missing"),
-        object_detection_state=str(payload.get("object_detection_state") or "missing"),
+        source_stamp=RosStamp.from_dict(payload["source_stamp"]),
+        received_utc=str(payload["received_utc"]),
+        received_monotonic=float(payload["received_monotonic"]),
+        contacted_state=str(payload["contacted_state"]),
+        object_detection_state=str(payload["object_detection_state"]),
         contacted=contacted,
         object_detection=object_detection,
         contact_object_matches=[dict(item) for item in matches if isinstance(item, Mapping)],
-        sequence=int(payload.get("sequence") or 0),
+        sequence=int(payload["sequence"]),
     )
 
 
 def store_request(store: ShigureMemoryStore, request: Mapping[str, Any]) -> dict[str, Any]:
-    action = str(request.get("action") or "status")
+    action = str(request.get("action") or "")
     start = _stamp_from_wire(request.get("start") if isinstance(request.get("start"), Mapping) else None)
     end = _stamp_from_wire(request.get("end") if isinstance(request.get("end"), Mapping) else None)
     if action == "status":
         return {"ok": True, "status": store.status()}
-    if action == "iter_sample_metadata":
-        return {"ok": True, "metadata": [_metadata_to_wire(item) for item in store.iter_sample_metadata(start=start, end=end)]}
     if action == "iter_samples":
         samples = store.iter_samples(start=start, end=end)
-        return {"ok": True, "samples": [_sample_to_wire(item, include_rgb=True, include_depth=True) for item in samples]}
-    if action == "iter_depth_samples":
-        samples = store.iter_depth_samples(start=start, end=end)
-        return {"ok": True, "samples": [_sample_to_wire(item, include_rgb=False, include_depth=True) for item in samples]}
-    if action == "iter_samples_after":
-        stamp = _stamp_from_wire(request.get("stamp") if isinstance(request.get("stamp"), Mapping) else None)
-        samples = store.iter_samples_after(stamp)
         return {"ok": True, "samples": [_sample_to_wire(item, include_rgb=True, include_depth=True) for item in samples]}
     if action == "newest_sample":
         sample = store.newest_sample()
@@ -606,47 +492,21 @@ def store_request(store: ShigureMemoryStore, request: Mapping[str, Any]) -> dict
         stamp = _stamp_from_wire(request.get("stamp") if isinstance(request.get("stamp"), Mapping) else None)
         if stamp is None:
             return {"ok": False, "error": "stamp is required"}
-        sample = store.get_sample(stamp, mode=str(request.get("mode") or "nearest"))
+        sample = store.get_sample(stamp)
         return {"ok": True, "sample": _sample_to_wire(sample, include_rgb=True, include_depth=True) if sample is not None else None}
-    if action == "iter_events":
-        include_masks = bool(request.get("include_masks", False))
-        events = store.iter_events(start=start, end=end)
-        return {"ok": True, "events": [_event_to_wire(item, include_masks=include_masks) for item in events]}
-    if action == "iter_events_after":
-        stamp = _stamp_from_wire(request.get("stamp") if isinstance(request.get("stamp"), Mapping) else None)
-        include_masks = bool(request.get("include_masks", False))
-        events = store.iter_events_after(stamp)
-        return {"ok": True, "events": [_event_to_wire(item, include_masks=include_masks) for item in events]}
     if action == "iter_event_updates_after":
         include_masks = bool(request.get("include_masks", False))
         events = store.iter_event_updates_after(int(request.get("sequence") or 0))
         return {"ok": True, "events": [_event_to_wire(item, include_masks=include_masks) for item in events]}
-    if action in {"latest_event", "newest_event"}:
+    if action == "latest_event":
         include_masks = bool(request.get("include_masks", False))
         event = store.latest_event()
         return {"ok": True, "event": _event_to_wire(event, include_masks=include_masks) if event is not None else None}
-    if action == "get_event":
-        stamp = _stamp_from_wire(request.get("stamp") if isinstance(request.get("stamp"), Mapping) else None)
-        if stamp is None:
-            return {"ok": False, "error": "stamp is required"}
-        include_masks = bool(request.get("include_masks", False))
-        event = store.get_event(stamp)
-        return {"ok": True, "event": _event_to_wire(event, include_masks=include_masks) if event is not None else None}
-    if action in {"prune", "prune_yolo_payloads", "clear_decoded_cache"}:
-        return {"ok": True}
     return {"ok": False, "error": f"unsupported action: {action}"}
 
 
-def resolve_socket_path(root: str | Path | None = None) -> Path:
-    raw = os.environ.get("SHIGURE_HISTORY_SOCKET_PATH")
-    if raw:
-        return Path(raw)
-    configured = getattr(settings, "SHIGURE_HISTORY_SOCKET_PATH", None)
-    if configured:
-        return Path(configured)
-    if root is not None:
-        return Path(root) / "shigure_history.sock"
-    return Path("/tmp/shigure_history.sock")
+def resolve_socket_path() -> Path:
+    return Path(settings.SHIGURE_HISTORY_SOCKET_PATH)
 
 
 def _send_socket_request(socket_path: Path, payload: Mapping[str, Any], *, timeout: float) -> dict[str, Any]:
@@ -671,14 +531,10 @@ class ShigureRgbdCache:
 
     def __init__(
         self,
-        root: str | Path | None = None,
-        *,
         socket_path: str | Path | None = None,
         timeout_seconds: float | None = None,
-        **_: Any,
     ) -> None:
-        self.root = Path(root) if root is not None else None
-        self.socket_path = Path(socket_path) if socket_path is not None else resolve_socket_path(root)
+        self.socket_path = Path(socket_path) if socket_path is not None else resolve_socket_path()
         self.timeout_seconds = float(timeout_seconds if timeout_seconds is not None else settings.SHIGURE_HISTORY_SOCKET_TIMEOUT_SECONDS)
         self.last_error: str | None = None
 
@@ -696,35 +552,8 @@ class ShigureRgbdCache:
         self.last_error = None
         return response
 
-    def clear_decoded_cache(self) -> None:
-        self._request({"action": "clear_decoded_cache"})
-
-    def iter_sample_metadata(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedSampleMetadata]:
-        response = self._request({"action": "iter_sample_metadata", "start": _stamp_to_wire(start), "end": _stamp_to_wire(end)})
-        if response is None:
-            return
-        for payload in response.get("metadata") or []:
-            if isinstance(payload, Mapping):
-                yield _metadata_from_wire(payload)
-
     def iter_samples(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedRgbdSample]:
         response = self._request({"action": "iter_samples", "start": _stamp_to_wire(start), "end": _stamp_to_wire(end)})
-        if response is None:
-            return
-        for payload in response.get("samples") or []:
-            if isinstance(payload, Mapping):
-                yield _sample_from_wire(payload)
-
-    def iter_samples_after(self, stamp: RosStamp | None) -> Iterable[CachedRgbdSample]:
-        response = self._request({"action": "iter_samples_after", "stamp": _stamp_to_wire(stamp)})
-        if response is None:
-            return
-        for payload in response.get("samples") or []:
-            if isinstance(payload, Mapping):
-                yield _sample_from_wire(payload)
-
-    def iter_depth_samples(self, *, start: RosStamp | None = None, end: RosStamp | None = None) -> Iterable[CachedRgbdSample]:
-        response = self._request({"action": "iter_depth_samples", "start": _stamp_to_wire(start), "end": _stamp_to_wire(end)})
         if response is None:
             return
         for payload in response.get("samples") or []:
@@ -738,47 +567,12 @@ class ShigureRgbdCache:
         sample_payload = response.get("sample")
         return _sample_from_wire(sample_payload) if isinstance(sample_payload, Mapping) else None
 
-    def get_sample(self, stamp: RosStamp, *, mode: str = "nearest") -> CachedRgbdSample | None:
-        response = self._request({"action": "get_sample", "stamp": stamp.to_dict(), "mode": mode})
+    def get_sample(self, stamp: RosStamp) -> CachedRgbdSample | None:
+        response = self._request({"action": "get_sample", "stamp": stamp.to_dict()})
         if response is None or response.get("sample") is None:
             return None
         sample_payload = response.get("sample")
         return _sample_from_wire(sample_payload) if isinstance(sample_payload, Mapping) else None
-
-    def iter_events(
-        self,
-        *,
-        start: RosStamp | None = None,
-        end: RosStamp | None = None,
-        include_masks: bool = False,
-    ) -> Iterable[CachedShigureEvent]:
-        response = self._request(
-            {
-                "action": "iter_events",
-                "start": _stamp_to_wire(start),
-                "end": _stamp_to_wire(end),
-                "include_masks": bool(include_masks),
-            }
-        )
-        if response is None:
-            return
-        for payload in response.get("events") or []:
-            if isinstance(payload, Mapping):
-                yield _event_from_wire(payload)
-
-    def iter_events_after(self, stamp: RosStamp | None, *, include_masks: bool = False) -> Iterable[CachedShigureEvent]:
-        response = self._request(
-            {
-                "action": "iter_events_after",
-                "stamp": _stamp_to_wire(stamp),
-                "include_masks": bool(include_masks),
-            }
-        )
-        if response is None:
-            return
-        for payload in response.get("events") or []:
-            if isinstance(payload, Mapping):
-                yield _event_from_wire(payload)
 
     def iter_event_updates_after(self, sequence: int, *, include_masks: bool = False) -> Iterable[CachedShigureEvent]:
         """Poll event updates without losing a late exact-stamp join update."""
@@ -803,31 +597,6 @@ class ShigureRgbdCache:
         event_payload = response.get("event")
         return _event_from_wire(event_payload) if isinstance(event_payload, Mapping) else None
 
-    def get_event(self, stamp: RosStamp, *, include_masks: bool = False) -> CachedShigureEvent | None:
-        response = self._request(
-            {
-                "action": "get_event",
-                "stamp": stamp.to_dict(),
-                "include_masks": bool(include_masks),
-            }
-        )
-        if response is None or response.get("event") is None:
-            return None
-        event_payload = response.get("event")
-        return _event_from_wire(event_payload) if isinstance(event_payload, Mapping) else None
-
     def status(self) -> dict[str, Any] | None:
         response = self._request({"action": "status"})
         return response.get("status") if isinstance(response, dict) else None
-
-    def prune(self, *, newest_stamp: RosStamp | None = None, retention_seconds: float | None = None) -> None:
-        self._request(
-            {
-                "action": "prune",
-                "newest_stamp": _stamp_to_wire(newest_stamp),
-                "retention_seconds": retention_seconds,
-            }
-        )
-
-    def prune_yolo_payloads(self) -> None:
-        self._request({"action": "prune_yolo_payloads"})

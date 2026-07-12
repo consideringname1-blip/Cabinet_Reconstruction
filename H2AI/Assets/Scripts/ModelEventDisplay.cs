@@ -54,16 +54,16 @@ public class ModelEventDisplay : MonoBehaviour
             return;
         }
 
-        string key = ResolveKey(identity.TaskId, identity.ModelKey);
+        string key = identity.ModelKey;
         if (activeHints.ContainsKey(key))
         {
             CloseHint(key);
-            ToggleHistoryEvidenceForIdentity(identity);
+            ToggleObjectEvidence(identity);
             return;
         }
 
-        bool historyEvidenceHandled = ToggleHistoryEvidenceForIdentity(identity);
-        if (historyEvidenceHandled)
+        bool evidenceHandled = ToggleObjectEvidence(identity);
+        if (evidenceHandled)
         {
             return;
         }
@@ -71,31 +71,31 @@ public class ModelEventDisplay : MonoBehaviour
         RuntimeModelRecord record = null;
         RuntimeModelManager manager = RuntimeModelManager.Instance;
         bool found = manager != null
-            && ((!string.IsNullOrEmpty(identity.TaskId) && manager.TryGetLoadedRecord(identity.TaskId, out record))
-                || (!string.IsNullOrEmpty(identity.ModelKey) && manager.TryGetLoadedRecord(identity.ModelKey, out record)));
+            && !string.IsNullOrEmpty(identity.ModelKey)
+            && manager.TryGetLoadedRecord(identity.ModelKey, out record);
         if (found)
         {
             ShowFrontMessage("model_event_no_evidence");
             return;
         }
 
-        if (!historyEvidenceHandled)
+        if (!evidenceHandled)
         {
             ShowFrontMessage("model_event_no_local_hint");
         }
     }
 
-    private bool ToggleHistoryEvidenceForIdentity(RuntimeModelEventIdentity identity)
+    private bool ToggleObjectEvidence(RuntimeModelEventIdentity identity)
     {
         if (identity == null)
         {
             return false;
         }
 
-        HistoryPlacementRestorationDisplay historyDisplay = HistoryPlacementRestorationDisplay.Instance;
-        return historyDisplay != null
-            && ((!string.IsNullOrEmpty(identity.TaskId) && historyDisplay.ToggleEvidenceForModel(identity.TaskId))
-                || (!string.IsNullOrEmpty(identity.ModelKey) && historyDisplay.ToggleEvidenceForModel(identity.ModelKey)));
+        ObjectEvidenceDisplay evidenceDisplay = ObjectEvidenceDisplay.Instance;
+        return evidenceDisplay != null
+            && !string.IsNullOrEmpty(identity.DisplayObjectId)
+            && evidenceDisplay.ToggleEvidenceForModel(identity.DisplayObjectId);
     }
 
     public void ShowForModel(RuntimeModelInstance instance, string message)
@@ -105,7 +105,7 @@ public class ModelEventDisplay : MonoBehaviour
             return;
         }
 
-        string key = ResolveKey(instance.TaskId, instance.ModelKey);
+        string key = instance.ModelKey;
         if (string.IsNullOrEmpty(key))
         {
             return;
@@ -138,7 +138,7 @@ public class ModelEventDisplay : MonoBehaviour
             return;
         }
 
-        string key = ResolveKey(instance.TaskId, instance.ModelKey);
+        string key = instance.ModelKey;
         if (string.IsNullOrEmpty(key))
         {
             return;
@@ -165,7 +165,7 @@ public class ModelEventDisplay : MonoBehaviour
             return;
         }
 
-        CloseHint(ResolveKey(instance.TaskId, instance.ModelKey));
+        CloseHint(instance.ModelKey);
     }
 
     public void CloseAllAndClearLocalCache()
@@ -189,7 +189,7 @@ public class ModelEventDisplay : MonoBehaviour
 
         foreach (string taskId in taskIds)
         {
-            CloseHint(ResolveKey(taskId, ""));
+            CloseHint(taskId);
         }
     }
 
@@ -209,15 +209,6 @@ public class ModelEventDisplay : MonoBehaviour
             }
             activeHints.Remove(key);
         }
-    }
-
-    private string ResolveKey(string taskId, string modelKey)
-    {
-        if (!string.IsNullOrEmpty(taskId))
-        {
-            return taskId;
-        }
-        return string.IsNullOrEmpty(modelKey) ? "" : modelKey;
     }
 
     private void ShowFrontMessage(string message)

@@ -1,3 +1,5 @@
+"""Ephemeral latest-wins state for Shigure realtime tracking."""
+
 from __future__ import annotations
 
 import copy
@@ -138,7 +140,8 @@ class RealtimeTrackingCoordinator:
         mode: str,
         request_generation: int,
     ) -> dict[str, Any]:
-        mode = str(mode or "").strip().lower()
+        if not isinstance(mode, str):
+            raise ValueError("realtime tracking mode must be a string")
         if mode not in VALID_MODES:
             raise ValueError(f"Unsupported realtime tracking mode: {mode}")
         request_generation = max(0, int(request_generation or 0))

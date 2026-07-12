@@ -8,7 +8,6 @@ public class RuntimeModelEventIdentity : MonoBehaviour, IMixedRealityPointerHand
     [SerializeField] private string taskId = "";
     [SerializeField] private string fbxUrl = "";
     [SerializeField] private string displayObjectId = "";
-    [SerializeField] private string captureInstanceId = "";
 
     public string ModelKey
     {
@@ -30,24 +29,17 @@ public class RuntimeModelEventIdentity : MonoBehaviour, IMixedRealityPointerHand
         get { return displayObjectId; }
     }
 
-    public string CaptureInstanceId
-    {
-        get { return captureInstanceId; }
-    }
-
     public void Configure(
         string newModelKey,
         string newTaskId,
         string newFbxUrl,
-        string newDisplayObjectId = "",
-        string newCaptureInstanceId = ""
+        string newDisplayObjectId
     )
     {
         modelKey = newModelKey ?? "";
         taskId = newTaskId ?? "";
         fbxUrl = newFbxUrl ?? "";
         displayObjectId = newDisplayObjectId ?? "";
-        captureInstanceId = newCaptureInstanceId ?? "";
     }
 
     public bool TryGetWorldBounds(out Bounds bounds)

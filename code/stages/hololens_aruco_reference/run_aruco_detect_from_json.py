@@ -17,7 +17,6 @@ from config import (
     TASK_DEBUG_OUTPUT_ENABLE,
 )
 from artifact_layout import (
-    ARUCO_TEMPLATE_PATH,
     aruco_debug_overlay_file,
     aruco_result_marker_detect_file,
     aruco_result_summary_file,
@@ -43,7 +42,6 @@ try:
         compose_world_pose,
         convert_cv_pose_to_unity_pose,
         invert_pose,
-        load_aruco_template,
         load_json_payload,
         orthonormalize_rotation,
         pose_to_payload,
@@ -59,7 +57,6 @@ except ModuleNotFoundError:
         compose_world_pose,
         convert_cv_pose_to_unity_pose,
         invert_pose,
-        load_aruco_template,
         load_json_payload,
         orthonormalize_rotation,
         pose_to_payload,
@@ -295,12 +292,14 @@ def _write_json(path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def _frame_timestamp(task_name: str, frame_index: int, frame: dict[str, Any]) -> str:
-    fallback = f"{task_name}_{frame_index:03d}"
-    return sanitize_artifact_token(
-        str(frame.get("artifact_timestamp") or frame.get("time") or ""),
-        fallback=fallback,
-    )
+def _frame_timestamp(frame: dict[str, Any]) -> str:
+    raw = str(frame.get("artifact_timestamp") or "").strip()
+    if not raw:
+        raise ValueError("PVCamera frame artifact_timestamp is required")
+    token = sanitize_artifact_token(raw, fallback="")
+    if not token:
+        raise ValueError("PVCamera frame artifact_timestamp is invalid")
+    return token
 
 
 def _write_no_detection(
@@ -332,7 +331,7 @@ def main(argv: list[str]) -> int:
 
     json_path = resolve_task_json_path(argv[1])
     task = load_task_json(json_path)
-    task_name = resolve_task_name(task, json_path.stem)
+    task_name = resolve_task_name(task)
     task_id = str(task.get("task_id") or "")
     startup_session_id = str((task.get("device") or {}).get("startup_session_id") or "").strip()
 
@@ -343,16 +342,13 @@ def main(argv: list[str]) -> int:
     record_path = aruco_result_summary_file(task_timestamp)
     annotated_path = None
 
-    template = load_aruco_template()
     db_markers = get_enabled_aruco_markers()
-    marker_configs = resolve_marker_configs(template, db_markers)
+    marker_configs = resolve_marker_configs(db_markers)
     marker_by_dict: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
     for marker in marker_configs:
         marker_by_dict[str(marker["dictionary"])][int(marker["marker_id"])] = marker
 
     aruco_stage = {
-        "template_path": normalize_path_for_storage(ARUCO_TEMPLATE_PATH),
-        "template_enabled": bool(template.get("enabled")),
         "configured": bool(marker_configs),
         "config_reason": "" if marker_configs else "no_enabled_markers",
         "anchor_marker_id": int(ARUCO_ANCHOR_MARKER_ID),
@@ -370,7 +366,6 @@ def main(argv: list[str]) -> int:
         "task_id": task_id,
         "task_name": task_name,
         "startup_session_id": startup_session_id,
-        "template": template,
         "registered_markers": marker_configs,
     }
 
@@ -470,7 +465,7 @@ def main(argv: list[str]) -> int:
                             axis_length,
                         )
 
-            frame_timestamp = _frame_timestamp(task_name, frame_index, frame)
+            frame_timestamp = _frame_timestamp(frame)
             frame_record_path = aruco_result_marker_detect_file(task_timestamp, frame_timestamp)
             frame_overlay_path = aruco_debug_overlay_file(task_timestamp, frame_timestamp)
 

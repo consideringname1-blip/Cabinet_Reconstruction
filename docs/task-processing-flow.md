@@ -1,22 +1,22 @@
 # 任务处理流程
 
-更新日期：2026-07-08
-状态：当前实现说明
+更新日期：2026-07-12
+状态：当前协议
 
-本文描述服务器和 Unity 当前使用的任务流程。`docs/hwang-project-flow.drawio` 只作为数据流参考，实际触发、队列、缓存、失败处理以代码为准。
+本文描述服务器、远端 Shigure 数据入口和 Unity 使用的唯一任务流程。
 
-## 核心原则
+## 核心标识
 
-- `task_id` 是 API、DB、Unity 侧追踪任务的主键。
-- `task_timestamp` 是文件目录和 artifact 文件名的主键。
-- HoloLens 上传 HoloLens 当前本地坐标；服务器负责转换到 ArUco/世界，再转换回当前 HoloLens 本地坐标下发。
-- Unity 正式模型必须使用服务器下发的 `object_hololens_current`。缺失时不再本地 fallback 摆放。
-- `Sam3SpatialBox` 只用于 pending preview，不作为历史模型或正式 runtime 位姿来源。
-- Shigure 视角历史再现不走 3D 投影，使用保存的 fixed Shigure `old_rgb + old_depth + old_mask + camera_info` 直接比较。
+- `task_id`：一次上传任务的 UUID，也是 API 与数据库主键。
+- `task_timestamp`：该任务的 artifact 目录名。
+- `startup_session_id`：一次 HoloLens/Unity 启动的会话边界。
+- `display_object_id`：跨任务持久化的物体身份。
+- `model_revision`：同一 `display_object_id` 下的模型版本。
+- Shigure 的 `object_id` 只在当前 ingress/startup 内作为临时绑定键，不进入持久身份。
 
-## 目录布局
+## Artifact 布局
 
-目录由 `code/artifact_layout.py` 管理：
+目录由 `code/artifact_layout.py` 统一生成：
 
 ```text
 data/
@@ -31,10 +31,7 @@ data/
     worker/
     result/
     debug/
-  history_placement_requests/<request_timestamp>/
-    worker/
-    result/
-    debug/
+  realtime_tracking/<display_object_id>/pose_events.jsonl
   database/tasks.db
   worker_sockets/
   shigure_history_cache/
@@ -42,26 +39,17 @@ data/
   console_logs/
 ```
 
-`data/upload/` 只视作旧数据/备份输入来源，不作为新任务接收缓存。
+任务 JSON 只从数据库记录的 `json_path` 解析。业务代码不扫描其他目录猜测任务文件。
 
-## 服务启动
+## Object reconstruction 主链
 
-`code/run_server.py` 启动 Flask API。`server_api.py` 初始化：
-
-1. `ensure_artifact_roots()` 创建目录。
-2. `initialize_task_table()` 创建或迁移 SQLite。
-3. `start_worker()` 启动任务 worker。
-4. worker 自动启动 Shigure history recorder sidecar，用 Unix socket 提供最近 RGB-D/object_detection/cache 数据。
-
-## Object Reconstruction Stage 顺序
-
-当前 `task_worker.STAGE_ORDER`：
+`task_worker.STAGE_ORDER` 的当前顺序为：
 
 ```text
 hololens2depth
 sam3mask
 historical_model_match
-instantmesh
+model_generation
 depthpointcloud
 modelscale
 object_alignment
@@ -70,79 +58,74 @@ aruco_sync
 runtime_mesh
 model_bounds
 display_identity
-history_placement_restoration
-taken_object_detection
-sam3d_body_mesh
 ```
 
-说明：
+`model_generation` 是统一模型生成阶段。`code/config.py` 的 `MODEL_GENERATION_BACKEND` 只能是：
 
-- `historical_model_match` 使用 DINOv2 识别历史模型。命中并允许复用时跳过 `instantmesh`，直接进入 `depthpointcloud`，后续仍重新计算点云、对齐、位姿和 runtime fbx。
-- `instantmesh` 是模型生成 stage 名。当前默认后端是 InstantMesh；`sam3d_objects` 只作为可选后端或运行库来源，不是当前默认生成后端。
-- `modelscale` 仍是独立 stage；`runtime_mesh` 内部负责 runtime mesh bake 和 FBX export。
-- `pose -> aruco_sync` 之后，任务保存 `object_aruco`，后续所有历史跨启动使用 ArUco pose 转当前 HoloLens pose。
+- `instantmesh`
+- `sam3d_objects`
 
-## 预览 3D Box
+DINOv2 命中同一 `display_object_id` 且 `force_new_3d_model=0` 时，当前任务复用该物体最新 completed 模型资产，跳过不再需要的生成、缩放和 runtime bake；当前拍摄仍重新计算点云、对齐、位姿、ArUco 同步、bounds 和身份记录。`force_new_3d_model=1` 时生成新模型版本并保留已有版本。
 
-预览 3D box 由 `run_sam3_boxmask_from_json.py` 产生 `Sam3SpatialBox`：
+`object_alignment` 的 HoloLens 拍摄任务使用高优先级 FoundationPose 请求。实时追踪请求进入独立的低优先级 latest-wins 通道。
 
-- 使用 depth limits 过滤深度。
-- 使用去边缘后的 mask/depth 点云。
-- 深度方向只向相机后方扩展，前边不动，中心自动后移。
-- 深度扩展倍数由 `config.PREVIEW_3D_BOX_DEPTH_EXPANSION_FACTOR` 控制，默认 `2.0`。
-- 输出 `coordinate_space = unity_world`，仅供 pending preview 使用。
+## Shigure contact/body 辅助分支
 
-完成/历史/runtime 模型不得依赖 `Sam3SpatialBox` 放置。
+物体上传后，`shigure_contact_body` 与主链并行启动，不占用主链 stage 顺序：
 
-## Shigure 相关 Stage
+1. recorder 从远端 Shigure 数据流接收 RGB、uint16 depth、CameraInfo、`/shigure/object_detection` 和 `/shigure/contacted`。
+2. `object_detection` 与 `contacted` 按完全相同的 ROS source stamp 组成事件。
+3. 仅接受存在 `take_out` contact、存在对应 object mask，且 contact 与 detection 关联唯一的事件。
+4. 使用当前 HoloLens 拍摄的 DINO embedding 校验该 Shigure mask 对应同一 `display_object_id`。
+5. 输出 `ShigureContactEvidence`；没有被检测到联系人时输出明确的 wrong/input 状态，不做无人体回退。
+6. `ShigureContactEvidence.status=TAKEN` 时，调用 `sam3d_body_mesh` 生成该对象的一份最新人体证据。
 
-`taken_object_detection`：
+服务器停止时，辅助等待和实时追踪内存状态会清空；模型、HoloLens 拍摄位姿、模型版本、人体版本和 FoundationPose 位置日志保留在数据库及 artifact 中。
 
-1. 从 Shigure cache 取上传时刻附近的 RGB-D、camera_info、object_detection。
-2. 将 `ModelBounds` 的模型中心和对角线投影为 Shigure 图像上的模型对角圆。
-3. 选择 `mask_inside_diag_circle_ratio >= 0.80` 且有效 depth 中位数与模型中心 depth 差 `<= 0.18m` 的候选，并在 accepted 中取面积最大的 object mask。
-4. 保存 `old_rgb + old_depth + old_mask + camera_info` 作为历史再现 baseline。
-5. 在 old_mask 内做拿取判断。
+## 实时位置追踪
 
-`history_placement_restoration`：
+实时追踪最多激活最近 5 个不同的 `display_object_id`：
 
-1. 读取 taken stage 保存的 baseline。
-2. 获取当前 Shigure RGB-D。
-3. 只在 old_mask 内比较 RGB Lab 和 depth delta。
-4. 输出 still/missing/occluded/unknown 和 Unity 显示用 polyhedron。
+1. `obj_move` 或 `bring_in` 事件到达后，将 mask 与每个活动对象最新 HoloLens `Sam3SpatialBox` 在 Shigure 图像中的投影圆比较。
+2. 候选必须满足 mask 在投影圆内占比至少 `0.80`，且 mask depth 中位数与投影中心 depth 差不超过 `0.18 m`。
+3. 单一候选直接绑定；多个候选使用 DINOv2 判别。
+4. 等待 mask 区域 depth 满足稳定窗口，再提交 FoundationPose。
+5. 同一对象只保留一个 pending 观测。正在运行的推理不取消，但有更新的观测时旧结果不会提交。
+6. FoundationPose 结果通过 bbox IoU 和 depth residual 校验后写入最新 tracking pose，并追加到 `pose_events.jsonl`。
 
-`sam3d_body_mesh`：
+`take_out` 只记录拿取事件和人体证据，不提交物体新位姿。
 
-1. 使用拿走那帧生成人体 mesh。
-2. 基于 body mask + depth 只调整相对相机距离，并按距离变化缩放人体 mesh。
-3. 选择离物体中心最近的人体/手腕。
-4. 输出人体 mesh 和 subject crop。
+## History/Live 模式
 
-## ArUco 更新与 Retro Sync
+Unity 的 `ToggleHistoryTrackingMode()` 调用 `/realtime-tracking/mode`：
 
-ArUco reference 完成后：
+- `history`：停止接收实时位姿，显示每个对象最新一次 HoloLens 拍摄确认的位置。
+- `live`：恢复读取 Shigure 事件并显示最新有效 tracking pose；暂停期间累积的移动事件按临时 Shigure ID 合并为最新一条。
 
-- 保存当前 `startup_session_id` 的最新 marker pose。
-- 同次启动内已到 `aruco_sync` 之后或 completed 的模型会 retro-sync。
-- retro-sync 只按 `startup_session_id` 查询同次启动任务，不修改其他启动批次。
-- 更新逻辑从 `object_hololens_original` 重新计算 `object_aruco`，再按最新 marker pose 更新 `object_hololens_current`。
+模式切换通过 `request_generation`、`mode_epoch` 和 `coordinate_epoch` 拒绝过期响应。任何重新放置只更新 position/rotation，不修改已加载模型的缩放。
 
-## API 触发关系
+## ArUco 与公开坐标
 
-主要入口：
+HoloLens 上传当前本地坐标；服务器将持久位姿保存为 ArUco 坐标，并按请求方当前 `startup_session_id` 的最新 ArUco reference 转回 HoloLens 当前本地坐标。
 
-- `POST /generate`：上传 object reconstruction 或 aruco reference。
-- `POST /check-queue`：Unity 查询任务状态和 completed model instance。
-- `GET /aruco/latest-reference`：按 startup session 获取最新 ArUco reference。
-- `GET /latest-completed-task-ids`：列出 completed 模型。
-- `POST /history-placement-restoration/start`：启动历史再现请求。
-- `GET /history-placement-restoration/latest`：获取最近 completed 历史再现结果。
-- `POST /spatial-query/ray` 和 `/spatial-query/ray-range`：基于当前 HoloLens 坐标查询模型。
+Unity 只消费：
 
-## 不再使用的旧逻辑
+```text
+coordinate_space = hololens_current_local
+model_instance.pose
+tracking item.pose
+body_evidence.body_model.pose
+```
 
-- Unity 正式模型不再从 `sam3_spatial_box` fallback 放置。
-- Unity 正式模型不再在缺 pose 时放到相机前方。
-- 历史再现不再扫描 Shigure 全图找 object mask。
-- 历史再现不再用旧 YOLO baseline 重新恢复对象区域。
-- HoloLens 本地不保存或消费 ArUco 坐标。
+ArUco reference 完成后，服务器只 retro-sync 同一 `startup_session_id` 的相关任务。
+
+## 当前 HTTP 入口
+
+- `POST /generate`
+- `POST /check-queue`
+- `GET /task-artifacts/<task_id>/<area>/<filename>`
+- `GET /aruco/latest-reference?startup_session_id=...`
+- `GET /aruco/markers`
+- `POST /aruco/markers/sync`
+- `POST /realtime-tracking/mode`
+- `GET /realtime-tracking/status?startup_session_id=...`

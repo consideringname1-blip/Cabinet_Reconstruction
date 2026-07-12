@@ -39,7 +39,6 @@ ARUCO_REFERENCE_MARKER_IMAGE_PATH = ARUCO_REFERENCE_ROOT / "ar_marker_7x7_1.png"
 
 TASK_DATA_ROOT = DATA_ROOT / "model"
 ARUCO_PROCESSING_ROOT = DATA_ROOT / "aruco_processing"
-HISTORY_PLACEMENT_REQUEST_ROOT = DATA_ROOT / "history_placement_requests"
 REALTIME_TRACKING_ROOT = DATA_ROOT / "realtime_tracking"
 
 ARTIFACT_ROOT_DIRS = (
@@ -55,7 +54,6 @@ ARTIFACT_ROOT_DIRS = (
     SHIGURE_MARKER_HISTORY_ROOT,
     TASK_DATA_ROOT,
     ARUCO_PROCESSING_ROOT,
-    HISTORY_PLACEMENT_REQUEST_ROOT,
     REALTIME_TRACKING_ROOT,
 )
 
@@ -124,22 +122,6 @@ def aruco_debug_dir(task_timestamp: str) -> Path:
     return aruco_processing_dir(task_timestamp) / TASK_DEBUG_DIRNAME
 
 
-def history_request_dir(request_timestamp: str) -> Path:
-    return HISTORY_PLACEMENT_REQUEST_ROOT / request_timestamp
-
-
-def history_request_worker_dir(request_timestamp: str) -> Path:
-    return history_request_dir(request_timestamp) / TASK_WORKER_DIRNAME
-
-
-def history_request_result_dir(request_timestamp: str) -> Path:
-    return history_request_dir(request_timestamp) / TASK_RESULT_DIRNAME
-
-
-def history_request_debug_dir(request_timestamp: str) -> Path:
-    return history_request_dir(request_timestamp) / TASK_DEBUG_DIRNAME
-
-
 def ensure_model_task_dirs(task_timestamp: str) -> None:
     for path in (
         model_worker_dir(task_timestamp),
@@ -155,15 +137,6 @@ def ensure_aruco_task_dirs(task_timestamp: str) -> None:
         aruco_worker_dir(task_timestamp),
         aruco_result_dir(task_timestamp),
         aruco_debug_dir(task_timestamp),
-    ):
-        path.mkdir(parents=True, exist_ok=True)
-
-
-def ensure_history_request_dirs(request_timestamp: str) -> None:
-    for path in (
-        history_request_worker_dir(request_timestamp),
-        history_request_result_dir(request_timestamp),
-        history_request_debug_dir(request_timestamp),
     ):
         path.mkdir(parents=True, exist_ok=True)
 
@@ -194,8 +167,9 @@ MODEL_RESULT_FILES = {
     "taken.result": "07_taken_detection_result.json",
     "taken.result_rgb": "07_taken_detection_result_rgb.png",
     "taken.result_depth": "07_taken_detection_result_depth.png",
+    "taken.object_mask": "07_taken_detection_object_mask.png",
     "taken.camera_info": "07_taken_detection_camera_info.json",
-    "taken.active_objects": "07_taken_detection_active_objects.json",
+    "taken.object_detection": "07_taken_detection_object_detection.json",
     "taken.marker_pose": "07_taken_detection_marker_6d_pose.json",
     "body.result": "08_sam3d_body_result.json",
     "body.people": "08_sam3d_body_people.json",

@@ -20,12 +20,11 @@ from settings import (
     SAM3D_OBJECTS_ATTN_BACKEND,
     SAM3D_OBJECTS_SEED,
 )
-from model_generation_common import (
+from stages.hololens3d_reconstruction.model_generation_common import (
     BACKEND_SAM3D_OBJECTS,
-    MODEL_STAGE_SAM3D_OBJECTS,
     build_model_generation_payload,
 )
-from object_alignment_common import resolve_blender_path
+from stages.hololens3d_reconstruction.object_alignment_common import resolve_blender_path
 from stage_common import ensure_file, load_stage_task, resolve_python
 from subprocess_stream import stream_command
 from task_json import save_task_json
@@ -229,16 +228,13 @@ def run_sam3d_objects(json_path: Path, task: dict[str, Any]) -> None:
         ensure_file(output_path, label)
 
     artifact_root = "model_worker"
-    sam3d_payload = build_model_generation_payload(
+    task["ModelGeneration"] = build_model_generation_payload(
         backend=BACKEND_SAM3D_OBJECTS,
-        source_stage=MODEL_STAGE_SAM3D_OBJECTS,
         mesh=obj_path.name,
         mtl=mtl_path.name,
         image=texture_path.name,
-        mesh_folder=artifact_root,
-        runtime_ready=False,
+        artifact_root=artifact_root,
         extra={
-            "artifact_root": artifact_root,
             "raw_glb": raw_glb_path.name,
             "source_color": color_path.name,
             "source_mask": mask_path.name,
@@ -248,8 +244,6 @@ def run_sam3d_objects(json_path: Path, task: dict[str, Any]) -> None:
             "postprocess": postprocess_info,
         },
     )
-    task["SAM3DObjects"] = sam3d_payload
-    task["ModelGeneration"] = dict(sam3d_payload)
     save_task_json(json_path, task)
     print(f"[OK] sam3d_objects mesh: {obj_path}")
 
@@ -269,7 +263,7 @@ def main() -> int:
         json_path, task = load_stage_task(
             sys.argv,
             usage="Usage: python code/stages/hololens3d_reconstruction/run_sam3d_objects_from_json.py <task_meta.json or filename>",
-            stage_name="sam3d_objects",
+            stage_name="model_generation",
         )
         run_sam3d_objects(json_path, task)
         return 0

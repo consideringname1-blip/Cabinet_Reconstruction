@@ -1,8 +1,9 @@
+"""Cross-camera object identity matching for Shigure observations."""
+
 from __future__ import annotations
 
 import math
 import uuid
-from collections import OrderedDict
 from dataclasses import asdict, dataclass
 from threading import RLock
 from typing import Any, Iterable, Mapping, Sequence
@@ -33,7 +34,9 @@ class BindingNotFoundError(KeyError):
 
 
 def _non_empty_text(value: Any, label: str) -> str:
-    text = str(value or "").strip()
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    text = value.strip()
     if not text:
         raise ValueError(f"{label} must not be empty")
     return text
@@ -63,66 +66,8 @@ def cosine_distance(left: Any, right: Any) -> float:
     return float(max(0.0, min(2.0, 1.0 - float(np.dot(a, b)))))
 
 
-def _looks_like_single_embedding(value: Any) -> bool:
-    if isinstance(value, np.ndarray):
-        return value.ndim == 1
-    if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
-        return False
-    if not value:
-        return False
-    return isinstance(value[0], (int, float, np.integer, np.floating))
-
-
-def _candidate_references(candidate: Mapping[str, Any]) -> list[tuple[Any, str | None]]:
-    references: list[tuple[Any, str | None]] = []
-    raw_references = candidate.get("references")
-    if isinstance(raw_references, Sequence) and not isinstance(raw_references, (str, bytes, bytearray)):
-        for index, reference in enumerate(raw_references):
-            if isinstance(reference, Mapping):
-                reference_id = str(
-                    reference.get("reference_id")
-                    or reference.get("capture_instance_id")
-                    or reference.get("task_id")
-                    or ""
-                ).strip() or None
-                references.append((reference.get("embedding"), reference_id))
-            else:
-                references.append((reference, str(index)))
-
-    if references:
-        return references
-
-    raw_embeddings = candidate.get("embeddings")
-    if raw_embeddings is not None:
-        values = [raw_embeddings] if _looks_like_single_embedding(raw_embeddings) else list(raw_embeddings)
-        for index, value in enumerate(values):
-            if isinstance(value, Mapping):
-                reference_id = str(
-                    value.get("reference_id")
-                    or value.get("capture_instance_id")
-                    or value.get("task_id")
-                    or ""
-                ).strip() or None
-                references.append((value.get("embedding"), reference_id))
-            else:
-                references.append((value, str(index)))
-        return references
-
-    if candidate.get("embedding") is not None:
-        reference_id = str(
-            candidate.get("reference_id")
-            or candidate.get("capture_instance_id")
-            or candidate.get("task_id")
-            or ""
-        ).strip() or None
-        references.append((candidate.get("embedding"), reference_id))
-    return references
-
-
 def _geometry_score(candidate: Mapping[str, Any]) -> float | None:
     value = candidate.get("geometry_score")
-    if value is None and isinstance(candidate.get("geometry"), Mapping):
-        value = candidate["geometry"].get("score")
     if value is None:
         return None
     score = float(value)
@@ -131,35 +76,34 @@ def _geometry_score(candidate: Mapping[str, Any]) -> float | None:
     return float(max(0.0, min(1.0, score)))
 
 
-def _group_candidates(
+def _canonical_candidates(
     candidates: Iterable[Mapping[str, Any]],
     *,
     max_candidates: int,
 ) -> tuple[list[dict[str, Any]], int]:
-    grouped: OrderedDict[str, dict[str, Any]] = OrderedDict()
+    accepted: list[dict[str, Any]] = []
+    seen: set[str] = set()
     truncated = 0
     for raw_candidate in candidates:
         if not isinstance(raw_candidate, Mapping):
+            raise ValueError("identity candidate must be an object")
+        display_object_id = _non_empty_text(raw_candidate.get("display_object_id"), "display_object_id")
+        if display_object_id in seen:
+            raise ValueError(f"duplicate identity candidate: {display_object_id}")
+        seen.add(display_object_id)
+        if len(accepted) >= max_candidates:
+            truncated += 1
             continue
-        display_object_id = str(raw_candidate.get("display_object_id") or "").strip()
-        if not display_object_id:
-            continue
-        if display_object_id not in grouped:
-            if len(grouped) >= max_candidates:
-                truncated += 1
-                continue
-            grouped[display_object_id] = {
+        reference_id = _non_empty_text(raw_candidate.get("reference_id"), "reference_id")
+        accepted.append(
+            {
                 "display_object_id": display_object_id,
-                "references": [],
-                "geometry_score": None,
+                "reference_id": reference_id,
+                "embedding": raw_candidate.get("embedding"),
+                "geometry_score": _geometry_score(raw_candidate),
             }
-        entry = grouped[display_object_id]
-        entry["references"].extend(_candidate_references(raw_candidate))
-        geometry_score = _geometry_score(raw_candidate)
-        if geometry_score is not None:
-            previous = entry.get("geometry_score")
-            entry["geometry_score"] = geometry_score if previous is None else max(float(previous), geometry_score)
-    return list(grouped.values()), truncated
+        )
+    return accepted, truncated
 
 
 def match_display_identity(
@@ -174,11 +118,9 @@ def match_display_identity(
 ) -> dict[str, Any]:
     """Match one Shigure observation to existing display objects.
 
-    Each candidate may contain ``embedding``, ``embeddings``, or a
-    ``references`` list with capture metadata. Multiple views are reduced by
-    minimum cosine distance, matching the historical identity policy. An
-    optional geometry score in [0, 1] adds ``weight * (1 - score)`` to the
-    ranking distance. A missing geometry score does not penalize a candidate.
+    Each candidate has exactly one latest HoloLens reference: ``embedding``,
+    ``reference_id`` and ``display_object_id``. An optional geometry score in
+    [0, 1] adds ``weight * (1 - score)`` to the ranking distance.
 
     The function never creates an ID and never mutates its inputs.
     """
@@ -188,49 +130,34 @@ def match_display_identity(
     geometry_weight = float(geometry_weight)
     if distance_threshold < 0.0 or second_margin < 0.0 or geometry_weight < 0.0:
         raise ValueError("identity thresholds and geometry_weight must be non-negative")
-    candidate_limit = max(1, min(int(max_candidates or 1), int(SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS), 5))
-    grouped, truncated = _group_candidates(candidates, max_candidates=candidate_limit)
+    candidate_limit = max(
+        1,
+        min(int(max_candidates or 1), int(SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS)),
+    )
+    canonical, truncated = _canonical_candidates(candidates, max_candidates=candidate_limit)
 
     scores: list[dict[str, Any]] = []
-    skipped_references = 0
-    for candidate in grouped:
-        best_distance: float | None = None
-        best_reference_id: str | None = None
-        valid_reference_count = 0
-        for index, (raw_embedding, reference_id) in enumerate(candidate["references"]):
-            try:
-                reference = _embedding_array(
-                    raw_embedding,
-                    label=f"{candidate['display_object_id']} reference {index}",
-                )
-            except ValueError:
-                skipped_references += 1
-                continue
-            if reference.shape != observation.shape:
-                skipped_references += 1
-                continue
-            valid_reference_count += 1
-            distance = float(max(0.0, min(2.0, 1.0 - float(np.dot(observation, reference)))))
-            if best_distance is None or distance < best_distance:
-                best_distance = distance
-                best_reference_id = reference_id
-        if best_distance is None:
-            continue
-
+    for candidate in canonical:
+        reference = _embedding_array(candidate["embedding"], label=f"{candidate['display_object_id']} embedding")
+        if reference.shape != observation.shape:
+            raise ValueError(
+                f"embedding shape mismatch for {candidate['display_object_id']}: "
+                f"{reference.shape} vs {observation.shape}"
+            )
+        distance = float(max(0.0, min(2.0, 1.0 - float(np.dot(observation, reference)))))
         geometry_score = candidate.get("geometry_score")
         geometry_penalty = 0.0
         if geometry_score is not None and geometry_weight > 0.0:
             geometry_penalty = geometry_weight * (1.0 - float(geometry_score))
-        effective_distance = best_distance + geometry_penalty
+        effective_distance = distance + geometry_penalty
         scores.append(
             {
                 "display_object_id": candidate["display_object_id"],
-                "dinov2_distance": float(best_distance),
+                "dinov2_distance": distance,
                 "geometry_score": float(geometry_score) if geometry_score is not None else None,
                 "geometry_penalty": float(geometry_penalty),
                 "effective_distance": float(effective_distance),
-                "selected_reference_id": best_reference_id,
-                "valid_reference_count": int(valid_reference_count),
+                "reference_id": candidate["reference_id"],
             }
         )
 
@@ -244,12 +171,10 @@ def match_display_identity(
     base_result: dict[str, Any] = {
         "status": UNBOUND,
         "display_object_id": None,
-        "reason": "no_valid_candidate_embeddings",
+        "reason": "no_identity_candidates",
         "candidate_scores": scores,
-        "considered_display_object_count": len(grouped),
-        "valid_display_object_count": len(scores),
+        "considered_display_object_count": len(canonical),
         "truncated_display_object_count": int(truncated),
-        "skipped_reference_count": int(skipped_references),
         "thresholds": {
             "distance": distance_threshold,
             "second_margin": second_margin,
@@ -294,7 +219,7 @@ def match_display_identity(
             "status": MATCHED,
             "display_object_id": best["display_object_id"],
             "reason": "matched_existing_display_object",
-            "selected_reference_id": best.get("selected_reference_id"),
+            "selected_reference_id": best["reference_id"],
         }
     )
     return base_result
@@ -335,7 +260,10 @@ class EphemeralBindingRegistry:
         max_display_objects: int = SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
     ) -> None:
         self._ingress_session_uuid = str(ingress_session_uuid or uuid.uuid4()).strip()
-        self._max_display_objects = max(1, min(int(max_display_objects or 1), 5))
+        self._max_display_objects = max(
+            1,
+            min(int(max_display_objects or 1), int(SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS)),
+        )
         self._records: dict[BindingKey, BindingRecord] = {}
         self._reverse: dict[tuple[str, str], BindingKey] = {}
         self._namespace_generations: dict[str, int] = {}

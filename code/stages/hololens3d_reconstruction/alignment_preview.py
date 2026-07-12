@@ -6,7 +6,7 @@ from pathlib import Path
 import _bootstrap
 import numpy as np
 
-from object_alignment_common import annotate_rendered_image, resolve_blender_path
+from stages.hololens3d_reconstruction.object_alignment_common import annotate_rendered_image, resolve_blender_path
 
 
 HELPER_SCRIPT = Path(__file__).resolve().with_name("blender_render_measure.py")
@@ -40,13 +40,9 @@ def build_preview_info_lines(
 ) -> list[str]:
     depthpointcloud = task.get("depthpointcloud") or {}
     object_alignment = task.get("object_alignment") or {}
-    mode = str(object_alignment.get('alignment_mode') or object_alignment.get('icp_mode') or 'off')
-    rmse = float(object_alignment.get('alignment_rmse') or object_alignment.get('icp_rmse') or 0.0)
-    fit_model_count = int(
-        object_alignment.get('alignment_fit_model_point_count')
-        or object_alignment.get('icp_fit_model_point_count')
-        or 0
-    )
+    mode = str(object_alignment.get('alignment_mode') or 'off')
+    rmse = float(object_alignment.get('alignment_rmse') or 0.0)
+    fit_model_count = int(object_alignment.get('alignment_fit_model_point_count') or 0)
     lines = [
         header_line,
         model_legend_line,

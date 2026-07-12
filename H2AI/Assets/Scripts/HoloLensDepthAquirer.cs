@@ -23,8 +23,7 @@ public class HoloLensDepthAquirer : MonoBehaviour
     [SerializeField] bool _enable_sensor_update = false;
     [SerializeField, Min(1f)] private float maxSensorUpdateHz = 15f;
 
-    // Default/backward-compatible sensor used by FreezeCurrentFrame().
-    // The capture buttons call FreezeCurrentFrame(sensor) explicitly.
+    // Sensor shown by the local preview; capture paths always select a sensor explicitly.
     [SerializeField] DepthSensorType _depthSensorType = DepthSensorType.AHAT;
 
     private class DepthSensorState
@@ -350,11 +349,6 @@ public class HoloLensDepthAquirer : MonoBehaviour
     public bool FreezeCurrentLongThrowFrame()
     {
         return FreezeCurrentFrame(DepthSensorType.LONGTHROW);
-    }
-
-    public bool FreezeCurrentFrame()
-    {
-        return FreezeCurrentFrame(_depthSensorType);
     }
 
     public bool FreezeCurrentFrame(DepthSensorType sensorType)

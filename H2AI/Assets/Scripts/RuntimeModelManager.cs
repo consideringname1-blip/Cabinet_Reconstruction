@@ -40,7 +40,6 @@ public class RuntimeModelInstance
     public string TaskId = "";
     public string FbxUrl = "";
     public string DisplayObjectId = "";
-    public string CaptureInstanceId = "";
     public long ModelRevision = -1;
     public bool IsEvidenceOverlay;
     public RuntimeModelPoseData Pose = new RuntimeModelPoseData();
@@ -53,7 +52,6 @@ public class RuntimeModelRecord
     public string TaskId = "";
     public string FbxUrl = "";
     public string DisplayObjectId = "";
-    public string CaptureInstanceId = "";
     public long ModelRevision = -1;
     public long HololensPoseRevision = -1;
     public long TrackingPoseRevision = -1;
@@ -166,9 +164,16 @@ public class RuntimeModelManager : MonoBehaviour
 
     public void PrepareForIncomingModel(RuntimeModelInstance instance)
     {
-        if (instance == null || string.IsNullOrEmpty(instance.ModelKey))
+        if (instance == null
+            || string.IsNullOrEmpty(instance.ModelKey)
+            || string.IsNullOrEmpty(instance.TaskId)
+            || string.IsNullOrEmpty(instance.DisplayObjectId)
+            || instance.ModelRevision <= 0
+            || string.IsNullOrEmpty(instance.FbxUrl)
+            || instance.Pose == null
+            || !instance.Pose.HasHololensPose)
         {
-            throw new ArgumentException("Runtime model instance requires a model key.");
+            throw new ArgumentException("Runtime model instance does not satisfy the canonical model contract.");
         }
 
         EnsureInitialized();
@@ -185,41 +190,10 @@ public class RuntimeModelManager : MonoBehaviour
         }
         EnsureInitialized();
 
-        string fileName;
-        if (!instance.IsEvidenceOverlay
-            && !string.IsNullOrEmpty(instance.DisplayObjectId)
-            && instance.ModelRevision >= 0)
-        {
-            fileName = "display_" + GetStableDisplayCacheKey(instance.DisplayObjectId)
-                + "_revision_" + instance.ModelRevision.ToString() + ".fbx";
-        }
-        else
-        {
-            string modelIdentity = !string.IsNullOrEmpty(instance.ModelKey)
-                ? instance.ModelKey
-                : instance.TaskId;
-            string prefix;
-            if (instance.IsEvidenceOverlay && !string.IsNullOrEmpty(instance.DisplayObjectId))
-            {
-                prefix = "evidence_display_" + GetStableDisplayCacheKey(instance.DisplayObjectId);
-            }
-            else
-            {
-                prefix = (instance.IsEvidenceOverlay ? "evidence_" : "model_")
-                    + ComputeStableIdentityHash(modelIdentity);
-            }
-            string identity = prefix;
-            if (instance.ModelRevision >= 0)
-            {
-                identity += "_revision_" + instance.ModelRevision.ToString();
-            }
-            if (!string.IsNullOrEmpty(instance.FbxUrl)
-                && (instance.IsEvidenceOverlay || instance.ModelRevision < 0))
-            {
-                identity += "_url_" + ComputeStableIdentityHash(instance.FbxUrl);
-            }
-            fileName = SanitizeFileName(identity) + ".fbx";
-        }
+        PrepareForIncomingModel(instance);
+        string prefix = instance.IsEvidenceOverlay ? "evidence_display_" : "display_";
+        string fileName = prefix + GetStableDisplayCacheKey(instance.DisplayObjectId)
+            + "_revision_" + instance.ModelRevision.ToString() + ".fbx";
         return Path.Combine(_cacheRootPath, fileName);
     }
 
@@ -286,7 +260,6 @@ public class RuntimeModelManager : MonoBehaviour
             TaskId = instance.TaskId,
             FbxUrl = instance.FbxUrl,
             DisplayObjectId = instance.DisplayObjectId,
-            CaptureInstanceId = instance.CaptureInstanceId,
             ModelRevision = instance.ModelRevision,
             LocalPath = localPath ?? "",
             IsEvidenceOverlay = instance.IsEvidenceOverlay,
@@ -321,54 +294,6 @@ public class RuntimeModelManager : MonoBehaviour
         EnforceCachedFileLimit();
     }
 
-    public bool UpdateModelPose(string taskId, RuntimeModelPoseData pose)
-    {
-        if (string.IsNullOrEmpty(taskId) || pose == null)
-        {
-            return false;
-        }
-
-        foreach (RuntimeModelRecord record in _records)
-        {
-            if (record == null)
-            {
-                continue;
-            }
-
-            if (record.TaskId == taskId || record.ModelKey == taskId)
-            {
-                record.Pose = pose;
-                ApplyResolvedPose(record);
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    public bool HasModel(string taskIdOrModelKey)
-    {
-        if (string.IsNullOrEmpty(taskIdOrModelKey))
-        {
-            return false;
-        }
-
-        foreach (RuntimeModelRecord record in _records)
-        {
-            if (record == null)
-            {
-                continue;
-            }
-
-            if (record.TaskId == taskIdOrModelKey || record.ModelKey == taskIdOrModelKey)
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     public bool HasMatchingModel(RuntimeModelInstance instance)
     {
         if (instance == null)
@@ -387,44 +312,10 @@ public class RuntimeModelManager : MonoBehaviour
         return false;
     }
 
-    public bool HasDisplayObjectModel(string displayObjectId)
-    {
-        if (string.IsNullOrEmpty(displayObjectId))
-        {
-            return false;
-        }
-
-        foreach (RuntimeModelRecord record in _records)
-        {
-            if (MatchesDisplayObject(record, displayObjectId))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    public List<string> GetLoadedTaskIds()
-    {
-        List<string> taskIds = new List<string>();
-        foreach (RuntimeModelRecord record in _records)
-        {
-            if (record == null || record.IsEvidenceOverlay || string.IsNullOrEmpty(record.TaskId))
-            {
-                continue;
-            }
-
-            taskIds.Add(record.TaskId);
-        }
-
-        return taskIds;
-    }
-
-    public bool TryGetLoadedRecord(string taskIdOrModelKey, out RuntimeModelRecord matchedRecord)
+    public bool TryGetLoadedRecord(string modelKey, out RuntimeModelRecord matchedRecord)
     {
         matchedRecord = null;
-        if (string.IsNullOrEmpty(taskIdOrModelKey))
+        if (string.IsNullOrEmpty(modelKey))
         {
             return false;
         }
@@ -436,33 +327,11 @@ public class RuntimeModelManager : MonoBehaviour
                 continue;
             }
 
-            if (record.TaskId == taskIdOrModelKey || record.ModelKey == taskIdOrModelKey)
+            if (record.ModelKey == modelKey)
             {
                 matchedRecord = record;
                 return true;
             }
-        }
-
-        return false;
-    }
-
-    public bool UpdateModelPose(RuntimeModelInstance instance)
-    {
-        if (instance == null || instance.Pose == null)
-        {
-            return false;
-        }
-
-        foreach (RuntimeModelRecord record in _records)
-        {
-            if (!MatchesRuntimeModelIdentity(record, instance))
-            {
-                continue;
-            }
-
-            record.Pose = instance.Pose;
-            ApplyResolvedPose(record);
-            return true;
         }
 
         return false;
@@ -517,12 +386,17 @@ public class RuntimeModelManager : MonoBehaviour
             return false;
         }
 
-        if (modelRevision >= 0 && record.ModelRevision >= 0 && modelRevision != record.ModelRevision)
+        if (modelRevision <= 0 || record.ModelRevision != modelRevision)
         {
             rejectionReason = "model_revision_mismatch";
             return false;
         }
-        if (modeEpoch >= 0 && record.LastAppliedModeEpoch >= 0 && modeEpoch < record.LastAppliedModeEpoch)
+        if (modeEpoch < 0)
+        {
+            rejectionReason = "mode_epoch_missing";
+            return false;
+        }
+        if (record.LastAppliedModeEpoch >= 0 && modeEpoch < record.LastAppliedModeEpoch)
         {
             rejectionReason = "mode_epoch_stale";
             return false;
@@ -536,7 +410,12 @@ public class RuntimeModelManager : MonoBehaviour
         long currentSourceRevision = normalizedSource == "tracking"
             ? record.TrackingPoseRevision
             : record.HololensPoseRevision;
-        if (sourcePoseRevision >= 0 && currentSourceRevision >= 0 && sourcePoseRevision < currentSourceRevision)
+        if (sourcePoseRevision <= 0)
+        {
+            rejectionReason = "pose_revision_missing";
+            return false;
+        }
+        if (currentSourceRevision >= 0 && sourcePoseRevision < currentSourceRevision)
         {
             rejectionReason = "pose_revision_stale";
             return false;
@@ -555,11 +434,6 @@ public class RuntimeModelManager : MonoBehaviour
             return false;
         }
 
-        if (record.ModelRevision < 0 && modelRevision >= 0)
-        {
-            // Legacy models loaded before revision metadata was introduced are bound once.
-            record.ModelRevision = modelRevision;
-        }
         if (normalizedSource == "tracking")
         {
             record.TrackingPoseRevision = Math.Max(record.TrackingPoseRevision, sourcePoseRevision);
@@ -597,11 +471,11 @@ public class RuntimeModelManager : MonoBehaviour
     private static string NormalizePoseSource(string poseSource)
     {
         string normalized = (poseSource ?? "").Trim().ToLowerInvariant();
-        if (normalized == "tracking" || normalized == "realtime" || normalized == "shigure")
+        if (normalized == "tracking")
         {
             return "tracking";
         }
-        if (normalized == "hololens" || normalized == "hololens_confirmed" || normalized == "history")
+        if (normalized == "hololens")
         {
             return "hololens";
         }
@@ -626,13 +500,6 @@ public class RuntimeModelManager : MonoBehaviour
         {
             Debug.LogWarning("[RuntimeModelManager] Failed to delete cached model file: " + exc.Message);
         }
-    }
-
-    public int ClearLocalRuntimeModels()
-    {
-        // Compatibility entry: "clear local" now means clear the scene display only.
-        // Records and FBX files remain available for position-only restoration.
-        return HideAllRuntimeModels();
     }
 
     public int HideAllRuntimeModels()
@@ -667,17 +534,6 @@ public class RuntimeModelManager : MonoBehaviour
         return shownCount;
     }
 
-    public bool SetDisplayObjectVisibility(string displayObjectId, bool visible)
-    {
-        RuntimeModelRecord record = FindDisplayObjectRecord(displayObjectId);
-        if (record == null || record.RootGameObject == null)
-        {
-            return false;
-        }
-        record.RootGameObject.SetActive(visible);
-        return true;
-    }
-
     public bool TryResolveWorldPose(RuntimeModelPoseData pose, out Vector3 position, out Quaternion rotation)
     {
         position = Vector3.zero;
@@ -708,46 +564,6 @@ public class RuntimeModelManager : MonoBehaviour
         {
             record.RootGameObject.transform.SetPositionAndRotation(position, rotation);
             record.LastTouchedAtUtc = DateTime.UtcNow;
-        }
-    }
-
-    private void RemoveModel(string modelKey)
-    {
-        if (string.IsNullOrEmpty(modelKey))
-        {
-            return;
-        }
-
-        for (int i = _records.Count - 1; i >= 0; i--)
-        {
-            if (_records[i].ModelKey == modelKey)
-            {
-                RuntimeModelRecord record = _records[i];
-                _records.RemoveAt(i);
-                DestroyRecordObject(record);
-                DeleteCachedFile(record.LocalPath);
-            }
-        }
-    }
-
-    private void RemoveDisplayObjectModels(string displayObjectId)
-    {
-        if (string.IsNullOrEmpty(displayObjectId))
-        {
-            return;
-        }
-
-        for (int i = _records.Count - 1; i >= 0; i--)
-        {
-            RuntimeModelRecord record = _records[i];
-            if (!MatchesDisplayObject(record, displayObjectId))
-            {
-                continue;
-            }
-
-            _records.RemoveAt(i);
-            DestroyRecordObject(record);
-            DeleteCachedFile(record.LocalPath);
         }
     }
 
@@ -794,11 +610,7 @@ public class RuntimeModelManager : MonoBehaviour
             }
             else
             {
-                superseded = !candidate.IsEvidenceOverlay
-                    && ((!string.IsNullOrEmpty(stagedRecord.TaskId)
-                            && string.Equals(candidate.TaskId, stagedRecord.TaskId, StringComparison.Ordinal))
-                        || (!string.IsNullOrEmpty(stagedRecord.ModelKey)
-                            && string.Equals(candidate.ModelKey, stagedRecord.ModelKey, StringComparison.Ordinal)));
+                superseded = false;
             }
             if (!superseded)
             {
@@ -817,15 +629,9 @@ public class RuntimeModelManager : MonoBehaviour
         {
             return "";
         }
-        if (!string.IsNullOrEmpty(record.DisplayObjectId))
-        {
-            return "display:" + record.DisplayObjectId;
-        }
-        if (!string.IsNullOrEmpty(record.TaskId))
-        {
-            return "task:" + record.TaskId;
-        }
-        return string.IsNullOrEmpty(record.ModelKey) ? "" : "model:" + record.ModelKey;
+        return string.IsNullOrEmpty(record.DisplayObjectId)
+            ? ""
+            : "display:" + record.DisplayObjectId;
     }
 
     private int CountDisplayObjectBundles()
@@ -889,15 +695,14 @@ public class RuntimeModelManager : MonoBehaviour
             return false;
         }
 
-        if (!string.IsNullOrEmpty(instance.TaskId) && record.TaskId == instance.TaskId)
+        if (instance.IsEvidenceOverlay)
         {
-            return true;
+            return record.IsEvidenceOverlay
+                && record.ModelKey == instance.ModelKey
+                && record.ModelRevision == instance.ModelRevision;
         }
-        if (!string.IsNullOrEmpty(instance.ModelKey) && record.ModelKey == instance.ModelKey)
-        {
-            return true;
-        }
-        return !instance.IsEvidenceOverlay && MatchesDisplayObject(record, instance.DisplayObjectId);
+        return MatchesDisplayObject(record, instance.DisplayObjectId)
+            && record.ModelRevision == instance.ModelRevision;
     }
 
     private bool MatchesDisplayObject(RuntimeModelRecord record, string displayObjectId)
@@ -906,49 +711,6 @@ public class RuntimeModelManager : MonoBehaviour
             && !record.IsEvidenceOverlay
             && !string.IsNullOrEmpty(displayObjectId)
             && record.DisplayObjectId == displayObjectId;
-    }
-
-    private int CountVisibleDisplayModels()
-    {
-        int count = 0;
-        foreach (RuntimeModelRecord record in _records)
-        {
-            if (record != null && !record.IsEvidenceOverlay)
-            {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    private bool RemoveOldestVisibleModel()
-    {
-        int oldestIndex = -1;
-        DateTime oldestTime = DateTime.MaxValue;
-        for (int i = 0; i < _records.Count; i++)
-        {
-            RuntimeModelRecord record = _records[i];
-            if (record == null || record.IsEvidenceOverlay)
-            {
-                continue;
-            }
-            if (oldestIndex < 0 || record.CreatedAtUtc < oldestTime)
-            {
-                oldestTime = record.CreatedAtUtc;
-                oldestIndex = i;
-            }
-        }
-
-        if (oldestIndex < 0)
-        {
-            return false;
-        }
-
-        RuntimeModelRecord oldest = _records[oldestIndex];
-        _records.RemoveAt(oldestIndex);
-        DestroyRecordObject(oldest);
-        DeleteCachedFile(oldest.LocalPath);
-        return true;
     }
 
     private void DestroyRecordObject(RuntimeModelRecord record)
@@ -976,7 +738,7 @@ public class RuntimeModelManager : MonoBehaviour
             identity = record.RootGameObject.AddComponent<RuntimeModelEventIdentity>();
         }
 
-        identity.Configure(record.ModelKey, record.TaskId, record.FbxUrl, record.DisplayObjectId, record.CaptureInstanceId);
+        identity.Configure(record.ModelKey, record.TaskId, record.FbxUrl, record.DisplayObjectId);
     }
 
     private void EnforceCachedFileLimit()
@@ -1079,9 +841,7 @@ public class RuntimeModelManager : MonoBehaviour
         if (stem.StartsWith(evidencePrefix, StringComparison.Ordinal))
         {
             string rest = stem.Substring(evidencePrefix.Length);
-            int revisionSeparator = rest.IndexOf("_revision_", StringComparison.Ordinal);
-            int urlSeparator = rest.IndexOf("_url_", StringComparison.Ordinal);
-            int separator = revisionSeparator >= 0 ? revisionSeparator : urlSeparator;
+            int separator = rest.IndexOf("_revision_", StringComparison.Ordinal);
             if (separator > 0)
             {
                 return "display:" + rest.Substring(0, separator);
@@ -1093,17 +853,7 @@ public class RuntimeModelManager : MonoBehaviour
     private string GetCacheFileFamilyKey(string fileName)
     {
         string stem = Path.GetFileNameWithoutExtension(fileName) ?? "";
-        int revisionSeparator = stem.IndexOf("_revision_", StringComparison.Ordinal);
-        int urlSeparator = stem.IndexOf("_url_", StringComparison.Ordinal);
-        int separator;
-        if (revisionSeparator >= 0 && urlSeparator >= 0)
-        {
-            separator = Math.Min(revisionSeparator, urlSeparator);
-        }
-        else
-        {
-            separator = Math.Max(revisionSeparator, urlSeparator);
-        }
+        int separator = stem.IndexOf("_revision_", StringComparison.Ordinal);
         return separator > 0 ? stem.Substring(0, separator) : stem;
     }
 

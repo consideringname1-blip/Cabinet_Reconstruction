@@ -4,7 +4,7 @@ import sys
 
 import _bootstrap
 
-from model_bounds import compute_and_store_model_bounds
+from stages.hololens3d_reconstruction.model_bounds import compute_and_store_model_bounds
 from stage_common import load_stage_task
 
 

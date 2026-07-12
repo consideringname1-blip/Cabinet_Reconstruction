@@ -1,27 +1,13 @@
 # 服务器输入输出契约
 
-更新日期：2026-07-08
-状态：当前实现说明
+更新日期：2026-07-12
+状态：当前协议
 
-本文记录 API、JSON 字段和稳定 artifact 契约。算法细节见坐标、Shigure、拿取判断、历史再现和 SAM3D Body 专题文档。
+服务器只接受本文列出的字段名、类型和坐标空间。模型生成后端可选 InstantMesh 或 SAM3D Objects，但两者写入相同的公开契约。
 
-## 运行入口
+## Artifact 下载
 
-```bash
-cd /workspace_whs
-python code/run_server.py
-```
-
-配置拆分：
-
-- `code/config.py`：运行开关、阈值、worker 参数。
-- `code/path_config.py`：代码路径、stage 脚本、Python/Blender 可执行文件。
-- `code/artifact_layout.py`：数据目录和 artifact 命名。
-- `code/task_db.py`：SQLite schema 和查询。
-
-## 稳定下载入口
-
-所有新稳定 artifact 使用 task-local endpoint：
+模型任务 artifact 使用：
 
 ```text
 /task-artifacts/<task_id>/worker/<filename>
@@ -29,230 +15,254 @@ python code/run_server.py
 /task-artifacts/<task_id>/debug/<filename>
 ```
 
-Unity 不应直接拼 `data/` 文件路径，也不应使用旧 `/files/<folder>/<filename>` 兼容路径。
+客户端只保存服务器返回的 URL，不自行拼接服务器文件路径。
 
-## `/generate`: object reconstruction
+## `POST /generate`: object reconstruction
 
-Multipart form：
+multipart form 必须恰好包含：
 
 ```text
-purpose=object_reconstruction
-startup_session_id 或 deviceJ.startup_session_id
+purpose
 deviceJ
-PVCameraJ 或 PVCameraFramesJ
-depthCameraJ / DepthCameraJ
+PVCameraJ
+DepthCameraJ
 SelectionBoxJ
+force_new_3d_model
+```
+
+文件必须恰好包含：
+
+```text
 pv_image
 depth_image
-force_new_3d_model   # 可选；为 true 时即使命中历史模型也强制新生成
 ```
 
-服务行为：
+字段值：
 
-1. 创建 `task_id` 和 `task_timestamp`。
-2. DB 写入 `uploading`。
-3. 写入 `data/model/<task_timestamp>/task.json` 和 `worker/01_*`。
-4. 状态切到 `pending`，进入 worker 队列。
+```text
+purpose = object_reconstruction
+force_new_3d_model = 0 | 1
+```
 
-关键输入字段：
+JSON 字段结构：
 
 ```json
 {
-  "task_id": "uuid",
-  "task_timestamp": "20260708_...",
-  "purpose": "object_reconstruction",
-  "device": {"startup_session_id": "..."},
-  "PVCamera": {"position": [0, 0, 0], "rotation_quaternion_xyzw": [0, 0, 0, 1]},
-  "DepthCamera": {"sensor": "AHAT"},
-  "SelectionBox": {}
-}
-```
-
-## `/generate`: aruco reference
-
-Multipart form：
-
-```text
-purpose=aruco_reference
-deviceJ.startup_session_id
-PVCameraFramesJ
-pv_image 或 pv_image_0, pv_image_1, ...
-```
-
-输出写入：
-
-```text
-data/aruco_processing/<task_timestamp>/
-  task.json
-  worker/<frame_timestamp>_color.png
-  worker/<frame_timestamp>_meta.json
-  result/summary.json
-  result/<frame_timestamp>_marker_detect.json
-  debug/<frame_timestamp>_aruco_debug_overlay.png
-```
-
-ArUco reference 会写入 DB，并触发同次 `startup_session_id` 的 model retro-sync。
-
-## Completed Model Response
-
-完成模型响应必须提供服务器转换后的当前 HoloLens 本地位姿：
-
-```json
-{
-  "success": true,
-  "status": "completed",
-  "task_id": "...",
-  "fbx_url": ".../task-artifacts/<task_id>/result/05_export_final.fbx",
-  "model_instance": {
-    "model_key": "...",
-    "task_id": "...",
-    "fbx_url": "...",
-    "object_hololens_current": {
-      "position": [0, 0, 0],
-      "rotation_quaternion_xyzw": [0, 0, 0, 1],
-      "scale": [1, 1, 1]
-    }
+  "deviceJ": {
+    "ip": "10.40.1.132",
+    "startup_session_id": "unity-startup-uuid"
   },
-  "object_hololens_current": {"position": [], "rotation_quaternion_xyzw": [], "scale": []},
-  "object_hololens_original": null,
-  "coordinate_space": "hololens_current_local"
-}
-```
-
-规则：
-
-- `object_hololens_current` 是 Unity 正式显示唯一可信位姿。
-- 非同次启动历史模型必须由 `object_aruco` + 当前 startup 的 latest ArUco reference 转换得到。
-- `object_hololens_original` 只在请求 startup 与任务 startup 相同时下发。
-- 缺 `object_hololens_current` 时，Unity 不下载/不显示正式模型。
-
-## Pending Preview Response
-
-pending 阶段可以返回 `sam3_spatial_box`：
-
-```json
-{
-  "status": "sam3mask",
-  "sam3_spatial_box": {
-    "coordinate_space": "unity_world",
-    "aabb_min_world": [],
-    "aabb_max_world": [],
-    "depth_expansion_factor": 2.0
+  "PVCameraJ": {
+    "width": 1920,
+    "height": 1080,
+    "k": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+    "pose": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+    "time": "2026-07-12T12:00:00.0000000Z"
+  },
+  "DepthCameraJ": {
+    "pose": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+    "sensor": "AHAT"
+  },
+  "SelectionBoxJ": {
+    "top_left": [0.25, 0.25],
+    "bottom_right": [0.75, 0.75]
   }
 }
 ```
 
-`sam3_spatial_box` 仅用于生成中预览。完成、历史、runtime 下载链路不得使用它作为 fallback。
+约束：
 
-## Taken Object Detection 输出
+- `deviceJ.ip` 必须是 IPv4。
+- `PVCameraJ.k` 为有限数值 `3x3`；`PVCameraJ.pose` 和 `DepthCameraJ.pose` 为有限数值 `4x4`。
+- `DepthCameraJ.sensor` 只能是 `AHAT` 或 `LONGTHROW`。
+- selection 坐标在 `[0,1]`，且 `bottom_right` 必须位于 `top_left` 右下方。
+- `depth_image` 必须是单通道 uint16 PNG；服务器按对应传感器可靠范围清洗。
 
-`TakenObjectDetection` 写入任务 JSON，并发布 result URLs：
-
-```json
-{
-  "status": "TAKEN",
-  "history_baseline": {
-    "old_rgb_path": ".../rgb.png",
-    "old_depth_path": ".../depth.png",
-    "old_mask_path": ".../old_mask.png",
-    "camera_info_path": ".../camera_info.json",
-    "coordinate_space": "fixed_shigure_image"
-  },
-  "result_rgb": "07_taken_detection_result_rgb.png",
-  "result_depth": "07_taken_detection_result_depth.png",
-  "camera_info": "07_taken_detection_camera_info.json",
-  "active_objects": "07_taken_detection_active_objects.json",
-  "marker_pose": "07_taken_detection_marker_6d_pose.json"
-}
-```
-
-服务器响应中对应：
+响应：
 
 ```json
-"taken_object_detection_urls": {
-  "result_rgb_url": "...",
-  "result_depth_url": "...",
-  "camera_info_url": "...",
-  "active_objects_url": "...",
-  "marker_pose_url": "..."
-}
+{"task_id": "server-generated-uuid"}
 ```
 
-## SAM3D Body 输出
+`task_id` 只由服务器生成。`force_new_3d_model=1` 表示即使命中同一 `display_object_id` 也生成新模型 revision。
 
-```json
-"sam3d_body_mesh": {
-  "status": "SUCCESS",
-  "coordinate_space": "hololens_current_local",
-  "selected_person_pose_hololens": {},
-  "selected_person_bbox_xyxy": [],
-  "subject_crop_path": "..."
-}
-```
+## `POST /generate`: ArUco reference
 
-```json
-"sam3d_body_mesh_urls": {
-  "selected_person_fbx_url": "...",
-  "selected_person_obj_url": "...",
-  "people_url": "...",
-  "subject_crop_url": "..."
-}
-```
-
-Unity 历史证据窗口优先显示 `subject_crop_url`，缺失时才退回 `taken_object_detection_urls.result_rgb_url`。
-
-## History Placement Response
-
-`POST /history-placement-restoration/start` 输入：
-
-```json
-{
-  "startup_session_id": "current-unity-startup",
-  "task_id": "optional specific model",
-  "model_limit": 20,
-  "target_time": "optional"
-}
-```
-
-响应 item：
-
-```json
-{
-  "task_id": "...",
-  "status": "ORIGINAL|MISSING|OCCLUDED_REUSE_LAST|UNKNOWN",
-  "history_placement_restoration": {
-    "display": {
-      "show_model": false,
-      "polyhedron": {
-        "shape": "octahedron|cube|tetrahedron|dodecahedron",
-        "pose_hololens": {}
-      }
-    },
-    "direct_compare": {}
-  },
-  "model_instance": {},
-  "object_hololens_current": {},
-  "taken_object_detection_urls": {},
-  "sam3d_body_mesh_urls": {}
-}
-```
-
-历史再现不显示重叠模型，只显示状态 polyhedron 和裁切证据图。
-
-## 配置项
-
-常用环境变量：
+multipart form 必须恰好包含：
 
 ```text
-SHIGURE_HISTORY_RECORDING_ENABLE=1
-HISTORICAL_MODEL_REUSE_ENABLE=1
-FORCE_NEW_3D_MODEL=0
-DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD=0.20
-PREVIEW_3D_BOX_DEPTH_EXPANSION_FACTOR=2.0
-TAKEN_OBJECT_TRACKING_MODE=model_diag_circle
-TAKEN_OBJECT_MODEL_DIAG_CIRCLE_MIN_MASK_INSIDE_RATIO=0.80
-TAKEN_OBJECT_MODEL_DIAG_CIRCLE_MAX_DEPTH_DIFF_M=0.18
-HISTORY_PLACEMENT_DIRECT_COMPARE_DEPTH_DELTA_M=0.12
+purpose
+deviceJ
+PVCameraFramesJ
 ```
 
-新字段应优先加到 `config.py` 或 stage-local `settings.py`，不要在 stage 内写死阈值。
+```text
+purpose = aruco_reference
+```
+
+`deviceJ` 只包含：
+
+```json
+{"startup_session_id": "unity-startup-uuid"}
+```
+
+`PVCameraFramesJ` 是非空数组。每帧必须恰好包含 `width`、`height`、`k`、`pose`、`time`。文件名与数组下标一一对应：
+
+```text
+pv_image_0
+pv_image_1
+...
+```
+
+ArUco 任务完成后保存该 startup 的 latest reference，并 retro-sync 同一 startup 的模型任务。
+
+## `POST /check-queue`
+
+请求：
+
+```json
+{
+  "task_ids": ["task-uuid"],
+  "startup_session_id": "unity-startup-uuid"
+}
+```
+
+未完成时返回：
+
+```json
+{
+  "ready": false,
+  "pending": [
+    {
+      "task_id": "task-uuid",
+      "status": "model_generation",
+      "purpose": "object_reconstruction",
+      "terminal": false,
+      "stage_name": "model_generation",
+      "stage_index": 3,
+      "stage_count": 12,
+      "progress": 0.25,
+      "progress_text": "model_generation 25%"
+    }
+  ]
+}
+```
+
+`sam3mask` 完成后，pending item 可额外包含 `sam3_spatial_box`，仅用于生成中预览。
+
+模型任务进入唯一终态 `completed` 时，`task.model_instance` 必须恰好包含 7 个字段：
+
+```json
+{
+  "model_key": "task-uuid",
+  "task_id": "task-uuid",
+  "display_object_id": "display-object-uuid",
+  "model_revision": 2,
+  "fbx_url": "http://server/task-artifacts/task-uuid/result/05_export_final.fbx",
+  "pose": {
+    "position": [0, 0, 0],
+    "rotation_quaternion_xyzw": [0, 0, 0, 1],
+    "scale": [1, 1, 1]
+  },
+  "coordinate_space": "hololens_current_local"
+}
+```
+
+服务器不提供中间下载状态；Unity 只在 `completed` 响应中按 `model_instance` 加载正式模型。
+
+## `POST /realtime-tracking/mode`
+
+请求必须恰好包含：
+
+```json
+{
+  "startup_session_id": "unity-startup-uuid",
+  "mode": "history",
+  "request_generation": 4
+}
+```
+
+`mode` 只能是 `history` 或 `live`。`request_generation` 为非负整数。
+
+响应包含 mode 状态和最多 5 个 item：
+
+```json
+{
+  "success": true,
+  "startup_session_id": "unity-startup-uuid",
+  "mode": "history",
+  "mode_epoch": 3,
+  "request_generation": 4,
+  "ingress_session_id": "server-ingress-uuid",
+  "coordinate_epoch": "aruco-task-uuid",
+  "count": 1,
+  "items": []
+}
+```
+
+## `GET /realtime-tracking/status`
+
+query 必须恰好出现一次：
+
+```text
+startup_session_id=<unity-startup-uuid>
+```
+
+每个 `items[]` 的位置部分：
+
+```json
+{
+  "display_object_id": "display-object-uuid",
+  "model_revision": 2,
+  "active_model_task_id": "task-uuid",
+  "pose_source": "hololens",
+  "pose_revision": 8,
+  "pose": {
+    "position": [0, 0, 0],
+    "rotation_quaternion_xyzw": [0, 0, 0, 1],
+    "scale": [1, 1, 1]
+  },
+  "coordinate_space": "hololens_current_local",
+  "body_revision": 1
+}
+```
+
+- history 模式的 `pose_source` 为 `hololens`，使用最新 HoloLens 拍摄确认位置。
+- live 模式存在有效追踪结果时使用 `tracking`，否则仍使用 `hololens`。
+- `model` 存在时，其结构与 canonical `model_instance` 完全相同，且 `model.pose` 必须等于 item 的 `pose`。客户端若已有相同 `display_object_id + model_revision` 的本地 FBX，则直接复用缓存。
+
+## Canonical body evidence
+
+有成功的人体证据时，tracking item 附带：
+
+```json
+{
+  "body_evidence": {
+    "task_id": "task-uuid",
+    "display_object_id": "display-object-uuid",
+    "body_revision": 1,
+    "image_url": "http://server/task-artifacts/task-uuid/result/08_sam3d_body_subject_crop.png",
+    "body_model": {
+      "model_key": "body:display-object-uuid",
+      "task_id": "task-uuid",
+      "display_object_id": "display-object-uuid",
+      "model_revision": 1,
+      "fbx_url": "http://server/task-artifacts/task-uuid/result/08_sam3d_body_selected_person.fbx",
+      "pose": {
+        "position": [0, 0, 0],
+        "rotation_quaternion_xyzw": [0, 0, 0, 1],
+        "scale": [1, 1, 1]
+      },
+      "coordinate_space": "hololens_current_local"
+    }
+  }
+}
+```
+
+`body_evidence` 必须包含裁切图和人体 FBX，两者 revision 必须与 item 的 `body_revision` 一致。
+
+## 坐标与缩放规则
+
+- 所有 Unity 正式位姿都使用 `hololens_current_local`。
+- 服务器内部可保存 ArUco 位姿，但不通过 model/tracking/body 公共对象下发。
+- Unity 应用 tracking/history 位姿时只更新 position 和 rotation；模型缩放保持加载时的值。

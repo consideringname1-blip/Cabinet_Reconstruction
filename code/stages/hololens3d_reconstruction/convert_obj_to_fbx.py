@@ -17,35 +17,10 @@ import bpy
 from artifact_layout import model_result_file
 from blender_common import clean_scene, ensure_file
 from blender_mesh_postprocess import (
-    apply_decimate_to_objects,
-    bake_vertex_color_sources_to_targets,
-    clean_connected_components,
     count_mesh_objects,
-    duplicate_mesh_objects,
-    ensure_source_materials,
-    repair_black_or_transparent_faces,
     select_objects,
-    smart_unwrap_objects,
 )
-from settings import (
-    MODEL_FBX_CLEAN_COMPONENT_MIN_FACE_RATIO,
-    MODEL_FBX_CLEAN_COMPONENT_MIN_FACES,
-    MODEL_FBX_CLEAN_ENABLE,
-    MODEL_FBX_DECIMATE_RATIO,
-    SAM3D_OBJECTS_BLACK_FACE_ALPHA_THRESHOLD,
-    SAM3D_OBJECTS_BLACK_FACE_MAX_REMOVE_RATIO,
-    SAM3D_OBJECTS_BLACK_FACE_RGB_THRESHOLD,
-    SAM3D_OBJECTS_DECIMATE_ENABLE,
-    SAM3D_OBJECTS_FBX_DECIMATE_RATIO,
-    SAM3D_OBJECTS_POSTPROCESS_BAKE_MARGIN_PX,
-    SAM3D_OBJECTS_POSTPROCESS_TEXTURE_SIZE,
-    SAM3D_OBJECTS_POSTPROCESS_UV_ISLAND_MARGIN,
-    SAM3D_OBJECTS_REPAIR_BLACK_FACES,
-)
-from model_generation_common import (
-    MODEL_STAGE_INSTANTMESH,
-    MODEL_STAGE_RUNTIME_MESH,
-    MODEL_STAGE_SAM3D_OBJECTS,
+from stages.hololens3d_reconstruction.model_generation_common import (
     ModelFileSource,
     resolve_runtime_mesh_source,
 )
@@ -133,81 +108,8 @@ def _import_obj_mtl_png_source(source: ModelFileSource) -> tuple[list, dict]:
     return imported_objects, source_info
 
 
-def _import_instantmesh_source(source: ModelFileSource) -> tuple[list, dict]:
-    return _import_obj_mtl_png_source(source)
-
-
 def _import_runtime_mesh_source(source: ModelFileSource) -> tuple[list, dict]:
     return _import_obj_mtl_png_source(source)
-
-
-def _apply_imported_glb_scale(objects: list) -> None:
-    for obj in objects:
-        if obj.type != "MESH":
-            continue
-        select_objects([obj], active=obj)
-        try:
-            bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-        except Exception:
-            pass
-
-
-def _import_sam3d_source(source: ModelFileSource) -> tuple[list, dict]:
-    raw_glb_name = str(source.payload.get("raw_glb") or "").strip()
-    if not raw_glb_name:
-        raise ValueError("SAM3DObjects.raw_glb is missing; regenerate the SAM3D stage")
-    raw_glb_path = ensure_file(source.root / raw_glb_name, "SAM3D Objects raw GLB")
-
-    clean_scene(purge_orphans=True)
-    bpy.ops.import_scene.gltf(filepath=str(raw_glb_path))
-    imported_objects = [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
-    if not imported_objects:
-        raise RuntimeError(f"No mesh objects were imported from {raw_glb_path}")
-    _apply_imported_glb_scale(imported_objects)
-    ensure_source_materials(imported_objects)
-    return imported_objects, {
-        "source_format": "glb",
-        "source_mesh": source.mesh,
-        "fbx_source_mesh": raw_glb_path.name,
-    }
-
-
-def _import_source_objects(source: ModelFileSource) -> tuple[list, dict]:
-    if source.source_stage == MODEL_STAGE_RUNTIME_MESH:
-        return _import_runtime_mesh_source(source)
-    if source.source_stage == MODEL_STAGE_INSTANTMESH:
-        return _import_instantmesh_source(source)
-    if source.source_stage == MODEL_STAGE_SAM3D_OBJECTS:
-        return _import_sam3d_source(source)
-    raise ValueError(f"Unsupported FBX source stage: {source.source_stage}")
-
-
-def _clean_fbx_source_geometry(objects: list, *, repair_black_faces: bool) -> tuple[list, dict]:
-    original_vertices, original_faces = count_mesh_objects(objects)
-    stats = {
-        "original_vertices": int(original_vertices),
-        "original_faces": int(original_faces),
-    }
-
-    objects, black_repair = repair_black_or_transparent_faces(
-        objects,
-        enabled=bool(repair_black_faces),
-        rgb_threshold=float(SAM3D_OBJECTS_BLACK_FACE_RGB_THRESHOLD),
-        alpha_threshold=float(SAM3D_OBJECTS_BLACK_FACE_ALPHA_THRESHOLD),
-        max_repair_ratio=float(SAM3D_OBJECTS_BLACK_FACE_MAX_REMOVE_RATIO),
-    )
-    stats["black_repair"] = black_repair
-
-    objects, component_cleanup = clean_connected_components(
-        objects,
-        enabled=bool(MODEL_FBX_CLEAN_ENABLE),
-        min_face_ratio=float(MODEL_FBX_CLEAN_COMPONENT_MIN_FACE_RATIO),
-        min_faces=int(MODEL_FBX_CLEAN_COMPONENT_MIN_FACES),
-    )
-    stats["component_cleanup"] = component_cleanup
-    if not objects:
-        raise RuntimeError("FBX postprocess removed all mesh geometry")
-    return objects, stats
 
 
 def _prepare_runtime_mesh_fbx_meshes(objects: list) -> tuple[list, dict]:
@@ -217,48 +119,6 @@ def _prepare_runtime_mesh_fbx_meshes(objects: list) -> tuple[list, dict]:
         "vertices": int(vertices),
         "faces": int(faces),
     }
-
-
-def _prepare_instantmesh_fbx_meshes(objects: list) -> tuple[list, dict]:
-    objects, stats = _clean_fbx_source_geometry(objects, repair_black_faces=False)
-    objects, decimate = apply_decimate_to_objects(
-        objects,
-        ratio=float(MODEL_FBX_DECIMATE_RATIO),
-        modifier_prefix="runtime_fbx_decimate",
-    )
-    stats["decimate"] = decimate
-    stats["vertices"] = int(decimate.get("vertices") or 0)
-    stats["faces"] = int(decimate.get("faces") or 0)
-    if not objects:
-        raise RuntimeError("FBX postprocess removed all mesh geometry")
-    return objects, stats
-
-
-def _prepare_sam3d_fbx_meshes(source_objects: list) -> tuple[list, list, dict]:
-    source_objects, stats = _clean_fbx_source_geometry(
-        source_objects,
-        repair_black_faces=bool(SAM3D_OBJECTS_REPAIR_BLACK_FACES),
-    )
-    source_vertices, source_faces = count_mesh_objects(source_objects)
-    stats["bake_source_vertices"] = int(source_vertices)
-    stats["bake_source_faces"] = int(source_faces)
-
-    target_objects = duplicate_mesh_objects(source_objects, suffix="_fbx_low")
-    if not target_objects:
-        raise RuntimeError("No SAM3D low-resolution target meshes could be created")
-
-    target_objects, decimate = apply_decimate_to_objects(
-        target_objects,
-        ratio=float(SAM3D_OBJECTS_FBX_DECIMATE_RATIO),
-        modifier_prefix="sam3d_runtime_fbx_decimate",
-        enabled=bool(SAM3D_OBJECTS_DECIMATE_ENABLE),
-    )
-    stats["decimate"] = decimate
-    stats["vertices"] = int(decimate.get("vertices") or 0)
-    stats["faces"] = int(decimate.get("faces") or 0)
-    if not target_objects:
-        raise RuntimeError("FBX postprocess removed all mesh geometry")
-    return source_objects, target_objects, stats
 
 
 def _export_fbx(objects: list, fbx_path: Path) -> None:
@@ -290,22 +150,8 @@ def export_fbx_from_json(json_path: Path) -> Path:
     fbx_path = model_result_file(task_timestamp, "model.final_fbx")
     fbx_path.parent.mkdir(parents=True, exist_ok=True)
 
-    imported_objects, source_info = _import_source_objects(source)
-    if source.source_stage == MODEL_STAGE_RUNTIME_MESH:
-        processed_objects, postprocess_info = _prepare_runtime_mesh_fbx_meshes(imported_objects)
-    elif source.source_stage == MODEL_STAGE_SAM3D_OBJECTS:
-        bake_source_objects, processed_objects, postprocess_info = _prepare_sam3d_fbx_meshes(imported_objects)
-        smart_unwrap_objects(processed_objects, island_margin=float(SAM3D_OBJECTS_POSTPROCESS_UV_ISLAND_MARGIN))
-        postprocess_info["color_texture_bake"] = bake_vertex_color_sources_to_targets(
-            bake_source_objects,
-            processed_objects,
-            output_dir=fbx_path.parent,
-            texture_stem=Path(source.mesh).stem,
-            texture_size=int(SAM3D_OBJECTS_POSTPROCESS_TEXTURE_SIZE),
-            margin_px=int(SAM3D_OBJECTS_POSTPROCESS_BAKE_MARGIN_PX),
-        )
-    else:
-        processed_objects, postprocess_info = _prepare_instantmesh_fbx_meshes(imported_objects)
+    imported_objects, source_info = _import_runtime_mesh_source(source)
+    processed_objects, postprocess_info = _prepare_runtime_mesh_fbx_meshes(imported_objects)
 
     apply_object_transform(processed_objects, task)
     _export_fbx(processed_objects, fbx_path)
@@ -314,12 +160,10 @@ def export_fbx_from_json(json_path: Path) -> Path:
         raise RuntimeError(f"FBX export failed: {fbx_path}")
 
     task["Blender"] = {
+        "backend": source.backend,
         "fbx": fbx_path.name,
         "artifact_root": "model_result",
-        "source_stage": source.source_stage,
         "source_mesh": source.mesh,
-        "source_mesh_folder": source.folder,
-        "source_backend": source.backend,
         **source_info,
         "postprocess": postprocess_info,
     }

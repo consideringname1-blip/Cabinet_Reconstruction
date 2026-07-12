@@ -20,12 +20,10 @@ CODE_ROOT = Path(__file__).resolve().parents[2]
 if str(CODE_ROOT) not in sys.path:
     sys.path.insert(0, str(CODE_ROOT))
 
-from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, model_debug_dir, model_result_file, model_worker_dir
+from artifact_layout import model_debug_dir, model_result_file, model_worker_dir
 from path_config import BLENDER_BIN, SAM3D_BODY_FBX_EXPORT_SCRIPT, SAM3D_BODY_ROOT
-from coordinate_systems import quat_xyzw_to_rotation_matrix
-from spatial_transforms import aruco_points_to_shigure_camera, project_camera_points_to_pixels, shigure_camera_points_to_aruco
+from spatial_transforms import shigure_camera_points_to_aruco
 from task_json import load_task_json, resolve_task_json_path, save_task_json
-from stages.shigure_history.marker_history import latest_marker_pose_path
 
 from stages.sam3d_body_mesh import settings
 
@@ -90,20 +88,20 @@ def _load_json(path: Path) -> dict[str, Any]:
 
 def _load_camera_matrix(path: Path) -> tuple[np.ndarray, int, int]:
     payload = _load_json(path)
-    msg = payload.get('message') if isinstance(payload.get('message'), Mapping) else payload
-    k = msg.get('k') or msg.get('K') or msg.get('camera_matrix')
-    matrix = _parse_float_array(k, 9, 'camera matrix').reshape(3, 3)
-    width = int(msg.get('width') or 0)
-    height = int(msg.get('height') or 0)
+    matrix = _parse_float_array(payload.get('k'), 9, 'camera_info.k').reshape(3, 3)
+    width = int(payload.get('width') or 0)
+    height = int(payload.get('height') or 0)
+    if width <= 0 or height <= 0:
+        raise ValueError('camera_info width and height must be positive')
+    if not np.isfinite(matrix).all() or matrix[0, 0] <= 0.0 or matrix[1, 1] <= 0.0:
+        raise ValueError('camera_info.k is invalid')
     return matrix.astype(np.float64), width, height
 
 
 def _depth_image_to_m(depth: np.ndarray) -> np.ndarray:
-    depth = depth.astype(np.float32)
-    finite = depth[np.isfinite(depth) & (depth > 0)]
-    if finite.size and float(np.nanmedian(finite)) > 20.0:
-        depth = depth / 1000.0
-    return depth.astype(np.float32)
+    if depth.dtype != np.uint16 or depth.ndim != 2:
+        raise ValueError('Shigure depth must be a uint16 millimetre image')
+    return depth.astype(np.float32) / 1000.0
 
 
 def _to_numpy(value: Any) -> np.ndarray:
@@ -137,11 +135,10 @@ def _prefer_cached_dinov3_torch_hub(torch_module: Any) -> None:
     torch_module.hub._sam3d_cached_dinov3_patch = True
 
 
-def _build_estimator(detector_name: str, device: str):
+def _build_estimator(device: str):
     _ensure_sam3d_imports()
     import torch
     from sam_3d_body import SAM3DBodyEstimator, load_sam_3d_body
-    from tools.build_detector import HumanDetector
 
     checkpoint = Path(SAM3D_BODY_ROOT) / 'checkpoints' / 'sam-3d-body-dinov3' / 'model.ckpt'
     mhr = Path(SAM3D_BODY_ROOT) / 'checkpoints' / 'sam-3d-body-dinov3' / 'assets' / 'mhr_model.pt'
@@ -152,30 +149,13 @@ def _build_estimator(detector_name: str, device: str):
     _prefer_cached_dinov3_torch_hub(torch)
     torch_device = torch.device(device if device else ('cuda' if torch.cuda.is_available() else 'cpu'))
     model, model_cfg = load_sam_3d_body(str(checkpoint), device=torch_device, mhr_path=str(mhr))
-    detector = None
-    if detector_name and detector_name != 'none':
-        detector = HumanDetector(name=detector_name, device=torch_device)
     return SAM3DBodyEstimator(
         sam_3d_body_model=model,
         model_cfg=model_cfg,
-        human_detector=detector,
+        human_detector=None,
         human_segmentor=None,
         fov_estimator=None,
     )
-
-
-def _detect_boxes(estimator: Any, rgb_bgr: np.ndarray) -> np.ndarray:
-    if settings.SAM3D_BODY_DETECTOR_NAME == 'none' or estimator.detector is None:
-        height, width = rgb_bgr.shape[:2]
-        return np.array([[0.0, 0.0, float(width), float(height)]], dtype=np.float32)
-    boxes = estimator.detector.run_human_detection(
-        rgb_bgr,
-        det_cat_id=0,
-        bbox_thr=settings.SAM3D_BODY_BBOX_THRESHOLD,
-        nms_thr=settings.SAM3D_BODY_NMS_THRESHOLD,
-        default_to_full_image=False,
-    )
-    return np.asarray(boxes, dtype=np.float32).reshape(-1, 4)
 
 
 def _run_sam3d_body(estimator: Any, rgb_bgr: np.ndarray, boxes: np.ndarray, camera_matrix: np.ndarray) -> list[dict[str, Any]]:
@@ -371,61 +351,20 @@ def _align_person_depth(output: Mapping[str, Any], faces: np.ndarray, depth_m: n
 
 def _load_marker_camera_pose(path: Path) -> tuple[np.ndarray, np.ndarray]:
     payload = _load_json(path)
-    pose = payload.get('opencv_camera_pose') if isinstance(payload.get('opencv_camera_pose'), Mapping) else payload
+    pose = payload.get('opencv_camera_pose')
     if not isinstance(pose, Mapping):
         raise ValueError('marker pose JSON does not contain opencv_camera_pose')
-    if pose.get('rotation_matrix') is not None:
-        rotation = _parse_float_array(pose.get('rotation_matrix'), 9, 'marker rotation_matrix').reshape(3, 3)
-    elif pose.get('rotation_quaternion_xyzw') is not None:
-        rotation = quat_xyzw_to_rotation_matrix(_parse_float_array(pose.get('rotation_quaternion_xyzw'), 4, 'marker quaternion'))
-    else:
-        raise ValueError('marker pose is missing rotation')
-    translation = _parse_float_array(pose.get('tvec_m') if pose.get('tvec_m') is not None else pose.get('position'), 3, 'marker translation')
+    rotation = _parse_float_array(pose.get('rotation_matrix'), 9, 'opencv_camera_pose.rotation_matrix').reshape(3, 3)
+    translation = _parse_float_array(pose.get('tvec_m'), 3, 'opencv_camera_pose.tvec_m')
     return rotation.astype(np.float64), translation.astype(np.float64)
 
 
-def _camera_to_armarker_points(points_camera_m: np.ndarray, marker_rotation_camera_marker_cv: np.ndarray, marker_translation_camera_marker_cv: np.ndarray) -> np.ndarray:
+def _camera_to_aruco_points(points_camera_m: np.ndarray, marker_rotation_camera_marker_cv: np.ndarray, marker_translation_camera_marker_cv: np.ndarray) -> np.ndarray:
     return shigure_camera_points_to_aruco(
         points_camera_m,
         marker_rotation_camera_marker_cv,
         marker_translation_camera_marker_cv,
     )
-
-
-def _object_center_aruco(task: Mapping[str, Any]) -> np.ndarray | None:
-    bounds = task.get('ModelBounds') if isinstance(task.get('ModelBounds'), Mapping) else None
-    if bounds and bounds.get('aabb_min_aruco') is not None and bounds.get('aabb_max_aruco') is not None:
-        a = np.asarray(bounds.get('aabb_min_aruco'), dtype=np.float64).reshape(3)
-        b = np.asarray(bounds.get('aabb_max_aruco'), dtype=np.float64).reshape(3)
-        return (a + b) * 0.5
-    obj = task.get('object_aruco') if isinstance(task.get('object_aruco'), Mapping) else None
-    if obj and obj.get('position') is not None:
-        return np.asarray(obj.get('position'), dtype=np.float64).reshape(3)
-    return None
-
-
-def _nearest_wrist(person_name: str, keypoints_aruco: np.ndarray, object_center: np.ndarray | None) -> dict[str, Any] | None:
-    if object_center is None:
-        return None
-    records = []
-    for wrist, idx in settings.WRIST_INDEXES.items():
-        if idx >= len(keypoints_aruco):
-            continue
-        point = keypoints_aruco[idx]
-        if not np.all(np.isfinite(point)):
-            continue
-        distance = float(np.linalg.norm(point - object_center))
-        records.append({
-            'person_name': person_name,
-            'wrist': wrist,
-            'joint_index': int(idx),
-            'point_armarker': point.astype(float).tolist(),
-            'distance_m': distance,
-            'within_trusted_range': bool(distance <= settings.MAX_WRIST_DISTANCE_M),
-        })
-    if not records:
-        return None
-    return min(records, key=lambda item: item['distance_m'])
 
 
 def _write_obj(path: Path, vertices: np.ndarray, faces: np.ndarray) -> None:
@@ -471,23 +410,14 @@ def _load_backup_paths(taken: Mapping[str, Any]) -> tuple[Path, Path, Path, Path
     for path in (rgb, depth, camera):
         if not path.is_file():
             raise FileNotFoundError(path)
-    if marker.is_file():
-        return rgb, depth, camera, marker
-    return rgb, depth, camera, latest_marker_pose_path()
+    return rgb, depth, camera, marker if marker.is_file() else None
 
 
 def _contact_people_bbox(taken: Mapping[str, Any]) -> list[float] | None:
     direct = taken.get("people_bounding_box")
     if not isinstance(direct, Mapping):
-        contact = taken.get("shigure_contact") if isinstance(taken.get("shigure_contact"), Mapping) else {}
-        direct = contact.get("people_bounding_box")
-    if not isinstance(direct, Mapping):
         return None
     raw = direct.get("xyxy")
-    if raw is None and all(key in direct for key in ("x", "y", "width", "height")):
-        x = float(direct["x"])
-        y = float(direct["y"])
-        raw = [x, y, x + float(direct["width"]), y + float(direct["height"])]
     try:
         values = [float(value) for value in np.asarray(raw, dtype=np.float64).reshape(4)]
     except Exception:
@@ -497,48 +427,18 @@ def _contact_people_bbox(taken: Mapping[str, Any]) -> list[float] | None:
     return values if values[2] > values[0] and values[3] > values[1] else None
 
 
-def _requires_remote_contact_bbox(taken: Mapping[str, Any]) -> bool:
-    return str(taken.get("source") or "").strip().lower() == "remote_shigure_contacted"
-
-
-def _contact_bbox_policy(taken: Mapping[str, Any]) -> tuple[list[float] | None, str]:
-    bbox = _contact_people_bbox(taken)
-    if bbox is not None:
-        return bbox, "remote_contact_bbox" if _requires_remote_contact_bbox(taken) else "legacy_contact_bbox"
-    if _requires_remote_contact_bbox(taken):
-        return None, "remote_contact_bbox_missing"
-    return None, "legacy_detector_fallback"
-
-
 def _load_object_mask_from_taken(taken: Mapping[str, Any], image_shape: tuple[int, int]) -> tuple[np.ndarray | None, dict[str, Any]]:
-    history = taken.get("history_baseline") if isinstance(taken.get("history_baseline"), Mapping) else {}
-    init = taken.get("init") if isinstance(taken.get("init"), Mapping) else {}
-    if not history and isinstance(init.get("history_baseline"), Mapping):
-        history = init.get("history_baseline")
-    candidates = []
-    if isinstance(history, Mapping) and history.get("old_mask_path"):
-        candidates.append(("history_baseline.old_mask_path", Path(str(history.get("old_mask_path")))))
-    debug_files = taken.get("debug_files") if isinstance(taken.get("debug_files"), Mapping) else {}
-    init_debug = init.get("debug_files") if isinstance(init.get("debug_files"), Mapping) else {}
-    for source, payload in (("taken.debug_files", debug_files), ("taken.init.debug_files", init_debug)):
-        value = payload.get("init_trusted_shigure_mask_path")
-        if value:
-            candidates.append((f"{source}.init_trusted_shigure_mask_path", Path(str(value))))
-    backup_dir = Path(str(taken.get("init_backup_shigurei_dir") or init.get("init_backup_shigurei_dir") or ""))
-    if backup_dir.is_dir():
-        candidates.append(("init_backup.old_mask", backup_dir / "old_mask.png"))
-    for source, path in candidates:
-        if not path.is_file():
-            continue
-        raw = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
-        if raw is None:
-            continue
-        mask = raw > 0
-        if mask.shape != image_shape:
-            mask = cv2.resize(mask.astype(np.uint8), (image_shape[1], image_shape[0]), interpolation=cv2.INTER_NEAREST) > 0
-        if np.any(mask):
-            return mask, {"source": source, "path": str(path), "pixels": int(np.count_nonzero(mask))}
-    return None, {"source": "missing", "checked": [{"source": src, "path": str(p)} for src, p in candidates]}
+    backup_dir = Path(str(taken.get("backup_shigurei_dir") or ""))
+    path = backup_dir / "object_mask.png"
+    raw = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE) if path.is_file() else None
+    if raw is None:
+        return None, {"source": "missing", "path": str(path)}
+    mask = raw > 0
+    if mask.shape != image_shape:
+        mask = cv2.resize(mask.astype(np.uint8), (image_shape[1], image_shape[0]), interpolation=cv2.INTER_NEAREST) > 0
+    if not np.any(mask):
+        return None, {"source": "empty", "path": str(path)}
+    return mask, {"source": "remote_shigure_object_mask", "path": str(path), "pixels": int(np.count_nonzero(mask))}
 
 
 
@@ -585,68 +485,12 @@ def _mask_from_bbox(bbox_xyxy: Any, image_shape: tuple[int, int], pad: int) -> t
     }
 
 
-def _project_object_center_mask(
-    object_center_aruco: np.ndarray | None,
-    marker_rotation: np.ndarray,
-    marker_translation: np.ndarray,
-    camera_matrix: np.ndarray,
-    image_shape: tuple[int, int],
-    object_mask: np.ndarray | None,
-) -> tuple[np.ndarray | None, dict[str, Any]]:
-    if object_center_aruco is None:
-        return None, {'source': 'object_center_armarker_projection', 'reason': 'object_center_missing'}
-    h, w = image_shape
-    try:
-        object_center = np.asarray(object_center_aruco, dtype=np.float64).reshape(1, 3)
-        camera_point = aruco_points_to_shigure_camera(object_center, marker_rotation, marker_translation).reshape(3)
-        pixels, visible = project_camera_points_to_pixels(camera_point.reshape(1, 3), camera_matrix)
-    except Exception as exc:
-        return None, {'source': 'object_center_armarker_projection', 'reason': 'projection_failed', 'error_message': str(exc)}
-    if not bool(visible[0]) or not np.all(np.isfinite(pixels[0])):
-        return None, {
-            'source': 'object_center_armarker_projection',
-            'reason': 'object_center_behind_camera_or_non_finite',
-            'object_center_camera_m': camera_point.astype(float).tolist(),
-        }
-    u = int(round(float(pixels[0, 0])))
-    v = int(round(float(pixels[0, 1])))
-    if u < 0 or u >= w or v < 0 or v >= h:
-        return None, {
-            'source': 'object_center_armarker_projection',
-            'reason': 'object_center_outside_image',
-            'pixel_xy': [float(pixels[0, 0]), float(pixels[0, 1])],
-            'object_center_camera_m': camera_point.astype(float).tolist(),
-        }
-    radius = int(settings.SUBJECT_CROP_OBJECT_CENTER_RADIUS_PX)
-    normalized_object = _normalise_mask(object_mask, image_shape)
-    object_bbox = None
-    if normalized_object is not None:
-        object_bbox = _mask_bbox(normalized_object, 0, w, h)
-        if object_bbox is not None:
-            ox0, oy0, ox1, oy1 = object_bbox
-            radius = max(radius, int(math.ceil(max(ox1 - ox0, oy1 - oy0) * 0.25)))
-    radius = max(1, min(int(settings.SUBJECT_CROP_OBJECT_CENTER_MAX_RADIUS_PX), radius))
-    mask_u8 = np.zeros((h, w), dtype=np.uint8)
-    cv2.circle(mask_u8, (u, v), radius, 1, thickness=-1)
-    mask = mask_u8 > 0
-    return mask, {
-        'source': 'object_center_armarker_projection',
-        'pixel_xy': [int(u), int(v)],
-        'radius_px': int(radius),
-        'pixels': int(np.count_nonzero(mask)),
-        'object_center_armarker': object_center.reshape(3).astype(float).tolist(),
-        'object_center_camera_m': camera_point.astype(float).tolist(),
-        'object_mask_bbox_xyxy': [int(v) for v in object_bbox] if object_bbox is not None else None,
-    }
-
-
 def _write_subject_crop(
     task_timestamp: str,
     rgb_bgr: np.ndarray,
     body_mask: np.ndarray | None,
     body_bbox_xyxy: Any,
     object_mask: np.ndarray | None,
-    object_center_mask: np.ndarray | None,
 ) -> tuple[str | None, dict[str, Any]]:
     h, w = rgb_bgr.shape[:2]
     image_shape = (h, w)
@@ -655,41 +499,20 @@ def _write_subject_crop(
 
     body = _normalise_mask(body_mask, image_shape)
     bbox_mask, bbox_info = _mask_from_bbox(body_bbox_xyxy, image_shape, int(settings.SUBJECT_CROP_BODY_BBOX_PAD_PX))
-    if body is not None and bbox_mask is not None:
-        clipped_body = body & bbox_mask
-        if np.any(clipped_body):
-            union |= clipped_body
-            sources.append({
-                'source': 'selected_body_mesh_mask_clipped_by_body_bbox',
-                'pixels': int(np.count_nonzero(clipped_body)),
-                'raw_body_mask_pixels': int(np.count_nonzero(body)),
-                'body_bbox': bbox_info,
-            })
-        else:
-            union |= body
-            sources.append({
-                'source': 'selected_body_mesh_mask_bbox_clip_empty_fallback',
-                'pixels': int(np.count_nonzero(body)),
-                'body_bbox': bbox_info,
-            })
-    elif body is not None:
+    if body is not None:
         union |= body
         sources.append({'source': 'selected_body_mesh_mask', 'pixels': int(np.count_nonzero(body)), 'body_bbox': bbox_info})
     elif bbox_mask is not None:
         union |= bbox_mask
-        sources.append({'source': 'selected_body_bbox_fallback', 'pixels': int(np.count_nonzero(bbox_mask)), 'body_bbox': bbox_info})
+        sources.append({'source': 'shigure_people_bbox', 'pixels': int(np.count_nonzero(bbox_mask)), 'body_bbox': bbox_info})
     else:
         sources.append(bbox_info)
 
     obj = _normalise_mask(object_mask, image_shape)
-    if obj is not None:
-        union |= obj
-        sources.append({'source': 'taken_object_old_mask', 'pixels': int(np.count_nonzero(obj))})
-
-    center = _normalise_mask(object_center_mask, image_shape)
-    if center is not None:
-        union |= center
-        sources.append({'source': 'object_center_armarker_projection_mask', 'pixels': int(np.count_nonzero(center))})
+    if obj is None:
+        return None, {'reason': 'shigure_object_mask_missing', 'sources': sources}
+    union |= obj
+    sources.append({'source': 'shigure_object_mask', 'pixels': int(np.count_nonzero(obj))})
 
     bbox = _mask_bbox(union, int(settings.SUBJECT_CROP_PAD_PX), w, h)
     if bbox is None:
@@ -698,7 +521,8 @@ def _write_subject_crop(
     crop = rgb_bgr[y0:y1, x0:x1].copy()
     crop_path = model_result_file(task_timestamp, 'body.subject_crop')
     crop_path.parent.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(crop_path), crop)
+    if not cv2.imwrite(str(crop_path), crop):
+        raise RuntimeError(f'failed to write subject crop: {crop_path}')
     return str(crop_path), {
         'reason': 'subject_crop_ready',
         'subject_crop_path': str(crop_path),
@@ -711,18 +535,13 @@ def _write_subject_crop(
     }
 
 
-def _write_latest_body_mesh_registry(payload: Mapping[str, Any]) -> str:
-    path = SHIGURE_HISTORY_CACHE_ROOT / "latest_sam3d_body_mesh.json"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(path, {**dict(payload), "updated_at": _utc_now()})
-    return str(path)
-
-
 def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
     json_path = resolve_task_json_path(json_path_arg)
     task = load_task_json(json_path)
-    taken = task.get('TakenObjectDetection') if isinstance(task.get('TakenObjectDetection'), Mapping) else {}
-    task_name = str(task.get('task_name') or task.get('task_id') or json_path.stem)
+    taken = task.get('ShigureContactEvidence') if isinstance(task.get('ShigureContactEvidence'), Mapping) else {}
+    task_name = str(task.get('task_name') or '').strip()
+    if not task_name:
+        raise ValueError('task_name is required for SAM3D body artifacts')
     task_timestamp = str(task.get('task_timestamp') or '').strip()
     if not task_timestamp:
         raise ValueError('task_timestamp is required for SAM3D body artifacts')
@@ -733,7 +552,7 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         payload = {
             'result_timestamp': taken.get('result_timestamp'),
             'backup_shigurei_dir': taken.get('backup_shigurei_dir'),
-            'reason': f"taken_object_detection_status={taken.get('status')}",
+            'reason': f"shigure_contact_status={taken.get('status')}",
         }
         _write_status(json_path, task, 'SKIPPED_NOT_TAKEN', **payload)
         return {'status': 'SKIPPED_NOT_TAKEN'}
@@ -745,13 +564,13 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         _write_status(
             json_path,
             task,
-            'NO_VALID_WRIST_JOINT',
+            'INPUT_MISSING',
             result_timestamp=result_timestamp,
             backup_shigurei_dir=backup_dir,
-            reason='camera_to_armarker_marker_pose_missing',
+            reason='camera_to_aruco_marker_pose_missing',
             output_dir=str(output_root),
         )
-        return {'status': 'NO_VALID_WRIST_JOINT', 'reason': 'camera_to_armarker_marker_pose_missing'}
+        return {'status': 'INPUT_MISSING', 'reason': 'camera_to_aruco_marker_pose_missing'}
 
     rgb_bgr = cv2.imread(str(rgb_path), cv2.IMREAD_COLOR)
     depth_raw = cv2.imread(str(depth_path), cv2.IMREAD_UNCHANGED)
@@ -761,14 +580,13 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         raise RuntimeError(f'failed to read depth: {depth_path}')
     depth_m = _depth_image_to_m(depth_raw)
     if depth_m.shape[:2] != rgb_bgr.shape[:2]:
-        depth_m = cv2.resize(depth_m, (rgb_bgr.shape[1], rgb_bgr.shape[0]), interpolation=cv2.INTER_NEAREST)
+        raise ValueError('Shigure RGB and depth dimensions must match')
     camera_matrix, width, height = _load_camera_matrix(camera_info_path)
-    if width and height and (rgb_bgr.shape[1] != width or rgb_bgr.shape[0] != height):
-        # Keep real image dimensions; CameraInfo intrinsics still define projection for this stream.
-        pass
+    if rgb_bgr.shape[1] != width or rgb_bgr.shape[0] != height:
+        raise ValueError('Shigure RGB dimensions must match camera_info width and height')
 
-    contact_bbox, contact_bbox_policy = _contact_bbox_policy(taken)
-    if contact_bbox_policy == 'remote_contact_bbox_missing':
+    contact_bbox = _contact_people_bbox(taken)
+    if contact_bbox is None:
         reason = 'remote_shigure_contact_people_bbox_missing_or_invalid'
         _write_status(
             json_path,
@@ -781,15 +599,8 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         )
         return {'status': 'NO_PERSON_DETECTED', 'reason': reason}
 
-    estimator = _build_estimator(settings.SAM3D_BODY_DETECTOR_NAME, settings.SAM3D_BODY_DEVICE)
-    boxes = (
-        np.asarray([contact_bbox], dtype=np.float32)
-        if contact_bbox is not None
-        else _detect_boxes(estimator, rgb_bgr)
-    )
-    if boxes.size == 0:
-        _write_status(json_path, task, 'NO_PERSON_DETECTED', result_timestamp=result_timestamp, backup_shigurei_dir=backup_dir, output_dir=str(output_root))
-        return {'status': 'NO_PERSON_DETECTED'}
+    estimator = _build_estimator(settings.SAM3D_BODY_DEVICE)
+    boxes = np.asarray([contact_bbox], dtype=np.float32)
 
     outputs = _run_sam3d_body(estimator, rgb_bgr, boxes, camera_matrix)
     if not outputs:
@@ -797,16 +608,14 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         return {'status': 'NO_VALID_BODY_MESH'}
     faces = np.asarray(estimator.faces, dtype=np.int64).reshape(-1, 3)
     marker_rotation, marker_translation = _load_marker_camera_pose(marker_pose_path)
-    object_center = _object_center_aruco(task)
 
     people: list[dict[str, Any]] = []
     for idx, output in enumerate(outputs):
         person_name = f'person_{idx}'
         try:
             aligned = _align_person_depth(output, faces, depth_m, camera_matrix)
-            vertices_aruco = _camera_to_armarker_points(aligned['vertices_camera_m'], marker_rotation, marker_translation)
-            keypoints_aruco = _camera_to_armarker_points(aligned['keypoints_camera_m'], marker_rotation, marker_translation)
-            nearest = _nearest_wrist(person_name, keypoints_aruco, object_center)
+            vertices_aruco = _camera_to_aruco_points(aligned['vertices_camera_m'], marker_rotation, marker_translation)
+            keypoints_aruco = _camera_to_aruco_points(aligned['keypoints_camera_m'], marker_rotation, marker_translation)
             mesh_npz = output_root / f'08_sam3d_body_{person_name}_armarker_mesh.npz'
             camera_mesh_npz = output_root / f'08_sam3d_body_{person_name}_camera_mesh.npz'
             np.savez_compressed(mesh_npz, vertices=vertices_aruco.astype(np.float32), faces=faces.astype(np.int32), keypoints=keypoints_aruco.astype(np.float32))
@@ -834,39 +643,27 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
                 'depth_sampled_pixels': int(aligned['depth_sampled_pixels']),
                 'depth_overlap_ratio': float(aligned['depth_overlap_ratio']),
                 'depth_alignment_method': aligned['depth_alignment_method'],
-                'nearest_wrist': nearest,
             })
         except Exception as exc:
             people.append({'person_name': person_name, 'error_message': str(exc)})
 
     people_json_path = model_result_file(task_timestamp, 'body.people')
-    _write_json(people_json_path, {'people': people, 'object_center_armarker': object_center.tolist() if object_center is not None else None})
-    if contact_bbox is not None:
-        valid_people = [p for p in people if p.get('mesh_npz_path') and not p.get('error_message')]
-    else:
-        valid_people = [p for p in people if isinstance(p.get('nearest_wrist'), Mapping)]
+    _write_json(people_json_path, {'people': people})
+    valid_people = [p for p in people if p.get('mesh_npz_path') and not p.get('error_message')]
     if not valid_people:
         _write_status(
             json_path,
             task,
-            'NO_VALID_WRIST_JOINT',
+            'NO_VALID_BODY_MESH',
             result_timestamp=result_timestamp,
             backup_shigurei_dir=backup_dir,
             people=people,
             output_dir=str(output_root),
-            reason=(
-                'no_valid_sam3d_body_for_shigure_contact_bbox'
-                if contact_bbox is not None
-                else 'no_sam3d_body_wrist_distance_to_object'
-            ),
+            reason='no_valid_sam3d_body_for_shigure_contact_bbox',
         )
-        return {'status': 'NO_VALID_WRIST_JOINT'}
+        return {'status': 'NO_VALID_BODY_MESH'}
 
-    selected = (
-        valid_people[0]
-        if contact_bbox is not None
-        else min(valid_people, key=lambda p: float((p.get('nearest_wrist') or {}).get('distance_m', math.inf)))
-    )
+    selected = valid_people[0]
     selected_name = str(selected['person_name'])
     selected_npz = np.load(str(selected['mesh_npz_path']))
     work_obj_path = output_root / f'08_sam3d_body_{task_name}_{selected_name}_armarker.obj'
@@ -900,24 +697,27 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         except Exception as exc:
             debug_files['body_mesh_on_taken_rgb_error'] = str(exc)
     object_mask, object_mask_info = _load_object_mask_from_taken(taken, rgb_bgr.shape[:2])
-    object_center_mask, object_center_projection_info = _project_object_center_mask(
-        object_center,
-        marker_rotation,
-        marker_translation,
-        camera_matrix,
-        rgb_bgr.shape[:2],
-        object_mask,
-    )
+    if object_mask is None:
+        _write_status(
+            json_path,
+            task,
+            'INPUT_MISSING',
+            result_timestamp=result_timestamp,
+            backup_shigurei_dir=backup_dir,
+            reason='shigure_object_mask_missing_or_invalid',
+            object_mask=object_mask_info,
+        )
+        return {'status': 'INPUT_MISSING', 'reason': 'shigure_object_mask_missing_or_invalid'}
     subject_crop_path, subject_crop_info = _write_subject_crop(
         task_timestamp,
         rgb_bgr,
         selected_body_mask,
         selected_body_bbox,
         object_mask,
-        object_center_mask,
     )
+    if subject_crop_path is None:
+        raise RuntimeError(f"subject crop failed: {subject_crop_info.get('reason')}")
     debug_files['object_mask_for_subject_crop'] = object_mask_info
-    debug_files['object_center_for_subject_crop'] = object_center_projection_info
     debug_files['subject_crop'] = subject_crop_info
 
     if obj_path != work_obj_path:
@@ -954,34 +754,19 @@ def run_sam3d_body_mesh(json_path_arg: str | Path) -> dict[str, Any]:
         'selected_person_obj_path': str(obj_path),
         'selected_person_camera_mesh_npz_path': selected_camera_mesh_npz_path,
         'selected_person_bbox_xyxy': selected_body_bbox,
-        'person_selection_source': 'shigure_contact_people_bbox' if contact_bbox is not None else 'nearest_wrist_to_object',
+        'person_selection_source': 'shigure_contact_people_bbox',
         'subject_crop_path': subject_crop_path,
         'subject_crop_folder': 'model_result' if subject_crop_path else None,
         'subject_crop': subject_crop_info,
         'material_color': settings.MATERIAL_COLOR,
         'material_alpha': settings.MATERIAL_ALPHA,
         'coordinate_space': 'aruco',
-        'camera_to_armarker_basis': 'spatial_transforms.shigure_camera_points_to_aruco',
-        'camera_to_armarker_source': str(marker_pose_path),
+        'camera_to_aruco_basis': 'spatial_transforms.shigure_camera_points_to_aruco',
+        'camera_to_aruco_source': str(marker_pose_path),
         'people_json_path': str(people_json_path),
         'people': people,
         'debug_files': debug_files,
-        'object_center_armarker': object_center.tolist() if object_center is not None else None,
     }
-    payload['latest_body_mesh_registry_path'] = _write_latest_body_mesh_registry({
-        'task_id': str(task.get('task_id') or ''),
-        'task_timestamp': task_timestamp,
-        'result_timestamp': result_timestamp,
-        'selected_person_name': selected_name,
-        'selected_person_fbx_path': str(fbx_path),
-        'selected_person_obj_path': str(obj_path),
-        'selected_person_camera_mesh_npz_path': selected_camera_mesh_npz_path,
-        'selected_person_bbox_xyxy': selected_body_bbox,
-        'subject_crop_path': subject_crop_path,
-        'people_json_path': str(people_json_path),
-        'backup_shigurei_dir': backup_dir,
-        'coordinate_space': 'aruco',
-    })
     _write_status(json_path, task, 'SUCCESS', **payload)
     return {'status': 'SUCCESS', 'selected_person_name': selected_name, 'selected_person_fbx_path': str(fbx_path), 'subject_crop_path': subject_crop_path}
 

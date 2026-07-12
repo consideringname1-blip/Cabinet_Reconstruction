@@ -11,14 +11,10 @@ from typing import Any
 import cv2
 import numpy as np
 
-from artifact_layout import ARUCO_TEMPLATE_PATH, SHIGURE_MARKER_HISTORY_PATH, SHIGURE_MARKER_HISTORY_ROOT
-from coordinate_systems import (
-    convert_opencv_camera_pose_to_unity_camera_pose,
-    orthonormalize_rotation,
-    rotation_matrix_to_quat_xyzw,
-)
-from stages.hololens_aruco_reference.aruco_common import load_aruco_template, resolve_marker_configs
-from stages.shigure_history.cache import CachedRgbdSample, load_json, sample_key
+from artifact_layout import SHIGURE_MARKER_HISTORY_PATH, SHIGURE_MARKER_HISTORY_ROOT
+from coordinate_systems import orthonormalize_rotation
+from stages.hololens_aruco_reference.aruco_common import resolve_marker_configs
+from stages.shigure_history.cache import CachedRgbdSample, sample_key
 
 try:
     from task_db import get_enabled_aruco_markers
@@ -64,38 +60,28 @@ def parse_float_array(value: Any, count: int, label: str) -> np.ndarray:
     return array
 
 
-def load_camera_info(path: Path) -> tuple[np.ndarray, np.ndarray, int, int]:
-    return load_camera_info_payload(load_json(path))
-
-
 def load_camera_info_payload(payload: dict[str, Any]) -> tuple[np.ndarray, np.ndarray, int, int]:
-    message = payload.get('message') if isinstance(payload.get('message'), dict) else payload
     camera_matrix = parse_float_array(
-        message.get('k') or message.get('K') or message.get('camera_matrix'),
+        payload.get('k'),
         9,
         'camera matrix',
     ).reshape(3, 3)
-    distortion_value = message.get('d') or message.get('D') or message.get('distortion')
+    distortion_value = payload.get('d')
     if distortion_value is None:
         distortion = np.zeros((5, 1), dtype=np.float64)
     else:
         distortion = np.asarray(distortion_value, dtype=np.float64).reshape(-1, 1)
         if distortion.size == 0:
             distortion = np.zeros((5, 1), dtype=np.float64)
-    width = int(message.get('width') or 0)
-    height = int(message.get('height') or 0)
+    width = int(payload.get('width') or 0)
+    height = int(payload.get('height') or 0)
     return camera_matrix.astype(np.float64), distortion.astype(np.float64), width, height
 
 
 def resolve_marker_configs_for_shigure() -> list[dict[str, Any]]:
-    template = load_aruco_template()
-    db_markers: list[dict[str, Any]] = []
-    if get_enabled_aruco_markers is not None:
-        try:
-            db_markers = list(get_enabled_aruco_markers() or [])
-        except Exception:
-            db_markers = []
-    return resolve_marker_configs(template, db_markers)
+    if get_enabled_aruco_markers is None:
+        raise RuntimeError("ArUco marker registry is unavailable")
+    return resolve_marker_configs(list(get_enabled_aruco_markers() or []))
 
 
 def resolve_dictionary(dictionary_name: str):
@@ -156,28 +142,9 @@ def marker_object_points(marker_size_mm: float) -> np.ndarray:
     )
 
 
-def pose_payload(rotation: np.ndarray, translation: np.ndarray) -> dict[str, Any]:
-    rotation = orthonormalize_rotation(rotation)
-    translation = np.asarray(translation, dtype=np.float64).reshape(3)
-    return {
-        'position': translation.astype(float).tolist(),
-        'rotation_quaternion_xyzw': rotation_matrix_to_quat_xyzw(rotation).astype(float).tolist(),
-        'rotation_matrix': rotation.astype(float).tolist(),
-    }
-
-
 def estimate_from_sample(sample: CachedRgbdSample) -> dict[str, Any] | None:
-    if sample.camera_info is not None:
-        camera_matrix, distortion, width, height = load_camera_info_payload(sample.camera_info)
-    elif sample.camera_info_path is not None and sample.camera_info_path.is_file():
-        camera_matrix, distortion, width, height = load_camera_info(sample.camera_info_path)
-    else:
-        return None
-    image = sample.rgb_bgr if sample.rgb_bgr is not None else None
-    if image is None and sample.rgb_path is not None:
-        image = cv2.imread(str(sample.rgb_path), cv2.IMREAD_COLOR)
-    if image is None:
-        return None
+    camera_matrix, distortion, width, height = load_camera_info_payload(sample.camera_info)
+    image = sample.rgb_bgr
     markers = resolve_marker_configs_for_shigure()
     if not markers:
         return None
@@ -222,8 +189,8 @@ def estimate_from_sample(sample: CachedRgbdSample) -> dict[str, Any] | None:
                 {
                     'stamp': sample.stamp.to_dict(),
                     'sample_key': sample_key(sample.stamp),
-                    'rgb_image': str(sample.rgb_path) if sample.rgb_path else f'chunk:{sample.chunk_id}:{sample.frame_index}',
-                    'camera_info': str(sample.camera_info_path) if sample.camera_info_path else f'chunk:{sample.chunk_id}:camera_info',
+                    'rgb_image': f'memory:{sample.key}',
+                    'camera_info': 'memory',
                     'marker_id': int(marker['marker_id']),
                     'dictionary': dictionary_name,
                     'marker_size_mm': float(marker['marker_size_mm']),
@@ -232,7 +199,6 @@ def estimate_from_sample(sample: CachedRgbdSample) -> dict[str, Any] | None:
                     'corner_area_px': area,
                     'weight': float(weight),
                     'rotation_matrix': rotation_cv.astype(float).tolist(),
-                    'rvec': np.asarray(rvec, dtype=np.float64).reshape(3).astype(float).tolist(),
                     'tvec_m': np.asarray(tvec, dtype=np.float64).reshape(3).astype(float).tolist(),
                 }
             )
@@ -240,8 +206,6 @@ def estimate_from_sample(sample: CachedRgbdSample) -> dict[str, Any] | None:
         return None
     best = max(detections, key=lambda item: item['weight'])
     rotation_cv = np.asarray(best['rotation_matrix'], dtype=np.float64).reshape(3, 3)
-    translation_cv = np.asarray(best['tvec_m'], dtype=np.float64).reshape(3)
-    unity_rotation, unity_translation = convert_opencv_camera_pose_to_unity_camera_pose(rotation_cv, translation_cv)
     payload = {
         'created_at': utc_now(),
         'source': 'shigure_history_marker_detection',
@@ -249,7 +213,6 @@ def estimate_from_sample(sample: CachedRgbdSample) -> dict[str, Any] | None:
         'stamp': best['stamp'],
         'rgb_image': best['rgb_image'],
         'camera_info': best['camera_info'],
-        'aruco_config': str(ARUCO_TEMPLATE_PATH),
         'marker_id': best['marker_id'],
         'dictionary': best['dictionary'],
         'marker_size_mm': best['marker_size_mm'],
@@ -257,14 +220,8 @@ def estimate_from_sample(sample: CachedRgbdSample) -> dict[str, Any] | None:
         'reprojection_error_px': best['reprojection_error_px'],
         'corner_area_px': best['corner_area_px'],
         'opencv_camera_pose': {
-            **pose_payload(rotation_cv, translation_cv),
-            'rvec': best['rvec'],
+            'rotation_matrix': orthonormalize_rotation(rotation_cv).astype(float).tolist(),
             'tvec_m': best['tvec_m'],
-            'coordinate_system': '+X right, +Y down, +Z forward; units are meters',
-        },
-        'unity_camera_pose': {
-            **pose_payload(unity_rotation, unity_translation),
-            'coordinate_system': '+X right, +Y up, +Z forward; HoloLens/Unity-compatible marker payload in this project',
         },
         'camera_matrix': camera_matrix.astype(float).tolist(),
         'distortion': distortion.reshape(-1).astype(float).tolist(),
@@ -286,7 +243,6 @@ def fuse_detections(detections: list[dict[str, Any]]) -> dict[str, Any]:
         rotation_acc += np.asarray(detection['opencv_camera_pose']['rotation_matrix'], dtype=np.float64).reshape(3, 3) * float(weight)
     fused_rotation = orthonormalize_rotation(rotation_acc)
     latest = detections[-1]
-    unity_rotation, unity_translation = convert_opencv_camera_pose_to_unity_camera_pose(fused_rotation, fused_translation)
     fused = {
         **latest,
         'created_at': utc_now(),
@@ -304,14 +260,8 @@ def fuse_detections(detections: list[dict[str, Any]]) -> dict[str, Any]:
             for d in detections
         ],
         'opencv_camera_pose': {
-            **pose_payload(fused_rotation, fused_translation),
-            'rvec': latest['opencv_camera_pose'].get('rvec'),
+            'rotation_matrix': fused_rotation.astype(float).tolist(),
             'tvec_m': fused_translation.astype(float).tolist(),
-            'coordinate_system': '+X right, +Y down, +Z forward; units are meters',
-        },
-        'unity_camera_pose': {
-            **pose_payload(unity_rotation, unity_translation),
-            'coordinate_system': '+X right, +Y up, +Z forward; HoloLens/Unity-compatible marker payload in this project',
         },
     }
     return fused

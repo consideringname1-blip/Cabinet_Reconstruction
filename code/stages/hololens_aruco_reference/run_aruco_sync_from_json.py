@@ -14,7 +14,7 @@ from task_db import (
     update_task_aruco_coordinate_synced,
 )
 from task_json import load_task_json, resolve_task_json_path, save_task_json
-from model_bounds import compute_and_store_model_bounds
+from stages.hololens3d_reconstruction.model_bounds import compute_and_store_model_bounds
 from spatial_transforms import (
     aruco_pose_to_hololens_pose,
     hololens_point_to_aruco,

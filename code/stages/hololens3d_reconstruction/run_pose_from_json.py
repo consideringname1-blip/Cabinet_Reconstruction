@@ -27,12 +27,11 @@ from task_json import save_task_json
 
 
 def resolve_runtime_local_to_unity_rotation() -> np.ndarray:
-    # Keep the pre-coordinate-refactor runtime local correction from d6be0ff.
-    # RuntimeMesh preserves generated model axes, so pose composition still has
-    # to rotate that local basis into the Unity-facing object transform.
+    # RuntimeMesh preserves generated model axes, so pose composition rotates
+    # that canonical local basis into the Unity-facing object transform.
     base = np.asarray(FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY, dtype=np.float64)
-    legacy_remap = np.asarray(RUNTIME_LOCAL_TO_UNITY_POSE_ROTATION, dtype=np.float64)
-    return base @ legacy_remap
+    runtime_axis_rotation = np.asarray(RUNTIME_LOCAL_TO_UNITY_POSE_ROTATION, dtype=np.float64)
+    return base @ runtime_axis_rotation
 
 
 def _normalize_vector(vector: np.ndarray, fallback: np.ndarray) -> np.ndarray:
@@ -72,7 +71,7 @@ def _look_rotation(forward: np.ndarray, up: np.ndarray) -> np.ndarray:
 
 def resolve_camera_rotation_for_object(task: dict, camera_rotation: np.ndarray) -> tuple[np.ndarray, dict]:
     alignment = task.get("object_alignment") or {}
-    alignment_mode = str(alignment.get("alignment_mode") or alignment.get("icp_mode") or "").strip().lower()
+    alignment_mode = str(alignment.get("alignment_mode") or "").strip().lower()
     if alignment_mode != "off":
         return camera_rotation, {"mode": "full_camera_rotation", "reason": "alignment_mode_not_off"}
 
@@ -131,22 +130,10 @@ def resolve_local_camera_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
 def resolve_pv_camera_world_pose(task: dict) -> tuple[np.ndarray, np.ndarray]:
     pv_info = task.get("PVCamera") or {}
     pv_pose = np.asarray(pv_info.get("pose"), dtype=np.float64)
-    if pv_pose.shape == (4, 4):
-        translation, rotation, _quat_xyzw = convert_hololens_pv_pose_matrix_to_unity_pose_components(
-            pv_pose
-        )
-        return translation, rotation
-
-    translation = np.asarray(pv_info.get("position"), dtype=np.float64)
-    quat_xyzw = np.asarray(pv_info.get("rotation_quaternion_xyzw"), dtype=np.float64)
-
-    if translation.shape == (3,) and quat_xyzw.shape == (4,):
-        rotation = quat_xyzw_to_rotation_matrix(quat_xyzw)
-        return translation.astype(np.float64), rotation.astype(np.float64)
-
-    raise ValueError(
-        "PVCamera must include either pose(4x4) or position+rotation_quaternion_xyzw"
-    )
+    if pv_pose.shape != (4, 4) or not np.isfinite(pv_pose).all():
+        raise ValueError("PVCamera.pose must be a finite 4x4 matrix")
+    translation, rotation, _quat_xyzw = convert_hololens_pv_pose_matrix_to_unity_pose_components(pv_pose)
+    return translation, rotation
 
 def compute_world_pose(task: dict) -> dict[str, list[float]]:
     alignment = task.get("object_alignment") or {}
@@ -168,8 +155,7 @@ def compute_world_pose(task: dict) -> dict[str, list[float]]:
     runtime_local_to_unity = resolve_runtime_local_to_unity_rotation()
 
     world_position = (R_cam_raw @ local_position) + t_cam
-    # Compose the solved pose with the legacy runtime local-axis correction so
-    # the loaded model orientation matches the pre-refactor HoloLens result.
+    # Compose the solved camera pose with the current runtime asset-axis contract.
     world_rotation = R_cam @ local_rotation @ runtime_local_to_unity
     det_world = float(np.linalg.det(world_rotation))
     if not np.isfinite(det_world) or det_world <= 0.0:

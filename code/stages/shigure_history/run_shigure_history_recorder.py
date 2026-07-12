@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import json
 import os
 import re
@@ -196,20 +195,6 @@ def stamp_from_message(msg: Any | None) -> RosStamp | None:
     return RosStamp(sec=sec, nanosec=nanosec)
 
 
-def now_stamp() -> RosStamp:
-    now = time.time()
-    sec = int(now)
-    return RosStamp(sec=sec, nanosec=int((now - sec) * 1_000_000_000))
-
-
-def stamp_to_dict(stamp: Any | None) -> dict[str, int]:
-    return {"sec": int(getattr(stamp, "sec", 0)), "nanosec": int(getattr(stamp, "nanosec", 0))}
-
-
-def header_to_dict(header: Any | None) -> dict[str, Any]:
-    return {"stamp": stamp_to_dict(getattr(header, "stamp", None)), "frame_id": str(getattr(header, "frame_id", ""))}
-
-
 def bytes_to_json_blob(data: bytes | bytearray | array) -> dict[str, Any]:
     raw = bytes(data)
     return {"__encoding__": "base64", "length": len(raw)}
@@ -233,15 +218,11 @@ def message_to_jsonable(value: Any) -> Any:
     return str(value)
 
 
-def camera_info_payload(sample: TopicSample, state: TopicState) -> dict[str, Any]:
-    msg = sample.message
-    return {
-        "topic": state.topic,
-        "message_type": state.type_name,
-        "received_at": datetime.fromtimestamp(sample.received_at, timezone.utc).isoformat(),
-        "header": header_to_dict(getattr(msg, "header", None)),
-        "message": message_to_jsonable(msg),
-    }
+def camera_info_payload(sample: TopicSample) -> dict[str, Any]:
+    payload = message_to_jsonable(sample.message)
+    if not isinstance(payload, dict):
+        raise ValueError("CameraInfo message must serialize to an object")
+    return payload
 
 
 def compressed_image_payload(msg: Any, topic: str) -> tuple[bytes, int]:
@@ -275,7 +256,7 @@ def _object_bbox_xyxy(obj: Any) -> tuple[float, float, float, float] | None:
         height = float(getattr(bbox, "height"))
     except Exception:
         return None
-    if width <= 0.0 or height <= 0.0:
+    if not np.isfinite([x, y, width, height]).all() or width <= 0.0 or height <= 0.0:
         return None
     return x, y, x + width, y + height
 
@@ -290,11 +271,9 @@ def _bbox_payload(bbox: Any | None) -> dict[str, Any] | None:
         height = float(getattr(bbox, "height"))
     except Exception:
         return None
+    if not np.isfinite([x, y, width, height]).all() or width <= 0.0 or height <= 0.0:
+        return None
     return {
-        "x": x,
-        "y": y,
-        "width": width,
-        "height": height,
         "xyxy": [x, y, x + width, y + height],
     }
 
@@ -303,7 +282,7 @@ def _cube_payload(cube: Any | None) -> dict[str, Any] | None:
     if cube is None:
         return None
     try:
-        return {
+        payload = {
             "x": float(getattr(cube, "x")),
             "y": float(getattr(cube, "y")),
             "z": float(getattr(cube, "z")),
@@ -311,11 +290,15 @@ def _cube_payload(cube: Any | None) -> dict[str, Any] | None:
             "height": float(getattr(cube, "height")),
             "depth": float(getattr(cube, "depth")),
         }
+        values = list(payload.values())
+        if not np.isfinite(values).all() or any(value <= 0.0 for value in values[3:]):
+            return None
+        return payload
     except Exception:
         return None
 
 
-def object_detection_payload(sample: TopicSample, state: TopicState) -> dict[str, Any]:
+def object_detection_payload(sample: TopicSample) -> dict[str, Any]:
     msg = sample.message
     objects: list[dict[str, Any]] = []
     for index, obj in enumerate(getattr(msg, "object_list", []) or []):
@@ -332,35 +315,19 @@ def object_detection_payload(sample: TopicSample, state: TopicState) -> dict[str
             {
                 "object_id": f"{action}:{index}",
                 "action": action,
-                "bbox": [x0, y0, x1, y1],
-                "bbox_xywh": [x0, y0, x1 - x0, y1 - y0],
-                "x": (x0 + x1) * 0.5,
-                "y": (y0 + y1) * 0.5,
+                "bbox_xyxy": [x0, y0, x1, y1],
                 "mask_b64": base64.b64encode(mask_raw).decode("ascii"),
                 "mask_format": str(getattr(mask_msg, "format", "")) if mask_msg is not None else "",
                 "mask_bytes": len(mask_raw),
             }
         )
-    header = getattr(msg, "header", None)
-    received_utc = datetime.fromtimestamp(sample.received_at, timezone.utc).isoformat()
-    source_stamp = header_to_dict(header).get("stamp")
     return {
-        "source": "shigure_object_detection",
-        "topic": state.topic,
-        "message_type": state.type_name,
-        "received_at": received_utc,
-        "received_utc": received_utc,
-        "received_monotonic": float(sample.received_monotonic),
-        "header": header_to_dict(header),
-        "stamp": source_stamp,
-        "source_stamp": source_stamp,
         "objects": objects,
         "object_count": len(objects),
-        "explicit_empty": len(objects) == 0,
     }
 
 
-def contacted_payload(sample: TopicSample, state: TopicState) -> dict[str, Any]:
+def contacted_payload(sample: TopicSample) -> dict[str, Any]:
     msg = sample.message
     contacts: list[dict[str, Any]] = []
     for index, contacted in enumerate(getattr(msg, "contacted_list", []) or []):
@@ -376,22 +343,9 @@ def contacted_payload(sample: TopicSample, state: TopicState) -> dict[str, Any]:
                 "object_cube": _cube_payload(getattr(contacted, "object_cube", None)),
             }
         )
-    header = getattr(msg, "header", None)
-    received_utc = datetime.fromtimestamp(sample.received_at, timezone.utc).isoformat()
-    source_stamp = header_to_dict(header).get("stamp")
     return {
-        "source": "shigure_contacted",
-        "topic": state.topic,
-        "message_type": state.type_name,
-        "received_at": received_utc,
-        "received_utc": received_utc,
-        "received_monotonic": float(sample.received_monotonic),
-        "header": header_to_dict(header),
-        "stamp": source_stamp,
-        "source_stamp": source_stamp,
         "contacts": contacts,
         "contact_count": len(contacts),
-        "explicit_empty": len(contacts) == 0,
     }
 
 
@@ -435,7 +389,7 @@ def associate_contacted_objects(
             if not isinstance(detected, dict):
                 continue
             action_match = bool(contact_action and contact_action == str(detected.get("action") or ""))
-            iou = _bbox_iou(contact_bbox, detected.get("bbox"))
+            iou = _bbox_iou(contact_bbox, detected.get("bbox_xyxy"))
             candidates.append(
                 {
                     "object_detection_index": int(object_index),
@@ -474,8 +428,8 @@ def append_correlated_event(store: ShigureMemoryStore, states: dict[str, TopicSt
     object_state = states.get("object_detection")
     contacted_sample = contacted_state.exact(stamp) if contacted_state is not None else None
     object_sample = object_state.exact(stamp) if object_state is not None else None
-    contact_payload = contacted_payload(contacted_sample, contacted_state) if contacted_sample is not None and contacted_state is not None else None
-    object_payload = object_detection_payload(object_sample, object_state) if object_sample is not None and object_state is not None else None
+    contact_payload = contacted_payload(contacted_sample) if contacted_sample is not None else None
+    object_payload = object_detection_payload(object_sample) if object_sample is not None else None
 
     contact_count = int((contact_payload or {}).get("contact_count") or 0)
     object_count = int((object_payload or {}).get("object_count") or 0)
@@ -512,15 +466,10 @@ def append_correlated_event(store: ShigureMemoryStore, states: dict[str, TopicSt
     return store.append_event(event)
 
 
-def payload_hash(payload: dict[str, Any] | None) -> str | None:
-    if not payload or not payload.get("objects"):
-        return None
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()
-
-
 def selected_rgb_stamp(rgb_sample: TopicSample) -> RosStamp:
-    return rgb_sample.stamp or now_stamp()
+    if rgb_sample.stamp is None:
+        raise ValueError("RGB frame is missing its ROS source timestamp")
+    return rgb_sample.stamp
 
 
 def required_ready(states: dict[str, TopicState]) -> bool:
@@ -544,9 +493,7 @@ def append_aligned_sample(
     states: dict[str, TopicState],
     *,
     last_key: str | None,
-    frame_index: int,
     rgb_depth_max_delta_seconds: float,
-    object_detection_max_delta_seconds: float,
 ) -> tuple[str | None, bool, CachedRgbdSample | None, dict[str, Any]]:
     rgb_sample = states["rgb"].latest()
     if rgb_sample is None:
@@ -567,36 +514,19 @@ def append_aligned_sample(
 
     rgb, rgb_info = decode_compressed_image(rgb_sample, states["rgb"], color=True)
     depth, depth_info = decode_compressed_image(depth_sample, states["depth"], color=False)
-    camera_info = camera_info_payload(camera_info_sample, states["camera_info"])
+    camera_info = camera_info_payload(camera_info_sample)
 
-    object_payload = None
-    object_delta = None
-    object_sample = states.get("object_detection").nearest(stamp, max_delta_seconds=object_detection_max_delta_seconds) if states.get("object_detection") else None
-    if object_sample is not None:
-        object_payload = object_detection_payload(object_sample, states["object_detection"])
-        if object_sample.stamp is not None:
-            object_delta = abs(float(object_sample.stamp.seconds) - float(stamp.seconds))
-
-    yolo_hash = payload_hash(object_payload)
     sample = CachedRgbdSample(
         stamp=stamp,
         rgb_bgr=rgb,
         depth=depth,
-        camera_info_path=None,
         camera_info=camera_info,
-        yolo=object_payload,
-        yolo_hash=yolo_hash,
-        chunk_id="memory",
-        frame_index=frame_index,
     )
     store.append(sample)
     return key, True, sample, {
         "rgb_decode": rgb_info,
         "depth_decode": depth_info,
         "frame": sample.to_dict(),
-        "object_detection_paired": object_payload is not None,
-        "object_detection_delta_seconds": object_delta,
-        "object_detection_object_count": int((object_payload or {}).get("object_count") or 0),
     }
 
 
@@ -693,7 +623,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-events", type=int, default=settings.SHIGURE_HISTORY_MAX_EVENTS)
     parser.add_argument("--log-interval", type=float, default=settings.SHIGURE_HISTORY_RECORDER_LOG_INTERVAL)
     parser.add_argument("--rgb-depth-max-delta-seconds", type=float, default=settings.SHIGURE_HISTORY_RGB_DEPTH_MAX_DELTA_SECONDS)
-    parser.add_argument("--object-detection-max-delta-seconds", type=float, default=settings.SHIGURE_HISTORY_OBJECT_DETECTION_MAX_DELTA_SECONDS)
     return parser
 
 
@@ -791,9 +720,7 @@ def main() -> int:
                     store,
                     states,
                     last_key=last_key,
-                    frame_index=sample_count,
                     rgb_depth_max_delta_seconds=args.rgb_depth_max_delta_seconds,
-                    object_detection_max_delta_seconds=args.object_detection_max_delta_seconds,
                 )
                 last_counts = counts
                 if appended and sample is not None:

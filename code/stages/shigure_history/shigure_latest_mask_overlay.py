@@ -123,7 +123,7 @@ def _decode_mask(obj: Mapping[str, Any], image_shape: tuple[int, int]) -> np.nda
 
 
 def _bbox_from_object(obj: Mapping[str, Any], image_shape: tuple[int, int]) -> tuple[int, int, int, int] | None:
-    bbox = obj.get("bbox")
+    bbox = obj.get("bbox_xyxy")
     if not (isinstance(bbox, list) and len(bbox) == 4):
         return None
     h, w = image_shape
@@ -140,15 +140,9 @@ def _bbox_from_object(obj: Mapping[str, Any], image_shape: tuple[int, int]) -> t
     return x0, y0, x1, y1
 
 
-def _center_from_object(obj: Mapping[str, Any], bbox: tuple[int, int, int, int]) -> tuple[int, int]:
+def _center_from_object(bbox: tuple[int, int, int, int]) -> tuple[int, int]:
     x0, y0, x1, y1 = bbox
-    try:
-        x = int(round(float(obj.get("x"))))
-        y = int(round(float(obj.get("y"))))
-    except Exception:
-        x = int(round((x0 + x1) * 0.5))
-        y = int(round((y0 + y1) * 0.5))
-    return x, y
+    return int(round((x0 + x1) * 0.5)), int(round((y0 + y1) * 0.5))
 
 
 def _color_for_index(index: int, total: int) -> tuple[int, int, int]:
@@ -159,8 +153,8 @@ def _color_for_index(index: int, total: int) -> tuple[int, int, int]:
     return int(rgb[0]), int(rgb[1]), int(rgb[2])
 
 
-def _extract_observations(sample: CachedRgbdSample) -> list[MaskObservation]:
-    payload = sample.yolo if isinstance(sample.yolo, Mapping) else {}
+def _extract_observations(sample: CachedRgbdSample, payload: Mapping[str, Any] | None) -> list[MaskObservation]:
+    payload = payload if isinstance(payload, Mapping) else {}
     objects = payload.get("objects") if isinstance(payload.get("objects"), list) else []
     h, w = sample.rgb_bgr.shape[:2]
     observations: list[MaskObservation] = []
@@ -180,7 +174,7 @@ def _extract_observations(sample: CachedRgbdSample) -> list[MaskObservation]:
                 object_id=str(obj.get("object_id") or f"object:{index}"),
                 action=str(obj.get("action") or "object"),
                 bbox_xyxy=bbox,
-                center_xy=_center_from_object(obj, bbox),
+                center_xy=_center_from_object(bbox),
                 mask=mask,
                 pixel_count=pixel_count,
                 color_rgb=_color_for_index(len(observations), max(1, len(objects))),
@@ -337,18 +331,22 @@ def _wait_for_sample(
     timeout_seconds: float,
     poll_interval: float,
     prefer_objects: bool,
-) -> CachedRgbdSample | None:
+) -> tuple[CachedRgbdSample | None, dict[str, Any] | None]:
     deadline = time.monotonic() + max(0.0, float(timeout_seconds))
     newest: CachedRgbdSample | None = None
+    newest_detection: dict[str, Any] | None = None
     while time.monotonic() <= deadline:
-        sample = cache.newest_sample()
+        event = cache.latest_event(include_masks=True)
+        sample = cache.get_sample(event.source_stamp) if event is not None else cache.newest_sample()
+        detection = event.object_detection if event is not None else None
         if sample is not None:
             newest = sample
-            observations = _extract_observations(sample)
+            newest_detection = detection
+            observations = _extract_observations(sample, detection)
             if observations or not prefer_objects:
-                return sample
+                return sample, detection
         time.sleep(max(0.05, float(poll_interval)))
-    return newest
+    return newest, newest_detection
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -406,7 +404,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"[ERR] Shigure recorder did not expose socket in time: {args.socket_path}", file=sys.stderr)
                 return 1
 
-        sample = _wait_for_sample(
+        sample, object_detection = _wait_for_sample(
             cache,
             timeout_seconds=args.timeout_seconds,
             poll_interval=args.poll_interval,
@@ -426,7 +424,7 @@ def main(argv: list[str] | None = None) -> int:
             print("[ERR] No Shigure RGB-D sample available.", file=sys.stderr)
             return 1
 
-        observations = _extract_observations(sample)
+        observations = _extract_observations(sample, object_detection)
         relations = _mask_relations(observations, near_pixels=args.near_pixels)
         overlay_rgb = _draw_overlay(sample, observations, relations, alpha=args.alpha)
         rgb = np.asarray(sample.rgb_bgr[:, :, ::-1], dtype=np.uint8)

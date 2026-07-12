@@ -1,9 +1,9 @@
 # SAM3D Body 运行与配置
 
-更新日期：2026-07-08
-状态：当前实现说明
+更新日期：2026-07-12
+状态：当前协议
 
-本文记录 SAM3D Body stage 的运行依赖、输入输出和常用配置。算法流程见 `docs/sam3d-body-workflow.md`。
+算法和数据契约见 [`sam3d-body-workflow.md`](sam3d-body-workflow.md)。
 
 ## 代码入口
 
@@ -13,72 +13,62 @@ code/stages/sam3d_body_mesh/export_selected_body_fbx.py
 code/stages/sam3d_body_mesh/settings.py
 ```
 
-由 `task_worker` 在 `taken_object_detection` 之后调用。
+`ShigureAuxiliaryBranchManager` 收到有效 `ShigureContactEvidence` 后，通过 `task_worker._run_sam3d_body_mesh()` 调用该入口。它不属于主任务 stage queue。
 
-## 依赖环境
+## 外部运行库
 
-路径配置在 `code/path_config.py`：
+路径由 `code/path_config.py` 定义：
 
 ```text
-SAM3D_BODY_ROOT = <repo>/reconstruction/sam3d-body
-SAM3D_BODY_STAGE_RUN = code/stages/sam3d_body_mesh/run_sam3d_body_mesh_from_json.py
-SAM3D_BODY_FBX_EXPORT_SCRIPT = code/stages/sam3d_body_mesh/export_selected_body_fbx.py
+SAM3D_BODY_ROOT
+SAM3D_BODY_STAGE_PY
+SAM3D_BODY_STAGE_RUN
+SAM3D_BODY_FBX_EXPORT_SCRIPT
+BLENDER_BIN
 ```
 
-具体 Python 环境由服务器部署决定。文档不固定某个 conda 名称；以 `path_config.py` 和实际启动脚本为准。
+`SAM3D_BODY_ROOT` 必须包含模型 checkpoint 和 MHR asset；FBX 导出需要 Blender。实际 Python 解释器以 `SAM3D_BODY_STAGE_PY` 为准。
 
-## 必要前置条件
+## 必需数据
 
-任务需要已经完成：
+执行前必须具备：
 
-- `aruco_sync`：生成 `object_aruco`。
-- `model_bounds`：提供物体中心/包围盒。
-- `taken_object_detection`：提供 taken frame 和 baseline。
+- `ShigureContactEvidence.status=TAKEN`。
+- 同一 contact event 的 RGB、uint16 millimetre depth、CameraInfo、object mask。
+- contact 的 `people_bounding_box.xyxy`。
+- `marker_6d_pose.json` 中的 `opencv_camera_pose.rotation_matrix` 与 `tvec_m`。
+- 主任务有效的 `task_id`、`task_name`、`task_timestamp`。
 
-缺少 marker pose、camera_info、taken result 或 depth 时，stage 应失败并写 reason，而不是继续猜测。
+输入不完整时记录状态并结束辅助分支，不创建伪造人体位姿。
 
-## 常用配置
+## 配置
 
-位于 `code/stages/sam3d_body_mesh/settings.py`：
+`code/stages/sam3d_body_mesh/settings.py` 当前读取：
 
 ```text
+SAM3D_BODY_DEVICE=cuda
+SAM3D_BODY_INFERENCE_TYPE=full
+SAM3D_BODY_DEPTH_OVERLAP_RATIO=0.05
+SAM3D_BODY_DEPTH_OVERLAP_PIXELS=500
+SAM3D_BODY_DEPTH_SAMPLE_MAX=5000
+SAM3D_BODY_BBOX_DEPTH_PAD_PX=8
+SAM3D_BODY_DEPTH_SCALE_MIN=0.50
+SAM3D_BODY_DEPTH_SCALE_MAX=2.00
 SAM3D_BODY_SUBJECT_CROP_PAD_PX=24
 SAM3D_BODY_SUBJECT_CROP_BODY_BBOX_PAD_PX=8
-SAM3D_BODY_SUBJECT_CROP_OBJECT_CENTER_RADIUS_PX=24
-SAM3D_BODY_SUBJECT_CROP_OBJECT_CENTER_MAX_RADIUS_PX=96
+SAM3D_BODY_FBX_DECIMATE_RATIO=0.125
+SAM3D_BODY_MATERIAL_ALPHA=0.5
 ```
 
-这些配置只影响裁切范围，不改变历史状态判断。
+这些值分别控制推理设备、depth 对齐、裁切和 FBX 简化；不参与物体身份匹配或 realtime pose 判定。
 
-## 输出契约
+## 排查顺序
 
-任务 JSON 中写入：
+1. 查看 auxiliary job `shigure_contact_body` 的 `status`、`result_path` 和 detail。
+2. 查看 `ShigureContactEvidence.status/reason` 与 source stamp。
+3. 查看 `result/08_sam3d_body_result.json`。
+4. 检查 `people_bounding_box.xyxy`、RGB-D-CameraInfo 尺寸和 marker pose。
+5. 查看 `result/08_sam3d_body_people.json` 中的 depth overlap、offset、scale。
+6. 查看 `debug/08_sam3d_body_mesh_on_taken_rgb.png` 和 subject crop sources。
 
-```text
-Sam3DBodyMesh.status
-Sam3DBodyMesh.selected_person_name
-Sam3DBodyMesh.selected_person_pose_aruco
-Sam3DBodyMesh.selected_person_pose_hololens   # API 公开转换后
-Sam3DBodyMesh.selected_person_bbox_xyxy
-Sam3DBodyMesh.subject_crop_path
-Sam3DBodyMesh.people_json_path
-```
-
-文件写入 `data/model/<task_timestamp>/result/`。
-
-## Debug 建议
-
-排查时优先看：
-
-1. `08_sam3d_body_result.json`
-2. `08_sam3d_body_people.json`
-3. `subject_crop` debug 字段中的 sources。
-4. `depth_alignment` 字段中的 valid pixels、offset、scale。
-5. marker pose 是否存在且时间合理。
-
-## 失败时的正确行为
-
-- 不输出伪造人体 pose。
-- 不让 Unity 用 identity/fallback pose 显示人体。
-- 不影响历史物体 still/missing/occluded 的 direct compare 结果。
-- 可以缺人体证据图，但 Unity 会退回 taken result RGB。
+只有 `SAM3DBodyMesh.status=SUCCESS` 才会增加该 `display_object_id` 的 `body_revision` 并进入公开 `body_evidence`。

@@ -138,7 +138,6 @@ class ShigureEventJoinTests(unittest.TestCase):
         assert explicit_empty is not None
         self.assertEqual(explicit_empty.contacted_state, "explicit_empty")
         self.assertEqual((explicit_empty.contacted or {})["contact_count"], 0)
-        self.assertTrue((explicit_empty.contacted or {})["explicit_empty"])
         self.assertGreater(explicit_empty.sequence, missing_sequence)
         updates = store.iter_event_updates_after(missing_sequence)
         self.assertEqual(len(updates), 1)
@@ -159,7 +158,7 @@ class ShigureEventJoinTests(unittest.TestCase):
         assert object_event is not None and contact_event is not None
         self.assertEqual(object_event.contacted_state, "missing")
         self.assertEqual(contact_event.object_detection_state, "missing")
-        self.assertEqual(len(list(store.iter_events())), 2)
+        self.assertEqual(store.status()["event_count"], 2)
 
     def test_socket_event_payload_is_lightweight_by_default(self) -> None:
         store = ShigureMemoryStore(max_seconds=60.0, max_samples=10, max_events=20)
@@ -170,7 +169,7 @@ class ShigureEventJoinTests(unittest.TestCase):
         append_correlated_event(store, states, stamp)
 
         lightweight = store_request(store, {"action": "latest_event"})
-        full = store_request(store, {"action": "get_event", "stamp": stamp.to_dict(), "include_masks": True})
+        full = store_request(store, {"action": "latest_event", "include_masks": True})
         light_object = lightweight["event"]["object_detection"]["objects"][0]
         full_object = full["event"]["object_detection"]["objects"][0]
         self.assertNotIn("mask_b64", light_object)

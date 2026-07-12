@@ -1,3 +1,5 @@
+"""Parallel contact-evidence and body-mesh branch for Shigure events."""
+
 from __future__ import annotations
 
 import base64
@@ -14,7 +16,7 @@ import numpy as np
 
 from artifact_layout import model_result_file, model_worker_dir
 from config import SHIGURE_AUXILIARY_CONTACT_WAIT_SEC, SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD
-from shigure_identity import cosine_distance
+from stages.shigure_history.shigure_identity import cosine_distance
 from stages.shigure_history.cache import CachedRgbdSample, CachedShigureEvent, RosStamp, ShigureRgbdCache
 from stages.shigure_history.marker_history import latest_marker_pose_path
 from task_db import upsert_auxiliary_job
@@ -35,8 +37,9 @@ def _publish_taken_artifacts(task_timestamp: str, backup_dir: Path) -> dict[str,
     mappings = {
         "rgb.png": ("result_rgb", model_result_file(task_timestamp, "taken.result_rgb")),
         "depth.png": ("result_depth", model_result_file(task_timestamp, "taken.result_depth")),
+        "object_mask.png": ("object_mask", model_result_file(task_timestamp, "taken.object_mask")),
         "camera_info.json": ("camera_info", model_result_file(task_timestamp, "taken.camera_info")),
-        "active_objects.json": ("active_objects", model_result_file(task_timestamp, "taken.active_objects")),
+        "object_detection.json": ("object_detection", model_result_file(task_timestamp, "taken.object_detection")),
         "marker_6d_pose.json": ("marker_pose", model_result_file(task_timestamp, "taken.marker_pose")),
     }
     published: dict[str, Any] = {"artifact_root": "model_result"}
@@ -81,7 +84,7 @@ def _freeze_watched_event(
     if sample is not None and sample.rgb_bgr.size:
         cv2.imwrite(str(event_dir / "rgb.png"), sample.rgb_bgr)
         cv2.imwrite(str(event_dir / "depth.png"), _depth_for_png(sample.depth))
-        _write_json(event_dir / "camera_info.json", sample.camera_info or {})
+        _write_json(event_dir / "camera_info.json", sample.camera_info)
     return event_dir
 
 
@@ -95,25 +98,27 @@ def _load_watched_events(
     for event_path in sorted(watched_root.glob("*/event.json")):
         try:
             payload = json.loads(event_path.read_text(encoding="utf-8"))
-            stamp = RosStamp.from_dict(payload.get("source_stamp") or {})
+            stamp_payload = payload["source_stamp"]
+            contacted = payload["contacted"]
+            object_detection = payload["object_detection"]
+            matches = payload["contact_object_matches"]
+            if contacted is not None and not isinstance(contacted, dict):
+                raise ValueError("contacted must be an object or null")
+            if object_detection is not None and not isinstance(object_detection, dict):
+                raise ValueError("object_detection must be an object or null")
+            if not isinstance(matches, list):
+                raise ValueError("contact_object_matches must be an array")
+            stamp = RosStamp.from_dict(stamp_payload)
             event = CachedShigureEvent(
                 source_stamp=stamp,
-                received_utc=str(payload.get("received_utc") or ""),
-                received_monotonic=float(payload.get("received_monotonic") or 0.0),
-                contacted_state=str(payload.get("contacted_state") or "missing"),
-                object_detection_state=str(payload.get("object_detection_state") or "missing"),
-                contacted=payload.get("contacted") if isinstance(payload.get("contacted"), dict) else None,
-                object_detection=(
-                    payload.get("object_detection")
-                    if isinstance(payload.get("object_detection"), dict)
-                    else None
-                ),
-                contact_object_matches=(
-                    payload.get("contact_object_matches")
-                    if isinstance(payload.get("contact_object_matches"), list)
-                    else []
-                ),
-                sequence=int(payload.get("sequence") or 0),
+                received_utc=str(payload["received_utc"]),
+                received_monotonic=float(payload["received_monotonic"]),
+                contacted_state=str(payload["contacted_state"]),
+                object_detection_state=str(payload["object_detection_state"]),
+                contacted=contacted,
+                object_detection=object_detection,
+                contact_object_matches=matches,
+                sequence=int(payload["sequence"]),
             )
             event_dir = event_path.parent
             rgb = cv2.imread(str(event_dir / "rgb.png"), cv2.IMREAD_COLOR)
@@ -130,7 +135,6 @@ def _load_watched_events(
                     stamp=stamp,
                     rgb_bgr=rgb,
                     depth=depth,
-                    camera_info_path=camera_path if camera_path.is_file() else None,
                     camera_info=camera_info,
                 )
             buffered[_watch_event_key(event)] = (event, sample)
@@ -317,7 +321,7 @@ class ShigureAuxiliaryBranchManager:
                 if not has_take_out_detection and not has_take_out_contact:
                     continue
 
-                sample = self.cache.get_sample(event.source_stamp, mode="nearest")
+                sample = self.cache.get_sample(event.source_stamp)
                 _freeze_watched_event(branch_root, event, sample)
                 buffered_events[_watch_event_key(event)] = (event, sample)
 
@@ -346,7 +350,7 @@ class ShigureAuxiliaryBranchManager:
                     continue
                 unresolved_source_stamps.discard(source_key)
                 if has_take_out_detection and event.contacted_state == "explicit_empty":
-                    sample = frozen_sample or self.cache.get_sample(event.source_stamp, mode="nearest")
+                    sample = frozen_sample or self.cache.get_sample(event.source_stamp)
                     if sample is None or sample.rgb_bgr.size == 0:
                         unresolved_source_stamps.add(source_key)
                         continue
@@ -398,7 +402,7 @@ class ShigureAuxiliaryBranchManager:
                     detection = _find_detection(event, str(best.get("object_detection_id") or ""))
                     if detection is None:
                         continue
-                    sample = frozen_sample or self.cache.get_sample(event.source_stamp, mode="nearest")
+                    sample = frozen_sample or self.cache.get_sample(event.source_stamp)
                     if sample is None or sample.rgb_bgr.size == 0:
                         continue
                     mask = _decode_mask(str(detection.get("mask_b64") or ""), sample.rgb_bgr.shape[:2])
@@ -451,7 +455,7 @@ class ShigureAuxiliaryBranchManager:
                 terminal_reason = "take_out_contact_mask_association_ambiguous"
             result_status = terminal_status or "NOT_TAKEN"
             result_reason = terminal_reason or "no_matching_shigure_take_out_before_timeout"
-            branch_task["TakenObjectDetection"] = {
+            branch_task["ShigureContactEvidence"] = {
                 "status": result_status,
                 "reason": result_reason,
                 "source": "remote_shigure_contacted",
@@ -475,13 +479,13 @@ class ShigureAuxiliaryBranchManager:
         cv2.imwrite(str(backup_dir / "rgb.png"), sample.rgb_bgr)
         depth = _depth_for_png(sample.depth)
         cv2.imwrite(str(backup_dir / "depth.png"), depth)
-        cv2.imwrite(str(backup_dir / "old_mask.png"), mask.astype(np.uint8) * 255)
+        cv2.imwrite(str(backup_dir / "object_mask.png"), mask.astype(np.uint8) * 255)
         (backup_dir / "camera_info.json").write_text(
-            json.dumps(sample.camera_info or {}, ensure_ascii=False, indent=2) + "\n",
+            json.dumps(sample.camera_info, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         _write_json(
-            backup_dir / "active_objects.json",
+            backup_dir / "object_detection.json",
             event.to_dict(include_masks=False).get("object_detection") or {},
         )
         marker_path = latest_marker_pose_path()
@@ -497,9 +501,7 @@ class ShigureAuxiliaryBranchManager:
             "result_timestamp": event.source_stamp.to_dict(),
             "event_sequence": int(event.sequence),
             "backup_shigurei_dir": str(backup_dir),
-            "init_backup_shigurei_dir": str(backup_dir),
             **published_artifacts,
-            "shigure_contact": contact,
             "people_bounding_box": contact.get("people_bounding_box"),
             "object_bounding_box": contact.get("object_bounding_box"),
             "shigure_object_id": contact.get("object_id"),
@@ -511,7 +513,7 @@ class ShigureAuxiliaryBranchManager:
                 key: value for key, value in detection.items() if key != "mask_b64"
             },
         }
-        branch_task["TakenObjectDetection"] = taken_payload
+        branch_task["ShigureContactEvidence"] = taken_payload
         _write_json(model_result_file(task_timestamp, "taken.result"), taken_payload)
         save_task_json(branch_json_path, branch_task)
         if self._stop.is_set():

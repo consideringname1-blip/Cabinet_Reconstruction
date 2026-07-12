@@ -1,3 +1,5 @@
+"""Shigure movement-event tracking and FoundationPose dispatch."""
+
 from __future__ import annotations
 
 import base64
@@ -13,6 +15,7 @@ import numpy as np
 
 from artifact_layout import REALTIME_TRACKING_ROOT
 from config import (
+    MAX_REALTIME_TRACKED_DISPLAY_OBJECTS,
     REALTIME_TRACKING_CENTROID_DRIFT_M,
     REALTIME_TRACKING_DEPTH_MAD_MAX_M,
     REALTIME_TRACKING_DEPTH_MEDIAN_DRIFT_M,
@@ -22,6 +25,8 @@ from config import (
     REALTIME_TRACKING_EVENT_POLL_SEC,
     REALTIME_TRACKING_FP_MAX_DEPTH_RESIDUAL_M,
     REALTIME_TRACKING_FP_MIN_BBOX_IOU,
+    SHIGURE_IDENTITY_MAX_CENTER_DEPTH_DIFF_M,
+    SHIGURE_IDENTITY_MIN_MASK_INSIDE_RATIO,
 )
 from coordinate_systems import (
     FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY,
@@ -32,26 +37,25 @@ from coordinate_systems import (
     model_pose_canonical_rh_to_unity_camera,
     orthonormalize_rotation,
 )
-from model_generation_common import resolve_model_generation_source
-from object_alignment_common import read_obj_vertices
-from realtime_tracking import (
+from stages.hololens3d_reconstruction.model_generation_common import resolve_model_generation_source
+from stages.hololens3d_reconstruction.object_alignment_common import read_obj_vertices
+from stages.shigure_history.realtime_tracking import (
     MODE_LIVE,
     PendingObservation,
     RealtimeTrackingCoordinator,
     append_tracking_journal,
 )
-from shigure_identity import (
+from stages.shigure_history.shigure_identity import (
     AMBIGUOUS,
     MATCHED,
     EphemeralBindingRegistry,
     BindingConflictError,
     match_display_identity,
 )
+from stages.shigure_history.shigure_projection import project_spatial_box_circle_to_shigure
 from spatial_transforms import camera_matrix_from_info, rt_to_pose
 from stages.shigure_history.cache import CachedRgbdSample, CachedShigureEvent, RosStamp, ShigureRgbdCache
 from stages.shigure_history.marker_history import latest_marker_pose_path
-from stages.taken_object_detection import settings as taken_detection_settings
-from stages.taken_object_detection.run_taken_object_detection_from_json import _project_model_diag_circle_to_shigure
 from task_db import (
     commit_realtime_tracking_pose,
     get_display_object_state,
@@ -160,22 +164,22 @@ def _score_projected_identity_candidate(
     if observed_depth is not None and center_depth is not None and np.isfinite(float(center_depth)):
         depth_diff = abs(observed_depth - float(center_depth))
     reject_reasons: list[str] = []
-    if inside_ratio < float(taken_detection_settings.MODEL_DIAG_CIRCLE_MIN_MASK_INSIDE_RATIO):
+    if inside_ratio < SHIGURE_IDENTITY_MIN_MASK_INSIDE_RATIO:
         reject_reasons.append("mask_not_enough_inside_model_diag_circle")
     if depth_diff is None:
         reject_reasons.append("depth_unavailable")
-    elif depth_diff > float(taken_detection_settings.MODEL_DIAG_CIRCLE_MAX_DEPTH_DIFF_M):
+    elif depth_diff > SHIGURE_IDENTITY_MAX_CENTER_DEPTH_DIFF_M:
         reject_reasons.append("depth_too_different_from_model_center")
     return {
         "accepted": not reject_reasons,
         "reject_reasons": reject_reasons,
         "mask_inside_diag_circle_pixels": inside_pixels,
         "mask_inside_diag_circle_ratio": inside_ratio,
-        "min_mask_inside_diag_circle_ratio": float(taken_detection_settings.MODEL_DIAG_CIRCLE_MIN_MASK_INSIDE_RATIO),
+        "min_mask_inside_diag_circle_ratio": SHIGURE_IDENTITY_MIN_MASK_INSIDE_RATIO,
         "observed_median_depth_m": observed_depth,
         "center_depth_m": float(center_depth) if center_depth is not None else None,
         "depth_diff_m": depth_diff,
-        "max_depth_diff_m": float(taken_detection_settings.MODEL_DIAG_CIRCLE_MAX_DEPTH_DIFF_M),
+        "max_depth_diff_m": SHIGURE_IDENTITY_MAX_CENTER_DEPTH_DIFF_M,
     }
 
 
@@ -233,9 +237,13 @@ def _marker_pose_cv() -> tuple[np.ndarray, np.ndarray, Path]:
         raise FileNotFoundError("Shigure ArUco marker pose is unavailable")
     with path.open("r", encoding="utf-8") as file:
         payload = json.load(file)
-    pose = payload.get("opencv_camera_pose") if isinstance(payload.get("opencv_camera_pose"), dict) else payload
+    pose = payload.get("opencv_camera_pose")
+    if not isinstance(pose, dict):
+        raise ValueError("marker pose must contain opencv_camera_pose")
     rotation = np.asarray(pose.get("rotation_matrix"), dtype=np.float64).reshape(3, 3)
-    translation = np.asarray(pose.get("tvec_m") or pose.get("position"), dtype=np.float64).reshape(3)
+    translation = np.asarray(pose.get("tvec_m"), dtype=np.float64).reshape(3)
+    if not np.isfinite(rotation).all() or not np.isfinite(translation).all():
+        raise ValueError("marker pose contains non-finite values")
     return orthonormalize_rotation(rotation), translation, path
 
 
@@ -446,11 +454,13 @@ class ShigureRealtimeTrackingEngine:
         sample: CachedRgbdSample,
         mask: np.ndarray,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """Filter the five active objects using their latest HoloLens projection."""
+        """Filter active objects using their latest HoloLens projection."""
 
         accepted: list[dict[str, Any]] = []
         diagnostics: list[dict[str, Any]] = []
-        for display_object_id in self.coordinator.active_display_object_ids()[-5:]:
+        for display_object_id in self.coordinator.active_display_object_ids()[
+            -MAX_REALTIME_TRACKED_DISPLAY_OBJECTS:
+        ]:
             state = get_display_object_state(display_object_id) or {}
             task_id = str(state.get("latest_hololens_task_id") or "").strip()
             diagnostic: dict[str, Any] = {
@@ -458,30 +468,23 @@ class ShigureRealtimeTrackingEngine:
                 "latest_hololens_task_id": task_id or None,
             }
             if not task_id:
-                diagnostic.update({"accepted": False, "reason": "latest_hololens_task_missing"})
-                diagnostics.append(diagnostic)
-                continue
+                raise RuntimeError(f"latest HoloLens task is missing for {display_object_id}")
             task_row = get_task_by_task_id(task_id)
             if not task_row:
-                diagnostic.update({"accepted": False, "reason": "latest_hololens_task_record_missing"})
-                diagnostics.append(diagnostic)
-                continue
+                raise RuntimeError(f"latest HoloLens task record does not exist: {task_id}")
             try:
                 task = load_task_json(resolve_task_json_path_from_record(task_row))
-                circle_mask, projection = _project_model_diag_circle_to_shigure(
+                circle_mask, projection = project_spatial_box_circle_to_shigure(
                     task,
                     sample.camera_info,
                     mask.shape,
                 )
             except Exception as exc:
-                diagnostic.update({"accepted": False, "reason": "projection_failed", "error": str(exc)})
-                diagnostics.append(diagnostic)
-                continue
+                raise RuntimeError(f"identity projection failed for {display_object_id}: {exc}") from exc
             diagnostic["projection"] = projection
             if circle_mask is None:
-                diagnostic.update({"accepted": False, "reason": str(projection.get("reason") or "projection_unavailable")})
-                diagnostics.append(diagnostic)
-                continue
+                reason = str(projection.get("reason") or "projection_unavailable")
+                raise RuntimeError(f"identity projection unavailable for {display_object_id}: {reason}")
             score = _score_projected_identity_candidate(sample, mask, circle_mask, projection)
             diagnostic.update(score)
             diagnostics.append(diagnostic)
@@ -500,12 +503,17 @@ class ShigureRealtimeTrackingEngine:
         return accepted, diagnostics
 
     def _event_detection(self, event: CachedShigureEvent, detection_id: str | None) -> dict[str, Any] | None:
+        if not detection_id:
+            return None
         objects = ((event.object_detection or {}).get("objects") or []) if event.object_detection else []
-        if detection_id:
-            for item in objects:
-                if isinstance(item, dict) and str(item.get("object_id") or "") == detection_id:
-                    return item
-        return next((item for item in objects if isinstance(item, dict)), None)
+        return next(
+            (
+                item
+                for item in objects
+                if isinstance(item, dict) and str(item.get("object_id") or "") == detection_id
+            ),
+            None,
+        )
 
     def _identity_for_detection(
         self,
@@ -515,7 +523,7 @@ class ShigureRealtimeTrackingEngine:
         detection: dict[str, Any],
         shigure_object_id: str,
     ) -> tuple[str | None, dict[str, Any], CachedRgbdSample | None, np.ndarray | None]:
-        sample = self.cache.get_sample(event.source_stamp, mode="nearest")
+        sample = self.cache.get_sample(event.source_stamp)
         if sample is None or sample.rgb_bgr.size == 0:
             return None, {"status": "UNBOUND", "reason": "rgbd_sample_missing"}, None, None
         mask = _decode_mask(str(detection.get("mask_b64") or ""), sample.rgb_bgr.shape[:2])
@@ -729,6 +737,15 @@ class ShigureRealtimeTrackingEngine:
             best = match.get("best") if isinstance(match.get("best"), dict) else {}
             detection = self._event_detection(event, str(best.get("object_detection_id") or ""))
             if not shigure_object_id or detection is None:
+                record_realtime_tracking_event(
+                    status="WRONG_AMBIGUOUS_OBJECT",
+                    startup_session_id=startup,
+                    ingress_session_id=self.bindings.ingress_session_uuid,
+                    shigure_object_id=shigure_object_id or None,
+                    source_stamp=event.source_stamp.to_dict(),
+                    reason="matched_contact_detection_missing",
+                    detail={"match": match, "contact": contact},
+                )
                 continue
             display_object_id, identity, sample, mask = self._identity_for_detection(
                 startup=startup,
@@ -749,6 +766,15 @@ class ShigureRealtimeTrackingEngine:
                 continue
             state = get_display_object_state(display_object_id)
             if state is None:
+                record_realtime_tracking_event(
+                    status="WRONG_AMBIGUOUS_OBJECT",
+                    startup_session_id=startup,
+                    ingress_session_id=self.bindings.ingress_session_uuid,
+                    shigure_object_id=shigure_object_id,
+                    source_stamp=event.source_stamp.to_dict(),
+                    reason="matched_display_object_state_missing",
+                    detail=identity,
+                )
                 continue
             if action == "take_out":
                 record_realtime_tracking_event(

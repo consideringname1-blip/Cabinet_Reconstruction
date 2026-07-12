@@ -5,8 +5,8 @@ from pathlib import Path
 import _bootstrap
 from artifact_layout import model_result_file
 from path_config import CONVERT_SCRIPT, RUNTIME_MESH_BAKE_SCRIPT
-from model_generation_common import resolve_runtime_mesh_source
-from object_alignment_common import resolve_blender_path
+from stages.hololens3d_reconstruction.model_generation_common import resolve_runtime_mesh_source
+from stages.hololens3d_reconstruction.object_alignment_common import resolve_blender_path
 from stage_common import ensure_file, load_stage_task
 from task_json import load_task_json
 

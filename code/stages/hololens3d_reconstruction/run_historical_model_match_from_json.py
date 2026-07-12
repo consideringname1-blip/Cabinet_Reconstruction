@@ -18,12 +18,8 @@ from config import (
     DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD,
     DINO_IDENTITY_MATCH_REQUIRE_MARGIN,
     DINO_IDENTITY_MATCH_SECOND_MARGIN,
-    FORCE_NEW_3D_MODEL,
-    HISTORICAL_MODEL_REUSE_ENABLE,
 )
-from model_generation_common import (
-    MODEL_STAGE_INSTANTMESH,
-    MODEL_STAGE_SAM3D_OBJECTS,
+from stages.hololens3d_reconstruction.model_generation_common import (
     build_model_generation_payload,
     resolve_model_generation_source,
     resolve_runtime_mesh_source,
@@ -37,7 +33,6 @@ from task_db import (
 )
 from task_json import (
     load_task_json,
-    normalize_path_for_storage,
     resolve_task_json_path_from_record,
     save_task_json,
 )
@@ -111,7 +106,10 @@ def _cosine_distance(left: dict[str, Any], right: dict[str, Any]) -> float:
 
 
 def _request_embedding(socket_path: Path, json_path: Path) -> dict[str, Any]:
-    response = _send_socket_request(socket_path, {"json_path": str(json_path)})
+    response = _send_socket_request(
+        socket_path,
+        {"action": "embed_task", "json_path": str(json_path)},
+    )
     return {
         "embedding": response.get("embedding") or [],
         "dim": int(response.get("dim") or 0),
@@ -124,7 +122,7 @@ def _request_embedding(socket_path: Path, json_path: Path) -> dict[str, Any]:
     }
 
 
-def _candidate_embedding(socket_path: Path, row: dict[str, Any]) -> dict[str, Any] | None:
+def _candidate_embedding(socket_path: Path, row: dict[str, Any]) -> dict[str, Any]:
     feature = _json_loads(row.get("feature_json"), {})
     if not isinstance(feature, dict):
         feature = {}
@@ -134,23 +132,18 @@ def _candidate_embedding(socket_path: Path, row: dict[str, Any]) -> dict[str, An
 
     task_id = str(row.get("task_id") or "").strip()
     if not task_id:
-        return None
+        raise ValueError("identity candidate is missing task_id")
     task_row = get_task_by_task_id(task_id)
     if not task_row:
-        return None
-    try:
-        candidate_json_path = resolve_task_json_path_from_record(task_row)
-        embedding = _request_embedding(socket_path, candidate_json_path)
-    except Exception:
-        return None
+        raise ValueError(f"identity candidate task does not exist: {task_id}")
+    candidate_json_path = resolve_task_json_path_from_record(task_row)
+    embedding = _request_embedding(socket_path, candidate_json_path)
+    _embedding_array(embedding)
 
     feature["dinov2"] = embedding
     capture_instance_id = str(row.get("capture_instance_id") or "").strip()
     if capture_instance_id:
-        try:
-            update_capture_instance_feature(capture_instance_id, feature=feature)
-        except Exception as exc:
-            print(f"[historical-model-match] failed to cache DINOv2 feature for {capture_instance_id}: {exc}", file=sys.stderr)
+        update_capture_instance_feature(capture_instance_id, feature=feature)
     return embedding
 
 
@@ -252,14 +245,9 @@ def _copy_historical_model_source(
     _copy_checked_file(source_fbx_path, target_fbx, "historical final fbx")
 
     reuse_info = {
-        "enabled": True,
-        "reuse_mode": "copy_historical_runtime_assets_realign_pose",
-        "skipped_generation_stages": ["instantmesh", "modelscale", "runtime_mesh"],
         "source_task_id": source_task_row.get("task_id"),
         "source_task_timestamp": source_timestamp,
         "source_display_object_id": display_object_id,
-        "source_stage": source.source_stage,
-        "source_backend": source.backend,
         "source_mesh": source.mesh,
         "source_mtl": source.mtl,
         "source_image": source.image,
@@ -270,31 +258,15 @@ def _copy_historical_model_source(
     }
     payload = build_model_generation_payload(
         backend=source.backend,
-        source_stage=source.source_stage,
         mesh=target_obj.name,
         mtl=target_mtl.name,
         image=target_texture.name,
-        mesh_folder="model_worker",
-        runtime_ready=False,
+        artifact_root="model_worker",
         extra={
-            "artifact_root": "model_worker",
             "historical_reuse": reuse_info,
         },
     )
     current_task["ModelGeneration"] = payload
-    stage_payload = {
-        "mesh": target_obj.name,
-        "mtl": target_mtl.name,
-        "image": target_texture.name,
-        "artifact_root": "model_worker",
-        "historical_reuse": reuse_info,
-    }
-    if source.source_stage == MODEL_STAGE_INSTANTMESH:
-        current_task["InstantMesh"] = stage_payload
-    elif source.source_stage == MODEL_STAGE_SAM3D_OBJECTS:
-        current_task["SAM3DObjects"] = dict(payload)
-    else:
-        raise ValueError(f"Unsupported historical model source stage: {source.source_stage}")
 
     model_payload = dict(source_model_payload)
     model_payload["historical_reuse"] = reuse_info
@@ -334,12 +306,10 @@ def _public_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
 
 def run_historical_model_match(json_path: Path) -> dict[str, Any]:
     task = load_task_json(json_path)
-    force_new = bool(FORCE_NEW_3D_MODEL) or _truthy(task.get("force_new_3d_model"))
+    force_new = _truthy(task.get("force_new_3d_model"))
     started = time.perf_counter()
     base_payload: dict[str, Any] = {
-        "version": 2,
         "stage": "historical_model_match",
-        "reuse_enabled": bool(HISTORICAL_MODEL_REUSE_ENABLE),
         "force_new_3d_model": bool(force_new),
         "thresholds": {
             "match_distance": float(DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD),
@@ -348,46 +318,27 @@ def run_historical_model_match(json_path: Path) -> dict[str, Any]:
         },
     }
 
-    if not HISTORICAL_MODEL_REUSE_ENABLE:
-        payload = {**base_payload, "status": "disabled", "reuse_model": False, "reason": "historical_model_reuse_disabled"}
-        task["HistoricalModelMatch"] = payload
-        save_task_json(json_path, task)
-        return payload
-
     socket_path_text = str(os.environ.get("DINO_IDENTITY_WORKER_SOCKET") or "").strip()
     if not socket_path_text:
-        start_error = str(os.environ.get("DINO_IDENTITY_START_ERROR") or "").strip()
-        reason = f"dinov2_identity_start_failed:{start_error}" if start_error else "DINO_IDENTITY_WORKER_SOCKET_missing"
-        payload = {**base_payload, "status": "unavailable", "reuse_model": False, "reason": reason}
-        task["HistoricalModelMatch"] = payload
-        save_task_json(json_path, task)
-        return payload
+        raise RuntimeError("DINO_IDENTITY_WORKER_SOCKET_missing")
     socket_path = Path(socket_path_text)
 
     try:
         current_embedding = _request_embedding(socket_path, json_path)
     except Exception as exc:
-        payload = {**base_payload, "status": "unavailable", "reuse_model": False, "reason": f"current_embedding_failed:{exc}"}
-        task["HistoricalModelMatch"] = payload
-        save_task_json(json_path, task)
-        return payload
+        raise RuntimeError(f"current_embedding_failed:{exc}") from exc
+    _embedding_array(current_embedding)
 
     current_task_id = str(task.get("task_id") or "").strip()
     rows = list_identity_candidate_captures(limit=int(DINO_IDENTITY_CANDIDATE_LIMIT))
     best_by_display: dict[str, dict[str, Any]] = {}
-    skipped = 0
     for row in rows:
         if current_task_id and str(row.get("task_id") or "").strip() == current_task_id:
-            skipped += 1
             continue
         display_object_id = str(row.get("display_object_id") or "").strip()
         if not display_object_id:
-            skipped += 1
-            continue
+            raise ValueError("identity candidate is missing display_object_id")
         candidate_embedding = _candidate_embedding(socket_path, row)
-        if candidate_embedding is None:
-            skipped += 1
-            continue
         distance = _cosine_distance(current_embedding, candidate_embedding)
         candidate = {
             "display_object_id": display_object_id,
@@ -416,14 +367,13 @@ def run_historical_model_match(json_path: Path) -> dict[str, Any]:
         "reuse_model": False,
         "reason": "no_candidate_below_threshold",
         "candidate_count": len(candidates),
-        "skipped_candidate_count": int(skipped),
         "candidate_scores": [_public_candidate(item) for item in candidates[:10]],
         "current_dinov2": current_embedding,
     }
 
     if best is not None:
         best_distance = float(best.get("dinov2_distance") or 999.0)
-        payload["best_candidate_distance"] = best_distance
+        payload["dinov2_distance"] = best_distance
         payload["second_margin_ok"] = bool(second_margin_ok)
         margin_required = bool(DINO_IDENTITY_MATCH_REQUIRE_MARGIN)
         if best_distance <= float(DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD) and (second_margin_ok or not margin_required):
@@ -443,9 +393,8 @@ def run_historical_model_match(json_path: Path) -> dict[str, Any]:
                         "dinov2_distance": best_distance,
                     }
                 )
-                task["display_object_id"] = display_object_id
             elif latest_task is None:
-                payload.update({"reason": "matched_display_object_has_no_completed_model"})
+                raise RuntimeError(f"matched display object has no completed model: {display_object_id}")
             else:
                 try:
                     source_json_path = resolve_task_json_path_from_record(latest_task)
@@ -470,11 +419,10 @@ def run_historical_model_match(json_path: Path) -> dict[str, Any]:
                             "historical_reuse": reuse_info,
                         }
                     )
-                    task["display_object_id"] = display_object_id
                 except Exception as exc:
-                    payload.update({"reason": f"historical_model_copy_failed:{exc}"})
+                    raise RuntimeError(f"historical_model_copy_failed:{exc}") from exc
         elif best_distance <= float(DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD):
-            payload.update({"reason": "second_candidate_too_close"})
+            raise RuntimeError("identity match is ambiguous: second candidate is too close")
 
     payload["duration_ms"] = (time.perf_counter() - started) * 1000.0
     task["HistoricalModelMatch"] = payload

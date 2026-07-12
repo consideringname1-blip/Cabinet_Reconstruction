@@ -18,7 +18,6 @@ from subprocess_stream import stream_command
 from config import (
     DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC,
     FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
-    HISTORICAL_MODEL_REUSE_ENABLE,
     MODEL_SERVICE_PREWARM_ENABLE,
     INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
     INSTANTMESH_GPU_IDS,
@@ -41,8 +40,6 @@ from path_config import (
     HOLOLENS2_CONVERT_DIR,
     HOLOLENS2_CONVERT_RUN,
     HOLOLENS2_PY,
-    HISTORY_PLACEMENT_RESTORATION_STAGE_PY,
-    HISTORY_PLACEMENT_RESTORATION_STAGE_RUN,
     HISTORICAL_MODEL_MATCH_STAGE_PY,
     HISTORICAL_MODEL_MATCH_STAGE_RUN,
     INSTANTMESH_STAGE_PY,
@@ -62,6 +59,7 @@ from path_config import (
     SAM3_BOX_MASK_RUN,
     SAM3_DIR,
     SAM3_PY,
+    SAM3D_OBJECTS_CONFIG,
     SAM3D_OBJECTS_ROOT,
     SAM3D_OBJECTS_STAGE_PY,
     SAM3D_OBJECTS_STAGE_RUN,
@@ -69,13 +67,10 @@ from path_config import (
     SAM3D_BODY_MESH_STAGE_RUN,
     SHIGURE_HISTORY_RECORDER_RUN,
     SHIGURE_HISTORY_RECORDER_STAGE_PY,
-    TAKEN_OBJECT_DETECTION_STAGE_PY,
-    TAKEN_OBJECT_DETECTION_STAGE_RUN,
 )
 from stages.hololens3d_reconstruction.settings import OBJECT_ALIGNMENT_MODE
 from task_db import (
     create_task as create_task_record,
-    get_latest_completed_task,
     get_task_stage_runs,
     get_task_timing_events,
     get_ai_model_timings_for_task,
@@ -97,21 +92,20 @@ from task_db import (
 from task_json import (
     ensure_task_id_in_json,
     load_task_json,
-    resolve_task_json_path,
     resolve_task_json_path_from_record,
     resolve_project_path,
     save_task_json,
 )
 from console_output_log import install_console_output_log
-from artifact_layout import make_timestamp, model_task_json_path
+from artifact_layout import model_task_json_path
 from foundationpose_dispatcher import (
     PRIORITY_REALTIME_TRACKING,
     FoundationPoseDispatcher,
     request_socket as request_foundationpose_dispatcher,
 )
-from realtime_tracking import coordinator as realtime_tracking_coordinator
-from shigure_realtime_tracking import ShigureRealtimeTrackingEngine
-from shigure_auxiliary_branch import ShigureAuxiliaryBranchManager
+from stages.shigure_history.realtime_tracking import coordinator as realtime_tracking_coordinator
+from stages.shigure_history.shigure_realtime_tracking import ShigureRealtimeTrackingEngine
+from stages.shigure_history.shigure_auxiliary_branch import ShigureAuxiliaryBranchManager
 from stages.shigure_history.cache import ShigureRgbdCache
 
 install_console_output_log()
@@ -126,7 +120,7 @@ STAGE_ORDER = [
     "hololens2depth",
     "sam3mask",
     "historical_model_match",
-    "instantmesh",
+    "model_generation",
     "depthpointcloud",
     "modelscale",
     "object_alignment",
@@ -136,12 +130,6 @@ STAGE_ORDER = [
     "model_bounds",
     "display_identity",
 ]
-LEGACY_DETACHED_STAGES = {
-    "history_placement_restoration",
-    "taken_object_detection",
-    "sam3d_body_mesh",
-}
-
 PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction"
 PURPOSE_ARUCO_REFERENCE = "aruco_reference"
 
@@ -683,6 +671,15 @@ def _enqueue_task_no_lock(
         _enqueue_stage_task_no_lock(task_id, stage_name, front=front)
 
 
+def _reject_restored_task(task_id: str, status: str, error_message: str) -> None:
+    try:
+        update_task_status(task_id, status, error_message=error_message)
+    except Exception as exc:
+        print(f"[worker] failed to reject unrestorable task {task_id}: {exc}")
+    else:
+        print(f"[worker] rejected unrestorable task {task_id}: {error_message}")
+
+
 def _restore_unfinished_tasks() -> None:
     global _last_restore_scan_at
     now = time.monotonic()
@@ -693,31 +690,33 @@ def _restore_unfinished_tasks() -> None:
     unfinished_tasks = get_unfinished_tasks()
     for task in unfinished_tasks:
         task_id = str(task["task_id"])
-        status_text = str(task.get("status") or "pending")
-        if status_text in LEGACY_DETACHED_STAGES:
-            try:
-                legacy_json_path = resolve_task_json_path_from_record(task)
-                _start_auxiliary_branch_if_needed(task_id, legacy_json_path)
-                update_task_status(task_id, "completed")
-                print(f"[worker] detached legacy post-model stage {status_text}: {task_id}")
-            except Exception as exc:
-                print(f"[worker] failed to detach legacy stage for {task_id}: {exc}")
-            continue
+        current_status = str(task.get("status") or "")
         with _task_lock:
             if task_id in _queued_task_ids or task_id in _running_task_ids:
                 continue
+        if current_status == "uploading":
+            _reject_restored_task(
+                task_id,
+                "upload_failed",
+                "upload was interrupted by server shutdown",
+            )
+            continue
         try:
             task_json = load_task_json(resolve_task_json_path_from_record(task))
             purpose = _resolve_task_purpose(task_json)
-        except Exception:
-            task_json = {}
-            purpose = PURPOSE_OBJECT_RECONSTRUCTION
+        except Exception as exc:
+            _reject_restored_task(
+                task_id,
+                "failed",
+                f"invalid persisted task contract: {exc}",
+            )
+            continue
         with _task_lock:
             _enqueue_task_no_lock(
                 task_id,
                 purpose,
                 task_json=task_json,
-                status=str(task.get("status") or "pending"),
+                status=current_status,
             )
 
 
@@ -737,12 +736,12 @@ def _prewarm_model_pipeline_services(reason: str) -> None:
 
     def _run() -> None:
         services = [
-            _instantmesh_service,
             _sam3mask_service,
             _foundationpose_service,
+            _dinov2_identity_service,
         ]
-        if HISTORICAL_MODEL_REUSE_ENABLE:
-            services.append(_dinov2_identity_service)
+        if MODEL_GENERATION_BACKEND == "instantmesh":
+            services.append(_instantmesh_service)
         starters: list[threading.Thread] = []
         for service in services:
             thread = threading.Thread(
@@ -768,14 +767,10 @@ def _prewarm_model_pipeline_services(reason: str) -> None:
 
 
 def _task_id_from_json_path(json_path: Path) -> str:
-    try:
-        task_json = load_task_json(json_path)
-        raw = task_json.get("task_id") or task_json.get("task_name")
-        if raw:
-            return str(raw)
-    except Exception:
-        pass
-    return json_path.stem
+    task_id = str(load_task_json(json_path).get("task_id") or "").strip()
+    if not task_id:
+        raise ValueError(f"task JSON is missing task_id: {json_path}")
+    return task_id
 
 
 def _record_worker_internal_model_init(
@@ -858,18 +853,16 @@ def _run_sam3mask(json_path: Path, context: StageWorkerContext | None = None) ->
 
 def _run_historical_model_match(json_path: Path, context: StageWorkerContext | None = None) -> None:
     env = os.environ.copy()
-    if HISTORICAL_MODEL_REUSE_ENABLE:
-        task_id = _task_id_from_json_path(json_path)
-        try:
-            _dinov2_identity_service.ensure_started(
-                task_id=task_id,
-                stage_name="historical_model_match",
-                reason="DINOv2 historical model matching",
-            )
-            env["DINO_IDENTITY_WORKER_SOCKET"] = str(_dinov2_identity_service.socket_path)
-        except Exception as exc:
-            env["DINO_IDENTITY_START_ERROR"] = str(exc)
-            print(f"[worker] DINOv2 identity unavailable, falling back to full generation: {exc}")
+    task_id = _task_id_from_json_path(json_path)
+    try:
+        _dinov2_identity_service.ensure_started(
+            task_id=task_id,
+            stage_name="historical_model_match",
+            reason="DINOv2 historical model matching",
+        )
+        env["DINO_IDENTITY_WORKER_SOCKET"] = str(_dinov2_identity_service.socket_path)
+    except Exception as exc:
+        raise RuntimeError(f"DINOv2 identity service failed to start: {exc}") from exc
     _run_python_script(
         python_path=HISTORICAL_MODEL_MATCH_STAGE_PY,
         script_path=HISTORICAL_MODEL_MATCH_STAGE_RUN,
@@ -879,7 +872,7 @@ def _run_historical_model_match(json_path: Path, context: StageWorkerContext | N
     )
 
 
-def _instantmesh_env(context: StageWorkerContext | None) -> dict[str, str] | None:
+def _model_generation_env(context: StageWorkerContext | None) -> dict[str, str] | None:
     if MODEL_GENERATION_BACKEND == "sam3d_objects":
         selected = _service_gpu_env("sam3d_objects")
         if selected:
@@ -894,7 +887,7 @@ def _instantmesh_env(context: StageWorkerContext | None) -> dict[str, str] | Non
 
 
 def _run_model_generation(json_path: Path, context: StageWorkerContext | None = None) -> None:
-    env = _instantmesh_env(context)
+    env = _model_generation_env(context)
     task_id = _task_id_from_json_path(json_path)
     if MODEL_GENERATION_BACKEND == "sam3d_objects":
         start_wall = time.time()
@@ -918,7 +911,7 @@ def _run_model_generation(json_path: Path, context: StageWorkerContext | None = 
                 record_ai_model_timing(
                     service_name="sam3d_objects",
                     timing_kind="task",
-                    stage_name="instantmesh",
+                    stage_name="model_generation",
                     task_id=task_id,
                     status=status,
                     duration_ms=(time.perf_counter() - start_perf) * 1000.0,
@@ -931,17 +924,16 @@ def _run_model_generation(json_path: Path, context: StageWorkerContext | None = 
                 print(f"[worker] failed to record sam3d_objects task timing: {db_exc}")
         return
 
-    _instantmesh_service.ensure_started(task_id=task_id, stage_name="instantmesh", reason="instantmesh stage")
-    _prewarm_model_pipeline_services("instantmesh start")
+    _instantmesh_service.ensure_started(
+        task_id=task_id,
+        stage_name="model_generation",
+        reason="InstantMesh model generation",
+    )
     _instantmesh_service.request(
         {"json_path": str(json_path)},
         task_id=task_id,
-        stage_name="instantmesh",
+        stage_name="model_generation",
     )
-
-
-def _run_instantmesh(json_path: Path, context: StageWorkerContext | None = None) -> None:
-    _run_model_generation(json_path, context)
 
 
 def _run_depthpointcloud(json_path: Path, context: StageWorkerContext | None = None) -> None:
@@ -1070,7 +1062,7 @@ def _run_display_identity(json_path: Path, context: StageWorkerContext | None = 
         if startup_session_id:
             realtime_tracking_coordinator.mode_status(startup_session_id)
         identity = task_json.get("DisplayIdentity") if isinstance(task_json.get("DisplayIdentity"), dict) else {}
-        display_object_id = str(identity.get("display_object_id") or task_json.get("display_object_id") or "").strip()
+        display_object_id = str(identity.get("display_object_id") or "").strip()
         if display_object_id:
             evicted = realtime_tracking_coordinator.activate_display_object(display_object_id, reanchor=True)
             if evicted:
@@ -1084,24 +1076,6 @@ def _run_display_identity(json_path: Path, context: StageWorkerContext | None = 
                     )
     except Exception as exc:
         print(f"[worker] failed to activate display identity for realtime tracking: {exc}")
-
-
-def _run_history_placement_restoration(json_path: Path, context: StageWorkerContext | None = None) -> None:
-    _run_python_script(
-        python_path=HISTORY_PLACEMENT_RESTORATION_STAGE_PY,
-        script_path=HISTORY_PLACEMENT_RESTORATION_STAGE_RUN,
-        json_path=json_path,
-        cwd=HISTORY_PLACEMENT_RESTORATION_STAGE_RUN.parent,
-    )
-
-
-def _run_taken_object_detection(json_path: Path, context: StageWorkerContext | None = None) -> None:
-    _run_python_script(
-        python_path=TAKEN_OBJECT_DETECTION_STAGE_PY,
-        script_path=TAKEN_OBJECT_DETECTION_STAGE_RUN,
-        json_path=json_path,
-        cwd=TAKEN_OBJECT_DETECTION_STAGE_RUN.parent,
-    )
 
 
 def _run_sam3d_body_mesh(json_path: Path, context: StageWorkerContext | None = None) -> None:
@@ -1132,7 +1106,7 @@ def _on_auxiliary_branch_complete(task_id: str, branch_json_path: Path) -> None:
             return
         main_task = load_task_json(resolve_task_json_path_from_record(task_row))
         identity = main_task.get("DisplayIdentity") if isinstance(main_task.get("DisplayIdentity"), dict) else {}
-        display_object_id = str(identity.get("display_object_id") or main_task.get("display_object_id") or "").strip()
+        display_object_id = str(identity.get("display_object_id") or "").strip()
         branch_task = load_task_json(branch_json_path)
         body = branch_task.get("SAM3DBodyMesh") if isinstance(branch_task.get("SAM3DBodyMesh"), dict) else {}
         if display_object_id and str(body.get("status") or "") == "SUCCESS":
@@ -1213,19 +1187,12 @@ def _reconcile_completed_auxiliary_outputs() -> None:
             print(f"[worker] failed to reconcile completed auxiliary output for {task_id}: {exc}")
 
 
-OPTIONAL_NON_BLOCKING_STAGES = {
-    "history_placement_restoration",
-    "taken_object_detection",
-    "sam3d_body_mesh",
-}
-
-
 STAGE_RUNNERS = {
     "hololens2depth": _run_hololens2depth,
     "aruco_detect": _run_aruco_detect,
     "sam3mask": _run_sam3mask,
     "historical_model_match": _run_historical_model_match,
-    "instantmesh": _run_instantmesh,
+    "model_generation": _run_model_generation,
     "depthpointcloud": _run_depthpointcloud,
     "modelscale": _run_modelscale,
     "object_alignment": _run_object_alignment,
@@ -1234,22 +1201,23 @@ STAGE_RUNNERS = {
     "runtime_mesh": _run_runtime_mesh,
     "model_bounds": _run_model_bounds,
     "display_identity": _run_display_identity,
-    "history_placement_restoration": _run_history_placement_restoration,
-    "taken_object_detection": _run_taken_object_detection,
-    "sam3d_body_mesh": _run_sam3d_body_mesh,
 }
 
 
 def _resolve_task_purpose(task_json: dict) -> str:
     purpose = str(task_json.get("purpose") or "").strip()
-    return purpose or PURPOSE_OBJECT_RECONSTRUCTION
+    if purpose not in {PURPOSE_OBJECT_RECONSTRUCTION, PURPOSE_ARUCO_REFERENCE}:
+        raise ValueError(f"unsupported task purpose: {purpose!r}")
+    return purpose
 
 
 def _resolve_stage_order(task_json: dict) -> list[str]:
     purpose = _resolve_task_purpose(task_json)
     if purpose == PURPOSE_ARUCO_REFERENCE:
         return ["aruco_detect"]
-    return STAGE_ORDER
+    if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
+        return STAGE_ORDER
+    raise ValueError(f"unsupported task purpose: {purpose!r}")
 
 
 def _dequeue_stage_task(stage_name: str) -> str | None:
@@ -1310,7 +1278,7 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
     try:
         STAGE_RUNNERS[stage_name](json_path, context)
         mark_task_stage_completed(task_id, stage_name)
-        if stage_name == "historical_model_match":
+        if stage_name == "sam3mask":
             try:
                 _start_auxiliary_branch_if_needed(task_id, json_path)
             except Exception as branch_exc:
@@ -1321,10 +1289,7 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
         else:
             error_message = str(exc)
         mark_task_stage_failed(task_id, stage_name, error_message=error_message)
-        if stage_name in OPTIONAL_NON_BLOCKING_STAGES:
-            print(f"[worker] optional stage failed, continuing {stage_name}: {task_id}: {error_message}")
-        else:
-            raise
+        raise
 
     if stage_name == "aruco_detect" and purpose == PURPOSE_ARUCO_REFERENCE:
         startup_session_id = str((task_json.get("device") or {}).get("startup_session_id") or "").strip() or None
@@ -1356,7 +1321,7 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
         reuse_next_status = _historical_reuse_next_status(stage_name, next_status, refreshed_task_json)
         if reuse_next_status != next_status:
             skipped: dict[str, str] = {
-                "historical_model_match": "instantmesh",
+                "historical_model_match": "model_generation",
                 "depthpointcloud": "modelscale",
                 "modelscale": "modelscale",
                 "aruco_sync": "runtime_mesh",
@@ -1403,16 +1368,20 @@ def _stage_worker_loop(context: StageWorkerContext) -> None:
             _finish_running_task(task_id)
 
 
-def _instantmesh_contexts() -> list[StageWorkerContext]:
-    gpu_id = str(INSTANTMESH_GPU_IDS[0]) if INSTANTMESH_GPU_IDS else None
-    return [StageWorkerContext("instantmesh", worker_index=0, gpu_id=gpu_id)]
+def _model_generation_contexts() -> list[StageWorkerContext]:
+    gpu_id = (
+        str(INSTANTMESH_GPU_IDS[0])
+        if MODEL_GENERATION_BACKEND == "instantmesh" and INSTANTMESH_GPU_IDS
+        else None
+    )
+    return [StageWorkerContext("model_generation", worker_index=0, gpu_id=gpu_id)]
 
 
 def _worker_contexts() -> list[StageWorkerContext]:
     contexts: list[StageWorkerContext] = [StageWorkerContext("aruco_detect")]
     for stage_name in STAGE_ORDER:
-        if stage_name == "instantmesh":
-            contexts.extend(_instantmesh_contexts())
+        if stage_name == "model_generation":
+            contexts.extend(_model_generation_contexts())
         else:
             contexts.append(StageWorkerContext(stage_name))
     return contexts
@@ -1449,7 +1418,7 @@ def _service_monitor_loop() -> None:
             _instantmesh_service.maybe_stop_idle(
                 keep_alive=(
                     MODEL_GENERATION_BACKEND == "instantmesh"
-                    and _has_unfinished_at_or_before("instantmesh")
+                    and _has_unfinished_at_or_before("model_generation")
                 ),
             )
             _foundationpose_service.maybe_stop_idle(
@@ -1463,10 +1432,7 @@ def _service_monitor_loop() -> None:
                 ),
             )
             _dinov2_identity_service.maybe_stop_idle(
-                keep_alive=(
-                    HISTORICAL_MODEL_REUSE_ENABLE
-                    and _has_unfinished_at_or_before("historical_model_match")
-                ),
+                keep_alive=_has_unfinished_at_or_before("historical_model_match"),
             )
         except Exception as exc:
             print(f"[worker] service monitor error: {exc}")
@@ -1513,9 +1479,18 @@ def _install_shutdown_hooks() -> None:
             pass
 
 
+def _validate_model_generation_backend() -> None:
+    if MODEL_GENERATION_BACKEND == "sam3d_objects" and not SAM3D_OBJECTS_CONFIG.is_file():
+        raise FileNotFoundError(
+            "SAM3D Objects is selected but its gated checkpoint config is missing: "
+            f"{SAM3D_OBJECTS_CONFIG}"
+        )
+
+
 def start_worker() -> threading.Thread:
     global _worker_thread, _service_monitor_thread
 
+    _validate_model_generation_backend()
     _install_shutdown_hooks()
     initialize_task_table()
     _reconcile_completed_auxiliary_outputs()
@@ -1554,13 +1529,17 @@ def _startup_session_id_from_task_json(data: Mapping[str, Any]) -> str | None:
 
 def reserve_uploading_task(
     *,
-    task_id: str | None = None,
-    task_timestamp: str | None = None,
-    startup_session_id: str | None = None,
+    task_timestamp: str,
+    startup_session_id: str,
     json_path: Path | str | None = None,
 ) -> dict[str, Any]:
-    resolved_task_id = str(task_id or uuid.uuid4())
-    resolved_timestamp = str(task_timestamp or make_timestamp())
+    resolved_task_id = str(uuid.uuid4())
+    resolved_timestamp = str(task_timestamp).strip()
+    if not resolved_timestamp:
+        raise ValueError("task_timestamp is required")
+    startup_session_id = str(startup_session_id).strip()
+    if not startup_session_id:
+        raise ValueError("startup_session_id is required")
     resolved_json_path = Path(json_path) if json_path is not None else model_task_json_path(resolved_timestamp)
     resolved_json_path.parent.mkdir(parents=True, exist_ok=True)
     return create_task_record(
@@ -1604,31 +1583,6 @@ def activate_uploaded_task(task_id: str, *, task_json: dict | None = None, front
         _enqueue_task_no_lock(task_id, _resolve_task_purpose(task_json), front=front, task_json=task_json)
 
 
-def create_task(json_path: Path | str) -> str:
-    task_json_path = resolve_task_json_path(json_path)
-    if not task_json_path.is_file():
-        raise FileNotFoundError(f"JSON file not found: {task_json_path}")
-
-    data = load_task_json(task_json_path)
-    task_id = str(data.get("task_id") or uuid.uuid4())
-    task_timestamp = str(data.get("task_timestamp") or data.get("task_name") or task_json_path.stem.removesuffix("_meta"))
-    startup_session_id = _startup_session_id_from_task_json(data)
-
-    data["task_id"] = task_id
-    data["task_timestamp"] = task_timestamp
-    save_task_json(task_json_path, data)
-
-    create_task_record(
-        task_id=task_id,
-        json_path=task_json_path,
-        startup_session_id=startup_session_id,
-        task_timestamp=task_timestamp,
-    )
-
-    activate_uploaded_task(task_id, task_json=data)
-    return task_id
-
-
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     task_record = get_task_by_task_id(task_id)
     if task_record is None:
@@ -1660,25 +1614,6 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
             continue
     task_record["auxiliary_jobs"] = auxiliary_jobs
     task_record["auxiliary_outputs"] = auxiliary_outputs
-    task_record["outputs"] = {
-        "model_generation": task_json.get("ModelGeneration") or {},
-        "sam3d_objects": task_json.get("SAM3DObjects") or {},
-        "instantmesh": task_json.get("InstantMesh") or {},
-        "runtime_mesh": task_json.get("RuntimeMesh") or {},
-        "blender": task_json.get("Blender") or {},
-        "display_identity": task_json.get("DisplayIdentity") or {},
-        "history_placement_restoration": task_json.get("HistoryPlacementRestoration") or {},
-        "taken_object_detection": (
-            (auxiliary_outputs.get("shigure_contact_body") or {}).get("TakenObjectDetection")
-            or task_json.get("TakenObjectDetection")
-            or {}
-        ),
-        "sam3d_body_mesh": (
-            (auxiliary_outputs.get("shigure_contact_body") or {}).get("SAM3DBodyMesh")
-            or task_json.get("SAM3DBodyMesh")
-            or {}
-        ),
-    }
     return task_record
 
 
@@ -1702,8 +1637,8 @@ def _sync_completed_tasks_for_startup(startup_session_id: str | None = None) -> 
     )
     # The database helpers return newest-first.  Retro-sync must replay captures
     # in chronological order so each display object's newest HoloLens capture
-    # is committed last.  This also leaves the coordinator's five-entry LRU on
-    # the five newest distinct objects instead of the five oldest ones.
+    # is committed last. This also leaves the configured runtime LRU on the
+    # newest distinct objects instead of the oldest ones.
     for task_row in reversed(task_rows):
         try:
             status = str(task_row.get("status") or "").strip()
@@ -1718,81 +1653,3 @@ def _sync_completed_tasks_for_startup(startup_session_id: str | None = None) -> 
                 f"[worker] failed to sync task {task_row.get('task_id')} to latest ArUco reference: {exc}"
             )
     return synced_count
-
-
-def get_latest_completed_task_data(
-    startup_session_id: str | None = None,
-    require_aruco_coordinate_synced: bool = False,
-    history_offset: int = 0,
-    attempt_sync: bool = True,
-) -> Optional[Dict[str, Any]]:
-    history_offset = max(0, int(history_offset or 0))
-    task_record = get_latest_completed_task(
-        startup_session_id=startup_session_id,
-        require_aruco_coordinate_synced=require_aruco_coordinate_synced,
-        history_offset=history_offset,
-    )
-    if task_record is None and startup_session_id and require_aruco_coordinate_synced and attempt_sync:
-        _sync_completed_tasks_for_startup(startup_session_id)
-        task_record = get_latest_completed_task(
-            startup_session_id=startup_session_id,
-            require_aruco_coordinate_synced=True,
-            history_offset=history_offset,
-        )
-    if task_record is None and require_aruco_coordinate_synced and not startup_session_id and attempt_sync:
-        _sync_completed_tasks_for_startup()
-        task_record = get_latest_completed_task(
-            startup_session_id=startup_session_id,
-            require_aruco_coordinate_synced=True,
-            history_offset=history_offset,
-        )
-    if task_record is None:
-        return None
-
-    try:
-        json_path = resolve_task_json_path_from_record(task_record)
-        task_json = load_task_json(json_path)
-    except FileNotFoundError:
-        task_json = {}
-
-    task_record["task_json"] = task_json
-    task_record["error"] = task_record.get("error_message")
-    task_id_str = str(task_record.get("task_id") or "")
-    task_record["stage_runs"] = get_task_stage_runs(task_id_str)
-    task_record["timing_events"] = get_task_timing_events(task_id_str)
-    task_record["ai_model_timings"] = get_ai_model_timings_for_task(task_id_str)
-    auxiliary_outputs: dict[str, Any] = {}
-    auxiliary_jobs = get_auxiliary_jobs(task_id_str)
-    for job in auxiliary_jobs:
-        branch_name = str(job.get("branch_name") or "").strip()
-        result_path = str(job.get("result_path") or "").strip()
-        if not branch_name or not result_path:
-            continue
-        try:
-            auxiliary_outputs[branch_name] = load_task_json(
-                resolve_project_path(result_path, require_exists=True)
-            )
-        except Exception:
-            continue
-    task_record["auxiliary_jobs"] = auxiliary_jobs
-    task_record["auxiliary_outputs"] = auxiliary_outputs
-    task_record["outputs"] = {
-        "model_generation": task_json.get("ModelGeneration") or {},
-        "sam3d_objects": task_json.get("SAM3DObjects") or {},
-        "instantmesh": task_json.get("InstantMesh") or {},
-        "runtime_mesh": task_json.get("RuntimeMesh") or {},
-        "blender": task_json.get("Blender") or {},
-        "display_identity": task_json.get("DisplayIdentity") or {},
-        "history_placement_restoration": task_json.get("HistoryPlacementRestoration") or {},
-        "taken_object_detection": (
-            (auxiliary_outputs.get("shigure_contact_body") or {}).get("TakenObjectDetection")
-            or task_json.get("TakenObjectDetection")
-            or {}
-        ),
-        "sam3d_body_mesh": (
-            (auxiliary_outputs.get("shigure_contact_body") or {}).get("SAM3DBodyMesh")
-            or task_json.get("SAM3DBodyMesh")
-            or {}
-        ),
-    }
-    return task_record

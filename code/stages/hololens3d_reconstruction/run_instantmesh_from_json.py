@@ -23,9 +23,8 @@ from settings import (
     INSTANTMESH_CLEAN_ENABLE,
 )
 from mesh_obj_utils import clean_obj_connected_components
-from model_generation_common import (
+from stages.hololens3d_reconstruction.model_generation_common import (
     BACKEND_INSTANTMESH,
-    MODEL_STAGE_INSTANTMESH,
     build_model_generation_payload,
 )
 from stage_common import ensure_file, load_stage_task, resolve_python
@@ -147,7 +146,6 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
             mesh_name = clean_mesh_name
 
     artifact_root = "model_worker"
-    mesh_folder = artifact_root
     model_video_name = video_name
 
     raw_obj_path = model_worker_file(task_timestamp, "generation.instantmesh_raw_obj")
@@ -176,33 +174,20 @@ def run_instantmesh(json_path: Path, task: dict) -> None:
     model_image_name = model_texture_path.name
     raw_mesh_name = raw_obj_path.name
 
-    instantmesh_payload = {
-        "mesh": model_mesh_name,
-        "mtl": model_mtl_name,
-        "image": model_image_name,
-        "video": model_video_name,
+    details = {
         "video_render_enabled": bool(video_output_enabled),
     }
-    instantmesh_payload["artifact_root"] = artifact_root
     if cleanup_info is not None:
-        instantmesh_payload["raw_mesh"] = raw_mesh_name
-        instantmesh_payload["cleanup"] = cleanup_info
-    task["InstantMesh"] = instantmesh_payload
+        details["raw_mesh"] = raw_mesh_name
+        details["cleanup"] = cleanup_info
     task["ModelGeneration"] = build_model_generation_payload(
         backend=BACKEND_INSTANTMESH,
-        source_stage=MODEL_STAGE_INSTANTMESH,
         mesh=model_mesh_name,
         mtl=model_mtl_name,
         image=model_image_name,
-        mesh_folder=mesh_folder,
+        artifact_root=artifact_root,
         video=model_video_name,
-        video_folder=None,
-        runtime_ready=False,
-        extra={
-            key: value
-            for key, value in instantmesh_payload.items()
-            if key not in {"mesh", "mtl", "image", "video"}
-        },
+        extra=details,
     )
     save_task_json(json_path, task)
 
@@ -289,7 +274,7 @@ def main() -> int:
         json_path, task = load_stage_task(
             sys.argv,
             usage="Usage: python code/stages/hololens3d_reconstruction/run_instantmesh_from_json.py <task_meta.json or filename>",
-            stage_name="instantmesh",
+            stage_name="model_generation",
         )
         run_instantmesh(json_path, task)
         return 0

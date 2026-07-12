@@ -342,19 +342,7 @@ MonoBehaviour:
     - {fileID: 11400000, guid: 087b16002c2b0b445baa3ed3beae44a9, type: 2}
   OnClick:
     m_PersistentCalls:
-      m_Calls:
-      - m_Target: {fileID: 1912203437}
-        m_TargetAssemblyTypeName: ShuJuQingQiu, Assembly-CSharp
-        m_MethodName: XiaZaiZuiXinChengGongMoXing
-        m_Mode: 1
-        m_Arguments:
-          m_ObjectArgument: {fileID: 0}
-          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
-          m_IntArgument: 0
-          m_FloatArgument: 0
-          m_StringArgument: 
-          m_BoolArgument: 0
-        m_CallState: 2
+      m_Calls: []
   Events:
   - Event:
       m_PersistentCalls:
@@ -2338,19 +2326,7 @@ MonoBehaviour:
     - {fileID: 11400000, guid: 087b16002c2b0b445baa3ed3beae44a9, type: 2}
   OnClick:
     m_PersistentCalls:
-      m_Calls:
-      - m_Target: {fileID: 1912203440}
-        m_TargetAssemblyTypeName: SpatialHistoryPointerQuery, Assembly-CSharp
-        m_MethodName: ToggleBoundsDebug
-        m_Mode: 1
-        m_Arguments:
-          m_ObjectArgument: {fileID: 0}
-          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
-          m_IntArgument: 0
-          m_FloatArgument: 0
-          m_StringArgument: 
-          m_BoolArgument: 0
-        m_CallState: 2
+      m_Calls: []
   Events:
   - Event:
       m_PersistentCalls:
@@ -3765,19 +3741,7 @@ MonoBehaviour:
     - {fileID: 11400000, guid: 087b16002c2b0b445baa3ed3beae44a9, type: 2}
   OnClick:
     m_PersistentCalls:
-      m_Calls:
-      - m_Target: {fileID: 1912203440}
-        m_TargetAssemblyTypeName: SpatialHistoryPointerQuery, Assembly-CSharp
-        m_MethodName: TriggerSpatialHistoryQuery
-        m_Mode: 1
-        m_Arguments:
-          m_ObjectArgument: {fileID: 0}
-          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
-          m_IntArgument: 0
-          m_FloatArgument: 0
-          m_StringArgument: 
-          m_BoolArgument: 0
-        m_CallState: 2
+      m_Calls: []
   Events:
   - Event:
       m_PersistentCalls:
@@ -4617,7 +4581,6 @@ GameObject:
   - component: {fileID: 1912203437}
   - component: {fileID: 1912203438}
   - component: {fileID: 1912203439}
-  - component: {fileID: 1912203440}
   - component: {fileID: 1912203441}
   m_Layer: 0
   m_Name: Scripts
@@ -10284,7 +10247,7 @@ MonoBehaviour:
       m_Calls:
       - m_Target: {fileID: 1912203437}
         m_TargetAssemblyTypeName: ShuJuQingQiu, Assembly-CSharp
-        m_MethodName: StartHistoryPlacementRestoration
+        m_MethodName: ToggleHistoryTrackingMode
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}
@@ -26011,13 +25974,9 @@ MonoBehaviour:
   serverCameraPosition: {x: 0, y: 0, z: 0}
   serverCameraRotation: {x: 0, y: 0, z: 0, w: 1}
   startup_session_id: 
-  hasArucoReferencePose: 0
-  arucoReferencePosition: {x: 0, y: 0, z: 0}
-  arucoReferenceRotation: {x: 0, y: 0, z: 0, w: 1}
   PV_controler: {fileID: 223974228}
   DP_controler: {fileID: 223974227}
   selectionPanelManager: {fileID: 223974230}
-  historyPlacementRestorationModelLimit: 5
   task_id: 
   debug_json: 
   pose_transform_stages_json: 
@@ -26049,46 +26008,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   text: {fileID: 801018185}
---- !u!114 &1912203440
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 223974226}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 3344d814404510d4bb637b99df53e3c7, type: 3}
-  m_Name: 
-  m_EditorClassIdentifier: 
-  targetHand: 1
-  waitSeconds: 3
-  maxDistanceMeters: 10
-  spatialRaycastMask:
-    serializedVersion: 2
-    m_Bits: 2147483648
-  useMrtkHandRay: 1
-  forceHideCustomRayLine: 1
-  showRayLine: 1
-  rayEndpointPaddingMeters: 0
-  noSurfaceHitLogIntervalSeconds: 2
-  serverBaseUrl: http://10.40.1.122:7355
-  historyLimit: 5
-  shuJuQingQiu: {fileID: 1912203437}
-  runtimeModelManager: {fileID: 223974233}
-  loadModel: {fileID: 1912203438}
-  lineMaterial: {fileID: 0}
-  lineWidth: 0.008
-  debugBoundsLayer: 2
-  showBoundsLabels: 1
-  rayValidColor: {r: 0.1, g: 0.9, b: 1, a: 1}
-  rayInvalidColor: {r: 1, g: 0.15, b: 0.1, a: 1}
-  debugBoundsColors:
-  - {r: 0.1, g: 0.9, b: 1, a: 1}
-  - {r: 1, g: 0.75, b: 0.15, a: 1}
-  - {r: 0.3, g: 1, b: 0.35, a: 1}
-  - {r: 1, g: 0.35, b: 0.75, a: 1}
-  - {r: 0.7, g: 0.5, b: 1, a: 1}
 --- !u!114 &1912203441
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -28033,19 +27952,7 @@ MonoBehaviour:
     - {fileID: 11400000, guid: 087b16002c2b0b445baa3ed3beae44a9, type: 2}
   OnClick:
     m_PersistentCalls:
-      m_Calls:
-      - m_Target: {fileID: 1912203437}
-        m_TargetAssemblyTypeName: ShuJuQingQiu, Assembly-CSharp
-        m_MethodName: XiaZaiLiShiWuGeKeYongMoXing
-        m_Mode: 1
-        m_Arguments:
-          m_ObjectArgument: {fileID: 0}
-          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
-          m_IntArgument: 0
-          m_FloatArgument: 0
-          m_StringArgument: 
-          m_BoolArgument: 1
-        m_CallState: 2
+      m_Calls: []
   Events:
   - Event:
       m_PersistentCalls:
