@@ -28,6 +28,7 @@ from task_db import (
     create_aruco_reference,
     get_aruco_marker_relation,
     get_enabled_aruco_markers,
+    sync_marker_registry_from_reference_folder,
     upsert_aruco_marker_relation,
 )
 from task_json import (
@@ -343,6 +344,9 @@ def main(argv: list[str]) -> int:
     annotated_path = None
 
     db_markers = get_enabled_aruco_markers()
+    if not db_markers:
+        sync_marker_registry_from_reference_folder()
+        db_markers = get_enabled_aruco_markers()
     marker_configs = resolve_marker_configs(db_markers)
     marker_by_dict: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
     for marker in marker_configs:
@@ -451,10 +455,9 @@ def main(argv: list[str]) -> int:
                     detections_by_frame[frame_index].append(detection)
 
                     if hasattr(cv2, "drawFrameAxes"):
-                        axis_length = (
-                            float(np.linalg.norm(detection["tvec"])) * 0.5
-                            if np.linalg.norm(detection["tvec"]) > 0
-                            else 0.05
+                        axis_length = max(
+                            float(detection["marker_size_mm"]) / 2000.0,
+                            0.01,
                         )
                         cv2.drawFrameAxes(
                             annotated,
@@ -627,7 +630,6 @@ def main(argv: list[str]) -> int:
                 marker_pose_json=aruco_reference,
                 raw_record_path=str(record_path),
                 config_snapshot_json={
-                    "template": template,
                     "registered_markers": marker_configs,
                     "anchor_marker_id": int(ARUCO_ANCHOR_MARKER_ID),
                 },

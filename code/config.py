@@ -65,7 +65,9 @@ AHAT_ENABLE_UPLOAD_GUARD = False
 ARUCO_ROI_PADDING_RATIO = 0.18
 ARUCO_ROI_PADDING_MIN_PX = 24
 ARUCO_ANCHOR_MARKER_ID = 1
-ARUCO_SYNC_MARKER_REGISTRY_ON_START = False
+ARUCO_SYNC_MARKER_REGISTRY_ON_START = os.environ.get(
+    "ARUCO_SYNC_MARKER_REGISTRY_ON_START", "1"
+).strip().lower() not in {"0", "false", "no", "off", ""}
 
 # Persistent model/service settings
 _instantmesh_gpu_ids = []

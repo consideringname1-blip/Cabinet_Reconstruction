@@ -230,6 +230,8 @@ class SocketStageService:
                 self._last_used_at = time.monotonic()
 
             self._wait_for_socket_ready()
+            if started:
+                print(f"[worker] {self.name} ready ({time.perf_counter() - start_perf:.1f}s)")
         except Exception as exc:
             status = "failed"
             error_message = str(exc)
@@ -562,7 +564,7 @@ _sam3mask_service = SocketStageService(
     cwd=SAM3_DIR,
     socket_name="sam3mask.sock",
     idle_timeout_sec=SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
-    echo_output=True,
+    echo_output=False,
     env_overrides=lambda: _service_gpu_env("sam3_image_mask"),
 )
 _instantmesh_service = SocketStageService(
@@ -572,7 +574,7 @@ _instantmesh_service = SocketStageService(
     cwd=INSTANTMESH_STAGE_RUN.parent,
     socket_name="instantmesh.sock",
     idle_timeout_sec=INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
-    echo_output=True,
+    echo_output=False,
     env_overrides=lambda: _service_gpu_env("instantmesh", INSTANTMESH_GPU_IDS or None),
 )
 _foundationpose_service = SocketStageService(
@@ -596,7 +598,7 @@ _dinov2_identity_service = SocketStageService(
     cwd=DINO_IDENTITY_STAGE_RUN.parent,
     socket_name="dinov2_identity.sock",
     idle_timeout_sec=DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC,
-    echo_output=True,
+    echo_output=False,
     env_overrides=lambda: _service_gpu_env("dinov2_identity"),
 )
 
@@ -815,6 +817,7 @@ def _run_python_script(
         cwd=cwd,
         env=env,
         check=True,
+        echo=False,
     )
 
 
@@ -1268,6 +1271,7 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
 
     stage_name = current_status
     start_index = stage_order.index(stage_name)
+    stage_started_at = time.perf_counter()
     worker_label = f"{stage_name}#{context.worker_index}"
     if context.gpu_id:
         worker_label += f"/gpu{context.gpu_id}"
@@ -1310,7 +1314,10 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
         if synced_count:
             print(f"[worker] synced model tasks after ArUco reference: {synced_count}")
         update_task_status(task_id, "aruco_completed")
-        print(f"[worker] completed task: {task_id}")
+        print(
+            f"[worker] done {stage_name}: {task_id} "
+            f"({time.perf_counter() - stage_started_at:.1f}s) -> aruco_completed"
+        )
         return
 
     next_status = "completed"
@@ -1335,12 +1342,13 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
     except Exception as exc:
         print(f"[worker] failed to inspect historical model reuse result: {exc}")
     update_task_status(task_id, next_status)
-    if next_status == "completed":
-        print(f"[worker] completed task: {task_id}")
-    else:
+    if next_status != "completed":
         with _task_lock:
             _enqueue_stage_task_no_lock(task_id, next_status, front=False)
-        print(f"[worker] stage completed, queued {next_status}: {task_id}")
+    print(
+        f"[worker] done {stage_name}: {task_id} "
+        f"({time.perf_counter() - stage_started_at:.1f}s) -> {next_status}"
+    )
 
 
 
@@ -1359,7 +1367,9 @@ def _stage_worker_loop(context: StageWorkerContext) -> None:
                 error_message = exc.stderr or exc.stdout or str(exc)
             else:
                 error_message = str(exc)
-            print(f"[worker] failed task {task_id}: {error_message}")
+            error_lines = [line.strip() for line in error_message.splitlines() if line.strip()]
+            error_summary = error_lines[-1] if error_lines else type(exc).__name__
+            print(f"[worker] failed {context.stage_name}: {task_id}: {error_summary[:1000]}")
             try:
                 update_task_status(task_id, "failed", error_message=error_message)
             except Exception as db_exc:

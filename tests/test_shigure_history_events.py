@@ -19,8 +19,10 @@ os.environ["SHIGURE_HISTORY_RECORDER_BOOTSTRAPPED"] = "1"
 from stages.shigure_history.cache import RosStamp, ShigureMemoryStore, store_request  # noqa: E402
 from stages.shigure_history import settings as shigure_settings  # noqa: E402
 from stages.shigure_history.run_shigure_history_recorder import (  # noqa: E402
+    TopicSample,
     TopicState,
     append_correlated_event,
+    camera_info_payload,
 )
 
 
@@ -80,6 +82,28 @@ def _states() -> dict[str, TopicState]:
 
 
 class ShigureEventJoinTests(unittest.TestCase):
+    def test_camera_info_payload_normalizes_fixed_numeric_arrays(self) -> None:
+        camera_info = SimpleNamespace(
+            width=1280,
+            height=720,
+            k=(654.0, 0.0, 652.0, 0.0, 653.0, 365.0, 0.0, 0.0, 1.0),
+            d=(-0.04, 0.05, 0.0, 0.0, -0.01),
+        )
+        sample = TopicSample(
+            message=camera_info,
+            stamp=RosStamp(100, 0),
+            received_at=0.0,
+            received_monotonic=0.0,
+            count=1,
+        )
+
+        payload = camera_info_payload(sample)
+
+        self.assertEqual(payload["width"], 1280)
+        self.assertEqual(payload["height"], 720)
+        self.assertEqual(len(payload["k"]), 9)
+        self.assertEqual(len(payload["d"]), 5)
+
     def test_subscription_qos_contract_is_best_effort_for_remote_shigure_publishers(self) -> None:
         self.assertEqual(
             frozenset(shigure_settings.TOPIC_SPECS),

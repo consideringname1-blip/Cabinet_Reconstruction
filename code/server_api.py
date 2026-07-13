@@ -3,13 +3,12 @@
 import ipaddress
 import json
 import logging
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
 import numpy as np
-from flask import Flask, g, jsonify, request, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 
 from console_output_log import install_console_output_log
 from artifact_layout import (
@@ -61,30 +60,10 @@ app = Flask(__name__)
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 
-@app.before_request
-def _log_request_start():
-    g.request_started_at = time.perf_counter()
-    try:
-        form_keys = list(request.form.keys()) if request.form else []
-        file_keys = list(request.files.keys()) if request.files else []
-        json_payload = request.get_json(silent=True) if request.is_json else None
-        json_keys = list(json_payload.keys()) if isinstance(json_payload, dict) else []
-        print(
-            f"[HTTP][REQ] {request.method} {request.path} "
-            f"remote={request.remote_addr} args={dict(request.args)} "
-            f"form_keys={form_keys} file_keys={file_keys} json_keys={json_keys}"
-        )
-    except Exception as exc:
-        print(f"[HTTP][REQ_LOG_ERR] {request.method} {request.path}: {exc}")
-
-
 @app.after_request
-def _log_request_end(response):
-    try:
-        elapsed_ms = (time.perf_counter() - float(getattr(g, 'request_started_at', time.perf_counter()))) * 1000.0
-        print(f"[HTTP][RESP] {request.method} {request.path} status={response.status_code} elapsed_ms={elapsed_ms:.1f}")
-    except Exception as exc:
-        print(f"[HTTP][RESP_LOG_ERR] {request.method} {request.path}: {exc}")
+def _log_http_failure(response):
+    if response.status_code >= 400:
+        print(f"[HTTP] {request.method} {request.path} failed: status={response.status_code}")
     return response
 
 
@@ -773,9 +752,6 @@ def serve_task_artifact(task_id: str, area: str, filename: str):
 @app.route("/generate", methods=["POST"], strict_slashes=False)
 def generate_model():
     try:
-        print("[RECV] form keys:", list(request.form.keys()))
-        print("[RECV] files:", list(request.files.keys()))
-
         def _parse_json_field(field_name: str) -> dict:
             raw = request.form.get(field_name, type=str)
             if not raw:

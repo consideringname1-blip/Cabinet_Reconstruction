@@ -219,9 +219,17 @@ def message_to_jsonable(value: Any) -> Any:
 
 
 def camera_info_payload(sample: TopicSample) -> dict[str, Any]:
-    payload = message_to_jsonable(sample.message)
+    msg = sample.message
+    payload = message_to_jsonable(msg)
     if not isinstance(payload, dict):
-        raise ValueError("CameraInfo message must serialize to an object")
+        payload = {}
+    try:
+        payload["width"] = int(getattr(msg, "width"))
+        payload["height"] = int(getattr(msg, "height"))
+        payload["k"] = [float(value) for value in getattr(msg, "k")]
+        payload["d"] = [float(value) for value in getattr(msg, "d", [])]
+    except (TypeError, ValueError) as exc:
+        raise ValueError("CameraInfo message has invalid width, height, k, or d") from exc
     return payload
 
 

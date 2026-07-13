@@ -137,8 +137,6 @@ public class ShuJuQingQiu : MonoBehaviour
     private long localModelDisplayGeneration = 0;
     private long historyTrackingRequestGeneration = 0;
     private long acceptedHistoryTrackingModeEpoch = -1;
-    private readonly Dictionary<HTTPRequest, float> httpRequestStartedAt = new Dictionary<HTTPRequest, float>();
-
     public HistoryTrackingMode CurrentHistoryTrackingMode
     {
         get { return historyTrackingMode; }
@@ -258,38 +256,10 @@ public class ShuJuQingQiu : MonoBehaviour
 
     private void LogHttpRequestStart(string label, HTTPRequest request)
     {
-        if (request == null)
-        {
-            return;
-        }
-
-        httpRequestStartedAt[request] = Time.realtimeSinceStartup;
-        string url = request.Uri != null ? request.Uri.ToString() : "";
-        Debug.Log("[HTTP][REQ] " + label + " url=" + url);
     }
 
     private void LogHttpRequestEnd(string label, HTTPRequest request, HTTPResponse response)
     {
-        float startedAt;
-        string elapsed = "unknown";
-        if (request != null && httpRequestStartedAt.TryGetValue(request, out startedAt))
-        {
-            elapsed = ((Time.realtimeSinceStartup - startedAt) * 1000f).ToString("F1", CultureInfo.InvariantCulture);
-            httpRequestStartedAt.Remove(request);
-        }
-
-        string url = request != null && request.Uri != null ? request.Uri.ToString() : "";
-        string statusCode = response != null ? response.StatusCode.ToString(CultureInfo.InvariantCulture) : "no_response";
-        int byteCount = response != null && response.Data != null ? response.Data.Length : 0;
-        bool success = response != null && response.IsSuccess;
-        Debug.Log(
-            "[HTTP][RESP] " + label
-            + " status=" + statusCode
-            + " success=" + success.ToString()
-            + " elapsed_ms=" + elapsed
-            + " bytes=" + byteCount.ToString(CultureInfo.InvariantCulture)
-            + " url=" + url
-        );
     }
 
     string NormalizeServerErrorForFrontMessage(string serverError, string fallbackMessage, string purpose)
@@ -474,7 +444,6 @@ public class ShuJuQingQiu : MonoBehaviour
             };
             frameArray.Add(frameJ);
             request.AddBinaryData("pv_image_" + i, frame.pvPng, "pv_" + i + ".png", "image/png");
-            Debug.Log("[UPLOAD] ArUco PV frame " + i + " PNG bytes=" + frame.pvPng.Length);
         }
         request.AddField("PVCameraFramesJ", frameArray.ToString(Formatting.None));
 
@@ -531,7 +500,6 @@ public class ShuJuQingQiu : MonoBehaviour
         };
         request.AddField("PVCameraJ", PVCameraJ.ToString(Formatting.None));
         request.AddBinaryData("pv_image", texPvPng, "pv.png", "image/png");
-        Debug.Log("[UPLOAD] PV PNG bytes=" + (texPvPng != null ? texPvPng.Length : 0));
 
         JObject deviceJ = new JObject
         {
@@ -553,7 +521,6 @@ public class ShuJuQingQiu : MonoBehaviour
             };
             request.AddField("DepthCameraJ", DepthCameraJ.ToString(Formatting.None));
             request.AddBinaryData("depth_image", depthPng, "depth.png", "image/png");
-            Debug.Log("[UPLOAD] Depth PNG bytes=" + (depthPng != null ? depthPng.Length : 0));
         }
 
         bool includeSelectionBox = purpose == TASK_PURPOSE_OBJECT_RECONSTRUCTION
@@ -730,7 +697,6 @@ public class ShuJuQingQiu : MonoBehaviour
         LogHttpRequestEnd("generate:" + requestPurpose, request, response);
         if (response != null && response.IsSuccess)
         {
-            Debug.Log("Response: " + System.Text.Encoding.UTF8.GetString(response.Data));
             JObject jo = (JObject)JsonConvert.DeserializeObject(response.DataAsText);
             string returnedTaskId = ReadString(jo, "task_id");
             if (string.IsNullOrEmpty(returnedTaskId))
@@ -740,16 +706,7 @@ public class ShuJuQingQiu : MonoBehaviour
             }
 
             task_id = returnedTaskId;
-            print(returnedTaskId);
 
-            if (requestPurpose == TASK_PURPOSE_ARUCO_REFERENCE)
-            {
-                Debug.Log("[ASYNC_QUEUE] queued ArUco task: " + returnedTaskId);
-            }
-            else
-            {
-                Debug.Log("[ASYNC_QUEUE] queued model task: " + returnedTaskId);
-            }
             EnqueueAsyncUpdateTask(
                 returnedTaskId,
                 requestPurpose,
@@ -2266,7 +2223,6 @@ public class ShuJuQingQiu : MonoBehaviour
                 ResumeAsyncTaskQueueForDownload(pendingDownload);
                 return;
             }
-            print(receiver.Length);
             ShowFrontMessage("download " + receiver.Length);
             try
             {
