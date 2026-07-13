@@ -58,6 +58,8 @@ __pycache__/
 /data/shigure_history_cache/
 /data_backup/
 /.test/
+/tests/
+/test/
 
 ########################################
 # ========== Code ==========
