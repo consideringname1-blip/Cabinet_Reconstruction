@@ -468,10 +468,16 @@ class ShigureRealtimeTrackingEngine:
                 "latest_hololens_task_id": task_id or None,
             }
             if not task_id:
-                raise RuntimeError(f"latest HoloLens task is missing for {display_object_id}")
+                diagnostic["accepted"] = False
+                diagnostic["reason"] = "missing_latest_hololens_task"
+                diagnostics.append(diagnostic)
+                continue
             task_row = get_task_by_task_id(task_id)
             if not task_row:
-                raise RuntimeError(f"latest HoloLens task record does not exist: {task_id}")
+                diagnostic["accepted"] = False
+                diagnostic["reason"] = "latest_hololens_task_record_missing"
+                diagnostics.append(diagnostic)
+                continue
             try:
                 task = load_task_json(resolve_task_json_path_from_record(task_row))
                 circle_mask, projection = project_spatial_box_circle_to_shigure(
@@ -480,11 +486,17 @@ class ShigureRealtimeTrackingEngine:
                     mask.shape,
                 )
             except Exception as exc:
-                raise RuntimeError(f"identity projection failed for {display_object_id}: {exc}") from exc
+                diagnostic["accepted"] = False
+                diagnostic["reason"] = "identity_projection_failed"
+                diagnostic["error"] = str(exc)
+                diagnostics.append(diagnostic)
+                continue
             diagnostic["projection"] = projection
             if circle_mask is None:
-                reason = str(projection.get("reason") or "projection_unavailable")
-                raise RuntimeError(f"identity projection unavailable for {display_object_id}: {reason}")
+                diagnostic["accepted"] = False
+                diagnostic["reason"] = str(projection.get("reason") or "projection_unavailable")
+                diagnostics.append(diagnostic)
+                continue
             score = _score_projected_identity_candidate(sample, mask, circle_mask, projection)
             diagnostic.update(score)
             diagnostics.append(diagnostic)

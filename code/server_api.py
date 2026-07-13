@@ -464,12 +464,44 @@ def _task_fbx_url(host: str, task_id: str, task_json: dict) -> str | None:
     blender_info = task_json.get("Blender") or {}
     fbx_name = str(blender_info.get("fbx") or "").strip()
     task_timestamp = str(task_json.get("task_timestamp") or "").strip()
-    if not fbx_name or blender_info.get("artifact_root") != "model_result" or not task_timestamp:
+    if not task_timestamp:
         return None
-    fbx_path = model_result_dir(task_timestamp) / fbx_name
+    result_dir = model_result_dir(task_timestamp)
+    if not fbx_name or blender_info.get("artifact_root") != "model_result":
+        candidates = sorted(result_dir.glob("*.fbx")) if result_dir.is_dir() else []
+        if not candidates:
+            return None
+        fbx_name = candidates[0].name
+    fbx_path = result_dir / fbx_name
     if not fbx_path.is_file():
         return None
     return _task_artifact_url(host, task_id, "result", fbx_name)
+
+def _fallback_completed_pose(task_json: dict) -> dict:
+    for key in ("object_hololens_current", "object_hololens_original"):
+        value = task_json.get(key)
+        if not isinstance(value, dict):
+            continue
+        try:
+            return minimal_pose_payload(value, include_scale=True)
+        except Exception:
+            continue
+    return {
+        "position": [0.0, 0.0, 0.0],
+        "rotation_quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
+        "scale": [1.0, 1.0, 1.0],
+    }
+
+
+def _fallback_model_revision(identity: dict) -> tuple[int, bool]:
+    try:
+        return _strict_json_integer(
+            identity.get("model_revision"),
+            "model_revision",
+            minimum=1,
+        ), False
+    except (TypeError, ValueError):
+        return 1, True
 
 
 def _body_result_artifact_url(
@@ -628,24 +660,31 @@ def _build_completed_task_response(
     if fbx_url:
         identity = _display_identity_from_task_json(task_json)
         display_object_id = str(identity.get("display_object_id") or "").strip()
+        degraded_reasons = []
+        if not display_object_id:
+            display_object_id = task_id
+            degraded_reasons.append("missing_display_identity")
         pose = _hololens_current_pose_for_response(
             task_json,
             task_data=task_data,
             startup_session_id=startup_session_id,
         )
-        if not display_object_id:
-            raise ValueError(f"completed task {task_id} is missing DisplayIdentity.display_object_id")
         if pose is None:
-            raise ValueError(
-                f"completed task {task_id} has no pose in the current HoloLens coordinate space"
-            )
+            pose = _fallback_completed_pose(task_json)
+            degraded_reasons.append("current_session_pose_unavailable")
+        model_revision, revision_fallback = _fallback_model_revision(identity)
+        if revision_fallback:
+            degraded_reasons.append("missing_model_revision")
         response["model_instance"] = _build_model_instance(
             task_id=task_id,
             display_object_id=display_object_id,
-            model_revision=identity.get("model_revision"),
+            model_revision=model_revision,
             fbx_url=fbx_url,
             pose=pose,
         )
+        if degraded_reasons:
+            response["delivery_degraded"] = True
+            response["delivery_degraded_reasons"] = degraded_reasons
     else:
         response["error"] = "completed model FBX is missing"
 
@@ -1238,15 +1277,18 @@ def _tracking_mode_items(
         if body_revision > 0 and body_task_id:
             body_task = get_task(body_task_id)
             if body_task and str(body_task.get("status") or "") == "completed":
-                body_evidence = _build_body_evidence(
-                    body_task,
-                    display_object_id=display_object_id,
-                    body_revision=body_revision,
-                    startup_session_id=startup_session_id,
-                    host=host,
-                )
-                if body_evidence is not None:
-                    item["body_evidence"] = body_evidence
+                try:
+                    body_evidence = _build_body_evidence(
+                        body_task,
+                        display_object_id=display_object_id,
+                        body_revision=body_revision,
+                        startup_session_id=startup_session_id,
+                        host=host,
+                    )
+                    if body_evidence is not None:
+                        item["body_evidence"] = body_evidence
+                except Exception as exc:
+                    print(f"[WARN] skipped invalid Shigure body evidence for {display_object_id}: {exc}")
         items.append(item)
     return items, coordinate_epoch
 
@@ -1347,6 +1389,5 @@ def internal_error(error):
 
 
 if __name__ == "__main__":
-    print(app.url_map)
     print("Starting Flask application...")
     app.run(host="0.0.0.0", port=7355, debug=False, use_reloader=False, threaded=True)

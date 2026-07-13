@@ -78,6 +78,7 @@ from task_db import (
     list_auxiliary_jobs,
     get_tasks_for_startup_statuses,
     get_task_by_task_id,
+    get_display_object_state,
     get_unfinished_tasks,
     get_unsynced_completed_tasks,
     initialize_task_table,
@@ -86,6 +87,7 @@ from task_db import (
     mark_task_stage_started,
     record_ai_model_timing,
     update_task_status,
+    update_task_aruco_coordinate_synced,
     upsert_auxiliary_job,
     set_latest_body_revision,
 )
@@ -1020,13 +1022,68 @@ def _run_pose(json_path: Path, context: StageWorkerContext | None = None) -> Non
     )
 
 
+def _record_optional_stage_degradation(
+    json_path: Path,
+    *,
+    stage_name: str,
+    error: Exception,
+) -> str:
+    error_lines = [line.strip() for line in str(error).splitlines() if line.strip()]
+    summary = error_lines[-1] if error_lines else type(error).__name__
+    try:
+        task = load_task_json(json_path)
+        debug_section = dict(task.get("debug") or {})
+        degradations = dict(debug_section.get("optional_stage_degradations") or {})
+        fallback = "hololens_original_pose" if stage_name == "aruco_sync" else "model_delivery_without_bounds"
+        degradations[stage_name] = {
+            "status": "degraded",
+            "reason": summary[:2000],
+            "fallback": fallback,
+        }
+        debug_section["optional_stage_degradations"] = degradations
+
+        if stage_name == "aruco_sync":
+            original_pose = task.get("object_hololens_original")
+            if isinstance(original_pose, dict):
+                task["object_hololens_current"] = dict(original_pose)
+            pose_stages = dict(debug_section.get("pose_transform_stages") or {})
+            aruco_stage = dict(pose_stages.get("aruco_stage") or {})
+            aruco_stage.update(
+                {
+                    "sync_stage_ran": True,
+                    "synced_to_reference": False,
+                    "sync_reason": "stage_failed_fallback_original_pose",
+                    "runtime_error": summary[:2000],
+                }
+            )
+            pose_stages["aruco_stage"] = aruco_stage
+            debug_section["pose_transform_stages"] = pose_stages
+
+        task["debug"] = debug_section
+        save_task_json(json_path, task)
+        task_id = str(task.get("task_id") or "").strip()
+        if stage_name == "aruco_sync" and task_id:
+            update_task_aruco_coordinate_synced(task_id, False)
+    except Exception as record_exc:
+        print(f"[worker] failed to record {stage_name} degradation: {record_exc}")
+    return summary
+
+
 def _run_aruco_sync(json_path: Path, context: StageWorkerContext | None = None) -> None:
-    _run_python_script(
-        python_path=ARUCO_SYNC_STAGE_PY,
-        script_path=ARUCO_SYNC_STAGE_RUN,
-        json_path=json_path,
-        cwd=ARUCO_SYNC_STAGE_RUN.parent,
-    )
+    try:
+        _run_python_script(
+            python_path=ARUCO_SYNC_STAGE_PY,
+            script_path=ARUCO_SYNC_STAGE_RUN,
+            json_path=json_path,
+            cwd=ARUCO_SYNC_STAGE_RUN.parent,
+        )
+    except Exception as exc:
+        summary = _record_optional_stage_degradation(
+            json_path,
+            stage_name="aruco_sync",
+            error=exc,
+        )
+        print(f"[worker] aruco_sync degraded to original HoloLens pose: {summary}")
 
 
 def _run_runtime_mesh(json_path: Path, context: StageWorkerContext | None = None) -> None:
@@ -1042,14 +1099,21 @@ def _run_runtime_mesh(json_path: Path, context: StageWorkerContext | None = None
     )
 
 
-
 def _run_model_bounds(json_path: Path, context: StageWorkerContext | None = None) -> None:
-    _run_python_script(
-        python_path=MODEL_BOUNDS_STAGE_PY,
-        script_path=MODEL_BOUNDS_STAGE_RUN,
-        json_path=json_path,
-        cwd=MODEL_BOUNDS_STAGE_RUN.parent,
-    )
+    try:
+        _run_python_script(
+            python_path=MODEL_BOUNDS_STAGE_PY,
+            script_path=MODEL_BOUNDS_STAGE_RUN,
+            json_path=json_path,
+            cwd=MODEL_BOUNDS_STAGE_RUN.parent,
+        )
+    except Exception as exc:
+        summary = _record_optional_stage_degradation(
+            json_path,
+            stage_name="model_bounds",
+            error=exc,
+        )
+        print(f"[worker] model_bounds degraded; model delivery continues: {summary}")
 
 
 def _run_display_identity(json_path: Path, context: StageWorkerContext | None = None) -> None:
@@ -1067,6 +1131,25 @@ def _run_display_identity(json_path: Path, context: StageWorkerContext | None = 
         identity = task_json.get("DisplayIdentity") if isinstance(task_json.get("DisplayIdentity"), dict) else {}
         display_object_id = str(identity.get("display_object_id") or "").strip()
         if display_object_id:
+            state = get_display_object_state(display_object_id) or {}
+            latest_task_id = str(state.get("latest_hololens_task_id") or "").strip()
+            tracking_ready = (
+                latest_task_id == str(task_json.get("task_id") or "").strip()
+                and int(state.get("active_model_revision") or 0) > 0
+                and int(state.get("latest_hololens_pose_revision") or 0) > 0
+                and bool(state.get("latest_hololens_pose_aruco_json"))
+            )
+            if not tracking_ready:
+                identity["realtime_tracking"] = {
+                    "status": "deferred",
+                    "reason": "missing_canonical_aruco_state",
+                }
+                save_task_json(json_path, task_json)
+                print(
+                    "[worker] realtime tracking deferred until ArUco state is available: "
+                    f"{display_object_id}"
+                )
+                return
             evicted = realtime_tracking_coordinator.activate_display_object(display_object_id, reanchor=True)
             if evicted:
                 print(f"[worker] realtime tracking capacity evicted: {evicted}")
@@ -1453,10 +1536,16 @@ def shutdown_worker() -> None:
     """Stop persistent model services owned by this server process."""
     global _shutdown_requested
     _shutdown_requested = True
-    _realtime_tracking_engine.stop()
+    try:
+        _realtime_tracking_engine.stop()
+    except Exception as exc:
+        print(f"[worker] failed to stop optional Shigure realtime tracking: {exc}")
     realtime_tracking_coordinator.reset()
     if _auxiliary_branch_manager is not None:
-        _auxiliary_branch_manager.stop()
+        try:
+            _auxiliary_branch_manager.stop()
+        except Exception as exc:
+            print(f"[worker] failed to stop optional Shigure auxiliary branch: {exc}")
     _stop_shigure_history_recorder()
     try:
         _foundationpose_dispatcher.stop()
@@ -1503,11 +1592,21 @@ def start_worker() -> threading.Thread:
     _validate_model_generation_backend()
     _install_shutdown_hooks()
     initialize_task_table()
-    _reconcile_completed_auxiliary_outputs()
+    try:
+        _reconcile_completed_auxiliary_outputs()
+        _restore_auxiliary_branches()
+    except Exception as exc:
+        print(f"[worker] optional Shigure auxiliary restore skipped: {exc}")
     _restore_unfinished_tasks()
-    _start_shigure_history_recorder(force=True)
+    try:
+        _start_shigure_history_recorder(force=True)
+    except Exception as exc:
+        print(f"[worker] optional Shigure recorder unavailable: {exc}")
     _foundationpose_dispatcher.start()
-    _realtime_tracking_engine.start()
+    try:
+        _realtime_tracking_engine.start()
+    except Exception as exc:
+        print(f"[worker] optional Shigure realtime tracking unavailable: {exc}")
     if _worker_thread is not None and _worker_thread.is_alive():
         return _worker_thread
 

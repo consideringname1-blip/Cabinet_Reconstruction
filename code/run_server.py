@@ -1,7 +1,10 @@
 import subprocess
 import signal
 import shlex
+import json
+import socket
 import sys
+from urllib.request import urlopen
 from config import IS_RUN_FLASK_SERVER
 from path_config import (
     CODE_ROOT,
@@ -15,6 +18,25 @@ from path_config import (
 from pathlib import Path
 
 PROJECT_SETUP_ENV = PROJECT_ROOT / "setup_env.sh"
+SERVER_HOST = "127.0.0.1"
+SERVER_PORT = 7355
+
+
+def _probe_existing_server():
+    try:
+        with socket.create_connection((SERVER_HOST, SERVER_PORT), timeout=1.0):
+            pass
+    except OSError:
+        return "available"
+
+    try:
+        with urlopen(f"http://{SERVER_HOST}:{SERVER_PORT}/", timeout=2.0) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        if payload.get("status") == "running" and "/generate" in payload.get("endpoints", []):
+            return "running"
+    except Exception:
+        pass
+    return "occupied"
 
 
 def _source_project_env_cmd(cmd):
@@ -61,6 +83,14 @@ def _run_child(cmd, cwd):
 
 def main():
     if(IS_RUN_FLASK_SERVER):
+        server_state = _probe_existing_server()
+        if server_state == "running":
+            print(f">>> server_api.py 已在运行: http://0.0.0.0:{SERVER_PORT}")
+            return 0
+        if server_state == "occupied":
+            print(f">>> 无法启动: 端口 {SERVER_PORT} 已被其他程序占用")
+            return 1
+
         cmd = [
             SERVER_PY,          # 从 config.py 读取 server 环境 python
             str(SERVER_API_RUN) # 运行 server_api.py

@@ -121,8 +121,10 @@ def _load_watched_events(
                 sequence=int(payload["sequence"]),
             )
             event_dir = event_path.parent
-            rgb = cv2.imread(str(event_dir / "rgb.png"), cv2.IMREAD_COLOR)
-            depth = cv2.imread(str(event_dir / "depth.png"), cv2.IMREAD_UNCHANGED)
+            rgb_path = event_dir / "rgb.png"
+            depth_path = event_dir / "depth.png"
+            rgb = cv2.imread(str(rgb_path), cv2.IMREAD_COLOR) if rgb_path.is_file() else None
+            depth = cv2.imread(str(depth_path), cv2.IMREAD_UNCHANGED) if depth_path.is_file() else None
             sample: CachedRgbdSample | None = None
             if rgb is not None and depth is not None:
                 camera_path = event_dir / "camera_info.json"

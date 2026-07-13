@@ -295,6 +295,7 @@ def _copy_historical_model_source(
     current_task["Blender"] = blender_payload
     return reuse_info
 
+
 def _public_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
     return {
         "display_object_id": candidate.get("display_object_id"),
@@ -302,6 +303,34 @@ def _public_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
         "task_id": candidate.get("task_id"),
         "dinov2_distance": candidate.get("dinov2_distance"),
     }
+
+
+def _apply_historical_copy_fallback(
+    payload: dict[str, Any],
+    *,
+    best: dict[str, Any],
+    latest_task: dict[str, Any],
+    display_object_id: str,
+    best_distance: float,
+    error: Exception,
+) -> None:
+    payload.update(
+        {
+            "status": "matched_force_new",
+            "reuse_model": False,
+            "reason": "historical_model_copy_failed_generate_new_model",
+            "display_object_id": display_object_id,
+            "selected_capture_instance_id": best.get("capture_instance_id"),
+            "selected_candidate_task_id": best.get("task_id"),
+            "selected_model_task_id": latest_task.get("task_id"),
+            "selected_model_task_timestamp": latest_task.get("task_timestamp"),
+            "dinov2_distance": best_distance,
+            "reuse_fallback": {
+                "trigger": "historical_model_copy_failed",
+                "error": str(error)[:2000],
+            },
+        }
+    )
 
 
 def run_historical_model_match(json_path: Path) -> dict[str, Any]:
@@ -420,7 +449,14 @@ def run_historical_model_match(json_path: Path) -> dict[str, Any]:
                         }
                     )
                 except Exception as exc:
-                    raise RuntimeError(f"historical_model_copy_failed:{exc}") from exc
+                    _apply_historical_copy_fallback(
+                        payload,
+                        best=best,
+                        latest_task=latest_task,
+                        display_object_id=display_object_id,
+                        best_distance=best_distance,
+                        error=exc,
+                    )
         elif best_distance <= float(DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD):
             raise RuntimeError("identity match is ambiguous: second candidate is too close")
 
