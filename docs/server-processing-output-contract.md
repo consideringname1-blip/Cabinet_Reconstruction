@@ -1,9 +1,9 @@
 # 服务器输入输出契约
 
-更新日期：2026-07-12
-状态：当前协议
+更新日期：2026-07-14
+状态：Shigure v2 当前协议
 
-服务器只接受本文列出的字段名、类型和坐标空间。模型生成后端可选 InstantMesh 或 SAM3D Objects，但两者写入相同的公开契约。
+服务器只接受本文列出的字段名、类型和坐标空间。模型生成后端可选 InstantMesh 或 SAM3D Objects，但两者写入相同的公开模型契约。
 
 ## Artifact 下载
 
@@ -14,6 +14,14 @@
 /task-artifacts/<task_id>/result/<filename>
 /task-artifacts/<task_id>/debug/<filename>
 ```
+
+Shigure 生命周期事件的证据图片使用：
+
+```text
+/shigure-event-artifacts/<event_directory>/<filename>
+```
+
+`event_directory` 对应服务器持久目录 `data/shigure_events/<event_uuid>/`；不存在 runtime/epoch 的额外路径层级。
 
 客户端只保存服务器返回的 URL，不自行拼接服务器文件路径。
 
@@ -30,14 +38,7 @@ SelectionBoxJ
 force_new_3d_model
 ```
 
-文件必须恰好包含：
-
-```text
-pv_image
-depth_image
-```
-
-字段值：
+文件必须恰好包含 `pv_image` 和 `depth_image`。字段值：
 
 ```text
 purpose = object_reconstruction
@@ -57,7 +58,7 @@ JSON 字段结构：
     "height": 1080,
     "k": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
     "pose": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
-    "time": "2026-07-12T12:00:00.0000000Z"
+    "time": "2026-07-14T12:00:00.0000000Z"
   },
   "DepthCameraJ": {
     "pose": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
@@ -73,9 +74,9 @@ JSON 字段结构：
 约束：
 
 - `deviceJ.ip` 必须是 IPv4。
-- `PVCameraJ.k` 为有限数值 `3x3`；`PVCameraJ.pose` 和 `DepthCameraJ.pose` 为有限数值 `4x4`。
+- `PVCameraJ.k` 为有限数值 `3x3`；两个 camera pose 为有限数值 `4x4`。
 - `DepthCameraJ.sensor` 只能是 `AHAT` 或 `LONGTHROW`。
-- selection 坐标在 `[0,1]`，且 `bottom_right` 必须位于 `top_left` 右下方。
+- selection 坐标在 `[0,1]`，且 `bottom_right` 位于 `top_left` 右下方。
 - `depth_image` 必须是单通道 uint16 PNG；服务器按对应传感器可靠范围清洗。
 
 响应：
@@ -88,13 +89,7 @@ JSON 字段结构：
 
 ## `POST /generate`: ArUco reference
 
-multipart form 必须恰好包含：
-
-```text
-purpose
-deviceJ
-PVCameraFramesJ
-```
+multipart form 必须恰好包含 `purpose`、`deviceJ`、`PVCameraFramesJ`，其中：
 
 ```text
 purpose = aruco_reference
@@ -106,15 +101,7 @@ purpose = aruco_reference
 {"startup_session_id": "unity-startup-uuid"}
 ```
 
-`PVCameraFramesJ` 是非空数组。每帧必须恰好包含 `width`、`height`、`k`、`pose`、`time`。文件名与数组下标一一对应：
-
-```text
-pv_image_0
-pv_image_1
-...
-```
-
-ArUco 任务完成后保存该 startup 的 latest reference，并 retro-sync 同一 startup 的模型任务。
+`PVCameraFramesJ` 是非空数组，每帧必须恰好包含 `width`、`height`、`k`、`pose`、`time`。文件名与数组下标一一对应为 `pv_image_0`、`pv_image_1` 等。任务完成后服务器保存该 startup 的 latest reference，并 retro-sync 同一 startup 的模型任务。
 
 ## `POST /check-queue`
 
@@ -127,28 +114,7 @@ ArUco 任务完成后保存该 startup 的 latest reference，并 retro-sync 同
 }
 ```
 
-未完成时返回：
-
-```json
-{
-  "ready": false,
-  "pending": [
-    {
-      "task_id": "task-uuid",
-      "status": "model_generation",
-      "purpose": "object_reconstruction",
-      "terminal": false,
-      "stage_name": "model_generation",
-      "stage_index": 3,
-      "stage_count": 12,
-      "progress": 0.25,
-      "progress_text": "model_generation 25%"
-    }
-  ]
-}
-```
-
-`sam3mask` 完成后，pending item 可额外包含 `sam3_spatial_box`，仅用于生成中预览。
+未完成时返回 task status、stage、progress 等字段。`sam3mask` 完成后 pending item 可包含 `sam3_spatial_box`，它只用于生成中的 HoloLens 当前任务预览。
 
 模型任务进入唯一终态 `completed` 时，`task.model_instance` 必须恰好包含 7 个字段：
 
@@ -170,35 +136,92 @@ ArUco 任务完成后保存该 startup 的 latest reference，并 retro-sync 同
 
 服务器不提供中间下载状态；Unity 只在 `completed` 响应中按 `model_instance` 加载正式模型。
 
+仅由 HoloLens capture 新建的 display object 初始为 `presence=UNKNOWN`。这里返回的 completed `model_instance` 是 capture preview/模型交付，不表示 Shigure 已确认物体在场；查询 `/check-queue` 本身也不改变 presence。后续 identity sync 只有在稳定且 raw ID 可信的 Shigure recovery snapshot 中匹配成功，才可由该 snapshot 建立 binding 并激活 `PRESENT`。
+
+completed task 还包含交付角色和可选同步摘要，例如：
+
+```json
+{
+  "delivery_role": "capture_preview",
+  "shigure_identity_sync": {
+    "status": "PENDING",
+    "sync_job_id": "0123456789abcdef0123456789abcdef",
+    "display_object_id": "display-object-uuid",
+    "task_id": "task-uuid",
+    "reason": "waiting_for_stable_recovery_frame",
+    "attempts": 0,
+    "updated_utc": "2026-07-14T12:00:00+00:00",
+    "status_url": "http://server/api/v2/identity-sync/0123456789abcdef0123456789abcdef"
+  }
+}
+```
+
+模型任务的 `terminal=true` 与辅助 identity sync 独立；因此模型已可预览时，sync 仍可为 `PENDING`。公共同步状态为 `PENDING | COMPLETED | FAILED`。成功结果的 `method` 为 `ARUCO_COLLIDER_GEOMETRY` 或 `DINOV2_FALLBACK`，并可包含 `candidate_id`、`raw_shigure_object_id`、`geometry`、`dinov2`、`identity_reference_id`、`binding_id`、`binding_established` 和 `presence_activated`。`lifecycle_authority=shigure_recovery_snapshot` 表示是 Shigure 稳定快照授权；`lifecycle_binding_changed` 明确报告本次是否建立 binding 或激活 presence。
+
+## `GET /api/v2/identity-sync/<sync_job_id>`
+
+`status_url` 指向持久 job 查询接口；不接受 query 或 request body。响应：
+
+```json
+{
+  "sync_job_id": "0123456789abcdef0123456789abcdef",
+  "kind": "HOLOLENS_CAPTURE",
+  "status": "COMPLETED",
+  "display_object_id": "display-object-uuid",
+  "result": {
+    "status": "COMPLETED",
+    "method": "ARUCO_COLLIDER_GEOMETRY",
+    "candidate_id": "candidate-id",
+    "raw_shigure_object_id": "epoch-local-raw-id",
+    "lifecycle_authority": "shigure_recovery_snapshot",
+    "lifecycle_binding_changed": true
+  },
+  "error_message": null,
+  "updated_at": "2026-07-14T12:00:00+00:00",
+  "terminal": true
+}
+```
+
+后续状态以该 GET 的持久 job 为准：
+
+- 排队时 Shigure runtime 不可用会立即 `FAILED`，reason 为 `shigure_runtime_unavailable`。
+- runtime 主动停止会把内存中的 pending job 终结为 `FAILED`，reason 为 `runtime_stopped_before_sync`。
+- 新服务器启动会把数据库中遗留的 `PENDING/RUNNING` job 终结为 `FAILED`，reason 为 `server_restart`。
+- `COMPLETED` 与 `FAILED` 的 `terminal=true`；未知 job 返回 404，非法 job ID 返回 400。
+
 ## `POST /realtime-tracking/mode`
 
-请求必须恰好包含：
+此接口只做 live transport 握手。请求必须恰好包含：
 
 ```json
 {
   "startup_session_id": "unity-startup-uuid",
-  "mode": "history",
+  "mode": "live",
   "request_generation": 4
 }
 ```
 
-`mode` 只能是 `history` 或 `live`。`request_generation` 为非负整数。
+`request_generation` 为非负整数。`mode=history` 已废止并返回 400；历史位置只是 Unity 的局部呈现状态，不会停止服务端接收、计算或保存 live 数据。
 
-响应包含 mode 状态和最多 5 个 item：
+响应：
 
 ```json
 {
   "success": true,
   "startup_session_id": "unity-startup-uuid",
-  "mode": "history",
+  "mode": "live",
   "mode_epoch": 3,
   "request_generation": 4,
-  "ingress_session_id": "server-ingress-uuid",
   "coordinate_epoch": "aruco-task-uuid",
-  "count": 1,
-  "items": []
+  "count": 0,
+  "items": [],
+  "spatial_box_snapshot_complete": true,
+  "spatial_box_count": 0,
+  "spatial_boxes": []
 }
 ```
+
+`POST /realtime-tracking/mode` 的成功响应与 status 使用同一份容量语义：`items` 最多 5 个，`spatial_boxes` 无数量上限且为完整快照。
 
 ## `GET /realtime-tracking/status`
 
@@ -208,61 +231,121 @@ query 必须恰好出现一次：
 startup_session_id=<unity-startup-uuid>
 ```
 
-每个 `items[]` 的位置部分：
+调用前必须完成当前 startup 的 live 握手。响应把两种容量语义明确拆开：
+
+- `items`：模型与 live pose，仍最多 5 个；不是 box 完整性的依据。
+- `spatial_boxes`：Shigure 实时 3D box 的完整、无数量上限快照。
+
+```json
+{
+  "success": true,
+  "startup_session_id": "unity-startup-uuid",
+  "mode": "live",
+  "mode_epoch": 3,
+  "request_generation": 4,
+  "coordinate_epoch": "aruco-task-uuid",
+  "count": 1,
+  "items": [
+    {
+      "display_object_id": "display-object-uuid",
+      "model_revision": 2,
+      "active_model_task_id": "task-uuid",
+      "pose_source": "tracking",
+      "pose_revision": 8,
+      "pose": {
+        "position": [0, 0, 0],
+        "rotation_quaternion_xyzw": [0, 0, 0, 1]
+      },
+      "coordinate_space": "hololens_current_local",
+      "presence": "PRESENT",
+      "presence_epoch": 7
+    }
+  ],
+  "spatial_box_snapshot_complete": true,
+  "spatial_box_count": 1,
+  "spatial_boxes": [
+    {
+      "display_object_id": "display-object-uuid",
+      "presence": "PRESENT",
+      "presence_epoch": 7,
+      "spatial_box": {
+        "status": "ready",
+        "coordinate_space": "hololens_current_local",
+        "revision": 30064771080,
+        "corners_hololens_current_local_m": [[0, 0, 0], [1, 0, 0], [1, 1, 0], [0, 1, 0], [0, 0, 1], [1, 0, 1], [1, 1, 1], [0, 1, 1]]
+      }
+    }
+  ]
+}
+```
+
+明确清框项为：
 
 ```json
 {
   "display_object_id": "display-object-uuid",
-  "model_revision": 2,
-  "active_model_task_id": "task-uuid",
-  "pose_source": "hololens",
-  "pose_revision": 8,
-  "pose": {
-    "position": [0, 0, 0],
-    "rotation_quaternion_xyzw": [0, 0, 0, 1],
-    "scale": [1, 1, 1]
-  },
-  "coordinate_space": "hololens_current_local",
-  "body_revision": 1
+  "presence": "ABSENT",
+  "presence_epoch": 8,
+  "spatial_box": {
+    "status": "no_box",
+    "coordinate_space": "hololens_current_local",
+    "revision": 34359738376
+  }
 }
 ```
 
-- history 模式的 `pose_source` 为 `hololens`，使用最新 HoloLens 拍摄确认位置。
-- live 模式存在有效追踪结果时使用 `tracking`，否则仍使用 `hololens`。
-- `model` 存在时，其结构与 canonical `model_instance` 完全相同，且 `model.pose` 必须等于 item 的 `pose`。客户端若已有相同 `display_object_id + model_revision` 的本地 FBX，则直接复用缓存。
+约束：
 
-## Canonical body evidence
+- 顶层 `count` 必须等于 `items` 数组长度且最多为 5；`pose_source` 为 `tracking` 或 `hololens`，当前模型 revision 有有效追踪位姿时优先前者。
+- `spatial_boxes` 不得截断或复用最近 5 条限制；`spatial_box_count` 必须等于数组长度，且只有 `spatial_box_snapshot_complete=true` 才允许客户端 reconcile/delete。
+- 每个 box item 的 `display_object_id` 必须非空且唯一。`status=ready` 时必须包含 8 个有限角点；`status=no_box` 时只包含 `status`、`coordinate_space` 和 `revision`。box 只来自 raw collider 与 ArUco 变换，不从 mask 或 depth 推测。
+- Unity 必须先完整验证整份 `spatial_boxes`，再原子应用。`ready` 更新，`no_box` 清除；完整快照中缺席的旧 display ID 删除其 `LatestLive` box/线框。每个 coordinate epoch 的 box revision 水位在清除后仍保留；小于或等于水位的迟到 `ready` 一律拒绝，不能以同 revision 复活已删除框。历史 box、历史照片/骨骼和模型不因该删除受影响。
+- take-out 增加 `presence_epoch` 并立即输出 `no_box`，不走缺帧 grace；拿走前 box 仍保存在 lifecycle history。
+- raw collider 单帧无效或完整 tracking snapshot 单帧缺席时，服务端继续下发最后可信 `ready`。连续明确缺失达到 `SHIGURE_SPATIAL_BOX_MISSING_GRACE_SECONDS=1.5` 后才提交并下发 `no_box`。Unity 不再叠加第二个计时器；1 秒轮询下视觉清除通常发生在服务端判定后的下一次 poll。
+- `items[]` 可附带 `tracking_status`、`tracking_event_uid` 和 canonical `model`；客户端已有相同 `display_object_id + model_revision` 的 FBX 时直接复用缓存。
 
-有成功的人体证据时，tracking item 附带：
+## `GET /api/v2/display-objects/<display_object_id>/history`
+
+query：
+
+```text
+kind=take_out
+limit=1..20
+startup_session_id=<unity-startup-uuid>
+before_cursor=<正整数，可选>
+```
+
+当前 Unity 每次请求一条；继续点击同一物体时，把上一条 `history_cursor` 作为 `before_cursor` 取得更老记录。响应：
 
 ```json
 {
-  "body_evidence": {
-    "task_id": "task-uuid",
+  "success": true,
+  "coordinate_space": "hololens_current_local",
+  "coordinate_epoch": "aruco-task-uuid",
+  "history_event": {
     "display_object_id": "display-object-uuid",
-    "body_revision": 1,
-    "image_url": "http://server/task-artifacts/task-uuid/result/08_sam3d_body_subject_crop.png",
-    "body_model": {
-      "model_key": "body:display-object-uuid",
-      "task_id": "task-uuid",
-      "display_object_id": "display-object-uuid",
-      "model_revision": 1,
-      "fbx_url": "http://server/task-artifacts/task-uuid/result/08_sam3d_body_selected_person.fbx",
-      "pose": {
-        "position": [0, 0, 0],
-        "rotation_quaternion_xyzw": [0, 0, 0, 1],
-        "scale": [1, 1, 1]
-      },
-      "coordinate_space": "hololens_current_local"
+    "event_uid": "lifecycle-event-uid",
+    "history_cursor": "42",
+    "pose": {
+      "position": [0, 0, 0],
+      "rotation_quaternion_xyzw": [0, 0, 0, 1]
+    },
+    "spatial_box": null,
+    "evidence": {
+      "scene_image_url": "http://server/shigure-event-artifacts/event/image.jpg",
+      "skeleton": {
+        "people_id": "person-id",
+        "joints": [
+          {"name": "nose", "position": [0, 0, 0], "score": 0.9, "valid": true}
+        ]
+      }
     }
   }
 }
 ```
 
-`body_evidence` 必须包含裁切图和人体 FBX，两者 revision 必须与 item 的 `body_revision` 一致。
+服务端会以 100 行为内部页继续扫描，跳过缺 pose、scene image、有效骨骼或坐标转换失败的行；这些坏行不会形成客户端永远越不过的分页墙。`history_cursor` 始终取实际返回的有效 lifecycle row，下一次 `before_cursor` 从它继续向更老记录查找。
 
-## 坐标与缩放规则
+真正耗尽后 `history_event` 才为 `null`。照片和 Shigure 点线骨骼随历史位置一同自动显示；协议不包含人体 mesh 或独立 body revision。
 
-- 所有 Unity 正式位姿都使用 `hololens_current_local`。
-- 服务器内部可保存 ArUco 位姿，但不通过 model/tracking/body 公共对象下发。
-- Unity 应用 tracking/history 位姿时只更新 position 和 rotation；模型缩放保持加载时的值。
+注意：历史事件自身的 `spatial_box` 仍可为 `null`；live 的显式 `status=no_box` 语义不改变已持久化历史证据。

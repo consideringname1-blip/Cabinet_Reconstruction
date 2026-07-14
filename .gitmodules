@@ -7,6 +7,7 @@
 [submodule "code/reconstruction/shigure_core"]
 	path = code/reconstruction/shigure_core
 	url = https://github.com/Rits-Interaction-Laboratory/shigure_core.git
+	branch = 2026_demo
 [submodule "code/reconstruction/FoundationPose"]
 	path = code/reconstruction/FoundationPose
 	url = https://github.com/NVlabs/FoundationPose.git

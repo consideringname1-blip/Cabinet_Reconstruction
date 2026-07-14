@@ -1,23 +1,24 @@
 当前约定：
 data/config 和 data/aruco/reference 继续由 git 追踪，不用 dvc。
 data_backup 整体由 dvc 追踪，不拆分子目录。
-data 内当前非空稳定运行期目录分开由 dvc 追踪。
-data/shigure_history_cache 是 1 分钟左右的实时缓存，不用 dvc。
+data 内当前非空、稳定、需要共享的运行期目录分开由 dvc 追踪。
 data/worker_sockets 是本地运行 socket 目录，不用 dvc。
-data/history_placement_requests 当前为空，不作为 dvc 入口。
+data/shigure_debug_cache 是默认关闭、最多 10 分钟的本地复查环，不用 dvc。
 旧 data/upload 和 data/RecordPhotoAndVideo 不再作为当前 dvc 入口，历史数据放 data_backup。
-Shigure 诊断目录 data/shigure_mask_overlay_checks 可以由 dvc 追踪图片/json，持续追加的 recorder log 由 .dvcignore 忽略。
+旧 data/shigure_history_cache 已整体退役；显式 v2 迁移会删除整个目录（包括未知文件），不要备份到当前运行数据或重新加入 dvc。
+data/shigure_events 与 data/identity_references 是 Shigure v2 持久证据；后者包含已接受的 `views/<sha256>/scene.png` 与 `mask.png`，临时候选不在其中。需要跨机器共享时，应在目录已有有效数据后分别 dvc add，不能与 debug cache 混在一起。
+`data/database/*.db-wal` 与 `*.db-shm` 是运行期 sidecar，已由 `.dvcignore` 排除。更新 `data/database.dvc` 前必须先停止服务器并完成 SQLite WAL checkpoint/关闭连接，确保已提交内容进入 `tasks.db`；禁止在数据库仍写入时只快照主文件。
 
-当前 data 的 dvc 入口：
+当前仓库已有的 dvc 入口：
 data/aruco/shigure_marker_history.dvc
 data/aruco_processing.dvc
 data/console_logs.dvc
 data/database.dvc
+data/identity_references.dvc
 data/model.dvc
-data/shigure_mask_overlay_checks.dvc
 data_backup.dvc
 
-初次初始化（已有git仓库）：
+初次初始化（已有 git 仓库）：
 conda create -n dvc python=3.10 -y
 conda activate dvc
 python -m pip install --upgrade pip
@@ -32,18 +33,23 @@ dvc remote modify --local gdrive gdrive_client_id YOUR_ID
 dvc remote modify --local gdrive gdrive_client_secret YOUR_SECRET
 dvc remote list
 
-初次初始化以后，确认 .dvcignore 内包含 Shigure 诊断日志忽略规则：
-data/shigure_mask_overlay_checks/**/shigure_history_recorder.log
-
 git add .dvc .dvcignore
 git commit -m "init dvc"
 
-按当前结构创建追踪：
+按当前已有结构创建追踪：
 conda activate dvc
-dvc add -f data/aruco/shigure_marker_history data/aruco_processing data/console_logs data/database data/model data/shigure_mask_overlay_checks data_backup
+dvc add -f data/aruco/shigure_marker_history data/aruco_processing data/console_logs data/database data/identity_references data/model data_backup
 
-git add .dvcignore data/aruco/shigure_marker_history.dvc data/aruco_processing.dvc data/console_logs.dvc data/database.dvc data/model.dvc data/shigure_mask_overlay_checks.dvc data_backup.dvc
+git add .dvcignore data/aruco/shigure_marker_history.dvc data/aruco_processing.dvc data/console_logs.dvc data/database.dvc data/identity_references.dvc data/model.dvc data_backup.dvc
 git commit -m "track runtime data with dvc"
+dvc push
+git push
+
+若要共享已经产生的 Shigure v2 事件证据，单独执行：
+conda activate dvc
+dvc add -f data/shigure_events
+git add data/shigure_events.dvc
+git commit -m "track shigure v2 evidence with dvc"
 dvc push
 git push
 
@@ -53,6 +59,7 @@ dvc add data/config
 dvc add data/aruco/reference
 dvc add data/upload
 dvc add data/RecordPhotoAndVideo
+dvc add data/shigure_debug_cache
 dvc add data/shigure_history_cache
 dvc add data/worker_sockets
 
@@ -75,10 +82,11 @@ dvc pull
 日常流程：
 上传：
 conda activate dvc
-dvc add -f data/aruco/shigure_marker_history data/aruco_processing data/console_logs data/database data/model data/shigure_mask_overlay_checks data_backup
+dvc add -f data/aruco/shigure_marker_history data/aruco_processing data/console_logs data/database data/identity_references data/model data_backup
+# 已启用事件证据 DVC 时再追加：data/shigure_events
 dvc status
 git status
-git add .dvcignore data/aruco/shigure_marker_history.dvc data/aruco_processing.dvc data/console_logs.dvc data/database.dvc data/model.dvc data/shigure_mask_overlay_checks.dvc data_backup.dvc
+git add .dvcignore data/aruco/shigure_marker_history.dvc data/aruco_processing.dvc data/console_logs.dvc data/database.dvc data/identity_references.dvc data/model.dvc data_backup.dvc
 git commit -m "update dvc data"
 dvc push
 git push
@@ -95,9 +103,9 @@ dvc status
 find data -maxdepth 3 -name "*.dvc" -print | sort
 find . -maxdepth 1 -name "data_backup.dvc" -print
 git ls-files data/config data/aruco/reference | head
-git check-ignore data/model data/database data/shigure_mask_overlay_checks data/shigure_history_cache data/worker_sockets
+git check-ignore data/model data/database data/shigure_debug_cache data/worker_sockets
 
-关于google drive缓存刷新：
+关于 Google Drive 缓存刷新：
 rm -rf /root/.cache/pydrive2fs/*
 Remove-Item -Recurse -Force "$env:LOCALAPPDATA\pydrive2fs\Cache\*"
 

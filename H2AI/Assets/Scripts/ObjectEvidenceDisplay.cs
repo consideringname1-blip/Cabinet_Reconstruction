@@ -1,7 +1,6 @@
 using BestHTTP;
 using Newtonsoft.Json.Linq;
 using System;
-using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -18,8 +17,8 @@ public class ObjectEvidenceDisplay : MonoBehaviour
     private readonly Dictionary<string, EvidenceItem> evidenceByDisplayObjectId =
         new Dictionary<string, EvidenceItem>(StringComparer.Ordinal);
     private GameObject evidenceRoot;
-    private Material evidenceBodyMaterial;
     private RuntimeModelManager runtimeModelManager;
+    private long evidenceGeneration;
 
     public static ObjectEvidenceDisplay Instance
     {
@@ -54,7 +53,7 @@ public class ObjectEvidenceDisplay : MonoBehaviour
     {
         foreach (EvidenceItem item in evidenceByDisplayObjectId.Values)
         {
-            if (item != null && item.ImageObject != null && item.ImageObject.activeSelf)
+            if (item != null && item.ImageObject != null)
             {
                 UpdateImagePlacement(item, false);
             }
@@ -68,20 +67,107 @@ public class ObjectEvidenceDisplay : MonoBehaviour
             _instance = null;
         }
         Clear();
-        if (evidenceBodyMaterial != null)
-        {
-            Destroy(evidenceBodyMaterial);
-            evidenceBodyMaterial = null;
-        }
     }
 
-    public void Clear()
+    public bool ShowHistoryEvidence(
+        string displayObjectId,
+        string eventUid,
+        JObject evidence,
+        string coordinateEpoch)
     {
-        foreach (EvidenceItem item in new List<EvidenceItem>(evidenceByDisplayObjectId.Values))
+        if (string.IsNullOrEmpty(displayObjectId)
+            || string.IsNullOrEmpty(eventUid)
+            || string.IsNullOrEmpty(coordinateEpoch)
+            || evidence == null
+            || !HasExactKeys(evidence, "scene_image_url", "skeleton"))
+        {
+            Debug.LogWarning("[ObjectEvidence] Reject incomplete strict-v2 evidence.");
+            return false;
+        }
+
+        if (!TryValidateHistoryEvidence(
+                evidence,
+                out Uri imageUri,
+                out RuntimeSkeletonData skeleton))
+        {
+            Debug.LogWarning("[ObjectEvidence] Reject invalid strict-v2 evidence.");
+            return false;
+        }
+        string imageUrl = imageUri.AbsoluteUri;
+
+        HideEvidenceForModel(displayObjectId);
+        EnsureRoot();
+        EvidenceItem item = new EvidenceItem
+        {
+            DisplayObjectId = displayObjectId,
+            EventUid = eventUid,
+            CoordinateEpoch = coordinateEpoch,
+            ImageUrl = imageUrl,
+            Generation = ++evidenceGeneration,
+        };
+        evidenceByDisplayObjectId[displayObjectId] = item;
+
+        item.SkeletonObject = new GameObject(
+            "ObjectEvidenceSkeleton_" + displayObjectId);
+        item.SkeletonObject.transform.SetParent(evidenceRoot.transform, false);
+        item.SkeletonDisplay =
+            item.SkeletonObject.AddComponent<RuntimeSkeletonDisplay>();
+        item.SkeletonDisplay.Configure(skeleton);
+
+        EvidenceImageRequestContext context = new EvidenceImageRequestContext
+        {
+            DisplayObjectId = displayObjectId,
+            EventUid = eventUid,
+            Url = imageUrl,
+            Generation = item.Generation,
+        };
+        HTTPRequest request = new HTTPRequest(
+            imageUri,
+            HTTPMethods.Get,
+            OnEvidenceImageDownloaded);
+        request.Tag = context;
+        item.ImageRequest = request;
+        request.Send();
+        return true;
+    }
+
+    public static bool ValidateHistoryEvidence(JObject evidence)
+    {
+        return TryValidateHistoryEvidence(
+            evidence,
+            out Uri ignoredUri,
+            out RuntimeSkeletonData ignoredSkeleton);
+    }
+
+    public bool HideEvidenceForModel(string displayObjectId)
+    {
+        if (string.IsNullOrEmpty(displayObjectId)
+            || !evidenceByDisplayObjectId.TryGetValue(
+                displayObjectId,
+                out EvidenceItem item))
+        {
+            return false;
+        }
+        evidenceByDisplayObjectId.Remove(displayObjectId);
+        ReleaseItemVisuals(item);
+        return true;
+    }
+
+    public int HideAll()
+    {
+        int hidden = evidenceByDisplayObjectId.Count;
+        foreach (EvidenceItem item in
+            new List<EvidenceItem>(evidenceByDisplayObjectId.Values))
         {
             ReleaseItemVisuals(item);
         }
         evidenceByDisplayObjectId.Clear();
+        return hidden;
+    }
+
+    public void Clear()
+    {
+        HideAll();
         if (evidenceRoot != null)
         {
             Destroy(evidenceRoot);
@@ -89,198 +175,41 @@ public class ObjectEvidenceDisplay : MonoBehaviour
         }
     }
 
-    public bool RegisterEvidence(JObject evidence)
-    {
-        if (evidence == null)
-        {
-            return false;
-        }
-
-        string displayObjectId = ReadRequiredString(evidence, "display_object_id");
-        string taskId = ReadRequiredString(evidence, "task_id");
-        string imageUrl = ReadRequiredString(evidence, "image_url");
-        JObject bodyModel = evidence["body_model"] as JObject;
-        long bodyRevision = ReadRequiredLong(evidence, "body_revision");
-        if (!HasExactKeys(
-                evidence,
-                "task_id",
-                "display_object_id",
-                "body_revision",
-                "image_url",
-                "body_model")
-            || string.IsNullOrEmpty(displayObjectId)
-            || string.IsNullOrEmpty(taskId)
-            || string.IsNullOrEmpty(imageUrl)
-            || bodyModel == null
-            || bodyRevision <= 0)
-        {
-            Debug.LogWarning("[ObjectEvidence] Reject incomplete canonical body_evidence payload.");
-            return false;
-        }
-
-        string bodyModelKey = ReadRequiredString(bodyModel, "model_key");
-        string bodyFbxUrl = ReadRequiredString(bodyModel, "fbx_url");
-        if (!HasExactKeys(
-                bodyModel,
-                "model_key",
-                "task_id",
-                "display_object_id",
-                "model_revision",
-                "fbx_url",
-                "pose",
-                "coordinate_space")
-            || bodyModelKey != "body:" + displayObjectId
-            || ReadRequiredString(bodyModel, "task_id") != taskId
-            || ReadRequiredString(bodyModel, "display_object_id") != displayObjectId
-            || ReadRequiredLong(bodyModel, "model_revision") != bodyRevision
-            || string.IsNullOrEmpty(bodyFbxUrl)
-            || ReadRequiredString(bodyModel, "coordinate_space") != "hololens_current_local"
-            || !(bodyModel["pose"] is JObject))
-        {
-            Debug.LogWarning("[ObjectEvidence] Reject invalid canonical body_model.");
-            return false;
-        }
-
-        EvidenceItem item;
-        if (!evidenceByDisplayObjectId.TryGetValue(displayObjectId, out item) || item == null)
-        {
-            item = new EvidenceItem
-            {
-                DisplayObjectId = displayObjectId,
-                BodyModelKey = bodyModelKey,
-            };
-        }
-
-        bool revisionChanged = item.BodyRevision != bodyRevision;
-        bool imageChanged = !string.Equals(item.ImageUrl, imageUrl, StringComparison.Ordinal);
-        bool bodyChanged = !string.Equals(item.BodyFbxUrl, bodyFbxUrl, StringComparison.Ordinal);
-        if (revisionChanged || imageChanged)
-        {
-            ReleaseImage(item);
-        }
-        if (revisionChanged || bodyChanged)
-        {
-            item.BodyDownloadQueued = false;
-            if (item.BodyVisibilityCoroutine != null)
-            {
-                StopCoroutine(item.BodyVisibilityCoroutine);
-                item.BodyVisibilityCoroutine = null;
-            }
-            HideLoadedBody(item);
-        }
-
-        item.BodyRevision = bodyRevision;
-        item.ImageUrl = imageUrl;
-        item.BodyFbxUrl = bodyFbxUrl;
-        item.BodyModel = (JObject)bodyModel.DeepClone();
-        evidenceByDisplayObjectId[displayObjectId] = item;
-        return true;
-    }
-
-    public bool ToggleEvidenceForModel(string displayObjectId)
-    {
-        if (string.IsNullOrEmpty(displayObjectId)
-            || !evidenceByDisplayObjectId.TryGetValue(displayObjectId, out EvidenceItem item)
-            || item == null)
-        {
-            return false;
-        }
-
-        if (IsEvidenceVisibleOrPending(item))
-        {
-            HideEvidence(item);
-            return true;
-        }
-
-        item.VisibleRequested = true;
-        EnsureRoot();
-        bool available = EnsureImage(item) | EnsureBodyMesh(item);
-        if (!available)
-        {
-            ShowFrontMessage("object_evidence_no_visual_artifact");
-        }
-        return true;
-    }
-
-    private bool IsEvidenceVisibleOrPending(EvidenceItem item)
-    {
-        if (item.ImageRequestInFlight || item.BodyDownloadQueued)
-        {
-            return true;
-        }
-        if (item.ImageObject != null && item.ImageObject.activeSelf)
-        {
-            return true;
-        }
-        ResolveRuntimeModelManager();
-        return runtimeModelManager != null
-            && runtimeModelManager.TryGetLoadedRecord(item.BodyModelKey, out RuntimeModelRecord bodyRecord)
-            && bodyRecord != null
-            && bodyRecord.RootGameObject != null
-            && bodyRecord.RootGameObject.activeSelf;
-    }
-
-    private void HideEvidence(EvidenceItem item)
-    {
-        item.VisibleRequested = false;
-        if (item.ImageObject != null)
-        {
-            item.ImageObject.SetActive(false);
-        }
-        HideLoadedBody(item);
-    }
-
-    private bool EnsureImage(EvidenceItem item)
-    {
-        if (item.ImageObject != null)
-        {
-            item.ImageObject.SetActive(item.VisibleRequested);
-            return true;
-        }
-        if (item.ImageRequestInFlight)
-        {
-            return true;
-        }
-        if (string.IsNullOrEmpty(item.ImageUrl))
-        {
-            return false;
-        }
-
-        item.ImageRequestInFlight = true;
-        EvidenceImageRequestContext context = new EvidenceImageRequestContext
-        {
-            DisplayObjectId = item.DisplayObjectId,
-            BodyRevision = item.BodyRevision,
-            Url = item.ImageUrl,
-        };
-        var request = new HTTPRequest(new Uri(item.ImageUrl), HTTPMethods.Get, OnEvidenceImageDownloaded);
-        request.Tag = context;
-        request.Send();
-        return true;
-    }
-
-    private void OnEvidenceImageDownloaded(HTTPRequest request, HTTPResponse response)
+    private void OnEvidenceImageDownloaded(
+        HTTPRequest request,
+        HTTPResponse response)
     {
         EvidenceImageRequestContext context = request != null
             ? request.Tag as EvidenceImageRequestContext
             : null;
         if (context == null
-            || !evidenceByDisplayObjectId.TryGetValue(context.DisplayObjectId, out EvidenceItem item)
+            || !evidenceByDisplayObjectId.TryGetValue(
+                context.DisplayObjectId,
+                out EvidenceItem item)
             || item == null
-            || item.BodyRevision != context.BodyRevision
-            || !string.Equals(item.ImageUrl, context.Url, StringComparison.Ordinal))
+            || item.ImageRequest != request
+            || item.Generation != context.Generation
+            || item.EventUid != context.EventUid
+            || item.ImageUrl != context.Url)
         {
             return;
         }
 
-        item.ImageRequestInFlight = false;
-        if (response == null || !response.IsSuccess || response.Data == null || response.Data.Length == 0)
+        item.ImageRequest = null;
+        if (response == null
+            || !response.IsSuccess
+            || response.Data == null
+            || response.Data.Length == 0)
         {
             ShowFrontMessage("object_evidence_ERR_rgb");
             return;
         }
 
-        Texture2D texture = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+        Texture2D texture = new Texture2D(
+            2,
+            2,
+            TextureFormat.RGBA32,
+            false);
         if (!texture.LoadImage(response.Data))
         {
             Destroy(texture);
@@ -293,7 +222,6 @@ public class ObjectEvidenceDisplay : MonoBehaviour
         item.ImageObject = CreateImageQuad(item, texture);
         if (item.ImageObject != null)
         {
-            item.ImageObject.SetActive(item.VisibleRequested);
             UpdateImagePlacement(item, true);
         }
     }
@@ -331,8 +259,17 @@ public class ObjectEvidenceDisplay : MonoBehaviour
         if (renderer != null)
         {
             Shader shader = Shader.Find("Unlit/Texture");
-            renderer.material = new Material(shader != null ? shader : Shader.Find("Standard"));
-            renderer.material.mainTexture = texture;
+            if (shader == null)
+            {
+                shader = Shader.Find("Standard");
+            }
+            if (shader == null)
+            {
+                shader = Shader.Find("Hidden/InternalErrorShader");
+            }
+            item.ImageMaterial = new Material(shader);
+            item.ImageMaterial.mainTexture = texture;
+            renderer.sharedMaterial = item.ImageMaterial;
         }
         return quad;
     }
@@ -348,15 +285,20 @@ public class ObjectEvidenceDisplay : MonoBehaviour
         Vector3 target = anchor + Vector3.up * ImageVerticalOffsetMeters;
         item.ImageObject.transform.position = force
             ? target
-            : Vector3.Lerp(item.ImageObject.transform.position, target, Time.deltaTime * ImageLerpSpeed);
+            : Vector3.Lerp(
+                item.ImageObject.transform.position,
+                target,
+                Time.deltaTime * ImageLerpSpeed);
 
         Camera camera = Camera.main;
         if (camera != null)
         {
-            Vector3 toCamera = item.ImageObject.transform.position - camera.transform.position;
+            Vector3 toCamera =
+                item.ImageObject.transform.position - camera.transform.position;
             if (toCamera.sqrMagnitude > 0.0001f)
             {
-                item.ImageObject.transform.rotation = Quaternion.LookRotation(toCamera.normalized, Vector3.up);
+                item.ImageObject.transform.rotation =
+                    Quaternion.LookRotation(toCamera.normalized, Vector3.up);
             }
         }
     }
@@ -370,127 +312,27 @@ public class ObjectEvidenceDisplay : MonoBehaviour
                 out RuntimeModelRecord record)
             && record != null
             && record.RootGameObject != null
-            && TryGetRendererBounds(record.RootGameObject, out Bounds bounds))
+            && TryGetRendererBounds(record.RootGameObject, out Bounds modelBounds))
         {
-            return new Vector3(bounds.center.x, bounds.max.y, bounds.center.z);
+            return new Vector3(
+                modelBounds.center.x,
+                modelBounds.max.y,
+                modelBounds.center.z);
         }
-        return Vector3.zero;
-    }
-
-    private bool EnsureBodyMesh(EvidenceItem item)
-    {
-        if (string.IsNullOrEmpty(item.BodyFbxUrl)
-            || item.BodyRevision <= 0
-            || item.BodyModel == null)
+        if (item.SkeletonObject != null
+            && TryGetRendererBounds(
+                item.SkeletonObject,
+                out Bounds skeletonBounds))
         {
-            return false;
+            return new Vector3(
+                skeletonBounds.center.x,
+                skeletonBounds.max.y,
+                skeletonBounds.center.z);
         }
-        if (item.BodyDownloadQueued)
-        {
-            return true;
-        }
-
-        ResolveRuntimeModelManager();
-        if (runtimeModelManager != null
-            && runtimeModelManager.TryGetLoadedRecord(item.BodyModelKey, out RuntimeModelRecord bodyRecord)
-            && bodyRecord != null
-            && bodyRecord.ModelRevision == item.BodyRevision
-            && string.Equals(bodyRecord.FbxUrl, item.BodyFbxUrl, StringComparison.Ordinal)
-            && bodyRecord.RootGameObject != null)
-        {
-            ApplyEvidenceBodyMaterial(bodyRecord.RootGameObject);
-            bodyRecord.RootGameObject.SetActive(item.VisibleRequested);
-            return true;
-        }
-
-        if (ShuJuQingQiu.initialize == null)
-        {
-            return false;
-        }
-        if (!ShuJuQingQiu.initialize.QueueRuntimeModelDownload(
-                (JObject)item.BodyModel.DeepClone(),
-                true))
-        {
-            return false;
-        }
-
-        item.BodyDownloadQueued = true;
-        if (item.BodyVisibilityCoroutine != null)
-        {
-            StopCoroutine(item.BodyVisibilityCoroutine);
-        }
-        item.BodyVisibilityCoroutine = StartCoroutine(WaitForBodyMesh(item));
-        return true;
-    }
-
-    private IEnumerator WaitForBodyMesh(EvidenceItem item)
-    {
-        long expectedRevision = item.BodyRevision;
-        float timeoutAt = Time.time + 30f;
-        while (item != null && item.BodyRevision == expectedRevision && Time.time < timeoutAt)
-        {
-            ResolveRuntimeModelManager();
-            if (runtimeModelManager != null
-                && runtimeModelManager.TryGetLoadedRecord(item.BodyModelKey, out RuntimeModelRecord bodyRecord)
-                && bodyRecord != null
-                && bodyRecord.ModelRevision == expectedRevision
-                && bodyRecord.RootGameObject != null)
-            {
-                ApplyEvidenceBodyMaterial(bodyRecord.RootGameObject);
-                bodyRecord.RootGameObject.SetActive(item.VisibleRequested);
-                item.BodyDownloadQueued = false;
-                item.BodyVisibilityCoroutine = null;
-                yield break;
-            }
-            yield return null;
-        }
-        if (item != null && item.BodyRevision == expectedRevision)
-        {
-            item.BodyDownloadQueued = false;
-            item.BodyVisibilityCoroutine = null;
-        }
-    }
-
-    private void HideLoadedBody(EvidenceItem item)
-    {
-        ResolveRuntimeModelManager();
-        if (runtimeModelManager != null
-            && runtimeModelManager.TryGetLoadedRecord(item.BodyModelKey, out RuntimeModelRecord bodyRecord)
-            && bodyRecord != null
-            && bodyRecord.RootGameObject != null)
-        {
-            bodyRecord.RootGameObject.SetActive(false);
-        }
-    }
-
-    private void ApplyEvidenceBodyMaterial(GameObject root)
-    {
-        if (root == null)
-        {
-            return;
-        }
-        if (evidenceBodyMaterial == null)
-        {
-            Shader shader = Shader.Find("Standard");
-            evidenceBodyMaterial = new Material(shader);
-            evidenceBodyMaterial.color = new Color(0.62f, 0.66f, 0.70f, 0.38f);
-            if (evidenceBodyMaterial.HasProperty("_Mode"))
-            {
-                evidenceBodyMaterial.SetFloat("_Mode", 3f);
-                evidenceBodyMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-                evidenceBodyMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-                evidenceBodyMaterial.SetInt("_ZWrite", 0);
-                evidenceBodyMaterial.EnableKeyword("_ALPHABLEND_ON");
-                evidenceBodyMaterial.renderQueue = 3000;
-            }
-        }
-        foreach (Renderer renderer in root.GetComponentsInChildren<Renderer>(true))
-        {
-            if (renderer != null)
-            {
-                renderer.sharedMaterial = evidenceBodyMaterial;
-            }
-        }
+        Camera camera = Camera.main;
+        return camera != null
+            ? camera.transform.position + camera.transform.forward
+            : Vector3.zero;
     }
 
     private void ReleaseItemVisuals(EvidenceItem item)
@@ -499,22 +341,35 @@ public class ObjectEvidenceDisplay : MonoBehaviour
         {
             return;
         }
-        if (item.BodyVisibilityCoroutine != null)
+        if (item.ImageRequest != null)
         {
-            StopCoroutine(item.BodyVisibilityCoroutine);
-            item.BodyVisibilityCoroutine = null;
+            item.ImageRequest.Abort();
+            item.ImageRequest = null;
         }
-        HideLoadedBody(item);
         ReleaseImage(item);
+        if (item.SkeletonObject != null)
+        {
+            Destroy(item.SkeletonObject);
+            item.SkeletonObject = null;
+            item.SkeletonDisplay = null;
+        }
     }
 
     private void ReleaseImage(EvidenceItem item)
     {
-        item.ImageRequestInFlight = false;
+        if (item == null)
+        {
+            return;
+        }
         if (item.ImageObject != null)
         {
             Destroy(item.ImageObject);
             item.ImageObject = null;
+        }
+        if (item.ImageMaterial != null)
+        {
+            Destroy(item.ImageMaterial);
+            item.ImageMaterial = null;
         }
         if (item.ImageTexture != null)
         {
@@ -523,7 +378,129 @@ public class ObjectEvidenceDisplay : MonoBehaviour
         }
     }
 
-    private static bool TryGetRendererBounds(GameObject root, out Bounds bounds)
+    private static bool TryParseSkeleton(
+        JObject payload,
+        out RuntimeSkeletonData skeleton)
+    {
+        skeleton = null;
+        if (payload == null
+            || !HasExactKeys(payload, "people_id", "joints"))
+        {
+            return false;
+        }
+        string peopleId = ReadRequiredString(payload, "people_id");
+        JArray joints = payload["joints"] as JArray;
+        if (string.IsNullOrEmpty(peopleId)
+            || joints == null
+            || joints.Count == 0)
+        {
+            return false;
+        }
+
+        RuntimeSkeletonData parsed = new RuntimeSkeletonData
+        {
+            PeopleId = peopleId,
+        };
+        HashSet<string> names = new HashSet<string>(StringComparer.Ordinal);
+        foreach (JToken token in joints)
+        {
+            JObject joint = token as JObject;
+            if (joint == null
+                || !HasExactKeys(
+                    joint,
+                    "name",
+                    "position",
+                    "score",
+                    "valid"))
+            {
+                return false;
+            }
+            string name = ReadRequiredString(joint, "name");
+            JToken scoreToken = joint["score"];
+            JToken validToken = joint["valid"];
+            float score = IsJsonNumber(scoreToken)
+                ? scoreToken.Value<float>()
+                : float.NaN;
+            if (string.IsNullOrEmpty(name)
+                || !names.Add(name)
+                || !TryReadVector3(joint["position"], out Vector3 position)
+                || !IsJsonNumber(scoreToken)
+                || float.IsNaN(score)
+                || float.IsInfinity(score)
+                || validToken == null
+                || validToken.Type != JTokenType.Boolean)
+            {
+                return false;
+            }
+            parsed.Joints.Add(new RuntimeSkeletonJointData
+            {
+                Name = name,
+                PositionWorld = position,
+                Score = score,
+                Valid = validToken.Value<bool>(),
+            });
+        }
+        skeleton = parsed;
+        return true;
+    }
+
+    private static bool TryValidateHistoryEvidence(
+        JObject evidence,
+        out Uri imageUri,
+        out RuntimeSkeletonData skeleton)
+    {
+        imageUri = null;
+        skeleton = null;
+        if (evidence == null
+            || !HasExactKeys(evidence, "scene_image_url", "skeleton"))
+        {
+            return false;
+        }
+        string imageUrl = ReadRequiredString(evidence, "scene_image_url");
+        return Uri.TryCreate(imageUrl, UriKind.Absolute, out imageUri)
+            && evidence["skeleton"] is JObject skeletonObject
+            && TryParseSkeleton(skeletonObject, out skeleton);
+    }
+
+    private static bool TryReadVector3(JToken token, out Vector3 value)
+    {
+        value = Vector3.zero;
+        JArray array = token as JArray;
+        if (array == null
+            || array.Count != 3
+            || !IsJsonNumber(array[0])
+            || !IsJsonNumber(array[1])
+            || !IsJsonNumber(array[2]))
+        {
+            return false;
+        }
+        value = new Vector3(
+            array[0].Value<float>(),
+            array[1].Value<float>(),
+            array[2].Value<float>());
+        return IsFinite(value);
+    }
+
+    private static bool IsJsonNumber(JToken token)
+    {
+        return token != null
+            && (token.Type == JTokenType.Integer
+                || token.Type == JTokenType.Float);
+    }
+
+    private static bool IsFinite(Vector3 value)
+    {
+        return !float.IsNaN(value.x)
+            && !float.IsInfinity(value.x)
+            && !float.IsNaN(value.y)
+            && !float.IsInfinity(value.y)
+            && !float.IsNaN(value.z)
+            && !float.IsInfinity(value.z);
+    }
+
+    private static bool TryGetRendererBounds(
+        GameObject root,
+        out Bounds bounds)
     {
         bounds = new Bounds(Vector3.zero, Vector3.zero);
         bool initialized = false;
@@ -558,19 +535,16 @@ public class ObjectEvidenceDisplay : MonoBehaviour
             : "";
     }
 
-    private static long ReadRequiredLong(JObject payload, string key)
-    {
-        JToken token = payload != null ? payload[key] : null;
-        return token != null && token.Type == JTokenType.Integer ? token.Value<long>() : -1;
-    }
-
-    private static bool HasExactKeys(JObject payload, params string[] expectedKeys)
+    private static bool HasExactKeys(
+        JObject payload,
+        params string[] expectedKeys)
     {
         if (payload == null || payload.Count != expectedKeys.Length)
         {
             return false;
         }
-        HashSet<string> expected = new HashSet<string>(expectedKeys, StringComparer.Ordinal);
+        HashSet<string> expected =
+            new HashSet<string>(expectedKeys, StringComparer.Ordinal);
         foreach (JProperty property in payload.Properties())
         {
             if (!expected.Remove(property.Name))
@@ -608,23 +582,23 @@ public class ObjectEvidenceDisplay : MonoBehaviour
     private sealed class EvidenceItem
     {
         public string DisplayObjectId = "";
-        public long BodyRevision = -1;
+        public string EventUid = "";
+        public string CoordinateEpoch = "";
         public string ImageUrl = "";
-        public string BodyFbxUrl = "";
-        public string BodyModelKey = "";
-        public JObject BodyModel;
-        public bool ImageRequestInFlight;
-        public bool BodyDownloadQueued;
-        public bool VisibleRequested;
-        public Coroutine BodyVisibilityCoroutine;
+        public long Generation;
+        public HTTPRequest ImageRequest;
         public Texture2D ImageTexture;
+        public Material ImageMaterial;
         public GameObject ImageObject;
+        public GameObject SkeletonObject;
+        public RuntimeSkeletonDisplay SkeletonDisplay;
     }
 
     private sealed class EvidenceImageRequestContext
     {
         public string DisplayObjectId = "";
-        public long BodyRevision = -1;
+        public string EventUid = "";
         public string Url = "";
+        public long Generation;
     }
 }

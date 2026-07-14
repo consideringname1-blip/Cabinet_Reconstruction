@@ -17,8 +17,7 @@ import threading
 import time
 from array import array
 from collections import deque
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -93,14 +92,18 @@ import numpy as np  # noqa: E402
 from stages.shigure_history import settings  # noqa: E402
 from stages.shigure_history.cache import (  # noqa: E402
     CachedRgbdSample,
-    CachedShigureEvent,
+    CachedShigureFrame,
     RosStamp,
     ShigureMemoryStore,
     sample_key,
     store_request,
-    write_json,
+)
+from stages.shigure_history.debug_cache import (  # noqa: E402
+    ShigureDebugDiskRing,
+    validate_debug_cache_limits,
 )
 from stages.shigure_history.marker_history import MarkerHistoryWarmup  # noqa: E402
+from stages.shigure_history.shigure_compatibility import ShigureCompatibilityAdapter  # noqa: E402
 
 _running = True
 REQUIRED_KEYS = ("rgb", "depth", "camera_info")
@@ -315,13 +318,11 @@ def object_detection_payload(sample: TopicSample) -> dict[str, Any]:
             continue
         mask_msg = getattr(obj, "mask", None)
         mask_raw = bytes(getattr(mask_msg, "data", b"")) if mask_msg is not None else b""
-        if not mask_raw:
-            continue
         x0, y0, x1, y1 = bbox
         action = str(getattr(obj, "action", "object") or "object")
         objects.append(
             {
-                "object_id": f"{action}:{index}",
+                "index": int(index),
                 "action": action,
                 "bbox_xyxy": [x0, y0, x1, y1],
                 "mask_b64": base64.b64encode(mask_raw).decode("ascii"),
@@ -333,6 +334,107 @@ def object_detection_payload(sample: TopicSample) -> dict[str, Any]:
         "objects": objects,
         "object_count": len(objects),
     }
+
+
+def object_tracking_payload(sample: TopicSample) -> dict[str, Any]:
+    objects: list[dict[str, Any]] = []
+    for index, obj in enumerate(getattr(sample.message, "tracked_object_list", []) or []):
+        bbox = _object_bbox_xyxy(obj)
+        object_id = str(getattr(obj, "object_id", "") or "").strip()
+        action = str(getattr(obj, "action", "") or "").strip().lower()
+        if bbox is None or not object_id:
+            continue
+        objects.append(
+            {
+                "index": int(index),
+                "object_id": object_id,
+                "action": action,
+                "bbox_xyxy": [float(value) for value in bbox],
+                "collider": _cube_payload(getattr(obj, "collider", None)),
+            }
+        )
+    return {"objects": objects, "object_count": len(objects)}
+
+
+def segments_payload(sample: TopicSample) -> dict[str, Any]:
+    segments: list[dict[str, Any]] = []
+    for index, segment in enumerate(getattr(sample.message, "segments", []) or []):
+        try:
+            x0 = float(getattr(segment, "xmin"))
+            y0 = float(getattr(segment, "ymin"))
+            x1 = float(getattr(segment, "xmax"))
+            y1 = float(getattr(segment, "ymax"))
+        except (TypeError, ValueError):
+            continue
+        if not np.isfinite([x0, y0, x1, y1]).all() or x1 <= x0 or y1 <= y0:
+            continue
+        segments.append(
+            {
+                "index": int(index),
+                "class_id": str(getattr(segment, "class_id", "") or ""),
+                "probability": float(getattr(segment, "probability", 0.0) or 0.0),
+                "bbox_xyxy": [x0, y0, x1, y1],
+                # Legacy bboxes_ex_msgs stores y in x_masks and x in y_masks.
+                "x_masks": [int(value) for value in (getattr(segment, "x_masks", []) or [])],
+                "y_masks": [int(value) for value in (getattr(segment, "y_masks", []) or [])],
+            }
+        )
+    return {"segments": segments, "segment_count": len(segments)}
+
+
+def _point_payload(point: Any | None) -> dict[str, float] | None:
+    if point is None:
+        return None
+    try:
+        values = {
+            "x": float(getattr(point, "x")),
+            "y": float(getattr(point, "y")),
+            "z": float(getattr(point, "z")),
+        }
+    except (TypeError, ValueError, AttributeError):
+        return None
+    return values if np.isfinite(list(values.values())).all() else None
+
+
+def people_payload(sample: TopicSample) -> dict[str, Any]:
+    people: list[dict[str, Any]] = []
+    for person in getattr(sample.message, "pose_key_points_list", []) or []:
+        joints: list[dict[str, Any]] = []
+        for point_data in getattr(person, "point_data", []) or []:
+            joints.append(
+                {
+                    "body_part_name": str(getattr(point_data, "body_part_name", "") or ""),
+                    "pixel_point": _point_payload(getattr(point_data, "pixel_point", None)),
+                    "projection_point": _point_payload(getattr(point_data, "projection_point", None)),
+                    "score": float(getattr(point_data, "score", 0.0) or 0.0),
+                }
+            )
+        people.append(
+            {
+                "people_id": str(getattr(person, "people_id", "") or ""),
+                "bounding_box": _bbox_payload(getattr(person, "bounding_box", None)),
+                "joints": joints,
+            }
+        )
+    return {"people": people, "people_count": len(people)}
+
+
+def compatibility_payload(topic_key: str, sample: TopicSample) -> dict[str, Any]:
+    if topic_key in {"rgb", "depth"}:
+        return {"available": True}
+    if topic_key == "camera_info":
+        return camera_info_payload(sample)
+    if topic_key == "object_detection":
+        return object_detection_payload(sample)
+    if topic_key == "object_tracking":
+        return object_tracking_payload(sample)
+    if topic_key == "segments":
+        return segments_payload(sample)
+    if topic_key == "people":
+        return people_payload(sample)
+    if topic_key == "contacted":
+        return contacted_payload(sample)
+    raise ValueError(f"unsupported canonical compatibility topic: {topic_key}")
 
 
 def contacted_payload(sample: TopicSample) -> dict[str, Any]:
@@ -357,123 +459,6 @@ def contacted_payload(sample: TopicSample) -> dict[str, Any]:
     }
 
 
-def _bbox_iou(left: Any, right: Any) -> float:
-    try:
-        ax0, ay0, ax1, ay1 = [float(value) for value in left]
-        bx0, by0, bx1, by1 = [float(value) for value in right]
-    except Exception:
-        return 0.0
-    intersection_width = max(0.0, min(ax1, bx1) - max(ax0, bx0))
-    intersection_height = max(0.0, min(ay1, by1) - max(ay0, by0))
-    intersection = intersection_width * intersection_height
-    area_a = max(0.0, ax1 - ax0) * max(0.0, ay1 - ay0)
-    area_b = max(0.0, bx1 - bx0) * max(0.0, by1 - by0)
-    union = area_a + area_b - intersection
-    return float(intersection / union) if union > 0.0 else 0.0
-
-
-def associate_contacted_objects(
-    contact_payload: dict[str, Any] | None,
-    object_payload: dict[str, Any] | None,
-) -> list[dict[str, Any]]:
-    """Associate contact entries with detection masks from the exact frame.
-
-    ``DetectedObject`` has no Shigure object id.  Action equality is therefore
-    used as the primary filter and object-bbox IoU resolves multiple candidates.
-    The result remains advisory; persistent identity must be resolved outside
-    this recorder.
-    """
-
-    contacts = (contact_payload or {}).get("contacts") or []
-    objects = (object_payload or {}).get("objects") or []
-    matches: list[dict[str, Any]] = []
-    for contact_index, contact in enumerate(contacts):
-        if not isinstance(contact, dict):
-            continue
-        contact_action = str(contact.get("action") or "")
-        contact_bbox = ((contact.get("object_bounding_box") or {}).get("xyxy")) if isinstance(contact.get("object_bounding_box"), dict) else None
-        candidates: list[dict[str, Any]] = []
-        for object_index, detected in enumerate(objects):
-            if not isinstance(detected, dict):
-                continue
-            action_match = bool(contact_action and contact_action == str(detected.get("action") or ""))
-            iou = _bbox_iou(contact_bbox, detected.get("bbox_xyxy"))
-            candidates.append(
-                {
-                    "object_detection_index": int(object_index),
-                    "object_detection_id": str(detected.get("object_id") or ""),
-                    "action_match": action_match,
-                    "bbox_iou": iou,
-                }
-            )
-        best = max(candidates, key=lambda item: (bool(item["action_match"]), float(item["bbox_iou"])), default=None)
-        if best is None:
-            match_status = "unmatched"
-        elif best["action_match"] and float(best["bbox_iou"]) > 0.0:
-            match_status = "matched_action_iou"
-        elif best["action_match"]:
-            match_status = "matched_action_only"
-        elif float(best["bbox_iou"]) > 0.0:
-            match_status = "matched_iou_only"
-        else:
-            match_status = "unmatched"
-        matches.append(
-            {
-                "contact_index": int(contact_index),
-                "contact_event_id": str(contact.get("event_id") or ""),
-                "contact_object_id": str(contact.get("object_id") or ""),
-                "contact_action": contact_action,
-                "status": match_status,
-                "candidate_count": len(candidates),
-                "best": best,
-            }
-        )
-    return matches
-
-
-def append_correlated_event(store: ShigureMemoryStore, states: dict[str, TopicState], stamp: RosStamp) -> CachedShigureEvent | None:
-    contacted_state = states.get("contacted")
-    object_state = states.get("object_detection")
-    contacted_sample = contacted_state.exact(stamp) if contacted_state is not None else None
-    object_sample = object_state.exact(stamp) if object_state is not None else None
-    contact_payload = contacted_payload(contacted_sample) if contacted_sample is not None else None
-    object_payload = object_detection_payload(object_sample) if object_sample is not None else None
-
-    contact_count = int((contact_payload or {}).get("contact_count") or 0)
-    object_count = int((object_payload or {}).get("object_count") or 0)
-    # Empty/empty frames are the normal steady-state stream and do not need an
-    # event record.  If either side contains an event, the other side's exact
-    # empty/missing state is retained explicitly.
-    if contact_count == 0 and object_count == 0:
-        return None
-
-    contact_status = "missing" if contact_payload is None else ("explicit_empty" if contact_count == 0 else "present")
-    object_status = "missing" if object_payload is None else ("explicit_empty" if object_count == 0 else "present")
-    matches = associate_contacted_objects(contact_payload, object_payload)
-    received_monotonic = max(
-        [
-            value
-            for value in (
-                contacted_sample.received_monotonic if contacted_sample is not None else None,
-                object_sample.received_monotonic if object_sample is not None else None,
-            )
-            if value is not None
-        ],
-        default=time.monotonic(),
-    )
-    event = CachedShigureEvent(
-        source_stamp=stamp,
-        received_utc=datetime.now(timezone.utc).isoformat(),
-        received_monotonic=float(received_monotonic),
-        contacted_state=contact_status,
-        object_detection_state=object_status,
-        contacted=contact_payload,
-        object_detection=object_payload,
-        contact_object_matches=matches,
-    )
-    return store.append_event(event)
-
-
 def selected_rgb_stamp(rgb_sample: TopicSample) -> RosStamp:
     if rgb_sample.stamp is None:
         raise ValueError("RGB frame is missing its ROS source timestamp")
@@ -487,13 +472,6 @@ def required_ready(states: dict[str, TopicState]) -> bool:
 def latest_required_counts(states: dict[str, TopicState]) -> tuple[int, ...]:
     return tuple(states[key].count for key in REQUIRED_KEYS)
 
-
-def write_status(root: Path, payload: dict[str, Any]) -> None:
-    status = {"updated_at": datetime.now(timezone.utc).isoformat(), **payload}
-    try:
-        write_json(root / "recorder_status.json", status)
-    except Exception as exc:
-        print(f"[shigure_history] failed to write recorder_status.json: {exc}", flush=True)
 
 
 def append_aligned_sample(
@@ -536,6 +514,73 @@ def append_aligned_sample(
         "depth_decode": depth_info,
         "frame": sample.to_dict(),
     }
+
+
+def attach_exact_canonical_rgbd(
+    store: ShigureMemoryStore,
+    states: dict[str, TopicState],
+    frame: CachedShigureFrame,
+    *,
+    rgb_depth_max_delta_seconds: float,
+) -> CachedShigureFrame:
+    """Attach evidence for an event/Segments stamp without nearest-RGB reuse."""
+
+    if not frame.events and not frame.recovery_candidates:
+        return frame
+    existing = store.get_sample(frame.source_stamp)
+    if existing is not None and existing.stamp == frame.source_stamp:
+        return frame
+    diagnostic: dict[str, Any] = {
+        "code": "CANONICAL_RGBD_UNAVAILABLE",
+        "source_stamp": frame.source_stamp.to_dict(),
+    }
+    try:
+        rgb_state = states["rgb"]
+        depth_state = states["depth"]
+        camera_state = states["camera_info"]
+        # Never relabel a nearest RGB image as this canonical frame. Depth and
+        # calibration follow the configured alignment policy.
+        rgb_sample = rgb_state.exact(frame.source_stamp)
+        depth_sample = depth_state.nearest(
+            frame.source_stamp,
+            max_delta_seconds=rgb_depth_max_delta_seconds,
+        )
+        camera_sample = camera_state.nearest(frame.source_stamp, max_delta_seconds=None)
+        if rgb_sample is None or depth_sample is None or camera_sample is None:
+            diagnostic.update(
+                {
+                    "reason": "aligned_topic_missing",
+                    "exact_rgb_available": rgb_sample is not None,
+                    "aligned_depth_available": depth_sample is not None,
+                    "camera_info_available": camera_sample is not None,
+                }
+            )
+            return replace(frame, diagnostics=[*frame.diagnostics, diagnostic])
+        rgb, rgb_info = decode_compressed_image(rgb_sample, rgb_state, color=True)
+        depth, depth_info = decode_compressed_image(depth_sample, depth_state, color=False)
+        sample = CachedRgbdSample(
+            stamp=frame.source_stamp,
+            rgb_bgr=rgb,
+            depth=depth,
+            camera_info=camera_info_payload(camera_sample),
+        )
+        store.append(sample)
+        return replace(
+            frame,
+            diagnostics=[
+                *frame.diagnostics,
+                {
+                    "code": "CANONICAL_RGBD_ATTACHED",
+                    "source_stamp": frame.source_stamp.to_dict(),
+                    "rgb_decode": rgb_info,
+                    "depth_decode": depth_info,
+                    "depth_stamp": depth_sample.stamp.to_dict() if depth_sample.stamp else None,
+                },
+            ],
+        )
+    except Exception as exc:
+        diagnostic.update({"reason": "decode_or_validation_failed", "error": str(exc)})
+        return replace(frame, diagnostics=[*frame.diagnostics, diagnostic])
 
 
 def _read_socket_json(conn: socket.socket) -> dict[str, Any]:
@@ -623,26 +668,82 @@ class ShigureHistorySocketServer:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cache-root", type=Path, default=settings.SHIGURE_HISTORY_CACHE_ROOT)
     parser.add_argument("--socket-server", type=Path, default=settings.SHIGURE_HISTORY_SOCKET_PATH)
     parser.add_argument("--sample-hz", type=float, default=settings.SHIGURE_HISTORY_HZ)
     parser.add_argument("--retention-seconds", type=float, default=settings.SHIGURE_HISTORY_SECONDS)
     parser.add_argument("--max-samples", type=int, default=settings.SHIGURE_HISTORY_MAX_SAMPLES)
-    parser.add_argument("--max-events", type=int, default=settings.SHIGURE_HISTORY_MAX_EVENTS)
+    parser.add_argument("--max-frames", type=int, default=settings.SHIGURE_HISTORY_MAX_FRAMES)
     parser.add_argument("--log-interval", type=float, default=settings.SHIGURE_HISTORY_RECORDER_LOG_INTERVAL)
     parser.add_argument("--rgb-depth-max-delta-seconds", type=float, default=settings.SHIGURE_HISTORY_RGB_DEPTH_MAX_DELTA_SECONDS)
+    debug_mode = parser.add_mutually_exclusive_group()
+    debug_mode.add_argument("--debug-cache-enable", dest="debug_cache_enable", action="store_true")
+    debug_mode.add_argument("--debug-cache-disable", dest="debug_cache_enable", action="store_false")
+    parser.set_defaults(debug_cache_enable=settings.SHIGURE_DEBUG_CACHE_ENABLE)
+    parser.add_argument("--debug-cache-root", type=Path, default=settings.SHIGURE_DEBUG_CACHE_ROOT)
+    parser.add_argument(
+        "--debug-cache-retention-seconds",
+        type=float,
+        default=settings.SHIGURE_DEBUG_CACHE_RETENTION_SECONDS,
+    )
+    parser.add_argument("--debug-cache-max-entries", type=int, default=settings.SHIGURE_DEBUG_CACHE_MAX_ENTRIES)
     return parser
 
 
 def main() -> int:
     args = build_arg_parser().parse_args()
+    validate_debug_cache_limits(
+        retention_seconds=args.debug_cache_retention_seconds,
+        max_entries=args.debug_cache_max_entries,
+    )
     rclpy, Node, QoSProfile, ReliabilityPolicy, get_message = import_ros_modules()
     rclpy.init(args=None)
     node = Node("shigure_memory_history_recorder")
     store = ShigureMemoryStore(
         max_seconds=args.retention_seconds,
         max_samples=args.max_samples,
-        max_events=args.max_events,
+        max_frames=args.max_frames,
+    )
+    debug_ring: ShigureDebugDiskRing | None = None
+    debug_rgbd_order: deque[str] = deque()
+    debug_rgbd_keys: set[str] = set()
+
+    def record_debug_rgbd_once(sample: CachedRgbdSample) -> bool:
+        """Queue one RGB-D write per source stamp without affecting runtime data."""
+
+        if debug_ring is None or not debug_ring.enabled:
+            return False
+        key = sample_key(sample.stamp)
+        if key in debug_rgbd_keys or not debug_ring.record_rgbd(sample):
+            return False
+        limit = max(1, int(args.debug_cache_max_entries))
+        while len(debug_rgbd_order) >= limit:
+            debug_rgbd_keys.discard(debug_rgbd_order.popleft())
+        debug_rgbd_order.append(key)
+        debug_rgbd_keys.add(key)
+        return True
+
+    def append_canonical_frame(frame: CachedShigureFrame) -> CachedShigureFrame:
+        frame = attach_exact_canonical_rgbd(
+            store,
+            states,
+            frame,
+            rgb_depth_max_delta_seconds=args.rgb_depth_max_delta_seconds,
+        )
+        exact_sample = store.get_sample(frame.source_stamp)
+        if exact_sample is not None and exact_sample.stamp == frame.source_stamp:
+            record_debug_rgbd_once(exact_sample)
+        stored = store.append_canonical_frame(frame)
+        if debug_ring is not None:
+            debug_ring.record_canonical(stored)
+        return stored
+
+    adapter = ShigureCompatibilityAdapter(append_canonical_frame)
+    debug_ring = ShigureDebugDiskRing(
+        args.debug_cache_root,
+        enabled=args.debug_cache_enable,
+        retention_seconds=args.debug_cache_retention_seconds,
+        max_entries=args.debug_cache_max_entries,
+        session_id=adapter.source_incarnation_id,
     )
     socket_server = ShigureHistorySocketServer(args.socket_server, store)
     socket_server.start()
@@ -650,7 +751,7 @@ def main() -> int:
     subscriptions = []
     try:
         best_effort_qos = QoSProfile(depth=10, reliability=ReliabilityPolicy.BEST_EFFORT)
-        event_best_effort_qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.BEST_EFFORT)
+        canonical_best_effort_qos = QoSProfile(depth=100, reliability=ReliabilityPolicy.BEST_EFFORT)
         history_len = max(16, int(round(args.sample_hz * max(args.retention_seconds, 1.0))) * 2)
         for key, (topic, type_name) in settings.TOPIC_SPECS.items():
             msg_type = get_message(type_name)
@@ -659,10 +760,24 @@ def main() -> int:
 
             def callback(msg: Any, topic_key: str = key) -> None:
                 sample = states[topic_key].append(msg)
-                if topic_key in settings.CORRELATED_EVENT_TOPIC_KEYS and sample.stamp is not None:
-                    append_correlated_event(store, states, sample.stamp)
+                if topic_key in settings.CANONICAL_TOPIC_KEYS and sample.stamp is not None:
+                    try:
+                        header = getattr(msg, "header", None)
+                        frame_id = str(getattr(header, "frame_id", "") or "")
+                        adapter.ingest(
+                            topic_key,
+                            sample.stamp,
+                            compatibility_payload(topic_key, sample),
+                            frame_id=frame_id,
+                        )
+                    except Exception as exc:
+                        print(
+                            f"[shigure_history] canonical adapter rejected {topic_key} "
+                            f"at {sample.stamp.to_dict()}: {exc}",
+                            flush=True,
+                        )
 
-            qos = event_best_effort_qos if key in settings.CORRELATED_EVENT_TOPIC_KEYS else best_effort_qos
+            qos = canonical_best_effort_qos if key in settings.CANONICAL_TOPIC_KEYS else best_effort_qos
             subscriptions.append(node.create_subscription(msg_type, topic, callback, qos))
 
         interval = 1.0 / max(0.1, float(args.sample_hz))
@@ -685,7 +800,10 @@ def main() -> int:
             "[shigure_history] started memory recorder: "
             f"socket={args.socket_server} sample_hz={args.sample_hz} "
             f"retention_seconds={args.retention_seconds} max_samples={args.max_samples} "
-            f"max_events={args.max_events}",
+            f"max_frames={args.max_frames} "
+            f"source_incarnation_id={adapter.source_incarnation_id} "
+            f"debug_cache={'enabled' if debug_ring.enabled else 'disabled'} "
+            f"debug_retention_seconds={debug_ring.retention_seconds}",
             flush=True,
         )
         for key, state in states.items():
@@ -706,18 +824,12 @@ def main() -> int:
             if not required_ready(states):
                 if now - last_log >= max(1.0, float(args.log_interval)):
                     missing = [key for key in REQUIRED_KEYS if states[key].latest() is None]
-                    optional_missing = [key for key in ("object_detection", "contacted") if states.get(key) is not None and states[key].latest() is None]
+                    optional_missing = [
+                        key
+                        for key in ("object_detection", "object_tracking", "segments", "people", "contacted")
+                        if states.get(key) is not None and states[key].latest() is None
+                    ]
                     print(f"[shigure_history] waiting for required topics: {missing}; optional_missing={optional_missing}", flush=True)
-                    write_status(
-                        args.cache_root,
-                        {
-                            "running": True,
-                            "waiting_for": missing,
-                            "optional_missing": optional_missing,
-                            "topic_counts": {name: state.count for name, state in states.items()},
-                            "store": store.status(),
-                        },
-                    )
                     last_log = now
                 continue
             counts = latest_required_counts(states)
@@ -733,20 +845,10 @@ def main() -> int:
                 last_counts = counts
                 if appended and sample is not None:
                     sample_count += 1
+                    record_debug_rgbd_once(sample)
                     marker_status = None
                     if marker_warmup is not None and not marker_warmup.completed:
                         marker_status = marker_warmup.process_sample(sample)
-                    write_status(
-                        args.cache_root,
-                        {
-                            "running": True,
-                            "last_sample_key": last_key,
-                            "last_sample": sample.to_dict(),
-                            "topic_counts": {name: state.count for name, state in states.items()},
-                            "store": store.status(),
-                            **info,
-                        },
-                    )
                     if now - last_log >= max(1.0, float(args.log_interval)):
                         print(
                             f"[shigure_history] cached samples={sample_count} latest={last_key} "
@@ -762,14 +864,13 @@ def main() -> int:
             except Exception as exc:
                 if now - last_log >= max(1.0, float(args.log_interval)):
                     print(f"[shigure_history] failed to append sample: {exc}", flush=True)
-                    write_status(args.cache_root, {"running": True, "error": str(exc), "store": store.status()})
                     last_log = now
 
-        write_status(args.cache_root, {"running": False, "stopped_at": datetime.now(timezone.utc).isoformat(), "store": store.status()})
         print("[shigure_history] stopped", flush=True)
         return 0
     finally:
         subscriptions.clear()
+        debug_ring.close(timeout=5.0)
         socket_server.stop()
         try:
             node.destroy_node()

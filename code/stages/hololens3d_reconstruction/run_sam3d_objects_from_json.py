@@ -26,8 +26,12 @@ from stages.hololens3d_reconstruction.model_generation_common import (
 )
 from stages.hololens3d_reconstruction.object_alignment_common import resolve_blender_path
 from stage_common import ensure_file, load_stage_task, resolve_python
-from subprocess_stream import stream_command
+from subprocess_stream import GPU_LEASE_USAGE_PID_PREFIX, stream_command
 from task_json import save_task_json
+
+
+def _report_gpu_usage_pid(pid: int) -> None:
+    print(f"{GPU_LEASE_USAGE_PID_PREFIX}{int(pid)}", flush=True)
 
 
 def safe_name(text: str) -> str:
@@ -152,6 +156,7 @@ def run_sam3d_generation(
             cwd=SAM3D_OBJECTS_ROOT,
             env=env,
             check=True,
+            on_start=_report_gpu_usage_pid,
         )
     except Exception as exc:
         raise RuntimeError(str(exc)) from exc
@@ -182,7 +187,11 @@ def run_sam3d_postprocess(
     ]
     print("[DEBUG] running:", " ".join(command), flush=True)
     try:
-        stream_command(command, check=True)
+        stream_command(
+            command,
+            check=True,
+            on_start=_report_gpu_usage_pid,
+        )
     except Exception as exc:
         raise RuntimeError(f"SAM3D Objects postprocess failed: {exc}") from exc
 

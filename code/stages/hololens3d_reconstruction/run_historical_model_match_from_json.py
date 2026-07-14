@@ -18,6 +18,7 @@ from config import (
     DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD,
     DINO_IDENTITY_MATCH_REQUIRE_MARGIN,
     DINO_IDENTITY_MATCH_SECOND_MARGIN,
+    SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
 )
 from stages.hololens3d_reconstruction.model_generation_common import (
     build_model_generation_payload,
@@ -344,6 +345,9 @@ def run_historical_model_match(json_path: Path) -> dict[str, Any]:
             "match_distance": float(DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD),
             "second_margin": float(DINO_IDENTITY_MATCH_SECOND_MARGIN),
             "require_second_margin": bool(DINO_IDENTITY_MATCH_REQUIRE_MARGIN),
+            "candidate_display_object_limit": int(
+                SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS
+            ),
         },
     }
 
@@ -360,13 +364,27 @@ def run_historical_model_match(json_path: Path) -> dict[str, Any]:
 
     current_task_id = str(task.get("task_id") or "").strip()
     rows = list_identity_candidate_captures(limit=int(DINO_IDENTITY_CANDIDATE_LIMIT))
-    best_by_display: dict[str, dict[str, Any]] = {}
+    # The query limit is only a backward scan window. Score exactly one latest
+    # capture for each of at most five distinct display objects so the old
+    # HoloLens matcher cannot bypass the shared candidate bound.
+    latest_distinct_rows: list[dict[str, Any]] = []
+    selected_display_ids: set[str] = set()
     for row in rows:
         if current_task_id and str(row.get("task_id") or "").strip() == current_task_id:
             continue
         display_object_id = str(row.get("display_object_id") or "").strip()
         if not display_object_id:
             raise ValueError("identity candidate is missing display_object_id")
+        if display_object_id in selected_display_ids:
+            continue
+        selected_display_ids.add(display_object_id)
+        latest_distinct_rows.append(row)
+        if len(latest_distinct_rows) >= SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS:
+            break
+
+    best_by_display: dict[str, dict[str, Any]] = {}
+    for row in latest_distinct_rows:
+        display_object_id = str(row.get("display_object_id") or "").strip()
         candidate_embedding = _candidate_embedding(socket_path, row)
         distance = _cosine_distance(current_embedding, candidate_embedding)
         candidate = {
@@ -396,7 +414,7 @@ def run_historical_model_match(json_path: Path) -> dict[str, Any]:
         "reuse_model": False,
         "reason": "no_candidate_below_threshold",
         "candidate_count": len(candidates),
-        "candidate_scores": [_public_candidate(item) for item in candidates[:10]],
+        "candidate_scores": [_public_candidate(item) for item in candidates],
         "current_dinov2": current_embedding,
     }
 

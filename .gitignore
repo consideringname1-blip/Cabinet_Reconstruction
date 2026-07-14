@@ -50,12 +50,10 @@ __pycache__/
 /data/upload/
 /data/model/
 /data/aruco_processing/
-/data/history_placement_requests/
 /data/worker_sockets/
 /data/console_logs/
 /data/aruco/runtime/
 /data/aruco/shigure_marker_history/
-/data/shigure_history_cache/
 /data_backup/
 /.test/
 /tests/
@@ -68,6 +66,8 @@ __pycache__/
 /code/scripts/
 /code/.test/
 /code/tests/
+!/code/tests/
+!/code/tests/test_gpu_lease.py
 ########################################
 # ========== Logs ==========
 ########################################

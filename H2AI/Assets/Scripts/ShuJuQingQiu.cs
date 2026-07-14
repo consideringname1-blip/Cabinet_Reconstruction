@@ -33,6 +33,10 @@ public class ShuJuQingQiu : MonoBehaviour
     const int MARKER_CAPTURE_MIN_SUCCESS = 1;
     const int STARTUP_CAMERA_MARKER_RETRY_FRAMES = 90;
     const float ASYNC_TASK_QUEUE_POLL_INTERVAL_SECONDS = 3.0f;
+    const string DEFAULT_REALTIME_TRACKING_MODE_URL =
+        "http://10.40.1.122:7355/realtime-tracking/mode";
+    const string DEFAULT_REALTIME_TRACKING_STATUS_URL =
+        "http://10.40.1.122:7355/realtime-tracking/status";
 
     public static ShuJuQingQiu initialize;
     // Start is called before the first frame update
@@ -50,8 +54,10 @@ public class ShuJuQingQiu : MonoBehaviour
     [SerializeField] private SelectionPanelManager selectionPanelManager;
 
     [Header("Realtime Tracking Mode")]
-    [SerializeField] private string realtimeTrackingModeUrl = "http://10.40.1.122:7355/realtime-tracking/mode";
-    [SerializeField] private string realtimeTrackingStatusUrl = "http://10.40.1.122:7355/realtime-tracking/status";
+    [SerializeField] private string realtimeTrackingModeUrl =
+        DEFAULT_REALTIME_TRACKING_MODE_URL;
+    [SerializeField] private string realtimeTrackingStatusUrl =
+        DEFAULT_REALTIME_TRACKING_STATUS_URL;
     [SerializeField, Min(0.25f)] private float realtimeTrackingStatusPollIntervalSeconds = 1.0f;
 
     private bool isMarkerCaptureActive = false;
@@ -142,11 +148,80 @@ public class ShuJuQingQiu : MonoBehaviour
         get { return historyTrackingMode; }
     }
 
+    public bool TryGetServerServiceBaseUri(out Uri serviceBaseUri)
+    {
+        serviceBaseUri = null;
+        string[] endpointCandidates =
+        {
+            ResolveRealtimeTrackingStatusUrl(),
+            ResolveRealtimeTrackingModeUrl(),
+        };
+        string[] endpointSuffixes =
+        {
+            "/realtime-tracking/status",
+            "/realtime-tracking/mode",
+        };
+
+        foreach (string endpointCandidate in endpointCandidates)
+        {
+            if (!Uri.TryCreate(
+                    endpointCandidate,
+                    UriKind.Absolute,
+                    out Uri endpointUri)
+                || (endpointUri.Scheme != Uri.UriSchemeHttp
+                    && endpointUri.Scheme != Uri.UriSchemeHttps))
+            {
+                continue;
+            }
+
+            string endpointPath = endpointUri.AbsolutePath.TrimEnd('/');
+            foreach (string endpointSuffix in endpointSuffixes)
+            {
+                if (!endpointPath.EndsWith(
+                        endpointSuffix,
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string servicePath = endpointPath.Substring(
+                    0,
+                    endpointPath.Length - endpointSuffix.Length);
+                UriBuilder builder = new UriBuilder(endpointUri)
+                {
+                    Path = string.IsNullOrEmpty(servicePath)
+                        ? "/"
+                        : servicePath.TrimEnd('/') + "/",
+                    Query = "",
+                    Fragment = "",
+                };
+                serviceBaseUri = builder.Uri;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private string ResolveRealtimeTrackingModeUrl()
+    {
+        return string.IsNullOrWhiteSpace(realtimeTrackingModeUrl)
+            ? DEFAULT_REALTIME_TRACKING_MODE_URL
+            : realtimeTrackingModeUrl.Trim();
+    }
+
+    private string ResolveRealtimeTrackingStatusUrl()
+    {
+        return string.IsNullOrWhiteSpace(realtimeTrackingStatusUrl)
+            ? DEFAULT_REALTIME_TRACKING_STATUS_URL
+            : realtimeTrackingStatusUrl.Trim();
+    }
+
     void Start()
     {
         initialize = this;
         startup_session_id = BuildStartupSessionId();
         StartCoroutine(PlaceStartupCameraMarkerWhenReady());
+        RequestHistoryTrackingMode(false, true);
         realtimeTrackingStatusPollingCoroutine = StartCoroutine(PollRealtimeTrackingStatus());
 
         // Pose sampling is started explicitly by the capture flow.
@@ -743,6 +818,12 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         ClearRealtimeTrackingTransfersForLocalHide();
 
+        HistoryPresentationController historyController =
+            HistoryPresentationController.Instance;
+        if (historyController != null)
+        {
+            historyController.ResumeAllPresentations(false);
+        }
         ObjectEvidenceDisplay evidenceDisplay = ObjectEvidenceDisplay.Instance;
         if (evidenceDisplay != null)
         {
@@ -1177,7 +1258,9 @@ public class ShuJuQingQiu : MonoBehaviour
         }
 
         RuntimeSpatialBoxData spatialBox;
-        if (!TryParseSpatialBoxToken(pendingTask["sam3_spatial_box"], out spatialBox))
+        if (!TryParsePendingSam3SpatialBoxToken(
+                pendingTask["sam3_spatial_box"],
+                out spatialBox))
         {
             return false;
         }
@@ -1201,13 +1284,26 @@ public class ShuJuQingQiu : MonoBehaviour
 
     public void ToggleHistoryTrackingMode()
     {
-        bool enterHistory = historyTrackingMode == HistoryTrackingMode.Live
-            || historyTrackingMode == HistoryTrackingMode.EnteringLive;
-        RequestHistoryTrackingMode(enterHistory, false);
+        HistoryPresentationController controller =
+            HistoryPresentationController.Instance;
+        if (controller == null)
+        {
+            ShowFrontMessage("history_presentation_controller_missing");
+            return;
+        }
+        controller.ToggleAllPresentations();
     }
 
     private void RequestHistoryTrackingMode(bool historyModeEnabled, bool isAutomaticRehandshake)
     {
+        if (historyModeEnabled)
+        {
+            Debug.LogError(
+                "[HISTORY_TRACKING] Server history mode was retired; "
+                + "history is a local presentation state only.");
+            return;
+        }
+
         HistoryTrackingMode targetMode = historyModeEnabled
             ? HistoryTrackingMode.History
             : HistoryTrackingMode.Live;
@@ -1248,9 +1344,7 @@ public class ShuJuQingQiu : MonoBehaviour
             isAutomaticRehandshake = isAutomaticRehandshake,
         };
 
-        string url = string.IsNullOrWhiteSpace(realtimeTrackingModeUrl)
-            ? "http://10.40.1.122:7355/realtime-tracking/mode"
-            : realtimeTrackingModeUrl.Trim();
+        string url = ResolveRealtimeTrackingModeUrl();
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnHistoryTrackingModeFinished);
         request.Tag = context;
         request.AddHeader("Content-Type", "application/json;charset=UTF-8");
@@ -1302,9 +1396,7 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
-        string baseUrl = string.IsNullOrWhiteSpace(realtimeTrackingStatusUrl)
-            ? "http://10.40.1.122:7355/realtime-tracking/status"
-            : realtimeTrackingStatusUrl.Trim();
+        string baseUrl = ResolveRealtimeTrackingStatusUrl();
         string separator = baseUrl.IndexOf('?') >= 0 ? "&" : "?";
         string url = baseUrl + separator + "startup_session_id="
             + Uri.EscapeDataString(startup_session_id);
@@ -1365,6 +1457,7 @@ public class ShuJuQingQiu : MonoBehaviour
         if (response == null || !response.IsSuccess)
         {
             Debug.LogWarning("[HISTORY_TRACKING] status request failed.");
+            BeginAutomaticLiveRehandshake();
             return;
         }
 
@@ -1400,9 +1493,18 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
-        ApplyTrackingSnapshot(root, modeEpoch, coordinateEpoch);
+        if (!ApplyTrackingSnapshot(
+                root,
+                modeEpoch,
+                coordinateEpoch,
+                out int appliedCount))
+        {
+            Debug.LogWarning(
+                "[HISTORY_TRACKING] Rejected status snapshot before applying "
+                + "pose, box, or model-download state.");
+            return;
+        }
         QueueMissingRealtimeTrackingModels(root);
-        RegisterRealtimeTrackingEvidence(root);
     }
 
     private void OnDestroy()
@@ -1457,6 +1559,20 @@ public class ShuJuQingQiu : MonoBehaviour
             return;
         }
 
+        if (!ApplyTrackingSnapshot(
+                root,
+                modeEpoch,
+                coordinateEpoch,
+                out int appliedCount))
+        {
+            historyTrackingMode = context.previousStableMode;
+            Debug.LogWarning(
+                "[HISTORY_TRACKING] Rejected mode snapshot before applying "
+                + "pose, box, or model-download state.");
+            ShowFrontMessage("history_tracking_ERR_invalid_response");
+            return;
+        }
+
         acceptedHistoryTrackingModeEpoch = modeEpoch;
         historyTrackingMode = context.targetMode;
         realtimeTrackingStatusDeliveryEnabled = context.targetMode == HistoryTrackingMode.Live;
@@ -1470,17 +1586,14 @@ public class ShuJuQingQiu : MonoBehaviour
             }
         }
 
-        int appliedCount = ApplyTrackingSnapshot(root, modeEpoch, coordinateEpoch);
         int queuedModelCount = QueueMissingRealtimeTrackingModels(root);
-        int registeredEvidenceCount = RegisterRealtimeTrackingEvidence(root);
         Debug.Log(
             "[HISTORY_TRACKING] mode=" + ReadString(root, "mode")
             + " generation=" + context.requestGeneration.ToString(CultureInfo.InvariantCulture)
             + " mode_epoch=" + modeEpoch.ToString(CultureInfo.InvariantCulture)
             + " coordinate_epoch=" + coordinateEpoch
             + " applied=" + appliedCount.ToString(CultureInfo.InvariantCulture)
-            + " model_downloads=" + queuedModelCount.ToString(CultureInfo.InvariantCulture)
-            + " evidence=" + registeredEvidenceCount.ToString(CultureInfo.InvariantCulture));
+            + " model_downloads=" + queuedModelCount.ToString(CultureInfo.InvariantCulture));
 
         if (!context.isAutomaticRehandshake)
         {
@@ -1514,32 +1627,259 @@ public class ShuJuQingQiu : MonoBehaviour
         return modeEpoch >= 0;
     }
 
-    private int ApplyTrackingSnapshot(JObject response, long modeEpoch, string coordinateEpoch)
+    private bool TryValidateTrackingSnapshot(
+        JObject response,
+        out JArray snapshotItems,
+        out JArray spatialBoxItems)
     {
-        RuntimeModelManager manager = RuntimeModelManager.Instance;
-        if (manager == null || string.IsNullOrEmpty(coordinateEpoch))
+        snapshotItems = response != null
+            ? response["items"] as JArray
+            : null;
+        spatialBoxItems = response != null
+            ? response["spatial_boxes"] as JArray
+            : null;
+        long declaredItemCount = ReadLong(response, "count");
+        long declaredSpatialBoxCount = ReadLong(
+            response,
+            "spatial_box_count");
+        JToken completeToken = response != null
+            ? response["spatial_box_snapshot_complete"]
+            : null;
+        bool spatialBoxSnapshotComplete = completeToken != null
+            && completeToken.Type == JTokenType.Boolean
+            && completeToken.Value<bool>();
+        if (snapshotItems == null
+            || declaredItemCount < 0
+            || declaredItemCount > 5
+            || declaredItemCount != snapshotItems.Count
+            || spatialBoxItems == null
+            || declaredSpatialBoxCount < 0
+            || declaredSpatialBoxCount != spatialBoxItems.Count
+            || !spatialBoxSnapshotComplete)
         {
-            return 0;
+            Debug.LogWarning(
+                "[HISTORY_TRACKING] Ignore incomplete tracking snapshot; "
+                + "no pose, box, or model download was changed.");
+            return false;
         }
 
-        int appliedCount = 0;
-        foreach (JObject item in EnumerateTrackingItems(response))
+        HashSet<string> validatedPoseDisplayObjectIds =
+            new HashSet<string>(StringComparer.Ordinal);
+        foreach (JToken token in snapshotItems)
         {
+            JObject item = token as JObject;
             string displayObjectId = ReadString(item, "display_object_id");
             long modelRevision = ReadLong(item, "model_revision");
             string poseSource = ReadString(item, "pose_source");
             long poseRevision = ReadLong(item, "pose_revision");
             string coordinateSpace = ReadString(item, "coordinate_space");
-            JObject poseObject = item["pose"] as JObject;
-            if (string.IsNullOrEmpty(displayObjectId)
+            JObject poseObject = item != null
+                ? item["pose"] as JObject
+                : null;
+            if (item == null
+                || string.IsNullOrEmpty(displayObjectId)
+                || !validatedPoseDisplayObjectIds.Add(displayObjectId)
                 || modelRevision <= 0
                 || poseRevision <= 0
                 || (poseSource != "hololens" && poseSource != "tracking")
                 || coordinateSpace != "hololens_current_local"
-                || !TryParsePoseToken(poseObject, out Vector3 position, out Quaternion rotation))
+                || !HasExactKeys(
+                    poseObject,
+                    "position",
+                    "rotation_quaternion_xyzw")
+                || !TryParsePoseToken(
+                    poseObject,
+                    out Vector3 ignoredPosition,
+                    out Quaternion ignoredRotation))
             {
-                continue;
+                Debug.LogWarning(
+                    "[HISTORY_TRACKING] Ignore malformed tracking item; "
+                    + "no pose, box, or model download was changed.");
+                return false;
             }
+
+            JProperty modelProperty = item.Property("model");
+            if (modelProperty != null
+                && !TryValidateCanonicalRealtimeModelPayload(
+                    item,
+                    modelProperty.Value as JObject))
+            {
+                Debug.LogWarning(
+                    "[HISTORY_TRACKING] Reject non-canonical model payload "
+                    + "before applying the tracking snapshot.");
+                return false;
+            }
+        }
+
+        HashSet<string> validatedSpatialBoxDisplayObjectIds =
+            new HashSet<string>(StringComparer.Ordinal);
+        foreach (JToken token in spatialBoxItems)
+        {
+            JObject item = token as JObject;
+            string displayObjectId = ReadString(item, "display_object_id");
+            string presence = ReadString(item, "presence");
+            long presenceEpoch = ReadLong(item, "presence_epoch");
+            if (item == null
+                || !HasExactKeys(
+                    item,
+                    "display_object_id",
+                    "presence",
+                    "presence_epoch",
+                    "spatial_box")
+                || string.IsNullOrEmpty(displayObjectId)
+                || (presence != "PRESENT" && presence != "ABSENT")
+                || presenceEpoch < 0
+                || !validatedSpatialBoxDisplayObjectIds.Add(displayObjectId)
+                || !TryParseCurrentSpatialBoxToken(
+                    item["spatial_box"],
+                    out RuntimeSpatialBoxData ignoredBox,
+                    out bool ignoredNoBox,
+                    out long ignoredRevision)
+                || (presence == "ABSENT" && !ignoredNoBox))
+            {
+                Debug.LogWarning(
+                    "[HISTORY_TRACKING] Ignore malformed complete spatial-box "
+                    + "snapshot; no pose, box, or model download was changed.");
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private bool TryValidateCanonicalRealtimeModelPayload(
+        JObject item,
+        JObject model)
+    {
+        if (item == null || model == null)
+        {
+            return false;
+        }
+
+        string displayObjectId = ReadString(item, "display_object_id");
+        long modelRevision = ReadLong(item, "model_revision");
+        string activeTaskId = ReadString(item, "active_model_task_id");
+        string taskId = ReadString(model, "task_id");
+        string modelKey = ReadString(model, "model_key");
+        string fbxUrl = ReadString(model, "fbx_url");
+        JObject pose = item["pose"] as JObject;
+        bool validHttpUrl = Uri.TryCreate(
+                fbxUrl,
+                UriKind.Absolute,
+                out Uri parsedFbxUri)
+            && (parsedFbxUri.Scheme == Uri.UriSchemeHttp
+                || parsedFbxUri.Scheme == Uri.UriSchemeHttps);
+        return HasExactKeys(
+                model,
+                "model_key",
+                "task_id",
+                "display_object_id",
+                "model_revision",
+                "fbx_url",
+                "pose",
+                "coordinate_space")
+            && !string.IsNullOrEmpty(displayObjectId)
+            && modelRevision > 0
+            && !string.IsNullOrEmpty(activeTaskId)
+            && !string.IsNullOrEmpty(taskId)
+            && modelKey == taskId
+            && taskId == activeTaskId
+            && validHttpUrl
+            && ReadString(item, "coordinate_space")
+                == "hololens_current_local"
+            && ReadString(model, "display_object_id") == displayObjectId
+            && ReadLong(model, "model_revision") == modelRevision
+            && ReadString(model, "coordinate_space")
+                == "hololens_current_local"
+            && JToken.DeepEquals(model["pose"], pose);
+    }
+
+    private bool ApplyTrackingSnapshot(
+        JObject response,
+        long modeEpoch,
+        string coordinateEpoch,
+        out int appliedCount)
+    {
+        appliedCount = 0;
+        if (string.IsNullOrEmpty(coordinateEpoch)
+            || !TryValidateTrackingSnapshot(
+                response,
+                out JArray snapshotItems,
+                out JArray spatialBoxItems))
+        {
+            return false;
+        }
+
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
+        if (manager == null)
+        {
+            return false;
+        }
+
+        int resumedHistoryCount =
+            manager.ResumeHistoryPresentationsForCoordinateEpoch(
+                coordinateEpoch);
+        if (resumedHistoryCount > 0)
+        {
+            Debug.Log(
+                "[HISTORY_TRACKING] Coordinate epoch changed to "
+                + coordinateEpoch
+                + "; resumed "
+                + resumedHistoryCount.ToString(CultureInfo.InvariantCulture)
+                + " history presentation(s).");
+        }
+
+        HashSet<string> readySpatialBoxDisplayObjectIds =
+            new HashSet<string>(StringComparer.Ordinal);
+        foreach (JToken token in spatialBoxItems)
+        {
+            JObject item = (JObject)token;
+            string displayObjectId = ReadString(item, "display_object_id");
+            TryParseCurrentSpatialBoxToken(
+                item["spatial_box"],
+                out RuntimeSpatialBoxData liveSpatialBox,
+                out bool liveNoBox,
+                out long liveSpatialBoxRevision);
+            string boxRejectionReason;
+            bool accepted = liveNoBox
+                ? manager.ClearDisplayObjectSpatialBox(
+                    displayObjectId,
+                    liveSpatialBoxRevision,
+                    coordinateEpoch,
+                    out boxRejectionReason)
+                : manager.UpdateDisplayObjectSpatialBox(
+                    displayObjectId,
+                    liveSpatialBoxRevision,
+                    coordinateEpoch,
+                    liveSpatialBox,
+                    out boxRejectionReason);
+            if (!accepted
+                && boxRejectionReason != "spatial_box_revision_duplicate")
+            {
+                Debug.Log(
+                    "[HISTORY_TRACKING] Spatial box rejected for "
+                    + displayObjectId + ": " + boxRejectionReason);
+            }
+            if (manager.HasReadyLiveSpatialBox(
+                displayObjectId,
+                coordinateEpoch))
+            {
+                readySpatialBoxDisplayObjectIds.Add(displayObjectId);
+            }
+        }
+        manager.ReconcileLiveSpatialBoxSnapshot(
+            readySpatialBoxDisplayObjectIds);
+
+        foreach (JToken token in snapshotItems)
+        {
+            JObject item = (JObject)token;
+            string displayObjectId = ReadString(item, "display_object_id");
+            long modelRevision = ReadLong(item, "model_revision");
+            string poseSource = ReadString(item, "pose_source");
+            long poseRevision = ReadLong(item, "pose_revision");
+            TryParsePoseToken(
+                item["pose"],
+                out Vector3 position,
+                out Quaternion rotation);
 
             RuntimeModelPoseData pose = new RuntimeModelPoseData
             {
@@ -1566,7 +1906,7 @@ public class ShuJuQingQiu : MonoBehaviour
                     + displayObjectId + ": " + rejectionReason);
             }
         }
-        return appliedCount;
+        return true;
     }
 
     private int QueueMissingRealtimeTrackingModels(JObject response)
@@ -1592,39 +1932,18 @@ public class ShuJuQingQiu : MonoBehaviour
 
             string displayObjectId = ReadString(item, "display_object_id");
             long modelRevision = ReadLong(item, "model_revision");
-            string taskId = ReadString(model, "task_id");
-            string modelKey = ReadString(model, "model_key");
-            string fbxUrl = ReadString(model, "fbx_url");
-            JObject pose = item["pose"] as JObject;
-            if (!HasExactKeys(
-                    model,
-                    "model_key",
-                    "task_id",
-                    "display_object_id",
-                    "model_revision",
-                    "fbx_url",
-                    "pose",
-                    "coordinate_space")
-                || string.IsNullOrEmpty(displayObjectId)
-                || modelRevision <= 0
-                || string.IsNullOrEmpty(taskId)
-                || string.IsNullOrEmpty(modelKey)
-                || string.IsNullOrEmpty(fbxUrl)
-                || pose == null
-                || ReadString(item, "coordinate_space") != "hololens_current_local"
-                || ReadString(model, "display_object_id") != displayObjectId
-                || ReadLong(model, "model_revision") != modelRevision
-                || ReadString(model, "coordinate_space") != "hololens_current_local"
-                || !JToken.DeepEquals(model["pose"], pose))
+            if (!TryValidateCanonicalRealtimeModelPayload(item, model))
             {
-                Debug.LogWarning("[HISTORY_TRACKING] Reject non-canonical model payload.");
+                Debug.LogError(
+                    "[HISTORY_TRACKING] Validated snapshot lost its canonical "
+                    + "model invariant; skip download.");
                 continue;
             }
             if (manager.TryGetLoadedRecordByDisplayObjectId(
                     displayObjectId,
                     out RuntimeModelRecord loaded)
                 && loaded != null
-                && loaded.ModelRevision == modelRevision)
+                && loaded.ModelRevision >= modelRevision)
             {
                 continue;
             }
@@ -1641,41 +1960,6 @@ public class ShuJuQingQiu : MonoBehaviour
             }
         }
         return queuedCount;
-    }
-
-    private int RegisterRealtimeTrackingEvidence(JObject response)
-    {
-        ObjectEvidenceDisplay display = null;
-        int registeredCount = 0;
-        foreach (JObject item in EnumerateTrackingItems(response))
-        {
-            JObject bodyEvidence = item["body_evidence"] as JObject;
-            if (bodyEvidence == null)
-            {
-                continue;
-            }
-
-            string displayObjectId = ReadString(item, "display_object_id");
-            long bodyRevision = ReadLong(item, "body_revision");
-            if (string.IsNullOrEmpty(displayObjectId)
-                || bodyRevision <= 0
-                || ReadString(bodyEvidence, "display_object_id") != displayObjectId
-                || ReadLong(bodyEvidence, "body_revision") != bodyRevision)
-            {
-                Debug.LogWarning("[ObjectEvidence] Reject non-canonical tracking evidence.");
-                continue;
-            }
-
-            if (display == null)
-            {
-                display = ObjectEvidenceDisplay.Instance;
-            }
-            if (display != null && display.RegisterEvidence(bodyEvidence))
-            {
-                registeredCount++;
-            }
-        }
-        return registeredCount;
     }
 
     private IEnumerable<JObject> EnumerateTrackingItems(JObject response)
@@ -1803,12 +2087,23 @@ public class ShuJuQingQiu : MonoBehaviour
             return false;
         }
 
-        value = new Vector3(
-            arr[0].Value<float>(),
-            arr[1].Value<float>(),
-            arr[2].Value<float>()
-        );
-        return true;
+        try
+        {
+            float x = arr[0].Value<float>();
+            float y = arr[1].Value<float>();
+            float z = arr[2].Value<float>();
+            if (!IsFinite(x) || !IsFinite(y) || !IsFinite(z))
+            {
+                return false;
+            }
+            value = new Vector3(x, y, z);
+            return true;
+        }
+        catch (Exception)
+        {
+            value = Vector3.zero;
+            return false;
+        }
     }
 
     bool TryReadQuaternion(JToken token, out Quaternion value)
@@ -1825,13 +2120,54 @@ public class ShuJuQingQiu : MonoBehaviour
             return false;
         }
 
-        value = new Quaternion(
-            arr[0].Value<float>(),
-            arr[1].Value<float>(),
-            arr[2].Value<float>(),
-            arr[3].Value<float>()
-        );
-        return true;
+        try
+        {
+            float x = arr[0].Value<float>();
+            float y = arr[1].Value<float>();
+            float z = arr[2].Value<float>();
+            float w = arr[3].Value<float>();
+            if (!IsFinite(x)
+                || !IsFinite(y)
+                || !IsFinite(z)
+                || !IsFinite(w))
+            {
+                return false;
+            }
+
+            double sqrMagnitude =
+                ((double)x * x)
+                + ((double)y * y)
+                + ((double)z * z)
+                + ((double)w * w);
+            if (double.IsNaN(sqrMagnitude)
+                || double.IsInfinity(sqrMagnitude)
+                || sqrMagnitude <= 1e-12)
+            {
+                return false;
+            }
+
+            float inverseMagnitude =
+                (float)(1.0 / Math.Sqrt(sqrMagnitude));
+            value = new Quaternion(
+                x * inverseMagnitude,
+                y * inverseMagnitude,
+                z * inverseMagnitude,
+                w * inverseMagnitude);
+            return IsFinite(value.x)
+                && IsFinite(value.y)
+                && IsFinite(value.z)
+                && IsFinite(value.w);
+        }
+        catch (Exception)
+        {
+            value = Quaternion.identity;
+            return false;
+        }
+    }
+
+    private static bool IsFinite(float value)
+    {
+        return !float.IsNaN(value) && !float.IsInfinity(value);
     }
 
     bool TryParsePoseToken(JToken poseToken, out Vector3 position, out Quaternion rotation)
@@ -1854,9 +2190,56 @@ public class ShuJuQingQiu : MonoBehaviour
             && (token.Type == JTokenType.Integer || token.Type == JTokenType.Float);
     }
 
-    bool TryParseSpatialBoxToken(JToken boxToken, out RuntimeSpatialBoxData spatialBox)
+    private bool TryParsePendingSam3SpatialBoxToken(
+        JToken boxToken,
+        out RuntimeSpatialBoxData spatialBox)
     {
         spatialBox = null;
+        JObject box = boxToken as JObject;
+        if (box == null
+            || ReadString(box, "status") != "ready"
+            || ReadString(box, "coordinate_space") != "unity_world"
+            || !TryReadVector3(box["aabb_min_world"], out Vector3 minimum)
+            || !TryReadVector3(box["aabb_max_world"], out Vector3 maximum))
+        {
+            return false;
+        }
+
+        Vector3 min = Vector3.Min(minimum, maximum);
+        Vector3 max = Vector3.Max(minimum, maximum);
+        spatialBox = new RuntimeSpatialBoxData
+        {
+            IsReady = true,
+            Status = "ready",
+            // The legacy pending preview already contains Unity/HoloLens-local
+            // world coordinates. Normalize it at this isolated boundary; this
+            // parser is never used by v2 live/history transport.
+            CoordinateSpace = "hololens_current_local",
+            Revision = 1,
+            CornersWorld = new[]
+            {
+                new Vector3(min.x, min.y, min.z),
+                new Vector3(max.x, min.y, min.z),
+                new Vector3(max.x, max.y, min.z),
+                new Vector3(min.x, max.y, min.z),
+                new Vector3(min.x, min.y, max.z),
+                new Vector3(max.x, min.y, max.z),
+                new Vector3(max.x, max.y, max.z),
+                new Vector3(min.x, max.y, max.z),
+            },
+        };
+        return true;
+    }
+
+    private bool TryParseCurrentSpatialBoxToken(
+        JToken boxToken,
+        out RuntimeSpatialBoxData spatialBox,
+        out bool noBox,
+        out long revision)
+    {
+        spatialBox = null;
+        noBox = false;
+        revision = -1;
         if (boxToken == null || boxToken.Type == JTokenType.Null)
         {
             return false;
@@ -1869,37 +2252,53 @@ public class ShuJuQingQiu : MonoBehaviour
         }
         string status = ReadString(box, "status");
         string coordinateSpace = ReadString(box, "coordinate_space");
-        if (status != "ready" || coordinateSpace != "unity_world")
+        revision = ReadLong(box, "revision");
+        if (status == "no_box")
+        {
+            if (!HasExactKeys(box, "status", "coordinate_space", "revision")
+                || coordinateSpace != "hololens_current_local"
+                || revision <= 0)
+            {
+                return false;
+            }
+            noBox = true;
+            return true;
+        }
+        if (!HasExactKeys(
+                box,
+                "status",
+                "coordinate_space",
+                "revision",
+                "corners_hololens_current_local_m")
+            || status != "ready"
+            || coordinateSpace != "hololens_current_local")
         {
             return false;
         }
 
-        Vector3 minWorld;
-        Vector3 maxWorld;
-        if (!TryReadVector3(box["aabb_min_world"], out minWorld)
-            || !TryReadVector3(box["aabb_max_world"], out maxWorld))
+        JArray corners =
+            box["corners_hololens_current_local_m"] as JArray;
+        if (revision <= 0 || corners == null || corners.Count != 8)
         {
             return false;
         }
 
-        Vector3 sortedMin = new Vector3(
-            Mathf.Min(minWorld.x, maxWorld.x),
-            Mathf.Min(minWorld.y, maxWorld.y),
-            Mathf.Min(minWorld.z, maxWorld.z)
-        );
-        Vector3 sortedMax = new Vector3(
-            Mathf.Max(minWorld.x, maxWorld.x),
-            Mathf.Max(minWorld.y, maxWorld.y),
-            Mathf.Max(minWorld.z, maxWorld.z)
-        );
+        Vector3[] parsedCorners = new Vector3[8];
+        for (int i = 0; i < parsedCorners.Length; i++)
+        {
+            if (!TryReadVector3(corners[i], out parsedCorners[i]))
+            {
+                return false;
+            }
+        }
 
         spatialBox = new RuntimeSpatialBoxData
         {
             IsReady = true,
             Status = status,
             CoordinateSpace = coordinateSpace,
-            AabbMinWorld = sortedMin,
-            AabbMaxWorld = sortedMax,
+            Revision = revision,
+            CornersWorld = parsedCorners,
         };
         return true;
     }

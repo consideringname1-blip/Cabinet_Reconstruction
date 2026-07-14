@@ -49,53 +49,25 @@ public class ModelEventDisplay : MonoBehaviour
 
     public void ToggleForModel(RuntimeModelEventIdentity identity)
     {
-        if (identity == null)
+        if (identity == null
+            || string.IsNullOrEmpty(identity.DisplayObjectId))
         {
+            ShowFrontMessage("history_presentation_model_identity_missing");
             return;
         }
 
-        string key = identity.ModelKey;
-        if (activeHints.ContainsKey(key))
+        if (!string.IsNullOrEmpty(identity.ModelKey))
         {
-            CloseHint(key);
-            ToggleObjectEvidence(identity);
+            CloseHint(identity.ModelKey);
+        }
+        HistoryPresentationController controller =
+            HistoryPresentationController.Instance;
+        if (controller == null)
+        {
+            ShowFrontMessage("history_presentation_controller_missing");
             return;
         }
-
-        bool evidenceHandled = ToggleObjectEvidence(identity);
-        if (evidenceHandled)
-        {
-            return;
-        }
-
-        RuntimeModelRecord record = null;
-        RuntimeModelManager manager = RuntimeModelManager.Instance;
-        bool found = manager != null
-            && !string.IsNullOrEmpty(identity.ModelKey)
-            && manager.TryGetLoadedRecord(identity.ModelKey, out record);
-        if (found)
-        {
-            ShowFrontMessage("model_event_no_evidence");
-            return;
-        }
-
-        if (!evidenceHandled)
-        {
-            ShowFrontMessage("model_event_no_local_hint");
-        }
-    }
-
-    private bool ToggleObjectEvidence(RuntimeModelEventIdentity identity)
-    {
-        if (identity == null)
-        {
-            return false;
-        }
-
-        ObjectEvidenceDisplay evidenceDisplay = ObjectEvidenceDisplay.Instance;
-        return evidenceDisplay != null
-            && !string.IsNullOrEmpty(identity.DisplayObjectId)
-            && evidenceDisplay.ToggleEvidenceForModel(identity.DisplayObjectId);
+        controller.OnModelClicked(identity.DisplayObjectId);
     }
 
     public void ShowForModel(RuntimeModelInstance instance, string message)

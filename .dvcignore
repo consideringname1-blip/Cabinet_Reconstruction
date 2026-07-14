@@ -1,5 +1,8 @@
 # Add patterns of files dvc should ignore, which could improve
 # the performance. Learn more at
 # https://dvc.org/doc/user-guide/dvcignore
-# Shigure overlay diagnostics keep images/json; recorder log is live.
-data/shigure_mask_overlay_checks/**/shigure_history_recorder.log
+
+# SQLite runtime sidecars are transient and must never enter the stable
+# database directory snapshot.
+data/database/*.db-wal
+data/database/*.db-shm

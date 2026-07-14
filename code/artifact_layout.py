@@ -27,8 +27,10 @@ CONSOLE_OUTPUT_LOG_ROOT = (
 if not CONSOLE_OUTPUT_LOG_ROOT.is_absolute():
     CONSOLE_OUTPUT_LOG_ROOT = PROJECT_ROOT / CONSOLE_OUTPUT_LOG_ROOT
 
-SHIGURE_HISTORY_CACHE_ROOT = DATA_ROOT / "shigure_history_cache"
 SHIGURE_HISTORY_SOCKET_PATH = WORKER_SOCKET_ROOT / "shigure_history.sock"
+SHIGURE_EVENT_ROOT = DATA_ROOT / "shigure_events"
+SHIGURE_DEBUG_CACHE_ROOT = DATA_ROOT / "shigure_debug_cache"
+IDENTITY_REFERENCE_ROOT = DATA_ROOT / "identity_references"
 ARUCO_DATA_ROOT = DATA_ROOT / "aruco"
 ARUCO_REFERENCE_ROOT = ARUCO_DATA_ROOT / "reference"
 ARUCO_RUNTIME_ROOT = ARUCO_DATA_ROOT / "runtime"
@@ -39,7 +41,6 @@ ARUCO_REFERENCE_MARKER_IMAGE_PATH = ARUCO_REFERENCE_ROOT / "ar_marker_7x7_1.png"
 
 TASK_DATA_ROOT = DATA_ROOT / "model"
 ARUCO_PROCESSING_ROOT = DATA_ROOT / "aruco_processing"
-REALTIME_TRACKING_ROOT = DATA_ROOT / "realtime_tracking"
 
 ARTIFACT_ROOT_DIRS = (
     DATA_ROOT,
@@ -47,14 +48,14 @@ ARTIFACT_ROOT_DIRS = (
     WORKER_SOCKET_ROOT,
     DATABASE_ROOT,
     CONSOLE_OUTPUT_LOG_ROOT,
-    SHIGURE_HISTORY_CACHE_ROOT,
+    SHIGURE_EVENT_ROOT,
+    IDENTITY_REFERENCE_ROOT,
     ARUCO_DATA_ROOT,
     ARUCO_REFERENCE_ROOT,
     ARUCO_RUNTIME_ROOT,
     SHIGURE_MARKER_HISTORY_ROOT,
     TASK_DATA_ROOT,
     ARUCO_PROCESSING_ROOT,
-    REALTIME_TRACKING_ROOT,
 )
 
 
@@ -164,18 +165,6 @@ MODEL_WORKER_FILES = {
 MODEL_RESULT_FILES = {
     "model.final_fbx": "05_export_final.fbx",
     "identity.decision": "06_identity_decision.json",
-    "taken.result": "07_taken_detection_result.json",
-    "taken.result_rgb": "07_taken_detection_result_rgb.png",
-    "taken.result_depth": "07_taken_detection_result_depth.png",
-    "taken.object_mask": "07_taken_detection_object_mask.png",
-    "taken.camera_info": "07_taken_detection_camera_info.json",
-    "taken.object_detection": "07_taken_detection_object_detection.json",
-    "taken.marker_pose": "07_taken_detection_marker_6d_pose.json",
-    "body.result": "08_sam3d_body_result.json",
-    "body.people": "08_sam3d_body_people.json",
-    "body.selected_obj": "08_sam3d_body_selected_person.obj",
-    "body.selected_fbx": "08_sam3d_body_selected_person.fbx",
-    "body.subject_crop": "08_sam3d_body_subject_crop.png",
 }
 
 MODEL_DEBUG_FILES = {

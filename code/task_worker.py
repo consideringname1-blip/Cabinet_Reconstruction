@@ -8,24 +8,28 @@ import sys
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional
 
-from subprocess_stream import stream_command
+from subprocess_stream import parse_gpu_lease_usage_pid_line, stream_command
 
 from config import (
     DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC,
+    FOUNDATIONPOSE_POOL_SIZE,
     FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
+    GPU_LEASE_WAIT_TIMEOUT_SEC,
     MODEL_SERVICE_PREWARM_ENABLE,
     INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
     INSTANTMESH_GPU_IDS,
     MODEL_GENERATION_BACKEND,
     SHIGURE_HISTORY_RECORDING_ENABLE,
+    SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
     SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
 )
-from artifact_layout import SHIGURE_HISTORY_CACHE_ROOT, SHIGURE_HISTORY_SOCKET_PATH, WORKER_SOCKET_ROOT
+from artifact_layout import SHIGURE_HISTORY_SOCKET_PATH, WORKER_SOCKET_ROOT
 from path_config import (
     ARUCO_DETECT_STAGE_PY,
     ARUCO_DETECT_STAGE_RUN,
@@ -63,22 +67,18 @@ from path_config import (
     SAM3D_OBJECTS_ROOT,
     SAM3D_OBJECTS_STAGE_PY,
     SAM3D_OBJECTS_STAGE_RUN,
-    SAM3D_BODY_MESH_STAGE_PY,
-    SAM3D_BODY_MESH_STAGE_RUN,
     SHIGURE_HISTORY_RECORDER_RUN,
     SHIGURE_HISTORY_RECORDER_STAGE_PY,
 )
 from stages.hololens3d_reconstruction.settings import OBJECT_ALIGNMENT_MODE
 from task_db import (
+    add_object_identity_reference,
     create_task as create_task_record,
     get_task_stage_runs,
     get_task_timing_events,
     get_ai_model_timings_for_task,
-    get_auxiliary_jobs,
-    list_auxiliary_jobs,
     get_tasks_for_startup_statuses,
     get_task_by_task_id,
-    get_display_object_state,
     get_unfinished_tasks,
     get_unsynced_completed_tasks,
     initialize_task_table,
@@ -86,16 +86,14 @@ from task_db import (
     mark_task_stage_failed,
     mark_task_stage_started,
     record_ai_model_timing,
+    upsert_identity_sync_job,
     update_task_status,
     update_task_aruco_coordinate_synced,
-    upsert_auxiliary_job,
-    set_latest_body_revision,
 )
 from task_json import (
     ensure_task_id_in_json,
     load_task_json,
     resolve_task_json_path_from_record,
-    resolve_project_path,
     save_task_json,
 )
 from console_output_log import install_console_output_log
@@ -105,17 +103,16 @@ from foundationpose_dispatcher import (
     FoundationPoseDispatcher,
     request_socket as request_foundationpose_dispatcher,
 )
-from stages.shigure_history.realtime_tracking import coordinator as realtime_tracking_coordinator
-from stages.shigure_history.shigure_realtime_tracking import ShigureRealtimeTrackingEngine
-from stages.shigure_history.shigure_auxiliary_branch import ShigureAuxiliaryBranchManager
-from stages.shigure_history.cache import ShigureRgbdCache
+from stages.shigure_history.shigure_runtime_v2 import ShigureRuntimeEngine
 
 install_console_output_log()
 
-try:
-    from gpu_budget import cuda_env_for_service
-except Exception:
-    cuda_env_for_service = None
+from gpu_budget import service_budget
+from gpu_lease import (
+    GpuLease,
+    GpuUnavailableError,
+    get_default_gpu_lease_manager,
+)
 
 
 STAGE_ORDER = [
@@ -155,6 +152,8 @@ class SocketStageService:
         idle_timeout_sec: int,
         echo_output: bool,
         env_overrides: Mapping[str, str] | Callable[[], Mapping[str, str] | None] | None = None,
+        gpu_service: str | None = None,
+        gpu_allowed_ids: tuple[str, ...] | None = None,
     ) -> None:
         self.name = name
         self.python_path = python_path
@@ -165,8 +164,13 @@ class SocketStageService:
         self.echo_output = bool(echo_output)
         self.env_overrides = env_overrides
         self._lock = threading.RLock()
+        self._startup_condition = threading.Condition(self._lock)
+        self._starting = False
+        self.gpu_service = str(gpu_service).strip() if gpu_service else None
+        self.gpu_allowed_ids = gpu_allowed_ids
         self._process: subprocess.Popen[str] | None = None
         self._reader_thread: threading.Thread | None = None
+        self._gpu_lease: GpuLease | None = None
         self._output_tail: deque[str] = deque(maxlen=80)
         self._active_requests = 0
         self._last_used_at = 0.0
@@ -177,6 +181,8 @@ class SocketStageService:
         task_id: str | None = None,
         stage_name: str | None = None,
         reason: str | None = None,
+        gpu_wait: bool = True,
+        gpu_timeout: float | None = None,
     ) -> None:
         started = False
         start_wall = time.time()
@@ -191,9 +197,12 @@ class SocketStageService:
         if reason:
             detail["reason"] = reason
         try:
-            with self._lock:
+            with self._startup_condition:
+                while self._starting:
+                    self._startup_condition.wait()
                 if self._is_running_locked() and self.socket_path.exists():
                     return
+                self._starting = True
                 started = True
                 self._stop_locked()
                 WORKER_SOCKET_ROOT.mkdir(parents=True, exist_ok=True)
@@ -204,6 +213,28 @@ class SocketStageService:
 
                 env = os.environ.copy()
                 env.update(self._resolve_env_overrides())
+                if self.gpu_service:
+                    budget = service_budget(self.gpu_service)
+                    lease = get_default_gpu_lease_manager().acquire(
+                        budget.required_mib,
+                        service=self.gpu_service,
+                        allowed_gpu_ids=self.gpu_allowed_ids,
+                        wait=bool(gpu_wait),
+                        timeout=(
+                            GPU_LEASE_WAIT_TIMEOUT_SEC
+                            if gpu_timeout is None
+                            else float(gpu_timeout)
+                        ),
+                        metadata={"worker": self.name, "lifetime": "process"},
+                    )
+                    self._gpu_lease = lease
+                    env.update(lease.cuda_env)
+                    detail["gpu_lease"] = {
+                        "lease_id": lease.lease_id,
+                        "gpu_id": lease.gpu_id,
+                        "required_mib": lease.required_mib,
+                        "lifetime": "process",
+                    }
                 env.setdefault("PYTHONUNBUFFERED", "1")
                 command = [
                     _resolve_python(self.python_path),
@@ -222,6 +253,9 @@ class SocketStageService:
                     bufsize=1,
                 )
                 detail["pid"] = self._process.pid
+                if self._gpu_lease is not None:
+                    self._gpu_lease.bind_pid(self._process.pid)
+                    detail["gpu_lease"]["pid"] = self._process.pid
                 self._reader_thread = threading.Thread(
                     target=self._consume_output,
                     args=(self._process,),
@@ -237,9 +271,14 @@ class SocketStageService:
         except Exception as exc:
             status = "failed"
             error_message = str(exc)
+            with self._lock:
+                self._stop_locked()
             raise
         finally:
             if started:
+                with self._startup_condition:
+                    self._starting = False
+                    self._startup_condition.notify_all()
                 try:
                     record_ai_model_timing(
                         service_name=self.name,
@@ -329,6 +368,10 @@ class SocketStageService:
                 print(f"[worker] stopping idle {self.name} service")
                 self._stop_locked()
 
+    def is_ready(self) -> bool:
+        with self._lock:
+            return self._is_running_locked() and self.socket_path.exists()
+
     def stop(self) -> None:
         with self._lock:
             self._stop_locked()
@@ -364,27 +407,33 @@ class SocketStageService:
 
     def _stop_locked(self) -> None:
         process = self._process
-        if process is None:
-            return
-        if process.poll() is None:
-            try:
-                _send_socket_request(self.socket_path, {"action": "shutdown"}, timeout=2.0)
-            except Exception:
-                pass
-            try:
-                process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                process.terminate()
+        lease = self._gpu_lease
+        try:
+            if process is not None and process.poll() is None:
+                try:
+                    _send_socket_request(
+                        self.socket_path, {"action": "shutdown"}, timeout=2.0
+                    )
+                except Exception:
+                    pass
                 try:
                     process.wait(timeout=5.0)
                 except subprocess.TimeoutExpired:
-                    process.kill()
-                    process.wait(timeout=5.0)
-        self._process = None
-        try:
-            self.socket_path.unlink()
-        except FileNotFoundError:
-            pass
+                    process.terminate()
+                    try:
+                        process.wait(timeout=5.0)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5.0)
+        finally:
+            self._process = None
+            self._gpu_lease = None
+            if lease is not None:
+                lease.release()
+            try:
+                self.socket_path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def _send_socket_request(
@@ -473,19 +522,15 @@ def _start_shigure_history_recorder(*, force: bool = False) -> None:
 
     env = os.environ.copy()
     env.setdefault("PYTHONUNBUFFERED", "1")
-    env.setdefault("SHIGURE_HISTORY_CACHE_ROOT", str(SHIGURE_HISTORY_CACHE_ROOT))
     env.setdefault("SHIGURE_HISTORY_SOCKET_PATH", str(SHIGURE_HISTORY_SOCKET_PATH))
     command = [
         _resolve_python(SHIGURE_HISTORY_RECORDER_STAGE_PY),
         str(SHIGURE_HISTORY_RECORDER_RUN),
-        "--cache-root",
-        str(SHIGURE_HISTORY_CACHE_ROOT),
         "--socket-server",
         str(SHIGURE_HISTORY_SOCKET_PATH),
     ]
     try:
         WORKER_SOCKET_ROOT.mkdir(parents=True, exist_ok=True)
-        SHIGURE_HISTORY_CACHE_ROOT.mkdir(parents=True, exist_ok=True)
         _shutdown_existing_shigure_history_socket_owner()
         try:
             SHIGURE_HISTORY_SOCKET_PATH.unlink()
@@ -545,19 +590,6 @@ def _stop_shigure_history_recorder() -> None:
 
 
 
-def _service_gpu_env(service_name: str, allowed_ids: tuple[str, ...] | None = None) -> dict[str, str]:
-    if cuda_env_for_service is None:
-        return {}
-    env, placement = cuda_env_for_service(service_name, allowed_ids=allowed_ids)
-    required = placement.required_mib + placement.headroom_mib
-    print(
-        f"[worker] gpu placement {service_name}: {placement.reason} "
-        f"(budget={placement.required_mib}MiB headroom={placement.headroom_mib}MiB required={required}MiB)"
-    )
-    if placement.gpu is not None and not placement.fits:
-        print(f"[worker] warning: {service_name} may not fit on GPU {placement.gpu.index}")
-    return dict(env)
-
 
 _sam3mask_service = SocketStageService(
     name="sam3mask",
@@ -567,7 +599,7 @@ _sam3mask_service = SocketStageService(
     socket_name="sam3mask.sock",
     idle_timeout_sec=SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
     echo_output=False,
-    env_overrides=lambda: _service_gpu_env("sam3_image_mask"),
+    gpu_service="sam3_image_mask",
 )
 _instantmesh_service = SocketStageService(
     name="instantmesh",
@@ -577,22 +609,28 @@ _instantmesh_service = SocketStageService(
     socket_name="instantmesh.sock",
     idle_timeout_sec=INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
     echo_output=False,
-    env_overrides=lambda: _service_gpu_env("instantmesh", INSTANTMESH_GPU_IDS or None),
+    gpu_service="instantmesh",
+    gpu_allowed_ids=INSTANTMESH_GPU_IDS or None,
 )
-_foundationpose_service = SocketStageService(
-    name="foundationpose",
-    python_path=FOUNDATIONPOSE_ALIGNMENT_PY,
-    script_path=FOUNDATIONPOSE_ALIGNMENT_RUN,
-    cwd=FOUNDATIONPOSE_ALIGNMENT_RUN.parent,
-    socket_name="foundationpose.sock",
-    idle_timeout_sec=FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
-    echo_output=False,
-    env_overrides=lambda: _service_gpu_env("foundationpose"),
+_foundationpose_services = tuple(
+    SocketStageService(
+        name=f"foundationpose-{worker_index}",
+        python_path=FOUNDATIONPOSE_ALIGNMENT_PY,
+        script_path=FOUNDATIONPOSE_ALIGNMENT_RUN,
+        cwd=FOUNDATIONPOSE_ALIGNMENT_RUN.parent,
+        socket_name=f"foundationpose-{worker_index}.sock",
+        idle_timeout_sec=FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
+        echo_output=False,
+        gpu_service="foundationpose",
+    )
+    for worker_index in range(FOUNDATIONPOSE_POOL_SIZE)
 )
 _foundationpose_dispatcher = FoundationPoseDispatcher(
     socket_path=WORKER_SOCKET_ROOT / "foundationpose_dispatcher.sock",
-    backend_socket_path=_foundationpose_service.socket_path,
+    backend_socket_paths=[service.socket_path for service in _foundationpose_services],
 )
+_foundationpose_pool_start_lock = threading.RLock()
+_foundationpose_pool_expansion_thread: threading.Thread | None = None
 _dinov2_identity_service = SocketStageService(
     name="dinov2_identity",
     python_path=DINO_IDENTITY_STAGE_PY,
@@ -601,20 +639,127 @@ _dinov2_identity_service = SocketStageService(
     socket_name="dinov2_identity.sock",
     idle_timeout_sec=DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC,
     echo_output=False,
-    env_overrides=lambda: _service_gpu_env("dinov2_identity"),
+    gpu_service="dinov2_identity",
 )
+_shigure_runtime_engine: ShigureRuntimeEngine | None = None
 
 
 def _request_realtime_dinov2(payload: dict[str, Any]) -> dict[str, Any]:
     return _dinov2_identity_service.request(payload, stage_name="shigure_identity")
 
 
+def _foundationpose_ready_count() -> int:
+    return sum(1 for service in _foundationpose_services if service.is_ready())
+
+
+def _expand_foundationpose_pool(
+    *,
+    stage_name: str,
+    reason: str,
+    task_id: str | None,
+) -> None:
+    """Best-effort pool expansion that never blocks a business request."""
+
+    for service in _foundationpose_services:
+        if _shutdown_requested:
+            return
+        if service.is_ready():
+            continue
+        try:
+            service.ensure_started(
+                task_id=task_id,
+                stage_name=stage_name,
+                reason=reason,
+                gpu_wait=False,
+                gpu_timeout=0.0,
+            )
+        except GpuUnavailableError as exc:
+            print(
+                f"[worker] FoundationPose pool remains at "
+                f"{_foundationpose_ready_count()}/"
+                f"{len(_foundationpose_services)} workers: {exc}"
+            )
+            if _foundationpose_ready_count() == 0:
+                # All pool members have the same budget/placement policy. If
+                # the first reservation cannot fit, probing later members can
+                # only race a foreground request for the next free slot.
+                return
+            continue
+        except Exception as exc:
+            print(
+                f"[worker] optional FoundationPose backend {service.name} "
+                f"failed; pool remains at {_foundationpose_ready_count()}/"
+                f"{len(_foundationpose_services)} workers: {exc}"
+            )
+
+
+def _schedule_foundationpose_pool_expansion(
+    *,
+    stage_name: str,
+    reason: str,
+    task_id: str | None,
+) -> None:
+    global _foundationpose_pool_expansion_thread
+    with _foundationpose_pool_start_lock:
+        existing = _foundationpose_pool_expansion_thread
+        if existing is not None and existing.is_alive():
+            return
+        _foundationpose_pool_expansion_thread = threading.Thread(
+            target=_expand_foundationpose_pool,
+            kwargs={
+                "stage_name": stage_name,
+                "reason": reason,
+                "task_id": task_id,
+            },
+            daemon=True,
+            name="foundationpose-pool-expansion",
+        )
+        _foundationpose_pool_expansion_thread.start()
+
+
+def _ensure_foundationpose_pool_started(
+    *,
+    stage_name: str,
+    reason: str,
+    task_id: str | None = None,
+    wait_for_first: bool = True,
+) -> None:
+    _foundationpose_dispatcher.start()
+    if not wait_for_first:
+        _schedule_foundationpose_pool_expansion(
+            stage_name=stage_name,
+            reason=reason,
+            task_id=task_id,
+        )
+        return
+
+    if _foundationpose_ready_count() == 0:
+        # Only the first backend belongs on the request's critical path. The
+        # service startup condition coalesces concurrent callers onto the same
+        # launch instead of killing and restarting an initializing process.
+        first_service = _foundationpose_services[0]
+        first_service.ensure_started(
+            task_id=task_id,
+            stage_name=stage_name,
+            reason=reason,
+            gpu_wait=True,
+            gpu_timeout=None,
+        )
+    if _foundationpose_ready_count() == 0:
+        raise RuntimeError("FoundationPose pool has no ready backend")
+
+    _schedule_foundationpose_pool_expansion(
+        stage_name=stage_name,
+        reason=reason,
+        task_id=task_id,
+    )
+
+
 def _request_realtime_foundationpose(payload: dict[str, Any], display_object_id: str) -> dict[str, Any]:
-    _foundationpose_service.ensure_started(
+    _ensure_foundationpose_pool_started(
         stage_name="realtime_tracking",
         reason=f"Shigure realtime tracking for {display_object_id}",
     )
-    _foundationpose_dispatcher.start()
     request_payload = dict(payload)
     request_payload["dispatcher_priority"] = PRIORITY_REALTIME_TRACKING
     request_payload["dispatcher_coalesce_key"] = f"tracking:{display_object_id}"
@@ -625,13 +770,31 @@ def _request_realtime_foundationpose(payload: dict[str, Any], display_object_id:
     )
 
 
-_realtime_tracking_engine = ShigureRealtimeTrackingEngine(
-    coordinator=realtime_tracking_coordinator,
-    dino_request=_request_realtime_dinov2,
-    foundationpose_request=_request_realtime_foundationpose,
-)
-_auxiliary_branch_manager: ShigureAuxiliaryBranchManager | None = None
-_auxiliary_branch_lock = threading.RLock()
+def _start_shigure_runtime_engine() -> None:
+    global _shigure_runtime_engine
+    if _shutdown_requested or not SHIGURE_HISTORY_RECORDING_ENABLE:
+        return
+    if _shigure_runtime_engine is not None:
+        return
+    engine = ShigureRuntimeEngine(
+        dino_request=_request_realtime_dinov2,
+        foundationpose_request=_request_realtime_foundationpose,
+    )
+    engine.start()
+    _shigure_runtime_engine = engine
+    print(f"[worker] started Shigure runtime v2: session={engine.runtime_session_id}")
+
+
+def _stop_shigure_runtime_engine() -> None:
+    global _shigure_runtime_engine
+    engine = _shigure_runtime_engine
+    _shigure_runtime_engine = None
+    if engine is None:
+        return
+    try:
+        engine.stop()
+    except Exception as exc:
+        print(f"[worker] failed to stop Shigure runtime v2: {exc}")
 
 
 def _queue_snapshot_no_lock() -> list[str]:
@@ -738,10 +901,22 @@ def _prewarm_model_pipeline_services(reason: str) -> None:
         except Exception as exc:
             print(f"[worker] failed to prewarm {service.name}: {exc}")
 
+    def _start_foundationpose_pool() -> None:
+        if _shutdown_requested:
+            return
+        try:
+            print(f"[worker] prewarming elastic FoundationPose pool after {reason}")
+            _ensure_foundationpose_pool_started(
+                stage_name="prewarm",
+                reason=f"prewarm:{reason}",
+                wait_for_first=False,
+            )
+        except Exception as exc:
+            print(f"[worker] failed to prewarm FoundationPose pool: {exc}")
+
     def _run() -> None:
         services = [
             _sam3mask_service,
-            _foundationpose_service,
             _dinov2_identity_service,
         ]
         if MODEL_GENERATION_BACKEND == "instantmesh":
@@ -756,6 +931,13 @@ def _prewarm_model_pipeline_services(reason: str) -> None:
             )
             thread.start()
             starters.append(thread)
+        foundationpose_thread = threading.Thread(
+            target=_start_foundationpose_pool,
+            daemon=True,
+            name="prewarm-foundationpose-pool",
+        )
+        foundationpose_thread.start()
+        starters.append(foundationpose_thread)
         for thread in starters:
             thread.join()
 
@@ -813,6 +995,8 @@ def _run_python_script(
     cwd: Path,
     *,
     env: Mapping[str, str] | None = None,
+    on_start: Callable[[int], None] | None = None,
+    on_output_line: Callable[[str], None] | None = None,
 ) -> None:
     stream_command(
         [_resolve_python(python_path), str(script_path), str(json_path)],
@@ -820,6 +1004,8 @@ def _run_python_script(
         env=env,
         check=True,
         echo=False,
+        on_start=on_start,
+        on_output_line=on_output_line,
     )
 
 
@@ -877,41 +1063,56 @@ def _run_historical_model_match(json_path: Path, context: StageWorkerContext | N
     )
 
 
-def _model_generation_env(context: StageWorkerContext | None) -> dict[str, str] | None:
-    if MODEL_GENERATION_BACKEND == "sam3d_objects":
-        selected = _service_gpu_env("sam3d_objects")
-        if selected:
-            env = os.environ.copy()
-            env.update(selected)
-            return env
-    if context is None or not context.gpu_id:
-        return None
-    env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = str(context.gpu_id)
-    return env
 
 
 def _run_model_generation(json_path: Path, context: StageWorkerContext | None = None) -> None:
-    env = _model_generation_env(context)
     task_id = _task_id_from_json_path(json_path)
     if MODEL_GENERATION_BACKEND == "sam3d_objects":
         start_wall = time.time()
         start_perf = time.perf_counter()
         status = "completed"
         error_message = None
+        lease: GpuLease | None = None
         try:
+            budget = service_budget("sam3d_objects")
+            lease = get_default_gpu_lease_manager().acquire(
+                budget.required_mib,
+                service="sam3d_objects",
+                wait=True,
+                timeout=GPU_LEASE_WAIT_TIMEOUT_SEC,
+                metadata={
+                    "task_id": task_id,
+                    "stage": "model_generation",
+                    "lifetime": "task",
+                },
+            )
+            env = os.environ.copy()
+            env.update(lease.cuda_env)
+
+            def bind_sam3d_usage_pid(line: str) -> None:
+                usage_pid = parse_gpu_lease_usage_pid_line(line)
+                if usage_pid is not None:
+                    lease.bind_usage_pid(usage_pid)
+
             _run_python_script(
                 python_path=SAM3D_OBJECTS_STAGE_PY,
                 script_path=SAM3D_OBJECTS_STAGE_RUN,
                 json_path=json_path,
                 cwd=SAM3D_OBJECTS_ROOT,
                 env=env,
+                on_start=lambda wrapper_pid: lease.bind_pid(
+                    wrapper_pid,
+                    tracks_usage=False,
+                ),
+                on_output_line=bind_sam3d_usage_pid,
             )
         except Exception as exc:
             status = "failed"
             error_message = str(exc)
             raise
         finally:
+            if lease is not None:
+                lease.release()
             try:
                 record_ai_model_timing(
                     service_name="sam3d_objects",
@@ -922,23 +1123,23 @@ def _run_model_generation(json_path: Path, context: StageWorkerContext | None = 
                     duration_ms=(time.perf_counter() - start_perf) * 1000.0,
                     started_at_unix=start_wall,
                     completed_at_unix=time.time(),
-                    detail={"backend": "sam3d_objects", "script_path": str(SAM3D_OBJECTS_STAGE_RUN)},
+                    detail={
+                        "backend": "sam3d_objects",
+                        "script_path": str(SAM3D_OBJECTS_STAGE_RUN),
+                        "gpu_lifetime": "task",
+                    },
                     error_message=error_message,
                 )
             except Exception as db_exc:
                 print(f"[worker] failed to record sam3d_objects task timing: {db_exc}")
         return
 
-    _instantmesh_service.ensure_started(
-        task_id=task_id,
-        stage_name="model_generation",
-        reason="InstantMesh model generation",
-    )
     _instantmesh_service.request(
         {"json_path": str(json_path)},
         task_id=task_id,
         stage_name="model_generation",
     )
+
 
 
 def _run_depthpointcloud(json_path: Path, context: StageWorkerContext | None = None) -> None:
@@ -996,12 +1197,11 @@ def _run_object_alignment(json_path: Path, context: StageWorkerContext | None = 
     env = None
     if OBJECT_ALIGNMENT_MODE == "foundationpose":
         task_id = _task_id_from_json_path(json_path)
-        _foundationpose_service.ensure_started(
+        _ensure_foundationpose_pool_started(
             task_id=task_id,
             stage_name="object_alignment",
             reason="foundationpose object alignment",
         )
-        _foundationpose_dispatcher.start()
         env = os.environ.copy()
         env["FOUNDATIONPOSE_WORKER_SOCKET"] = str(_foundationpose_dispatcher.socket_path)
     _run_python_script(
@@ -1116,161 +1316,162 @@ def _run_model_bounds(json_path: Path, context: StageWorkerContext | None = None
         print(f"[worker] model_bounds degraded; model delivery continues: {summary}")
 
 
-def _run_display_identity(json_path: Path, context: StageWorkerContext | None = None) -> None:
-    _run_python_script(
-        python_path=DISPLAY_IDENTITY_STAGE_PY,
-        script_path=DISPLAY_IDENTITY_STAGE_RUN,
-        json_path=json_path,
-        cwd=DISPLAY_IDENTITY_STAGE_RUN.parent,
-    )
+def _record_hololens_sync_failure(
+    json_path: Path,
+    *,
+    task_id: str,
+    display_object_id: str,
+    reason: str,
+) -> dict[str, Any]:
+    stable_task_id = str(task_id or json_path.stem).strip()
+    sync_job_id = uuid.uuid5(
+        uuid.NAMESPACE_URL,
+        f"shigure-hololens-sync:{stable_task_id}",
+    ).hex
+    payload = {
+        "status": "FAILED",
+        "sync_job_id": sync_job_id,
+        "display_object_id": str(display_object_id or "") or None,
+        "task_id": stable_task_id,
+        "reason": str(reason),
+        "attempts": 0,
+        "method": None,
+        "lifecycle_authority": None,
+        "lifecycle_binding_changed": False,
+        "updated_utc": datetime.now(timezone.utc).isoformat(),
+    }
     try:
         task_json = load_task_json(json_path)
-        startup_session_id = _startup_session_id_from_task_json(task_json)
-        if startup_session_id:
-            realtime_tracking_coordinator.mode_status(startup_session_id)
-        identity = task_json.get("DisplayIdentity") if isinstance(task_json.get("DisplayIdentity"), dict) else {}
+        task_json["ShigureIdentitySync"] = payload
+        save_task_json(json_path, task_json)
+    except Exception as exc:
+        print(f"[worker] failed to write Holo sync failure to task JSON: {exc}")
+    try:
+        upsert_identity_sync_job(
+            sync_job_id=sync_job_id,
+            kind="HOLOLENS_CAPTURE",
+            status="FAILED",
+            display_object_id=str(display_object_id or "") or None,
+            candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
+            result=payload,
+            error_message=str(reason),
+        )
+    except Exception as exc:
+        print(f"[worker] failed to persist Holo sync failure job: {exc}")
+    print(
+        f"[worker] Holo identity sync terminal: task={stable_task_id} "
+        f"display={display_object_id or None} status=FAILED method=None "
+        f"raw=None candidate=None reason={reason} "
+        f"sync_job_id={sync_job_id}"
+    )
+    return payload
+
+
+def _run_display_identity(json_path: Path, context: StageWorkerContext | None = None) -> None:
+    task_id = str(json_path.stem)
+    display_object_id = ""
+    try:
+        _run_python_script(
+            python_path=DISPLAY_IDENTITY_STAGE_PY,
+            script_path=DISPLAY_IDENTITY_STAGE_RUN,
+            json_path=json_path,
+            cwd=DISPLAY_IDENTITY_STAGE_RUN.parent,
+        )
+    except Exception as exc:
+        _record_hololens_sync_failure(
+            json_path,
+            task_id=task_id,
+            display_object_id=display_object_id,
+            reason=f"display_identity_stage_failed:{exc}",
+        )
+        raise
+    # HoloLens supplies the target identity/model only. A later successful sync
+    # can activate presence solely from a trusted stable Shigure snapshot.
+    try:
+        task_json = load_task_json(json_path)
+        identity = (
+            task_json.get("DisplayIdentity")
+            if isinstance(task_json.get("DisplayIdentity"), dict)
+            else {}
+        )
         display_object_id = str(identity.get("display_object_id") or "").strip()
-        if display_object_id:
-            state = get_display_object_state(display_object_id) or {}
-            latest_task_id = str(state.get("latest_hololens_task_id") or "").strip()
-            tracking_ready = (
-                latest_task_id == str(task_json.get("task_id") or "").strip()
-                and int(state.get("active_model_revision") or 0) > 0
-                and int(state.get("latest_hololens_pose_revision") or 0) > 0
-                and bool(state.get("latest_hololens_pose_aruco_json"))
+        task_id = str(task_json.get("task_id") or "").strip()
+        evidence = identity.get("evidence") if isinstance(identity.get("evidence"), dict) else {}
+        dino_source = (
+            evidence.get("dinov2_source")
+            if isinstance(evidence.get("dinov2_source"), dict)
+            else {}
+        )
+        color_path = str(dino_source.get("color_path") or "").strip()
+        mask_path = str(dino_source.get("mask_path") or "").strip()
+        if (
+            str(identity.get("binding_status") or "") == "bound"
+            and display_object_id
+            and task_id
+            and color_path
+        ):
+            reference = add_object_identity_reference(
+                display_object_id=display_object_id,
+                source="HOLOLENS",
+                source_task_id=task_id,
+                image_path=color_path,
+                mask_path=mask_path or None,
+                view_hash=f"hololens:{task_id}",
+                quality={
+                    "role": "auxiliary",
+                    "identity_distance": identity.get("identity_distance"),
+                    "binding_reason": identity.get("binding_reason"),
+                },
             )
-            if not tracking_ready:
-                identity["realtime_tracking"] = {
-                    "status": "deferred",
-                    "reason": "missing_canonical_aruco_state",
-                }
-                save_task_json(json_path, task_json)
-                print(
-                    "[worker] realtime tracking deferred until ArUco state is available: "
-                    f"{display_object_id}"
+            identity["identity_reference"] = {
+                "status": "recorded",
+                "reference_id": reference["reference_id"],
+                "role": "auxiliary",
+            }
+            task_json["DisplayIdentity"] = identity
+            save_task_json(json_path, task_json)
+            engine = _shigure_runtime_engine
+            if engine is not None:
+                sync = engine.queue_hololens_capture_sync(
+                    display_object_id=display_object_id,
+                    task_id=task_id,
+                    task_json_path=json_path,
                 )
-                return
-            evicted = realtime_tracking_coordinator.activate_display_object(display_object_id, reanchor=True)
-            if evicted:
-                print(f"[worker] realtime tracking capacity evicted: {evicted}")
-            for job in get_auxiliary_jobs(str(task_json.get("task_id") or "")):
-                result_path = str(job.get("result_path") or "").strip()
-                if str(job.get("status") or "") == "completed" and result_path:
-                    _on_auxiliary_branch_complete(
-                        str(task_json.get("task_id") or ""),
-                        resolve_project_path(result_path, require_exists=True),
-                    )
-    except Exception as exc:
-        print(f"[worker] failed to activate display identity for realtime tracking: {exc}")
-
-
-def _run_sam3d_body_mesh(json_path: Path, context: StageWorkerContext | None = None) -> None:
-    _run_python_script(
-        python_path=SAM3D_BODY_MESH_STAGE_PY,
-        script_path=SAM3D_BODY_MESH_STAGE_RUN,
-        json_path=json_path,
-        cwd=SAM3D_BODY_MESH_STAGE_RUN.parent,
-    )
-
-
-def _get_auxiliary_branch_manager() -> ShigureAuxiliaryBranchManager:
-    global _auxiliary_branch_manager
-    with _auxiliary_branch_lock:
-        if _auxiliary_branch_manager is None:
-            _auxiliary_branch_manager = ShigureAuxiliaryBranchManager(
-                dino_request=_request_realtime_dinov2,
-                body_runner=lambda path: _run_sam3d_body_mesh(path),
-                on_complete=_on_auxiliary_branch_complete,
+                print(
+                    f"[worker] queued HoloLens/Shigure identity sync: "
+                    f"{task_id} -> {sync.get('status')}"
+                )
+            else:
+                _record_hololens_sync_failure(
+                    json_path,
+                    task_id=task_id,
+                    display_object_id=display_object_id,
+                    reason="shigure_runtime_unavailable",
+                )
+        else:
+            missing = []
+            if str(identity.get("binding_status") or "") != "bound":
+                missing.append("display_identity_not_bound")
+            if not display_object_id:
+                missing.append("display_object_id_missing")
+            if not task_id:
+                missing.append("task_id_missing")
+            if not color_path:
+                missing.append("hololens_identity_color_missing")
+            _record_hololens_sync_failure(
+                json_path,
+                task_id=task_id,
+                display_object_id=display_object_id,
+                reason="sync_prerequisite_failed:" + ",".join(missing),
             )
-        return _auxiliary_branch_manager
-
-
-def _on_auxiliary_branch_complete(task_id: str, branch_json_path: Path) -> None:
-    try:
-        task_row = get_task_by_task_id(task_id)
-        if not task_row:
-            return
-        main_task = load_task_json(resolve_task_json_path_from_record(task_row))
-        identity = main_task.get("DisplayIdentity") if isinstance(main_task.get("DisplayIdentity"), dict) else {}
-        display_object_id = str(identity.get("display_object_id") or "").strip()
-        branch_task = load_task_json(branch_json_path)
-        body = branch_task.get("SAM3DBodyMesh") if isinstance(branch_task.get("SAM3DBodyMesh"), dict) else {}
-        if display_object_id and str(body.get("status") or "") == "SUCCESS":
-            set_latest_body_revision(display_object_id=display_object_id, task_id=task_id)
     except Exception as exc:
-        print(f"[worker] failed to link auxiliary body for {task_id}: {exc}")
+        _record_hololens_sync_failure(
+            json_path,
+            task_id=task_id,
+            display_object_id=display_object_id,
+            reason=f"identity_reference_or_sync_queue_failed:{exc}",
+        )
 
-
-def _auxiliary_start_event_sequence() -> int:
-    try:
-        status = ShigureRgbdCache().status() or {}
-        return max(0, int(status.get("latest_event_sequence") or 0))
-    except Exception:
-        return 0
-
-
-def _pending_auxiliary_start_sequence(task_id: str) -> int:
-    for job in get_auxiliary_jobs(task_id):
-        if str(job.get("branch_name") or "") != "shigure_contact_body":
-            continue
-        detail = job.get("detail_json")
-        try:
-            detail = json.loads(detail) if isinstance(detail, str) else dict(detail or {})
-        except Exception:
-            detail = {}
-        return max(0, int(detail.get("start_event_sequence") or 0))
-    return 0
-
-
-def _start_auxiliary_branch_if_needed(task_id: str, json_path: Path) -> None:
-    jobs = get_auxiliary_jobs(task_id)
-    existing = next((job for job in jobs if str(job.get("branch_name") or "") == "shigure_contact_body"), None)
-    manager = _get_auxiliary_branch_manager()
-    if existing and str(existing.get("status") or "") == "completed":
-        return
-    if existing and str(existing.get("status") or "") == "running" and manager.is_running(task_id):
-        return
-    start_sequence = _pending_auxiliary_start_sequence(task_id)
-    manager.start(
-        task_id=task_id,
-        json_path=json_path,
-        start_event_sequence=start_sequence,
-    )
-
-
-def _restore_auxiliary_branches() -> None:
-    if not SHIGURE_HISTORY_SOCKET_PATH.exists():
-        return
-    for job in list_auxiliary_jobs(statuses=("pending", "running")):
-        if str(job.get("branch_name") or "") != "shigure_contact_body":
-            continue
-        task_id = str(job.get("task_id") or "").strip()
-        task_row = get_task_by_task_id(task_id) if task_id else None
-        if not task_row:
-            continue
-        try:
-            _start_auxiliary_branch_if_needed(task_id, resolve_task_json_path_from_record(task_row))
-        except Exception as exc:
-            print(f"[worker] failed to restore auxiliary Shigure branch for {task_id}: {exc}")
-
-
-def _reconcile_completed_auxiliary_outputs() -> None:
-    """Repair the crash window between job completion and body-state linking."""
-
-    for job in list_auxiliary_jobs(statuses=("completed",)):
-        if str(job.get("branch_name") or "") != "shigure_contact_body":
-            continue
-        task_id = str(job.get("task_id") or "").strip()
-        result_path = str(job.get("result_path") or "").strip()
-        if not task_id or not result_path:
-            continue
-        try:
-            _on_auxiliary_branch_complete(
-                task_id,
-                resolve_project_path(result_path, require_exists=True),
-            )
-        except Exception as exc:
-            print(f"[worker] failed to reconcile completed auxiliary output for {task_id}: {exc}")
 
 
 STAGE_RUNNERS = {
@@ -1365,11 +1566,6 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
     try:
         STAGE_RUNNERS[stage_name](json_path, context)
         mark_task_stage_completed(task_id, stage_name)
-        if stage_name == "sam3mask":
-            try:
-                _start_auxiliary_branch_if_needed(task_id, json_path)
-            except Exception as branch_exc:
-                print(f"[worker] failed to start auxiliary Shigure branch for {task_id}: {branch_exc}")
     except Exception as exc:
         if isinstance(exc, subprocess.CalledProcessError):
             error_message = exc.stderr or exc.stdout or str(exc)
@@ -1504,7 +1700,7 @@ def _service_monitor_loop() -> None:
     while True:
         try:
             _start_shigure_history_recorder()
-            _restore_auxiliary_branches()
+            _start_shigure_runtime_engine()
             _sam3mask_service.maybe_stop_idle(
                 keep_alive=_has_unfinished_at_or_before("sam3mask"),
             )
@@ -1512,16 +1708,6 @@ def _service_monitor_loop() -> None:
                 keep_alive=(
                     MODEL_GENERATION_BACKEND == "instantmesh"
                     and _has_unfinished_at_or_before("model_generation")
-                ),
-            )
-            _foundationpose_service.maybe_stop_idle(
-                keep_alive=(
-                    OBJECT_ALIGNMENT_MODE == "foundationpose"
-                    and _has_unfinished_at_or_before("object_alignment")
-                )
-                or bool(
-                    ((realtime_tracking_coordinator.snapshot().get("mode") or {}).get("running_count") or 0)
-                    or ((realtime_tracking_coordinator.snapshot().get("mode") or {}).get("pending_count") or 0)
                 ),
             )
             _dinov2_identity_service.maybe_stop_idle(
@@ -1536,22 +1722,19 @@ def shutdown_worker() -> None:
     """Stop persistent model services owned by this server process."""
     global _shutdown_requested
     _shutdown_requested = True
-    try:
-        _realtime_tracking_engine.stop()
-    except Exception as exc:
-        print(f"[worker] failed to stop optional Shigure realtime tracking: {exc}")
-    realtime_tracking_coordinator.reset()
-    if _auxiliary_branch_manager is not None:
-        try:
-            _auxiliary_branch_manager.stop()
-        except Exception as exc:
-            print(f"[worker] failed to stop optional Shigure auxiliary branch: {exc}")
+    _stop_shigure_runtime_engine()
     _stop_shigure_history_recorder()
     try:
         _foundationpose_dispatcher.stop()
     except Exception as exc:
         print(f"[worker] failed to stop FoundationPose dispatcher: {exc}")
-    for service in (_sam3mask_service, _instantmesh_service, _foundationpose_service, _dinov2_identity_service):
+    services = (
+        _sam3mask_service,
+        _instantmesh_service,
+        *_foundationpose_services,
+        _dinov2_identity_service,
+    )
+    for service in services:
         try:
             service.stop()
         except Exception as exc:
@@ -1592,21 +1775,13 @@ def start_worker() -> threading.Thread:
     _validate_model_generation_backend()
     _install_shutdown_hooks()
     initialize_task_table()
-    try:
-        _reconcile_completed_auxiliary_outputs()
-        _restore_auxiliary_branches()
-    except Exception as exc:
-        print(f"[worker] optional Shigure auxiliary restore skipped: {exc}")
     _restore_unfinished_tasks()
     try:
         _start_shigure_history_recorder(force=True)
     except Exception as exc:
         print(f"[worker] optional Shigure recorder unavailable: {exc}")
+    _start_shigure_runtime_engine()
     _foundationpose_dispatcher.start()
-    try:
-        _realtime_tracking_engine.start()
-    except Exception as exc:
-        print(f"[worker] optional Shigure realtime tracking unavailable: {exc}")
     if _worker_thread is not None and _worker_thread.is_alive():
         return _worker_thread
 
@@ -1667,26 +1842,6 @@ def activate_uploaded_task(task_id: str, *, task_json: dict | None = None, front
     task_json = task_json or load_task_json(resolve_task_json_path_from_record(task_record))
     update_task_status(task_id, "pending")
     if _resolve_task_purpose(task_json) == PURPOSE_OBJECT_RECONSTRUCTION:
-        startup_session_id = _startup_session_id_from_task_json(task_json)
-        if startup_session_id:
-            realtime_tracking_coordinator.mode_status(startup_session_id)
-        upsert_auxiliary_job(
-            task_id=task_id,
-            branch_name="shigure_contact_body",
-            status="pending",
-            detail={"start_event_sequence": _auxiliary_start_event_sequence()},
-        )
-        # Start the sparse event watcher as soon as the upload is committed.
-        # It freezes take-out RGB-D evidence while the main branch is still
-        # computing SAM/DINO, so the recorder's short online cache is not the
-        # effective taken-detection deadline.
-        try:
-            _start_auxiliary_branch_if_needed(
-                task_id,
-                resolve_task_json_path_from_record(task_record),
-            )
-        except Exception as branch_exc:
-            print(f"[worker] failed to start upload-time Shigure watcher for {task_id}: {branch_exc}")
         _prewarm_model_pipeline_services("new 3D model task")
     with _task_lock:
         _enqueue_task_no_lock(task_id, _resolve_task_purpose(task_json), front=front, task_json=task_json)
@@ -1708,21 +1863,6 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     task_record["stage_runs"] = get_task_stage_runs(task_id)
     task_record["timing_events"] = get_task_timing_events(task_id)
     task_record["ai_model_timings"] = get_ai_model_timings_for_task(task_id)
-    auxiliary_outputs: dict[str, Any] = {}
-    auxiliary_jobs = get_auxiliary_jobs(task_id)
-    for job in auxiliary_jobs:
-        branch_name = str(job.get("branch_name") or "").strip()
-        result_path = str(job.get("result_path") or "").strip()
-        if not branch_name or not result_path:
-            continue
-        try:
-            auxiliary_outputs[branch_name] = load_task_json(
-                resolve_project_path(result_path, require_exists=True)
-            )
-        except Exception:
-            continue
-    task_record["auxiliary_jobs"] = auxiliary_jobs
-    task_record["auxiliary_outputs"] = auxiliary_outputs
     return task_record
 
 

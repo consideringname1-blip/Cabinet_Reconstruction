@@ -3,6 +3,7 @@
 import ipaddress
 import json
 import logging
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from flask import Flask, jsonify, request, send_from_directory
 
 from console_output_log import install_console_output_log
 from artifact_layout import (
+    SHIGURE_EVENT_ROOT,
     aruco_task_json_path,
     aruco_worker_frame_color,
     aruco_worker_frame_meta,
@@ -30,7 +32,7 @@ from artifact_layout import (
 install_console_output_log()
 
 from depth_camera_config import get_depth_sensor_limits, normalize_depth_sensor_name
-from config import MAX_REALTIME_TRACKED_DISPLAY_OBJECTS
+from config import MAX_REALTIME_MODEL_POSE_ITEMS
 from task_worker import (
     STAGE_ORDER,
     activate_uploaded_task,
@@ -40,17 +42,20 @@ from task_worker import (
 )
 from task_db import (
     get_enabled_aruco_markers,
+    get_identity_sync_job,
     get_latest_aruco_reference,
-    get_latest_realtime_tracking_event,
-    list_display_object_states,
+    get_latest_shigure_canonical_event,
+    list_live_display_object_states,
+    list_live_spatial_box_states,
+    list_object_lifecycle_history,
     get_task_by_task_id,
     sync_marker_registry_from_reference_folder,
     update_task_status,
     initialize_task_table,
 )
-from stages.shigure_history.realtime_tracking import MODE_LIVE, coordinator as realtime_tracking_coordinator
-from task_json import save_task_json
+from task_json import resolve_project_path, save_task_json
 from spatial_transforms import (
+    aruco_points_to_hololens,
     aruco_pose_to_hololens_pose,
     minimal_pose_payload,
 )
@@ -468,127 +473,11 @@ def _task_fbx_url(host: str, task_id: str, task_json: dict) -> str | None:
         return None
     result_dir = model_result_dir(task_timestamp)
     if not fbx_name or blender_info.get("artifact_root") != "model_result":
-        candidates = sorted(result_dir.glob("*.fbx")) if result_dir.is_dir() else []
-        if not candidates:
-            return None
-        fbx_name = candidates[0].name
+        return None
     fbx_path = result_dir / fbx_name
     if not fbx_path.is_file():
         return None
     return _task_artifact_url(host, task_id, "result", fbx_name)
-
-def _fallback_completed_pose(task_json: dict) -> dict:
-    for key in ("object_hololens_current", "object_hololens_original"):
-        value = task_json.get(key)
-        if not isinstance(value, dict):
-            continue
-        try:
-            return minimal_pose_payload(value, include_scale=True)
-        except Exception:
-            continue
-    return {
-        "position": [0.0, 0.0, 0.0],
-        "rotation_quaternion_xyzw": [0.0, 0.0, 0.0, 1.0],
-        "scale": [1.0, 1.0, 1.0],
-    }
-
-
-def _fallback_model_revision(identity: dict) -> tuple[int, bool]:
-    try:
-        return _strict_json_integer(
-            identity.get("model_revision"),
-            "model_revision",
-            minimum=1,
-        ), False
-    except (TypeError, ValueError):
-        return 1, True
-
-
-def _body_result_artifact_url(
-    host: str,
-    task_id: str,
-    task_json: dict,
-    body_payload: dict,
-    payload_key: str,
-) -> str | None:
-    raw_path = str(body_payload.get(payload_key) or "").strip()
-    task_timestamp = str(task_json.get("task_timestamp") or "").strip()
-    if not raw_path or not task_timestamp:
-        return None
-    filename = Path(raw_path).name
-    if not filename or not (model_result_dir(task_timestamp) / filename).is_file():
-        return None
-    return _task_artifact_url(host, task_id, "result", filename)
-
-
-def _build_body_evidence(
-    task_data: dict,
-    *,
-    display_object_id: str,
-    body_revision: int,
-    startup_session_id: str,
-    host: str,
-) -> dict | None:
-    if body_revision <= 0:
-        return None
-    task_id = str(task_data.get("task_id") or "").strip()
-    task_json = task_data.get("task_json") or {}
-    auxiliary_outputs = task_data.get("auxiliary_outputs")
-    contact_body = (
-        auxiliary_outputs.get("shigure_contact_body")
-        if isinstance(auxiliary_outputs, dict)
-        and isinstance(auxiliary_outputs.get("shigure_contact_body"), dict)
-        else {}
-    )
-    body_payload = (
-        contact_body.get("SAM3DBodyMesh")
-        if isinstance(contact_body.get("SAM3DBodyMesh"), dict)
-        else {}
-    )
-    if body_payload.get("status") != "SUCCESS":
-        return None
-    pose_aruco = body_payload.get("selected_person_pose_aruco")
-    aruco_reference = _load_latest_aruco_reference_pose(startup_session_id)
-    if not isinstance(pose_aruco, dict) or aruco_reference is None:
-        return None
-    try:
-        body_pose = aruco_pose_to_hololens_pose(pose_aruco, aruco_reference)
-    except Exception as exc:
-        print(f"[WARN] body pose conversion failed for {display_object_id}: {exc}")
-        return None
-    fbx_url = _body_result_artifact_url(
-        host,
-        task_id,
-        task_json,
-        body_payload,
-        "selected_person_fbx_path",
-    )
-    if not fbx_url:
-        return None
-    image_url = _body_result_artifact_url(
-        host,
-        task_id,
-        task_json,
-        body_payload,
-        "subject_crop_path",
-    )
-    if not image_url:
-        return None
-    return {
-        "task_id": task_id,
-        "display_object_id": display_object_id,
-        "body_revision": body_revision,
-        "image_url": image_url,
-        "body_model": {
-            "model_key": f"body:{display_object_id}",
-            "task_id": task_id,
-            "display_object_id": display_object_id,
-            "model_revision": body_revision,
-            "fbx_url": fbx_url,
-            "pose": body_pose,
-            "coordinate_space": "hololens_current_local",
-        },
-    }
 
 def _sanitize_depth_png(depth_png_bytes: bytes, sensor_name: str) -> tuple[bytes, dict]:
     limits = get_depth_sensor_limits(sensor_name)
@@ -653,28 +542,42 @@ def _build_completed_task_response(
         "aruco_coordinate_synced": bool(task_data.get("aruco_coordinate_synced")),
     }
     task_json = task_data.get("task_json") or {}
+    response["delivery_role"] = "capture_preview"
+    identity_sync = task_json.get("ShigureIdentitySync")
+    if isinstance(identity_sync, dict):
+        # Auxiliary status only; it never promotes a HoloLens capture to live.
+        response["shigure_identity_sync"] = dict(identity_sync)
     task_id = str(task_data.get("task_id") or "")
-    response["auxiliary_jobs"] = task_data.get("auxiliary_jobs") or []
     host = (host_override or request.host_url).rstrip("/")
+    sync_payload = response.get("shigure_identity_sync")
+    if isinstance(sync_payload, dict):
+        sync_job_id = str(sync_payload.get("sync_job_id") or "").strip().lower()
+        if len(sync_job_id) == 32 and all(ch in "0123456789abcdef" for ch in sync_job_id):
+            sync_payload["status_url"] = f"{host}/api/v2/identity-sync/{sync_job_id}"
     fbx_url = _task_fbx_url(host, task_id, task_json)
     if fbx_url:
         identity = _display_identity_from_task_json(task_json)
         display_object_id = str(identity.get("display_object_id") or "").strip()
-        degraded_reasons = []
         if not display_object_id:
-            display_object_id = task_id
-            degraded_reasons.append("missing_display_identity")
+            response["error"] = "completed task is missing DisplayIdentity.display_object_id"
+            return response
         pose = _hololens_current_pose_for_response(
             task_json,
             task_data=task_data,
             startup_session_id=startup_session_id,
         )
         if pose is None:
-            pose = _fallback_completed_pose(task_json)
-            degraded_reasons.append("current_session_pose_unavailable")
-        model_revision, revision_fallback = _fallback_model_revision(identity)
-        if revision_fallback:
-            degraded_reasons.append("missing_model_revision")
+            response["error"] = "current_session_pose_unavailable"
+            return response
+        try:
+            model_revision = _strict_json_integer(
+                identity.get("model_revision"),
+                "model_revision",
+                minimum=1,
+            )
+        except (TypeError, ValueError) as exc:
+            response["error"] = f"invalid DisplayIdentity.model_revision: {exc}"
+            return response
         response["model_instance"] = _build_model_instance(
             task_id=task_id,
             display_object_id=display_object_id,
@@ -682,9 +585,6 @@ def _build_completed_task_response(
             fbx_url=fbx_url,
             pose=pose,
         )
-        if degraded_reasons:
-            response["delivery_degraded"] = True
-            response["delivery_degraded_reasons"] = degraded_reasons
     else:
         response["error"] = "completed model FBX is missing"
 
@@ -1166,68 +1066,255 @@ def sync_aruco_markers():
         return jsonify({"error": str(exc)}), 500
 
 
-def _json_object_column(value, field_name: str) -> dict | None:
+@app.route(
+    "/api/v2/identity-sync/<sync_job_id>",
+    methods=["GET"],
+    strict_slashes=False,
+)
+def identity_sync_status_v2(sync_job_id: str):
+    try:
+        _require_no_request_body()
+        if request.args:
+            raise ValueError("identity-sync status does not accept query fields")
+        sync_job_id = str(sync_job_id or "").strip().lower()
+        if len(sync_job_id) != 32 or any(ch not in "0123456789abcdef" for ch in sync_job_id):
+            raise ValueError("sync_job_id must be a 32-character lowercase hex UUID")
+        row = get_identity_sync_job(sync_job_id)
+        if row is None:
+            return jsonify({"error": "identity sync job not found"}), 404
+        raw_result = row.get("result_json")
+        result = json.loads(raw_result) if isinstance(raw_result, str) and raw_result else None
+        return jsonify(
+            {
+                "sync_job_id": sync_job_id,
+                "kind": row.get("kind"),
+                "status": row.get("status"),
+                "display_object_id": row.get("display_object_id"),
+                "result": result,
+                "error_message": row.get("error_message"),
+                "updated_at": row.get("updated_at"),
+                "terminal": str(row.get("status")) in {"COMPLETED", "FAILED"},
+            }
+        )
+    except (json.JSONDecodeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except Exception as exc:
+        print(f"Error in identity_sync_status_v2: {exc}")
+        return jsonify({"error": str(exc)}), 500
+
+
+def _json_column(value, field_name: str, expected_type: type):
     if value is None:
         return None
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{field_name} must contain a JSON object")
+        raise ValueError(f"{field_name} must contain JSON")
     try:
         loaded = json.loads(value)
     except json.JSONDecodeError as exc:
         raise ValueError(f"{field_name} is invalid JSON: {exc}") from exc
-    if not isinstance(loaded, dict):
-        raise ValueError(f"{field_name} must contain a JSON object")
+    if not isinstance(loaded, expected_type):
+        raise ValueError(f"{field_name} contains the wrong JSON type")
     return loaded
 
 
-def _tracking_mode_items(
+def _strict_current_pose(pose_aruco: dict, reference_pose: dict) -> dict:
+    converted = aruco_pose_to_hololens_pose(pose_aruco, reference_pose)
+    return minimal_pose_payload(converted, include_scale=False)
+
+
+def _live_spatial_revision(presence_epoch, spatial_sequence) -> int:
+    presence_epoch = _strict_json_integer(
+        presence_epoch,
+        "presence_epoch",
+        minimum=0,
+    )
+    spatial_sequence = _strict_json_integer(
+        spatial_sequence,
+        "latest_spatial_observation_seq",
+        minimum=0,
+    )
+    if spatial_sequence >= (1 << 32):
+        raise ValueError("latest_spatial_observation_seq exceeds 32-bit component range")
+    return max(1, (presence_epoch << 32) | spatial_sequence)
+
+
+def _strict_current_box(
+    corners_aruco,
+    reference_pose: dict,
+    *,
+    revision: int,
+    emit_no_box: bool = False,
+) -> dict | None:
+    if corners_aruco is None:
+        if not emit_no_box:
+            return None
+        return {
+            "status": "no_box",
+            "coordinate_space": "hololens_current_local",
+            "revision": max(1, int(revision)),
+        }
+    points = np.asarray(corners_aruco, dtype=np.float64)
+    if points.shape != (8, 3) or not np.all(np.isfinite(points)):
+        raise ValueError("spatial box must contain 8 finite ArUco points")
+    current = aruco_points_to_hololens(points, reference_pose)
+    return {
+        "status": "ready",
+        "coordinate_space": "hololens_current_local",
+        "revision": max(1, int(revision)),
+        "corners_hololens_current_local_m": [
+            [float(component) for component in point] for point in current
+        ],
+    }
+
+
+def _strict_current_skeleton(skeleton_aruco, reference_pose: dict) -> dict | None:
+    if not isinstance(skeleton_aruco, dict):
+        return None
+    people_id = str(skeleton_aruco.get("people_id") or "").strip()
+    raw_joints = skeleton_aruco.get("joints")
+    if not people_id or not isinstance(raw_joints, list) or not raw_joints:
+        return None
+
+    prepared: list[tuple[str, list[float], float, bool]] = []
+    for raw_joint in raw_joints:
+        if not isinstance(raw_joint, dict):
+            return None
+        name = str(raw_joint.get("name") or "").strip()
+        position = np.asarray(raw_joint.get("position"), dtype=np.float64)
+        try:
+            score = float(raw_joint.get("score"))
+        except (TypeError, ValueError):
+            return None
+        valid = raw_joint.get("valid")
+        if (
+            not name
+            or position.shape != (3,)
+            or not np.all(np.isfinite(position))
+            or not np.isfinite(score)
+            or not isinstance(valid, bool)
+        ):
+            return None
+        prepared.append(
+            (
+                name,
+                [float(component) for component in position],
+                score,
+                valid,
+            )
+        )
+
+    converted = aruco_points_to_hololens(
+        [position for _, position, _, _ in prepared],
+        reference_pose,
+    )
+    return {
+        "people_id": people_id,
+        "joints": [
+            {
+                "name": name,
+                "position": [float(component) for component in converted[index]],
+                "score": score,
+                "valid": valid,
+            }
+            for index, (name, _position, score, valid) in enumerate(prepared)
+        ],
+    }
+
+
+def _event_artifact_url(host: str, stored_path: str | None) -> str | None:
+    raw = str(stored_path or "").strip()
+    if not raw:
+        return None
+    try:
+        resolved = resolve_project_path(raw, require_exists=True)
+        relative = resolved.relative_to(SHIGURE_EVENT_ROOT.resolve())
+    except (FileNotFoundError, ValueError):
+        return None
+    if len(relative.parts) != 2 or resolved.name != relative.parts[1]:
+        return None
+    event_directory = sanitize_artifact_token(relative.parts[0], fallback="invalid")
+    filename = sanitize_artifact_token(relative.parts[1], fallback="invalid")
+    if event_directory != relative.parts[0] or filename != relative.parts[1]:
+        return None
+    return f"{host}/shigure-event-artifacts/{event_directory}/{filename}"
+
+
+@app.route(
+    "/shigure-event-artifacts/<event_directory>/<filename>",
+    methods=["GET"],
+    strict_slashes=False,
+)
+def shigure_event_artifact(event_directory: str, filename: str):
+    safe_event = sanitize_artifact_token(event_directory, fallback="invalid")
+    safe_filename = sanitize_artifact_token(filename, fallback="invalid")
+    if safe_event != event_directory or safe_filename != filename:
+        return jsonify({"error": "invalid artifact path"}), 400
+    return send_from_directory(SHIGURE_EVENT_ROOT / safe_event, safe_filename)
+
+
+def _live_snapshot_items(
     *,
     startup_session_id: str,
-    mode: str,
-) -> tuple[list[dict], str | None]:
-    states = list_display_object_states(limit=MAX_REALTIME_TRACKED_DISPLAY_OBJECTS)
+) -> tuple[list[dict], str, dict]:
+    # Model and pose transport intentionally remains bounded at five. Spatial
+    # boxes use the separate complete snapshot below and are never truncated.
+    states = list_live_display_object_states(
+        limit=MAX_REALTIME_MODEL_POSE_ITEMS
+    )
+    reference_row = get_latest_aruco_reference(startup_session_id)
+    if reference_row is None:
+        raise ValueError("current startup session has no ArUco reference")
+    reference_pose = _load_marker_pose_json(reference_row.get("marker_pose_json"))
+    if reference_pose is None:
+        raise ValueError("current startup session ArUco reference is invalid")
+    coordinate_epoch = str(
+        reference_row.get("task_id") or reference_row.get("id") or ""
+    ).strip()
+    if not coordinate_epoch:
+        raise ValueError("current coordinate epoch is unavailable")
 
-    reference_row = get_latest_aruco_reference(startup_session_id) if startup_session_id else None
-    reference_pose = _load_marker_pose_json((reference_row or {}).get("marker_pose_json")) if reference_row else None
-    coordinate_epoch = str((reference_row or {}).get("task_id") or (reference_row or {}).get("id") or "").strip() or None
     host = request.host_url.rstrip("/")
     items: list[dict] = []
     for state in states:
-        display_object_id = str(state.get("display_object_id") or "")
+        display_object_id = str(state.get("display_object_id") or "").strip()
         model_revision = int(state.get("active_model_revision") or 0)
-        hololens_pose_aruco = _json_object_column(
+        if not display_object_id or model_revision <= 0:
+            continue
+
+        hololens_pose_aruco = _json_column(
             state.get("latest_hololens_pose_aruco_json"),
             "latest_hololens_pose_aruco_json",
+            dict,
         )
-        tracking_pose_aruco = _json_object_column(
+        tracking_pose_aruco = _json_column(
             state.get("latest_tracking_pose_aruco_json"),
             "latest_tracking_pose_aruco_json",
+            dict,
         )
-        hololens_pose = None
-        tracking_pose = None
-        if reference_pose is not None and isinstance(hololens_pose_aruco, dict):
-            try:
-                hololens_pose = aruco_pose_to_hololens_pose(hololens_pose_aruco, reference_pose)
-            except Exception as exc:
-                print(f"[WARN] HoloLens snapshot conversion failed for {display_object_id}: {exc}")
-        tracking_model_revision = int(state.get("latest_tracking_model_revision") or 0)
-        if (
-            reference_pose is not None
-            and isinstance(tracking_pose_aruco, dict)
-            and tracking_model_revision == model_revision
-        ):
-            try:
-                tracking_pose = aruco_pose_to_hololens_pose(tracking_pose_aruco, reference_pose)
-            except Exception as exc:
-                print(f"[WARN] tracking snapshot conversion failed for {display_object_id}: {exc}")
-
         selected_source = "hololens"
-        selected_pose = hololens_pose
         selected_revision = int(state.get("latest_hololens_pose_revision") or 0)
-        if mode == MODE_LIVE and tracking_pose is not None:
+        selected_pose_aruco = hololens_pose_aruco
+        if (
+            isinstance(tracking_pose_aruco, dict)
+            and int(state.get("latest_tracking_model_revision") or 0)
+            == model_revision
+        ):
             selected_source = "tracking"
-            selected_pose = tracking_pose
-            selected_revision = int(state.get("latest_tracking_pose_revision") or 0)
+            selected_revision = int(
+                state.get("latest_tracking_pose_revision") or 0
+            )
+            selected_pose_aruco = tracking_pose_aruco
+        if selected_pose_aruco is None or selected_revision <= 0:
+            continue
+        try:
+            selected_pose = _strict_current_pose(
+                selected_pose_aruco, reference_pose
+            )
+        except Exception as exc:
+            print(
+                f"[WARN] skipped invalid live pose for {display_object_id}: {exc}"
+            )
+            continue
 
         item = {
             "display_object_id": display_object_id,
@@ -1236,27 +1323,25 @@ def _tracking_mode_items(
             "pose_source": selected_source,
             "pose_revision": selected_revision,
             "pose": selected_pose,
-            "coordinate_space": "hololens_current_local" if selected_pose is not None else None,
-            "body_revision": int(state.get("latest_body_revision") or 0),
+            "coordinate_space": "hololens_current_local",
+            "presence": str(state.get("presence") or "UNKNOWN"),
+            "presence_epoch": int(state.get("presence_epoch") or 0),
         }
-        latest_tracking_event = get_latest_realtime_tracking_event(display_object_id)
-        if latest_tracking_event is not None:
-            tracking_event_sequence = int(latest_tracking_event.get("id") or 0)
-            item["tracking_status"] = latest_tracking_event.get("status")
-            item["tracking_reason"] = latest_tracking_event.get("reason")
-            item["tracking_event_sequence"] = tracking_event_sequence
+        latest_event = get_latest_shigure_canonical_event(display_object_id)
+        if latest_event is not None:
+            item["tracking_status"] = latest_event.get("resolution_status")
+            item["tracking_event_uid"] = latest_event.get("event_uid")
+
         active_task_id = str(state.get("active_model_task_id") or "").strip()
         active_task = get_task(active_task_id) if active_task_id else None
-        if (
-            active_task
-            and str(active_task.get("status") or "") == "completed"
-            and selected_pose is not None
-        ):
+        if active_task and str(active_task.get("status") or "") == "completed":
             active_task_json = active_task.get("task_json") or {}
             active_identity = _display_identity_from_task_json(active_task_json)
             identity_matches_state = (
-                str(active_identity.get("display_object_id") or "").strip() == display_object_id
-                and active_identity.get("model_revision") == model_revision
+                str(active_identity.get("display_object_id") or "").strip()
+                == display_object_id
+                and int(active_identity.get("model_revision") or 0)
+                == model_revision
             )
             fbx_url = _task_fbx_url(host, active_task_id, active_task_json)
             if identity_matches_state and fbx_url:
@@ -1267,30 +1352,114 @@ def _tracking_mode_items(
                     fbx_url=fbx_url,
                     pose=selected_pose,
                 )
-            else:
-                print(
-                    f"[WARN] active model state is inconsistent for {display_object_id}: "
-                    f"task={active_task_id}"
-                )
-        body_revision = int(state.get("latest_body_revision") or 0)
-        body_task_id = str(state.get("latest_body_task_id") or "").strip()
-        if body_revision > 0 and body_task_id:
-            body_task = get_task(body_task_id)
-            if body_task and str(body_task.get("status") or "") == "completed":
-                try:
-                    body_evidence = _build_body_evidence(
-                        body_task,
-                        display_object_id=display_object_id,
-                        body_revision=body_revision,
-                        startup_session_id=startup_session_id,
-                        host=host,
-                    )
-                    if body_evidence is not None:
-                        item["body_evidence"] = body_evidence
-                except Exception as exc:
-                    print(f"[WARN] skipped invalid Shigure body evidence for {display_object_id}: {exc}")
         items.append(item)
-    return items, coordinate_epoch
+    return items, coordinate_epoch, reference_pose
+
+
+def _live_spatial_box_items(reference_pose: dict) -> list[dict]:
+    """Build one complete, unbounded Shigure spatial-box snapshot."""
+
+    boxes: list[dict] = []
+    seen_display_ids: set[str] = set()
+    for state in list_live_spatial_box_states():
+        display_object_id = str(state.get("display_object_id") or "").strip()
+        if not display_object_id or display_object_id in seen_display_ids:
+            raise ValueError("live spatial-box registry contains an invalid id")
+        seen_display_ids.add(display_object_id)
+        presence = str(state.get("presence") or "UNKNOWN")
+        revision = _live_spatial_revision(
+            state.get("presence_epoch") or 0,
+            state.get("latest_spatial_observation_seq") or 0,
+        )
+        corners_aruco = None
+        if presence == "PRESENT":
+            try:
+                corners_aruco = _json_column(
+                    state.get("latest_spatial_box_aruco_json"),
+                    "latest_spatial_box_aruco_json",
+                    list,
+                )
+            except Exception as exc:
+                print(
+                    "[WARN] rejected invalid spatial box for "
+                    f"{display_object_id}: {exc}"
+                )
+        try:
+            spatial_box = _strict_current_box(
+                corners_aruco,
+                reference_pose,
+                revision=revision,
+                emit_no_box=True,
+            )
+        except Exception as exc:
+            print(
+                f"[WARN] rejected invalid spatial box for {display_object_id}: {exc}"
+            )
+            spatial_box = _strict_current_box(
+                None,
+                reference_pose,
+                revision=revision,
+                emit_no_box=True,
+            )
+        boxes.append(
+            {
+                "display_object_id": display_object_id,
+                "presence": presence,
+                "presence_epoch": int(state.get("presence_epoch") or 0),
+                "spatial_box": spatial_box,
+            }
+        )
+    return boxes
+
+
+_LIVE_TRANSPORT_LOCK = threading.RLock()
+_LIVE_TRANSPORT_SESSIONS: dict[str, dict[str, int]] = {}
+
+
+def _accept_live_handshake(startup_session_id: str, request_generation: int) -> dict:
+    with _LIVE_TRANSPORT_LOCK:
+        existing = _LIVE_TRANSPORT_SESSIONS.get(startup_session_id)
+        if existing is not None and request_generation < existing["request_generation"]:
+            raise ValueError("stale request_generation")
+        if existing is None:
+            state = {"request_generation": request_generation, "mode_epoch": 1}
+        elif request_generation > existing["request_generation"]:
+            state = {
+                "request_generation": request_generation,
+                "mode_epoch": existing["mode_epoch"] + 1,
+            }
+        else:
+            state = dict(existing)
+        _LIVE_TRANSPORT_SESSIONS[startup_session_id] = state
+        return dict(state)
+
+
+def _live_handshake_status(startup_session_id: str) -> dict:
+    with _LIVE_TRANSPORT_LOCK:
+        state = _LIVE_TRANSPORT_SESSIONS.get(startup_session_id)
+        if state is None:
+            raise ValueError("live mode handshake is required")
+        return dict(state)
+
+
+def _live_transport_response(startup_session_id: str, state: dict):
+    items, coordinate_epoch, reference_pose = _live_snapshot_items(
+        startup_session_id=startup_session_id,
+    )
+    spatial_boxes = _live_spatial_box_items(reference_pose)
+    return {
+        "success": True,
+        "startup_session_id": startup_session_id,
+        "mode": "live",
+        "mode_epoch": int(state["mode_epoch"]),
+        "request_generation": int(state["request_generation"]),
+        "coordinate_epoch": coordinate_epoch,
+        "count": len(items),
+        "items": items,
+        "spatial_box_snapshot_complete": True,
+        "spatial_box_count": len(spatial_boxes),
+        "spatial_boxes": spatial_boxes,
+    }
 
 
 @app.route("/realtime-tracking/mode", methods=["POST"], strict_slashes=False)
@@ -1301,48 +1470,25 @@ def realtime_tracking_mode():
         if not isinstance(payload, dict):
             raise ValueError("request body must be a JSON object")
         expected_keys = {"startup_session_id", "mode", "request_generation"}
-        actual_keys = set(payload)
-        if actual_keys != expected_keys:
-            missing = sorted(expected_keys - actual_keys)
-            unexpected = sorted(actual_keys - expected_keys)
+        if set(payload) != expected_keys:
+            missing = sorted(expected_keys - set(payload))
+            unexpected = sorted(set(payload) - expected_keys)
             raise ValueError(
                 f"invalid request fields; missing={missing}, unsupported={unexpected}"
             )
-        startup_session_value = payload["startup_session_id"]
-        if not isinstance(startup_session_value, str):
-            raise ValueError("startup_session_id must be a string")
-        startup_session_id = startup_session_value.strip()
-        if not startup_session_id:
+        startup_session_id = payload["startup_session_id"]
+        if not isinstance(startup_session_id, str) or not startup_session_id.strip():
             raise ValueError("startup_session_id is required")
-        mode_value = payload["mode"]
-        if not isinstance(mode_value, str):
-            raise ValueError("mode must be a string")
-        requested_mode = mode_value
-        if requested_mode not in {"live", "history"}:
-            raise ValueError("mode must be live or history")
+        startup_session_id = startup_session_id.strip()
+        if payload["mode"] != "live":
+            raise ValueError("v2 only accepts mode=live; history is presentation-only")
         request_generation = _strict_json_integer(
             payload["request_generation"],
             "request_generation",
             minimum=0,
         )
-        mode_state = realtime_tracking_coordinator.set_mode(
-            startup_session_id=startup_session_id,
-            mode=requested_mode,
-            request_generation=request_generation,
-        )
-        items, coordinate_epoch = _tracking_mode_items(
-            startup_session_id=startup_session_id,
-            mode=str(mode_state["mode"]),
-        )
-        return jsonify(
-            {
-                "success": True,
-                **mode_state,
-                "coordinate_epoch": coordinate_epoch,
-                "count": len(items),
-                "items": items,
-            }
-        )
+        state = _accept_live_handshake(startup_session_id, request_generation)
+        return jsonify(_live_transport_response(startup_session_id, state))
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
     except Exception as exc:
@@ -1358,24 +1504,158 @@ def realtime_tracking_status():
         startup_session_id = str(request.args.get("startup_session_id") or "").strip()
         if not startup_session_id:
             raise ValueError("startup_session_id is required")
-        mode_state = realtime_tracking_coordinator.mode_status(startup_session_id)
-        items, coordinate_epoch = _tracking_mode_items(
-            startup_session_id=startup_session_id,
-            mode=str(mode_state["mode"]),
-        )
-        return jsonify(
-            {
-                "success": True,
-                **mode_state,
-                "coordinate_epoch": coordinate_epoch,
-                "count": len(items),
-                "items": items,
-            }
-        )
+        state = _live_handshake_status(startup_session_id)
+        return jsonify(_live_transport_response(startup_session_id, state))
     except ValueError as exc:
         return jsonify({"success": False, "error": str(exc)}), 400
     except Exception as exc:
+        print(f"Error in realtime_tracking_status: {exc}")
         return jsonify({"success": False, "error": str(exc)}), 500
+
+
+@app.route(
+    "/api/v2/display-objects/<display_object_id>/history",
+    methods=["GET"],
+    strict_slashes=False,
+)
+def display_object_history_v2(display_object_id: str):
+    try:
+        _require_no_request_body()
+        expected = {"kind", "limit", "startup_session_id"}
+        actual = set(request.args)
+        if "before_cursor" in actual:
+            expected.add("before_cursor")
+        if actual != expected:
+            missing = sorted(expected - actual)
+            unexpected = sorted(actual - expected)
+            raise ValueError(
+                f"invalid query fields; missing={missing}, unsupported={unexpected}"
+            )
+        for key in expected:
+            if len(request.args.getlist(key)) != 1:
+                raise ValueError(f"query field {key} must appear exactly once")
+        if request.args["kind"] != "take_out":
+            raise ValueError("kind must be take_out")
+        limit = _strict_json_integer(
+            int(request.args["limit"]),
+            "limit",
+            minimum=1,
+        )
+        if limit > 20:
+            raise ValueError("limit must not exceed 20")
+        startup_session_id = str(request.args["startup_session_id"]).strip()
+        if not startup_session_id:
+            raise ValueError("startup_session_id is required")
+        before_cursor = request.args.get("before_cursor")
+        before_id = None
+        if before_cursor is not None:
+            before_id = _strict_json_integer(
+                int(before_cursor),
+                "before_cursor",
+                minimum=1,
+            )
+
+        reference_row = get_latest_aruco_reference(startup_session_id)
+        if reference_row is None:
+            raise ValueError("current startup session has no ArUco reference")
+        reference_pose = _load_marker_pose_json(reference_row.get("marker_pose_json"))
+        if reference_pose is None:
+            raise ValueError("current startup session ArUco reference is invalid")
+        coordinate_epoch = str(
+            reference_row.get("task_id") or reference_row.get("id") or ""
+        ).strip()
+        if not coordinate_epoch:
+            raise ValueError("current coordinate epoch is unavailable")
+
+        host = request.host_url.rstrip("/")
+        history_event = None
+        # The response contains one usable history event. Invalid or incomplete
+        # rows must not form an artificial pagination wall: otherwise a client
+        # using limit=1 can never reach the first valid row below 20 bad rows.
+        scan_before_id = before_id
+        page_size = 100
+        while history_event is None:
+            candidates = list_object_lifecycle_history(
+                display_object_id,
+                limit=page_size,
+                before_id=scan_before_id,
+                take_out_only=True,
+            )
+            if not candidates:
+                break
+            for event in candidates:
+                try:
+                    pose_aruco = _json_column(
+                        event.get("pose_aruco_json"),
+                        "pose_aruco_json",
+                        dict,
+                    )
+                    skeleton_aruco = _json_column(
+                        event.get("skeleton_json"),
+                        "skeleton_json",
+                        dict,
+                    )
+                    if pose_aruco is None or skeleton_aruco is None:
+                        continue
+                    scene_image_url = _event_artifact_url(
+                        host,
+                        event.get("scene_image_path"),
+                    )
+                    if scene_image_url is None:
+                        continue
+                    pose = _strict_current_pose(pose_aruco, reference_pose)
+                    skeleton = _strict_current_skeleton(skeleton_aruco, reference_pose)
+                    corners_aruco = _json_column(
+                        event.get("spatial_box_corners_aruco_json"),
+                        "spatial_box_corners_aruco_json",
+                        list,
+                    )
+                    spatial_box = _strict_current_box(
+                        corners_aruco,
+                        reference_pose,
+                        revision=int(event.get("presence_epoch") or 1),
+                    )
+                except Exception as exc:
+                    print(
+                        f"[WARN] skipped invalid history event "
+                        f"{event.get('lifecycle_event_uid')}: {exc}"
+                    )
+                    continue
+                if skeleton is None:
+                    continue
+                history_event = {
+                    "display_object_id": str(event["display_object_id"]),
+                    "event_uid": str(event["lifecycle_event_uid"]),
+                    "history_cursor": str(event["id"]),
+                    "pose": pose,
+                    "spatial_box": spatial_box,
+                    "evidence": {
+                        "scene_image_url": scene_image_url,
+                        "skeleton": skeleton,
+                    },
+                }
+                break
+            if history_event is not None or len(candidates) < page_size:
+                break
+            next_before_id = int(candidates[-1]["id"])
+            if scan_before_id is not None and next_before_id >= scan_before_id:
+                raise RuntimeError("history pagination did not advance")
+            scan_before_id = next_before_id
+
+        return jsonify(
+            {
+                "success": True,
+                "coordinate_space": "hololens_current_local",
+                "coordinate_epoch": coordinate_epoch,
+                "history_event": history_event,
+            }
+        )
+    except (TypeError, ValueError) as exc:
+        return jsonify({"success": False, "error": str(exc)}), 400
+    except Exception as exc:
+        print(f"Error in display_object_history_v2: {exc}")
+        return jsonify({"success": False, "error": str(exc)}), 500
+
 
 
 @app.errorhandler(404)

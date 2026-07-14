@@ -1,15 +1,13 @@
-using System;
 using System.Globalization;
 using UnityEngine;
 
 [DisallowMultipleComponent]
 public class RuntimeSpatialBoxDisplay : MonoBehaviour
 {
-    private const float PanelOffsetMeters = 0.20f;
-    private const float PanelDownOffsetMeters = 0.10f;
-    private const float FaceSwitchHoldSeconds = 1.0f;
-    private const float PanelLerpSpeed = 8.0f;
+    private const float EdgeDiameterMeters = 0.005f;
 
+    // Canonical corner order:
+    // [000, 100, 110, 010, 001, 101, 111, 011].
     private static readonly int[,] EdgePairs =
     {
         { 0, 1 }, { 1, 2 }, { 2, 3 }, { 3, 0 },
@@ -18,294 +16,135 @@ public class RuntimeSpatialBoxDisplay : MonoBehaviour
     };
 
     private RuntimeSpatialBoxData box;
-    private GameObject fillObject;
-    private Transform panelRoot;
-    private TextMesh panelText;
-    private Material fillMaterial;
-    private Material lineMaterial;
-    private Vector3[] corners = new Vector3[8];
-    private Vector3 activeFaceNormal = Vector3.forward;
-    private Vector3 pendingFaceNormal = Vector3.forward;
-    private float pendingFaceSince;
-    private bool faceInitialized;
+    private Material edgeMaterial;
+    private readonly GameObject[] edgeObjects = new GameObject[12];
 
     public void Configure(RuntimeSpatialBoxData spatialBox, string message)
     {
         box = spatialBox;
         Rebuild();
-        UpdateMessage(message);
     }
 
     public void UpdateMessage(string message)
     {
-        if (panelText != null)
-        {
-            panelText.text = string.IsNullOrEmpty(message) ? "processing" : message;
-        }
-    }
-
-    private void Update()
-    {
-        if (box == null || !box.IsReady)
-        {
-            return;
-        }
-
-        UpdatePanelPlacement();
+        // Spatial boxes are deliberately geometry-only. Progress text belongs
+        // to the regular UI and must not add filled/panel geometry to this box.
     }
 
     private void OnDestroy()
     {
-        DestroyMaterial(fillMaterial);
-        DestroyMaterial(lineMaterial);
+        if (edgeMaterial != null)
+        {
+            Destroy(edgeMaterial);
+            edgeMaterial = null;
+        }
     }
 
     private void Rebuild()
     {
-        for (int i = transform.childCount - 1; i >= 0; i--)
+        if (box == null || !box.IsReady || !box.HasFiniteCorners)
         {
-            Destroy(transform.GetChild(i).gameObject);
-        }
-
-        if (box == null || !box.IsReady)
-        {
+            SetAllEdgesActive(false);
             return;
         }
 
-        ComputeCorners();
-        EnsureMaterials();
-        CreateFillBox();
-        CreateWireframe();
-        CreatePanel();
-        UpdatePanelPlacement(true);
-    }
-
-    private void ComputeCorners()
-    {
-        Vector3 min = box.AabbMinWorld;
-        Vector3 max = box.AabbMaxWorld;
-        corners[0] = new Vector3(min.x, min.y, min.z);
-        corners[1] = new Vector3(max.x, min.y, min.z);
-        corners[2] = new Vector3(max.x, max.y, min.z);
-        corners[3] = new Vector3(min.x, max.y, min.z);
-        corners[4] = new Vector3(min.x, min.y, max.z);
-        corners[5] = new Vector3(max.x, min.y, max.z);
-        corners[6] = new Vector3(max.x, max.y, max.z);
-        corners[7] = new Vector3(min.x, max.y, max.z);
-    }
-
-    private void EnsureMaterials()
-    {
-        if (fillMaterial == null)
-        {
-            fillMaterial = CreateTransparentMaterial(new Color(0.05f, 0.62f, 1.0f, 0.20f));
-        }
-        if (lineMaterial == null)
-        {
-            Shader shader = FindFirstAvailableShader("Sprites/Default", "Standard", "Unlit/Color");
-            lineMaterial = new Material(shader);
-            SetMaterialColor(lineMaterial, new Color(0.05f, 1.0f, 0.95f, 0.95f));
-        }
-    }
-
-    private void CreateFillBox()
-    {
-        fillObject = GameObject.CreatePrimitive(PrimitiveType.Cube);
-        fillObject.name = "sam3_spatial_box_fill";
-        fillObject.transform.SetParent(transform, false);
-        fillObject.transform.position = box.CenterWorld;
-        fillObject.transform.localScale = box.SizeWorld;
-        Collider collider = fillObject.GetComponent<Collider>();
-        if (collider != null)
-        {
-            Destroy(collider);
-        }
-        Renderer renderer = fillObject.GetComponent<Renderer>();
-        if (renderer != null)
-        {
-            renderer.sharedMaterial = fillMaterial;
-        }
-    }
-
-    private void CreateWireframe()
-    {
+        EnsureMaterial();
         for (int i = 0; i < EdgePairs.GetLength(0); i++)
         {
-            GameObject edgeObject = new GameObject("sam3_spatial_box_edge_" + i.ToString(CultureInfo.InvariantCulture));
-            edgeObject.transform.SetParent(transform, false);
-            LineRenderer line = edgeObject.AddComponent<LineRenderer>();
-            line.useWorldSpace = true;
-            line.positionCount = 2;
-            line.material = lineMaterial;
-            line.startWidth = 0.008f;
-            line.endWidth = 0.008f;
-            line.startColor = new Color(0.05f, 1.0f, 0.95f, 0.95f);
-            line.endColor = new Color(0.05f, 1.0f, 0.95f, 0.95f);
-            line.numCapVertices = 2;
-            line.SetPosition(0, corners[EdgePairs[i, 0]]);
-            line.SetPosition(1, corners[EdgePairs[i, 1]]);
+            CreateOrUpdateEdge(
+                i,
+                box.CornersWorld[EdgePairs[i, 0]],
+                box.CornersWorld[EdgePairs[i, 1]]);
         }
     }
 
-    private void CreatePanel()
+    private void CreateOrUpdateEdge(int edgeIndex, Vector3 start, Vector3 end)
     {
-        GameObject panelObject = new GameObject("sam3_spatial_progress_panel");
-        panelObject.transform.SetParent(transform, false);
-        panelRoot = panelObject.transform;
-
-        GameObject textObject = new GameObject("text");
-        textObject.transform.SetParent(panelRoot, false);
-        textObject.transform.localPosition = Vector3.zero;
-        panelText = textObject.AddComponent<TextMesh>();
-        panelText.text = "processing";
-        panelText.anchor = TextAnchor.MiddleCenter;
-        panelText.alignment = TextAlignment.Center;
-        panelText.characterSize = 0.025f;
-        panelText.fontSize = 48;
-        panelText.color = new Color(0.0f, 0.18f, 1.0f, 1.0f);
-    }
-
-    private void UpdatePanelPlacement(bool force = false)
-    {
-        if (panelRoot == null)
+        Vector3 delta = end - start;
+        float length = delta.magnitude;
+        if (!IsFinite(start) || !IsFinite(end) || length <= 0.000001f)
         {
+            if (edgeObjects[edgeIndex] != null)
+            {
+                edgeObjects[edgeIndex].SetActive(false);
+            }
             return;
         }
 
-        Vector3 normal = ResolveViewerFaceNormal();
-        if (!faceInitialized)
+        GameObject edge = edgeObjects[edgeIndex];
+        if (edge == null)
         {
-            activeFaceNormal = normal;
-            pendingFaceNormal = normal;
-            pendingFaceSince = Time.time;
-            faceInitialized = true;
-        }
-        else if (Vector3.Dot(normal, activeFaceNormal) < 0.82f)
-        {
-            if (Vector3.Dot(normal, pendingFaceNormal) < 0.98f)
+            edge = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            edge.name = "spatial_box_edge_"
+                + edgeIndex.ToString(CultureInfo.InvariantCulture);
+            edge.transform.SetParent(transform, true);
+            Collider collider = edge.GetComponent<Collider>();
+            if (collider != null)
             {
-                pendingFaceNormal = normal;
-                pendingFaceSince = Time.time;
+                Destroy(collider);
             }
-            else if (Time.time - pendingFaceSince >= FaceSwitchHoldSeconds)
+            Renderer renderer = edge.GetComponent<Renderer>();
+            if (renderer != null)
             {
-                activeFaceNormal = normal;
+                renderer.sharedMaterial = edgeMaterial;
             }
+            edgeObjects[edgeIndex] = edge;
         }
+        edge.SetActive(true);
+        edge.transform.position = (start + end) * 0.5f;
+        edge.transform.rotation = Quaternion.FromToRotation(Vector3.up, delta / length);
+        // Unity's primitive cylinder has radius 0.5 and height 2.
+        edge.transform.localScale = new Vector3(
+            EdgeDiameterMeters,
+            length * 0.5f,
+            EdgeDiameterMeters);
+    }
 
-        Vector3 targetPosition = FaceCenter(activeFaceNormal) + activeFaceNormal * PanelOffsetMeters + Vector3.down * PanelDownOffsetMeters;
-        panelRoot.position = force
-            ? targetPosition
-            : Vector3.Lerp(panelRoot.position, targetPosition, Time.deltaTime * PanelLerpSpeed);
-
-        Camera cam = Camera.main;
-        if (cam != null)
+    private void SetAllEdgesActive(bool active)
+    {
+        foreach (GameObject edge in edgeObjects)
         {
-            Vector3 toCamera = panelRoot.position - cam.transform.position;
-            if (toCamera.sqrMagnitude > 0.0001f)
+            if (edge != null)
             {
-                panelRoot.rotation = Quaternion.LookRotation(toCamera.normalized, Vector3.up);
-            }
-        }
-    }
-
-    private Vector3 ResolveViewerFaceNormal()
-    {
-        Camera cam = Camera.main;
-        Vector3 direction = cam != null
-            ? cam.transform.position - box.CenterWorld
-            : Vector3.forward;
-        if (direction.sqrMagnitude < 0.0001f)
-        {
-            direction = Vector3.forward;
-        }
-        direction.Normalize();
-
-        Vector3 abs = new Vector3(Mathf.Abs(direction.x), Mathf.Abs(direction.y), Mathf.Abs(direction.z));
-        if (abs.x >= abs.y && abs.x >= abs.z)
-        {
-            return new Vector3(Mathf.Sign(direction.x), 0f, 0f);
-        }
-        if (abs.y >= abs.z)
-        {
-            return new Vector3(0f, Mathf.Sign(direction.y), 0f);
-        }
-        return new Vector3(0f, 0f, Mathf.Sign(direction.z));
-    }
-
-    private Vector3 FaceCenter(Vector3 normal)
-    {
-        Vector3 extents = box.SizeWorld * 0.5f;
-        Vector3 offset = new Vector3(normal.x * extents.x, normal.y * extents.y, normal.z * extents.z);
-        return box.CenterWorld + offset;
-    }
-
-    private static Material CreateTransparentMaterial(Color color)
-    {
-        Shader shader = FindFirstAvailableShader("Standard", "Unlit/Color", "Sprites/Default");
-        Material material = new Material(shader);
-        SetMaterialColor(material, color);
-        MakeTransparent(material);
-        return material;
-    }
-
-    private static Shader FindFirstAvailableShader(params string[] names)
-    {
-        foreach (string name in names)
-        {
-            Shader shader = Shader.Find(name);
-            if (shader != null)
-            {
-                return shader;
+                edge.SetActive(active);
             }
         }
-        return Shader.Find("Hidden/InternalErrorShader");
     }
 
-    private static void SetMaterialColor(Material material, Color color)
+    private void EnsureMaterial()
     {
-        if (material == null)
+        if (edgeMaterial != null)
         {
             return;
         }
-
-        if (material.HasProperty("_Color"))
+        Shader shader = Shader.Find("Unlit/Color");
+        if (shader == null)
         {
-            material.SetColor("_Color", color);
+            shader = Shader.Find("Standard");
         }
-        if (material.HasProperty("_BaseColor"))
+        if (shader == null)
         {
-            material.SetColor("_BaseColor", color);
+            shader = Shader.Find("Hidden/InternalErrorShader");
+        }
+        edgeMaterial = new Material(shader);
+        Color color = new Color(0.05f, 1.0f, 0.95f, 0.95f);
+        if (edgeMaterial.HasProperty("_Color"))
+        {
+            edgeMaterial.SetColor("_Color", color);
+        }
+        if (edgeMaterial.HasProperty("_BaseColor"))
+        {
+            edgeMaterial.SetColor("_BaseColor", color);
         }
     }
 
-    private static void MakeTransparent(Material material)
+    private static bool IsFinite(Vector3 value)
     {
-        if (material == null)
-        {
-            return;
-        }
-
-        material.SetOverrideTag("RenderType", "Transparent");
-        material.SetFloat("_Mode", 3f);
-        material.SetFloat("_Surface", 1f);
-        material.SetFloat("_AlphaClip", 0f);
-        material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-        material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-        material.SetInt("_ZWrite", 0);
-        material.SetInt("_Cull", (int)UnityEngine.Rendering.CullMode.Off);
-        material.DisableKeyword("_ALPHATEST_ON");
-        material.EnableKeyword("_ALPHABLEND_ON");
-        material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
-        material.EnableKeyword("_SURFACE_TYPE_TRANSPARENT");
-        material.renderQueue = (int)UnityEngine.Rendering.RenderQueue.Transparent;
-    }
-
-    private static void DestroyMaterial(Material material)
-    {
-        if (material != null)
-        {
-            Destroy(material);
-        }
+        return !float.IsNaN(value.x)
+            && !float.IsInfinity(value.x)
+            && !float.IsNaN(value.y)
+            && !float.IsInfinity(value.y)
+            && !float.IsNaN(value.z)
+            && !float.IsInfinity(value.z);
     }
 }

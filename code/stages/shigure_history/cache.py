@@ -81,77 +81,71 @@ class CachedRgbdSample:
 
 
 @dataclass(frozen=True)
-class CachedShigureEvent:
-    """A Shigure event joined by the exact ROS source timestamp.
-
-    ``contacted_state`` and ``object_detection_state`` are deliberately kept
-    separate from the payloads.  This lets consumers distinguish an explicit
-    empty list from a topic that was not received for the source timestamp.
-    """
+class CachedShigureFrame:
+    """Canonical exact-stamp Shigure frame produced by the server adapter."""
 
     source_stamp: RosStamp
+    source_incarnation_id: str
+    frame_id: str
     received_utc: str
     received_monotonic: float
-    contacted_state: str
-    object_detection_state: str
-    contacted: dict[str, Any] | None = None
-    object_detection: dict[str, Any] | None = None
-    contact_object_matches: list[dict[str, Any]] | None = None
+    schema_version: int
+    input_states: dict[str, str]
+    events: list[dict[str, Any]]
+    tracked_objects: list[dict[str, Any]]
+    recovery_candidates: list[dict[str, Any]]
+    people: list[dict[str, Any]]
+    diagnostics: list[dict[str, Any]]
     sequence: int = 0
 
     def __post_init__(self) -> None:
-        valid_states = {"missing", "explicit_empty", "present"}
-        if self.contacted_state not in valid_states or self.object_detection_state not in valid_states:
-            raise ValueError("invalid Shigure event topic state")
-        self._validate_payload(self.contacted_state, self.contacted, "contact_count", "contacted")
-        self._validate_payload(
-            self.object_detection_state,
-            self.object_detection,
-            "object_count",
-            "object_detection",
-        )
+        if int(self.schema_version) != 2:
+            raise ValueError("unsupported canonical Shigure schema version")
+        if not str(self.source_incarnation_id).strip():
+            raise ValueError("canonical frame source_incarnation_id is required")
         if int(self.sequence) < 0:
-            raise ValueError("Shigure event sequence must be non-negative")
-
-    @staticmethod
-    def _validate_payload(state: str, payload: dict[str, Any] | None, count_key: str, label: str) -> None:
-        if state == "missing":
-            if payload is not None:
-                raise ValueError(f"{label} payload must be absent when state is missing")
-            return
-        if not isinstance(payload, dict) or count_key not in payload:
-            raise ValueError(f"{label} payload requires {count_key}")
-        count = int(payload[count_key])
-        if (state == "explicit_empty") != (count == 0):
-            raise ValueError(f"{label} state does not match {count_key}")
+            raise ValueError("canonical frame sequence must be non-negative")
+        valid_states = {"missing", "explicit_empty", "present"}
+        if any(str(value) not in valid_states for value in self.input_states.values()):
+            raise ValueError("canonical frame contains an invalid input state")
+        for label, value in (
+            ("events", self.events),
+            ("tracked_objects", self.tracked_objects),
+            ("recovery_candidates", self.recovery_candidates),
+            ("people", self.people),
+            ("diagnostics", self.diagnostics),
+        ):
+            if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
+                raise ValueError(f"canonical frame {label} must be an array of objects")
 
     @property
     def key(self) -> str:
         return sample_key(self.source_stamp)
 
     def to_dict(self, *, include_masks: bool = False) -> dict[str, Any]:
-        object_detection = deepcopy(self.object_detection)
-        if object_detection is not None and not include_masks:
-            for item in object_detection.get("objects") or []:
-                if isinstance(item, dict):
-                    item.pop("mask_b64", None)
-        if self.contacted_state == "missing":
-            join_state = "waiting_contacted"
-        elif self.object_detection_state == "missing":
-            join_state = "waiting_object_detection"
-        else:
-            join_state = "complete"
+        events = deepcopy(self.events)
+        recovery_candidates = deepcopy(self.recovery_candidates)
+        if not include_masks:
+            for event in events:
+                detection = event.get("detection")
+                if isinstance(detection, dict):
+                    detection.pop("mask_b64", None)
+            for candidate in recovery_candidates:
+                candidate.pop("mask_b64", None)
         return {
+            "schema_version": int(self.schema_version),
             "source_stamp": self.source_stamp.to_dict(),
+            "source_incarnation_id": str(self.source_incarnation_id),
+            "frame_id": str(self.frame_id),
             "sequence": int(self.sequence),
-            "received_utc": self.received_utc,
+            "received_utc": str(self.received_utc),
             "received_monotonic": float(self.received_monotonic),
-            "contacted_state": self.contacted_state,
-            "object_detection_state": self.object_detection_state,
-            "join_state": join_state,
-            "contacted": deepcopy(self.contacted),
-            "object_detection": object_detection,
-            "contact_object_matches": deepcopy(self.contact_object_matches or []),
+            "input_states": deepcopy(self.input_states),
+            "events": events,
+            "tracked_objects": deepcopy(self.tracked_objects),
+            "recovery_candidates": recovery_candidates,
+            "people": deepcopy(self.people),
+            "diagnostics": deepcopy(self.diagnostics),
         }
 
 
@@ -213,80 +207,107 @@ class RecentRawSampleBuffer:
                     self._samples.pop(key, None)
 
 
-class RecentShigureEventBuffer:
-    def __init__(self, *, max_seconds: float, max_events: int) -> None:
+class RecentShigureFrameBuffer:
+    def __init__(self, *, max_seconds: float, max_frames: int) -> None:
         self.max_seconds = max(0.0, float(max_seconds))
-        self.max_events = max(0, int(max_events))
-        self._events: OrderedDict[str, CachedShigureEvent] = OrderedDict()
+        self.max_frames = max(0, int(max_frames))
+        self._frames: OrderedDict[str, CachedShigureFrame] = OrderedDict()
 
     def __len__(self) -> int:
-        return len(self._events)
+        return len(self._frames)
 
-    def append(self, event: CachedShigureEvent) -> None:
-        if self.max_events <= 0:
+    def append(self, frame: CachedShigureFrame) -> None:
+        if self.max_frames <= 0:
             return
-        copied = CachedShigureEvent(
-            source_stamp=event.source_stamp,
-            received_utc=str(event.received_utc),
-            received_monotonic=float(event.received_monotonic),
-            contacted_state=str(event.contacted_state),
-            object_detection_state=str(event.object_detection_state),
-            contacted=deepcopy(event.contacted),
-            object_detection=deepcopy(event.object_detection),
-            contact_object_matches=deepcopy(event.contact_object_matches or []),
-            sequence=int(event.sequence),
+        copied = CachedShigureFrame(
+            source_stamp=frame.source_stamp,
+            source_incarnation_id=str(frame.source_incarnation_id),
+            frame_id=str(frame.frame_id),
+            received_utc=str(frame.received_utc),
+            received_monotonic=float(frame.received_monotonic),
+            schema_version=int(frame.schema_version),
+            input_states=deepcopy(frame.input_states),
+            events=deepcopy(frame.events),
+            tracked_objects=deepcopy(frame.tracked_objects),
+            recovery_candidates=deepcopy(frame.recovery_candidates),
+            people=deepcopy(frame.people),
+            diagnostics=deepcopy(frame.diagnostics),
+            sequence=int(frame.sequence),
         )
-        self._events[copied.key] = copied
-        self._events = OrderedDict(
-            sorted(
-                self._events.items(),
-                key=lambda item: (
-                    item[1].source_stamp.sec,
-                    item[1].source_stamp.nanosec,
-                    item[1].received_monotonic,
-                ),
-            )
-        )
-        newest = self.newest_event()
-        if newest is not None:
-            self._prune(newest_seconds=newest.source_stamp.seconds)
+        self._frames[copied.key] = copied
+        # Canonical frames are an arrival-ordered update log.  A control frame
+        # that rotates the source incarnation may legitimately arrive after a
+        # frame with a larger ROS stamp, so source time must never decide which
+        # incarnation is authoritative.
+        self._frames.move_to_end(copied.key)
+        self._prune(newest_received_monotonic=copied.received_monotonic)
 
-    def iter_event_updates_after(self, sequence: int) -> Iterable[CachedShigureEvent]:
+    def iter_updates_after(self, sequence: int) -> Iterable[CachedShigureFrame]:
         minimum = max(0, int(sequence))
         yield from sorted(
-            (event for event in self._events.values() if int(event.sequence) > minimum),
-            key=lambda event: int(event.sequence),
+            (frame for frame in self._frames.values() if int(frame.sequence) > minimum),
+            key=lambda frame: int(frame.sequence),
         )
 
-    def newest_event(self) -> CachedShigureEvent | None:
-        if not self._events:
+    def newest_frame(self) -> CachedShigureFrame | None:
+        if not self._frames:
             return None
-        return next(reversed(self._events.values()))
+        return max(self._frames.values(), key=lambda frame: int(frame.sequence))
 
-    def _prune(self, *, newest_seconds: float) -> None:
-        cutoff = newest_seconds - self.max_seconds if self.max_seconds > 0 else None
-        while len(self._events) > self.max_events:
-            self._events.popitem(last=False)
+    def newest_recovery_frame(self) -> CachedShigureFrame | None:
+        candidates = [
+            frame
+            for frame in self._frames.values()
+            if (
+                frame.input_states.get("camera_info") == "present"
+                and frame.input_states.get("segments") in {"present", "explicit_empty"}
+            )
+        ]
+        return (
+            max(candidates, key=lambda frame: int(frame.sequence))
+            if candidates
+            else None
+        )
+
+    def _prune(self, *, newest_received_monotonic: float) -> None:
+        cutoff = (
+            float(newest_received_monotonic) - self.max_seconds
+            if self.max_seconds > 0
+            else None
+        )
+        while len(self._frames) > self.max_frames:
+            oldest_key = min(
+                self._frames,
+                key=lambda key: int(self._frames[key].sequence),
+            )
+            self._frames.pop(oldest_key, None)
         if cutoff is not None:
-            for key, event in list(self._events.items()):
-                if event.source_stamp.seconds < cutoff:
-                    self._events.pop(key, None)
+            latest_sequence = max(
+                (int(frame.sequence) for frame in self._frames.values()),
+                default=0,
+            )
+            for key, frame in list(self._frames.items()):
+                if (
+                    int(frame.sequence) != latest_sequence
+                    and float(frame.received_monotonic) < cutoff
+                ):
+                    self._frames.pop(key, None)
 
 
 class ShigureMemoryStore:
-    """Thread-safe in-process RGB-D and correlated Shigure event buffers."""
+    """Thread-safe in-process RGB-D and canonical Shigure frame buffers."""
 
-    def __init__(self, *, max_seconds: float, max_samples: int, max_events: int | None = None) -> None:
+    def __init__(self, *, max_seconds: float, max_samples: int, max_frames: int | None = None) -> None:
         self._buffer = RecentRawSampleBuffer(max_seconds=max_seconds, max_samples=max_samples)
-        self._event_buffer = RecentShigureEventBuffer(
+        self._frame_buffer = RecentShigureFrameBuffer(
             max_seconds=max_seconds,
-            max_events=max_samples if max_events is None else max_events,
+            max_frames=max_samples if max_frames is None else max_frames,
         )
         self._lock = RLock()
         self.created_at = utc_now()
         self.last_append_at: str | None = None
-        self.last_event_append_at: str | None = None
-        self._next_event_sequence = 0
+        self.last_frame_append_at: str | None = None
+        self._next_frame_sequence = 0
 
     def append(self, sample: CachedRgbdSample) -> None:
         with self._lock:
@@ -305,38 +326,47 @@ class ShigureMemoryStore:
         with self._lock:
             return self._buffer.get_sample(stamp)
 
-    def append_event(self, event: CachedShigureEvent) -> CachedShigureEvent:
+    def append_canonical_frame(self, frame: CachedShigureFrame) -> CachedShigureFrame:
         with self._lock:
-            self._next_event_sequence += 1
-            stored = replace(event, sequence=self._next_event_sequence)
-            self._event_buffer.append(stored)
-            self.last_event_append_at = utc_now()
+            self._next_frame_sequence += 1
+            stored = replace(frame, sequence=self._next_frame_sequence)
+            self._frame_buffer.append(stored)
+            self.last_frame_append_at = utc_now()
             return stored
 
-    def iter_event_updates_after(self, sequence: int) -> list[CachedShigureEvent]:
+    def iter_canonical_updates_after(self, sequence: int) -> list[CachedShigureFrame]:
         with self._lock:
-            return list(self._event_buffer.iter_event_updates_after(sequence))
+            return list(self._frame_buffer.iter_updates_after(sequence))
 
-    def latest_event(self) -> CachedShigureEvent | None:
+    def latest_canonical_frame(self) -> CachedShigureFrame | None:
         with self._lock:
-            return self._event_buffer.newest_event()
+            return self._frame_buffer.newest_frame()
+
+    def latest_recovery_frame(self) -> CachedShigureFrame | None:
+        with self._lock:
+            return self._frame_buffer.newest_recovery_frame()
 
     def status(self) -> dict[str, Any]:
         with self._lock:
             newest = self._buffer.newest_sample()
-            latest_event = self._event_buffer.newest_event()
+            latest_frame = self._frame_buffer.newest_frame()
+            latest_recovery = self._frame_buffer.newest_recovery_frame()
             return {
                 "created_at": self.created_at,
                 "last_append_at": self.last_append_at,
-                "last_event_append_at": self.last_event_append_at,
+                "last_frame_append_at": self.last_frame_append_at,
                 "sample_count": len(self._buffer),
-                "event_count": len(self._event_buffer),
+                "canonical_frame_count": len(self._frame_buffer),
                 "retention_seconds": self._buffer.max_seconds,
                 "max_samples": self._buffer.max_samples,
-                "max_events": self._event_buffer.max_events,
-                "latest_event_sequence": int(self._next_event_sequence),
+                "max_frames": self._frame_buffer.max_frames,
+                "latest_canonical_sequence": int(self._next_frame_sequence),
+                "source_incarnation_id": (
+                    latest_frame.source_incarnation_id if latest_frame is not None else None
+                ),
                 "newest_sample": newest.to_dict() if newest is not None else None,
-                "latest_event": latest_event.to_dict() if latest_event is not None else None,
+                "latest_canonical_frame": latest_frame.to_dict() if latest_frame is not None else None,
+                "latest_recovery_frame": latest_recovery.to_dict() if latest_recovery is not None else None,
             }
 
 
@@ -435,43 +465,52 @@ def _sample_from_wire(payload: Mapping[str, Any]) -> CachedRgbdSample:
     )
 
 
-def _event_to_wire(event: CachedShigureEvent, *, include_masks: bool = False) -> dict[str, Any]:
-    return event.to_dict(include_masks=include_masks)
+def _canonical_frame_to_wire(frame: CachedShigureFrame, *, include_masks: bool = False) -> dict[str, Any]:
+    return frame.to_dict(include_masks=include_masks)
 
 
-def _event_from_wire(payload: Mapping[str, Any]) -> CachedShigureEvent:
+def _canonical_frame_from_wire(payload: Mapping[str, Any]) -> CachedShigureFrame:
     required = {
+        "schema_version",
         "source_stamp",
+        "source_incarnation_id",
+        "frame_id",
         "received_utc",
         "received_monotonic",
-        "contacted_state",
-        "object_detection_state",
-        "contacted",
-        "object_detection",
-        "contact_object_matches",
+        "input_states",
+        "events",
+        "tracked_objects",
+        "recovery_candidates",
+        "people",
+        "diagnostics",
         "sequence",
     }
     missing = required.difference(payload)
     if missing:
-        raise ValueError(f"Shigure event is missing fields: {sorted(missing)}")
-    contacted = payload["contacted"]
-    object_detection = payload["object_detection"]
-    matches = payload["contact_object_matches"]
-    if contacted is not None and not isinstance(contacted, dict):
-        raise ValueError("contacted must be an object or null")
-    if object_detection is not None and not isinstance(object_detection, dict):
-        raise ValueError("object_detection must be an object or null")
-    if not isinstance(matches, list):
-        raise ValueError("contact_object_matches must be an array")
-    return CachedShigureEvent(
+        raise ValueError(f"canonical Shigure frame is missing fields: {sorted(missing)}")
+    input_states = payload["input_states"]
+    if not isinstance(input_states, Mapping):
+        raise ValueError("canonical frame input_states must be an object")
+
+    def object_list(name: str) -> list[dict[str, Any]]:
+        values = payload[name]
+        if not isinstance(values, list) or any(not isinstance(item, Mapping) for item in values):
+            raise ValueError(f"canonical frame {name} must be an array of objects")
+        return [dict(item) for item in values]
+
+    return CachedShigureFrame(
+        schema_version=int(payload["schema_version"]),
         source_stamp=RosStamp.from_dict(payload["source_stamp"]),
+        source_incarnation_id=str(payload["source_incarnation_id"]),
+        frame_id=str(payload["frame_id"]),
         received_utc=str(payload["received_utc"]),
         received_monotonic=float(payload["received_monotonic"]),
-        contacted_state=str(payload["contacted_state"]),
-        object_detection_state=str(payload["object_detection_state"]),
-        contacted=contacted,
-        object_detection=object_detection,
-        contact_object_matches=[dict(item) for item in matches if isinstance(item, Mapping)],
+        input_states={str(key): str(value) for key, value in input_states.items()},
+        events=object_list("events"),
+        tracked_objects=object_list("tracked_objects"),
+        recovery_candidates=object_list("recovery_candidates"),
+        people=object_list("people"),
+        diagnostics=object_list("diagnostics"),
         sequence=int(payload["sequence"]),
     )
 
@@ -494,14 +533,18 @@ def store_request(store: ShigureMemoryStore, request: Mapping[str, Any]) -> dict
             return {"ok": False, "error": "stamp is required"}
         sample = store.get_sample(stamp)
         return {"ok": True, "sample": _sample_to_wire(sample, include_rgb=True, include_depth=True) if sample is not None else None}
-    if action == "iter_event_updates_after":
+    if action == "iter_canonical_updates_after":
         include_masks = bool(request.get("include_masks", False))
-        events = store.iter_event_updates_after(int(request.get("sequence") or 0))
-        return {"ok": True, "events": [_event_to_wire(item, include_masks=include_masks) for item in events]}
-    if action == "latest_event":
+        frames = store.iter_canonical_updates_after(int(request.get("sequence") or 0))
+        return {"ok": True, "frames": [_canonical_frame_to_wire(item, include_masks=include_masks) for item in frames]}
+    if action == "latest_canonical_frame":
         include_masks = bool(request.get("include_masks", False))
-        event = store.latest_event()
-        return {"ok": True, "event": _event_to_wire(event, include_masks=include_masks) if event is not None else None}
+        frame = store.latest_canonical_frame()
+        return {"ok": True, "frame": _canonical_frame_to_wire(frame, include_masks=include_masks) if frame is not None else None}
+    if action == "latest_recovery_frame":
+        include_masks = bool(request.get("include_masks", False))
+        frame = store.latest_recovery_frame()
+        return {"ok": True, "frame": _canonical_frame_to_wire(frame, include_masks=include_masks) if frame is not None else None}
     return {"ok": False, "error": f"unsupported action: {action}"}
 
 
@@ -527,7 +570,7 @@ def _send_socket_request(socket_path: Path, payload: Mapping[str, Any], *, timeo
 
 
 class ShigureRgbdCache:
-    """Client for the online Shigurei RGB-D and correlated event cache."""
+    """Client for the online Shigurei RGB-D and canonical frame cache."""
 
     def __init__(
         self,
@@ -574,28 +617,37 @@ class ShigureRgbdCache:
         sample_payload = response.get("sample")
         return _sample_from_wire(sample_payload) if isinstance(sample_payload, Mapping) else None
 
-    def iter_event_updates_after(self, sequence: int, *, include_masks: bool = False) -> Iterable[CachedShigureEvent]:
-        """Poll event updates without losing a late exact-stamp join update."""
+    def iter_canonical_updates_after(
+        self, sequence: int, *, include_masks: bool = False
+    ) -> Iterable[CachedShigureFrame]:
+        """Poll exact-stamp canonical frame revisions."""
 
         response = self._request(
             {
-                "action": "iter_event_updates_after",
+                "action": "iter_canonical_updates_after",
                 "sequence": max(0, int(sequence)),
                 "include_masks": bool(include_masks),
             }
         )
         if response is None:
             return
-        for payload in response.get("events") or []:
+        for payload in response.get("frames") or []:
             if isinstance(payload, Mapping):
-                yield _event_from_wire(payload)
+                yield _canonical_frame_from_wire(payload)
 
-    def latest_event(self, *, include_masks: bool = False) -> CachedShigureEvent | None:
-        response = self._request({"action": "latest_event", "include_masks": bool(include_masks)})
-        if response is None or response.get("event") is None:
+    def latest_canonical_frame(self, *, include_masks: bool = False) -> CachedShigureFrame | None:
+        response = self._request({"action": "latest_canonical_frame", "include_masks": bool(include_masks)})
+        if response is None or response.get("frame") is None:
             return None
-        event_payload = response.get("event")
-        return _event_from_wire(event_payload) if isinstance(event_payload, Mapping) else None
+        frame_payload = response.get("frame")
+        return _canonical_frame_from_wire(frame_payload) if isinstance(frame_payload, Mapping) else None
+
+    def latest_recovery_frame(self, *, include_masks: bool = False) -> CachedShigureFrame | None:
+        response = self._request({"action": "latest_recovery_frame", "include_masks": bool(include_masks)})
+        if response is None or response.get("frame") is None:
+            return None
+        frame_payload = response.get("frame")
+        return _canonical_frame_from_wire(frame_payload) if isinstance(frame_payload, Mapping) else None
 
     def status(self) -> dict[str, Any] | None:
         response = self._request({"action": "status"})

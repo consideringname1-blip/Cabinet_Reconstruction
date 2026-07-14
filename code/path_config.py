@@ -12,7 +12,6 @@ STAGES_ROOT = CODE_ROOT / "stages"
 HOLOLENS3D_RECON_STAGE_ROOT = STAGES_ROOT / "hololens3d_reconstruction"
 ARUCO_STAGE_ROOT = STAGES_ROOT / "hololens_aruco_reference"
 SHIGURE_HISTORY_STAGE_ROOT = STAGES_ROOT / "shigure_history"
-SAM3D_BODY_STAGE_ROOT = STAGES_ROOT / "sam3d_body_mesh"
 SCRIPTS_ROOT = CODE_ROOT / "scripts"
 RECON_ROOT = CODE_ROOT / "reconstruction"
 HOLOLENS_ROOT = CODE_ROOT / "Hololens2"
@@ -23,7 +22,6 @@ IMESH_PY = "/opt/miniconda/envs/imesh/bin/python"
 SERVER_PY = "/opt/miniconda/envs/server/bin/python"
 SAM3_PY = "/opt/miniconda/envs/sam3/bin/python"
 SAM3D_OBJECTS_PY = "/opt/miniconda/envs/sam3d-objects-cu118/bin/python"
-SAM3D_BODY_PY = "/opt/miniconda/envs/sam_3d_body/bin/python"
 HOLOLENS2_PY = SERVER_PY
 
 # App entrypoints
@@ -46,7 +44,6 @@ SAM3_DIR = SAM3_ROOT / "sam3"
 SAM3_BEP = SAM3_DIR / "assets" / "bpe_simple_vocab_16e6.txt.gz"
 SAM3D_OBJECTS_ROOT = RECON_ROOT / "sam-3d-objects"
 SAM3D_OBJECTS_CONFIG = SAM3D_OBJECTS_ROOT / "checkpoints" / "hf" / "pipeline.yaml"
-SAM3D_BODY_ROOT = RECON_ROOT / "sam3d-body"
 
 # Stage scripts
 SAM3_BOX_MASK_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_sam3_boxmask_from_json.py"
@@ -68,8 +65,6 @@ SAM3D_OBJECTS_POSTPROCESS_SCRIPT = HOLOLENS3D_RECON_STAGE_ROOT / "postprocess_sa
 MODEL_BOUNDS_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_model_bounds_from_json.py"
 DISPLAY_IDENTITY_STAGE_RUN = HOLOLENS3D_RECON_STAGE_ROOT / "run_display_identity_from_json.py"
 SHIGURE_HISTORY_RECORDER_RUN = SHIGURE_HISTORY_STAGE_ROOT / "run_shigure_history_recorder.py"
-SAM3D_BODY_MESH_STAGE_RUN = SAM3D_BODY_STAGE_ROOT / "run_sam3d_body_mesh_from_json.py"
-SAM3D_BODY_FBX_EXPORT_SCRIPT = SAM3D_BODY_STAGE_ROOT / "export_selected_body_fbx.py"
 CONVERT_SCRIPT = HOLOLENS3D_RECON_STAGE_ROOT / "convert_obj_to_fbx.py"
 
 ARUCO_STAGE_PY = SERVER_PY
@@ -89,6 +84,5 @@ RUNTIME_MESH_STAGE_PY = SERVER_PY
 MODEL_BOUNDS_STAGE_PY = SERVER_PY
 DISPLAY_IDENTITY_STAGE_PY = SERVER_PY
 SHIGURE_HISTORY_RECORDER_STAGE_PY = os.environ.get("SHIGURE_HISTORY_RECORDER_PY", "/usr/bin/python3")
-SAM3D_BODY_MESH_STAGE_PY = os.environ.get("SAM3D_BODY_PY", SAM3D_BODY_PY)
 
 BLENDER_BIN = "/usr/local/bin/blender"

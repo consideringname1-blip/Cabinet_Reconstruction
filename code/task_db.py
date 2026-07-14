@@ -1,12 +1,15 @@
 import json
 import math
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 from config import (
+    SHIGURE_EXAMPLE_DINO_DISTANCE_THRESHOLD,
+    SHIGURE_EXAMPLE_DINO_SECOND_MARGIN,
     ARUCO_ANCHOR_MARKER_ID,
     ARUCO_SYNC_MARKER_REGISTRY_ON_START,
 )
@@ -14,9 +17,10 @@ from artifact_layout import (
     ARUCO_REFERENCE_ROOT,
     ARUCO_TEMPLATE_PATH,
     DATABASE_PATH,
+    IDENTITY_REFERENCE_ROOT,
     ensure_database_root,
 )
-from task_json import normalize_path_for_storage
+from task_json import normalize_path_for_storage, resolve_project_path
 
 
 TABLE_NAME = "tasks"
@@ -34,8 +38,15 @@ CAPTURE_BINDING_LOG_TABLE = "capture_binding_logs"
 DISPLAY_OBJECT_STATE_TABLE = "display_object_states"
 DISPLAY_OBJECT_MODEL_REVISION_TABLE = "display_object_model_revisions"
 DISPLAY_OBJECT_POSE_HISTORY_TABLE = "display_object_pose_history"
-REALTIME_TRACKING_EVENT_TABLE = "realtime_tracking_events"
-AUXILIARY_JOB_TABLE = "auxiliary_jobs"
+SCHEMA_METADATA_TABLE = "schema_metadata"
+SHIGURE_RUNTIME_SESSION_TABLE = "shigure_runtime_sessions"
+SHIGURE_SOURCE_EPOCH_TABLE = "shigure_source_epochs"
+SHIGURE_OBJECT_BINDING_TABLE = "shigure_object_bindings"
+SHIGURE_CANONICAL_EVENT_TABLE = "shigure_canonical_events"
+OBJECT_LIFECYCLE_EVENT_TABLE = "object_lifecycle_events"
+OBJECT_IDENTITY_REFERENCE_TABLE = "object_identity_references"
+IDENTITY_SYNC_JOB_TABLE = "identity_sync_jobs"
+SHIGURE_SCHEMA_VERSION = 2
 MODEL_BOUNDS_STATUSES = (
     "pending",
     "ready",
@@ -350,9 +361,9 @@ def _create_capture_binding_log_table_sql() -> str:
     """
 
 
-def _create_display_object_state_table_sql() -> str:
+def _create_display_object_state_table_sql(table_name: str = DISPLAY_OBJECT_STATE_TABLE) -> str:
     return f"""
-        CREATE TABLE {DISPLAY_OBJECT_STATE_TABLE} (
+        CREATE TABLE {table_name} (
             display_object_id TEXT PRIMARY KEY,
             active_model_revision INTEGER NOT NULL DEFAULT 0,
             active_model_task_id TEXT,
@@ -365,8 +376,15 @@ def _create_display_object_state_table_sql() -> str:
             latest_tracking_model_revision INTEGER NOT NULL DEFAULT 0,
             latest_tracking_pose_aruco_json TEXT,
             latest_tracking_observation_seq INTEGER NOT NULL DEFAULT 0,
-            latest_body_revision INTEGER NOT NULL DEFAULT 0,
-            latest_body_task_id TEXT,
+            latest_spatial_observation_seq INTEGER NOT NULL DEFAULT 0,
+            latest_skeleton_observation_seq INTEGER NOT NULL DEFAULT 0,
+            presence TEXT NOT NULL DEFAULT 'UNKNOWN'
+                CHECK (presence IN ('UNKNOWN', 'PRESENT', 'ABSENT')),
+            presence_epoch INTEGER NOT NULL DEFAULT 0,
+            active_shigure_binding_id TEXT,
+            last_lifecycle_event_uid TEXT,
+            latest_spatial_box_aruco_json TEXT,
+            latest_skeleton_json TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -388,16 +406,17 @@ def _create_display_object_model_revision_table_sql() -> str:
     """
 
 
-def _create_display_object_pose_history_table_sql() -> str:
+def _create_display_object_pose_history_table_sql(
+    table_name: str = DISPLAY_OBJECT_POSE_HISTORY_TABLE,
+) -> str:
     return f"""
-        CREATE TABLE {DISPLAY_OBJECT_POSE_HISTORY_TABLE} (
+        CREATE TABLE {table_name} (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             display_object_id TEXT NOT NULL,
             task_id TEXT NOT NULL UNIQUE,
             model_revision INTEGER NOT NULL,
             pose_revision INTEGER NOT NULL,
             pose_aruco_json TEXT NOT NULL,
-            body_revision INTEGER,
             captured_at TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -405,45 +424,168 @@ def _create_display_object_pose_history_table_sql() -> str:
     """
 
 
-def _create_realtime_tracking_event_table_sql() -> str:
+def _create_schema_metadata_table_sql() -> str:
     return f"""
-        CREATE TABLE {REALTIME_TRACKING_EVENT_TABLE} (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            display_object_id TEXT,
-            startup_session_id TEXT,
-            ingress_session_id TEXT,
-            shigure_object_id TEXT,
-            observation_seq INTEGER NOT NULL DEFAULT 0,
-            tracking_epoch INTEGER NOT NULL DEFAULT 0,
-            mode_epoch INTEGER NOT NULL DEFAULT 0,
-            model_revision INTEGER NOT NULL DEFAULT 0,
-            status TEXT NOT NULL,
-            reason TEXT,
-            source_stamp_json TEXT,
-            pose_aruco_json TEXT,
+        CREATE TABLE {SCHEMA_METADATA_TABLE} (
+            schema_name TEXT PRIMARY KEY,
+            schema_version INTEGER NOT NULL,
+            migrated_at TEXT NOT NULL,
+            detail_json TEXT NOT NULL DEFAULT '{{}}'
+        )
+    """
+
+
+def _create_shigure_runtime_session_table_sql() -> str:
+    return f"""
+        CREATE TABLE {SHIGURE_RUNTIME_SESSION_TABLE} (
+            runtime_session_id TEXT PRIMARY KEY,
+            server_boot_id TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'CLOSED')),
+            started_at TEXT NOT NULL,
+            ended_at TEXT,
+            close_reason TEXT,
+            config_json TEXT NOT NULL DEFAULT '{{}}'
+        )
+    """
+
+
+def _create_shigure_source_epoch_table_sql() -> str:
+    return f"""
+        CREATE TABLE {SHIGURE_SOURCE_EPOCH_TABLE} (
+            source_epoch_id TEXT PRIMARY KEY,
+            runtime_session_id TEXT NOT NULL,
+            generation INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'CLOSED')),
+            opened_at TEXT NOT NULL,
+            closed_at TEXT,
+            open_reason TEXT NOT NULL,
+            close_reason TEXT,
+            publisher_fingerprint_json TEXT NOT NULL DEFAULT '{{}}',
+            raw_id_prefix TEXT,
+            UNIQUE(runtime_session_id, generation)
+        )
+    """
+
+
+def _create_shigure_object_binding_table_sql() -> str:
+    return f"""
+        CREATE TABLE {SHIGURE_OBJECT_BINDING_TABLE} (
+            binding_id TEXT PRIMARY KEY,
+            runtime_session_id TEXT NOT NULL,
+            source_epoch_id TEXT NOT NULL,
+            raw_shigure_object_id TEXT NOT NULL,
+            display_object_id TEXT NOT NULL,
+            binding_epoch INTEGER NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('ACTIVE', 'REVOKED')),
+            established_by TEXT NOT NULL,
+            established_event_uid TEXT,
+            valid_from TEXT NOT NULL,
+            valid_until TEXT,
+            revoke_reason TEXT,
+            confidence REAL,
             detail_json TEXT NOT NULL DEFAULT '{{}}',
+            UNIQUE(source_epoch_id, raw_shigure_object_id, binding_epoch)
+        )
+    """
+
+
+def _create_shigure_canonical_event_table_sql() -> str:
+    return f"""
+        CREATE TABLE {SHIGURE_CANONICAL_EVENT_TABLE} (
+            event_uid TEXT PRIMARY KEY,
+            runtime_session_id TEXT NOT NULL,
+            source_epoch_id TEXT NOT NULL,
+            stamp_sec INTEGER NOT NULL,
+            stamp_nanosec INTEGER NOT NULL,
+            frame_id TEXT NOT NULL,
+            detection_index INTEGER NOT NULL,
+            action TEXT NOT NULL CHECK (action IN ('BRING_IN', 'TAKE_OUT', 'MOVE')),
+            raw_shigure_object_id TEXT,
+            binding_id TEXT,
+            display_object_id TEXT,
+            resolution_status TEXT NOT NULL
+                CHECK (resolution_status IN ('RESOLVED', 'UNRESOLVED', 'AMBIGUOUS', 'CONFLICT', 'REJECTED')),
+            resolution_method TEXT,
+            bbox_json TEXT NOT NULL,
+            collider_json TEXT,
+            mask_artifact_path TEXT,
+            scene_image_path TEXT,
+            object_crop_path TEXT,
+            skeleton_json TEXT,
+            source_stamp_json TEXT NOT NULL,
+            detail_json TEXT NOT NULL DEFAULT '{{}}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(source_epoch_id, stamp_sec, stamp_nanosec, frame_id, detection_index)
+        )
+    """
+
+
+def _create_object_lifecycle_event_table_sql() -> str:
+    return f"""
+        CREATE TABLE {OBJECT_LIFECYCLE_EVENT_TABLE} (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lifecycle_event_uid TEXT NOT NULL UNIQUE,
+            canonical_event_uid TEXT NOT NULL UNIQUE,
+            display_object_id TEXT NOT NULL,
+            binding_id TEXT NOT NULL,
+            source_epoch_id TEXT NOT NULL,
+            raw_shigure_object_id TEXT NOT NULL,
+            action TEXT NOT NULL CHECK (action IN ('BRING_IN', 'TAKE_OUT', 'MOVE')),
+            presence_before TEXT NOT NULL CHECK (presence_before IN ('UNKNOWN', 'PRESENT', 'ABSENT')),
+            presence_after TEXT NOT NULL CHECK (presence_after IN ('PRESENT', 'ABSENT')),
+            presence_epoch INTEGER NOT NULL,
+            model_revision INTEGER NOT NULL DEFAULT 0,
+            pose_revision INTEGER NOT NULL DEFAULT 0,
+            pose_aruco_json TEXT,
+            spatial_box_corners_aruco_json TEXT,
+            scene_image_path TEXT,
+            object_crop_path TEXT,
+            mask_artifact_path TEXT,
+            skeleton_json TEXT,
+            calibration_revision TEXT,
+            source_stamp_json TEXT NOT NULL,
+            occurred_at TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """
 
 
-def _create_auxiliary_job_table_sql() -> str:
+def _create_object_identity_reference_table_sql() -> str:
     return f"""
-        CREATE TABLE {AUXILIARY_JOB_TABLE} (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_id TEXT NOT NULL UNIQUE,
-            task_id TEXT NOT NULL,
-            branch_name TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending'
-                CHECK (status IN ('pending', 'running', 'completed', 'failed', 'cancelled')),
-            result_path TEXT,
-            detail_json TEXT NOT NULL DEFAULT '{{}}',
+        CREATE TABLE {OBJECT_IDENTITY_REFERENCE_TABLE} (
+            reference_id TEXT PRIMARY KEY,
+            display_object_id TEXT NOT NULL,
+            source TEXT NOT NULL CHECK (source IN ('SHIGURE', 'HOLOLENS')),
+            source_event_uid TEXT,
+            source_task_id TEXT,
+            image_path TEXT NOT NULL,
+            mask_path TEXT,
+            embedding_path TEXT,
+            view_hash TEXT NOT NULL,
+            active INTEGER NOT NULL DEFAULT 1,
+            quality_json TEXT NOT NULL DEFAULT '{{}}',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(display_object_id, view_hash)
+        )
+    """
+
+
+def _create_identity_sync_job_table_sql() -> str:
+    return f"""
+        CREATE TABLE {IDENTITY_SYNC_JOB_TABLE} (
+            sync_job_id TEXT PRIMARY KEY,
+            kind TEXT NOT NULL CHECK (kind IN ('STARTUP_RECOVERY', 'HOLOLENS_CAPTURE')),
+            status TEXT NOT NULL CHECK (status IN ('PENDING', 'RUNNING', 'COMPLETED', 'FAILED')),
+            runtime_session_id TEXT,
+            source_epoch_id TEXT,
+            display_object_id TEXT,
+            candidate_limit INTEGER NOT NULL DEFAULT 5,
+            result_json TEXT,
             error_message TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             started_at TEXT,
             completed_at TEXT,
-            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(task_id, branch_name)
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
     """
 
@@ -473,6 +615,241 @@ def _task_table_schema_is_current(conn: sqlite3.Connection) -> bool:
         return False
     expected_sql = _create_task_table_sql()
     return _normalized_table_definition(current_sql) == _normalized_table_definition(expected_sql)
+
+
+def _v2_table_builders() -> tuple[tuple[str, Any], ...]:
+    """Return every application table that belongs to the strict v2 schema."""
+
+    return (
+        (TABLE_NAME, _create_task_table_sql),
+        (ARUCO_REFERENCE_TABLE, _create_aruco_reference_table_sql),
+        (STAGE_RUN_TABLE, _create_stage_run_table_sql),
+        (TASK_TIMING_EVENT_TABLE, _create_task_timing_event_table_sql),
+        (AI_MODEL_TIMING_TABLE, _create_ai_model_timing_table_sql),
+        (ARUCO_MARKER_TABLE, _create_aruco_marker_table_sql),
+        (ARUCO_MARKER_RELATION_TABLE, _create_aruco_marker_relation_table_sql),
+        (MODEL_BOUNDS_TABLE, _create_model_bounds_table_sql),
+        (DISPLAY_OBJECT_TABLE, _create_display_object_table_sql),
+        (CAPTURE_INSTANCE_TABLE, _create_capture_instance_table_sql),
+        (CAPTURE_BINDING_LOG_TABLE, _create_capture_binding_log_table_sql),
+        (DISPLAY_OBJECT_STATE_TABLE, _create_display_object_state_table_sql),
+        (
+            DISPLAY_OBJECT_MODEL_REVISION_TABLE,
+            _create_display_object_model_revision_table_sql,
+        ),
+        (
+            DISPLAY_OBJECT_POSE_HISTORY_TABLE,
+            _create_display_object_pose_history_table_sql,
+        ),
+        (SCHEMA_METADATA_TABLE, _create_schema_metadata_table_sql),
+        (SHIGURE_RUNTIME_SESSION_TABLE, _create_shigure_runtime_session_table_sql),
+        (SHIGURE_SOURCE_EPOCH_TABLE, _create_shigure_source_epoch_table_sql),
+        (SHIGURE_OBJECT_BINDING_TABLE, _create_shigure_object_binding_table_sql),
+        (SHIGURE_CANONICAL_EVENT_TABLE, _create_shigure_canonical_event_table_sql),
+        (OBJECT_LIFECYCLE_EVENT_TABLE, _create_object_lifecycle_event_table_sql),
+        (
+            OBJECT_IDENTITY_REFERENCE_TABLE,
+            _create_object_identity_reference_table_sql,
+        ),
+        (IDENTITY_SYNC_JOB_TABLE, _create_identity_sync_job_table_sql),
+    )
+
+
+def _v2_index_sql() -> tuple[str, ...]:
+    return (
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{ARUCO_REFERENCE_TABLE}_startup_session
+        ON {ARUCO_REFERENCE_TABLE} (startup_session_id)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{STAGE_RUN_TABLE}_task
+        ON {STAGE_RUN_TABLE} (task_id)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{TASK_TIMING_EVENT_TABLE}_task_stage
+        ON {TASK_TIMING_EVENT_TABLE} (task_id, stage_name, event_name)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{AI_MODEL_TIMING_TABLE}_task
+        ON {AI_MODEL_TIMING_TABLE} (task_id, service_name, timing_kind)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{AI_MODEL_TIMING_TABLE}_service
+        ON {AI_MODEL_TIMING_TABLE} (service_name, timing_kind, started_at)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{ARUCO_MARKER_RELATION_TABLE}_marker
+        ON {ARUCO_MARKER_RELATION_TABLE} (marker_id)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{MODEL_BOUNDS_TABLE}_status_uploaded
+        ON {MODEL_BOUNDS_TABLE} (status, uploaded_at)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{MODEL_BOUNDS_TABLE}_task
+        ON {MODEL_BOUNDS_TABLE} (task_id)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{CAPTURE_INSTANCE_TABLE}_display_object
+        ON {CAPTURE_INSTANCE_TABLE} (display_object_id, binding_status, updated_at)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{CAPTURE_INSTANCE_TABLE}_task
+        ON {CAPTURE_INSTANCE_TABLE} (task_id)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{CAPTURE_BINDING_LOG_TABLE}_capture
+        ON {CAPTURE_BINDING_LOG_TABLE} (capture_instance_id, created_at)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{CAPTURE_BINDING_LOG_TABLE}_task
+        ON {CAPTURE_BINDING_LOG_TABLE} (task_id, created_at)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{DISPLAY_OBJECT_MODEL_REVISION_TABLE}_display_revision
+        ON {DISPLAY_OBJECT_MODEL_REVISION_TABLE} (display_object_id, model_revision DESC)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{DISPLAY_OBJECT_POSE_HISTORY_TABLE}_display_revision
+        ON {DISPLAY_OBJECT_POSE_HISTORY_TABLE} (display_object_id, pose_revision DESC)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{SHIGURE_RUNTIME_SESSION_TABLE}_status
+        ON {SHIGURE_RUNTIME_SESSION_TABLE} (status, started_at DESC)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{SHIGURE_SOURCE_EPOCH_TABLE}_runtime_status
+        ON {SHIGURE_SOURCE_EPOCH_TABLE} (runtime_session_id, status, generation DESC)
+        """,
+        f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_{SHIGURE_OBJECT_BINDING_TABLE}_active_raw
+        ON {SHIGURE_OBJECT_BINDING_TABLE} (source_epoch_id, raw_shigure_object_id)
+        WHERE status = 'ACTIVE'
+        """,
+        f"""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_{SHIGURE_OBJECT_BINDING_TABLE}_active_display
+        ON {SHIGURE_OBJECT_BINDING_TABLE} (source_epoch_id, display_object_id)
+        WHERE status = 'ACTIVE'
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{SHIGURE_CANONICAL_EVENT_TABLE}_display_created
+        ON {SHIGURE_CANONICAL_EVENT_TABLE} (display_object_id, created_at DESC)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{OBJECT_LIFECYCLE_EVENT_TABLE}_display_history
+        ON {OBJECT_LIFECYCLE_EVENT_TABLE} (display_object_id, id DESC)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{OBJECT_IDENTITY_REFERENCE_TABLE}_display_active
+        ON {OBJECT_IDENTITY_REFERENCE_TABLE} (display_object_id, active, created_at DESC)
+        """,
+        f"""
+        CREATE INDEX IF NOT EXISTS idx_{IDENTITY_SYNC_JOB_TABLE}_status_created
+        ON {IDENTITY_SYNC_JOB_TABLE} (status, created_at)
+        """,
+    )
+
+
+def _application_table_names(conn: sqlite3.Connection) -> set[str]:
+    return {
+        str(row["name"])
+        for row in conn.execute(
+            """
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+            """
+        ).fetchall()
+    }
+
+
+def _schema_object_sql(
+    conn: sqlite3.Connection,
+    object_type: str,
+    object_name: str,
+) -> Optional[str]:
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = ? AND name = ?",
+        (object_type, object_name),
+    ).fetchone()
+    return str(row["sql"]) if row is not None and row["sql"] is not None else None
+
+
+def _normalized_schema_sql(sql: str) -> str:
+    normalized = " ".join(sql.strip().split())
+    # sqlite_master omits this creation-time guard from stored index SQL.
+    return normalized.replace(" INDEX IF NOT EXISTS ", " INDEX ")
+
+
+def _migration_required(detail: str) -> RuntimeError:
+    return RuntimeError(
+        "Task database is not the strict Shigure v2 schema: "
+        f"{detail}. Run: python code/migrate_shigure_v2_data.py --apply"
+    )
+
+
+def _validate_v2_schema(conn: sqlite3.Connection) -> None:
+    builders = dict(_v2_table_builders())
+    expected_tables = set(builders)
+    actual_tables = _application_table_names(conn)
+    missing = sorted(expected_tables - actual_tables)
+    unexpected = sorted(actual_tables - expected_tables)
+    if missing or unexpected:
+        details = []
+        if missing:
+            details.append("missing tables=" + ",".join(missing))
+        if unexpected:
+            details.append("legacy/unknown tables=" + ",".join(unexpected))
+        raise _migration_required("; ".join(details))
+
+    mismatched = []
+    for table_name, builder in builders.items():
+        actual_sql = _table_sql(conn, table_name)
+        expected_sql = builder()
+        if actual_sql is None or _normalized_table_definition(
+            actual_sql
+        ) != _normalized_table_definition(expected_sql):
+            mismatched.append(table_name)
+    if mismatched:
+        raise _migration_required("table DDL mismatch=" + ",".join(sorted(mismatched)))
+
+    for expected_sql in _v2_index_sql():
+        tokens = _normalized_schema_sql(expected_sql).split()
+        index_token = tokens.index("INDEX") + 1
+        if tokens[index_token : index_token + 3] == ["IF", "NOT", "EXISTS"]:
+            index_token += 3
+        index_name = tokens[index_token]
+        actual_sql = _schema_object_sql(conn, "index", index_name)
+        if actual_sql is None or _normalized_schema_sql(
+            actual_sql
+        ) != _normalized_schema_sql(expected_sql):
+            raise _migration_required(f"index DDL mismatch={index_name}")
+
+    metadata = conn.execute(
+        f"""
+        SELECT schema_version, migrated_at, detail_json
+        FROM {SCHEMA_METADATA_TABLE}
+        WHERE schema_name = 'shigure_runtime'
+        """
+    ).fetchone()
+    found_version = None if metadata is None else metadata["schema_version"]
+    try:
+        version_matches = int(found_version) == SHIGURE_SCHEMA_VERSION
+    except (TypeError, ValueError):
+        version_matches = False
+    if not version_matches:
+        raise _migration_required(
+            f"schema_metadata shigure_runtime version must be {SHIGURE_SCHEMA_VERSION}, "
+            f"got {found_version}"
+        )
+    if not str(metadata["migrated_at"] or "").strip():
+        raise _migration_required("schema_metadata.migrated_at is empty")
+    try:
+        detail = json.loads(str(metadata["detail_json"]))
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise _migration_required("schema_metadata.detail_json is invalid JSON") from exc
+    if not isinstance(detail, dict):
+        raise _migration_required("schema_metadata.detail_json must be an object")
 
 
 def _unsupported_task_status_error(status: str) -> str:
@@ -526,6 +903,100 @@ def _rebuild_task_table_with_current_schema(conn: sqlite3.Connection) -> None:
     conn.execute(
         f"ALTER TABLE {_TASK_SCHEMA_UPGRADE_TABLE} RENAME TO {TABLE_NAME}"
     )
+
+
+_DISPLAY_STATE_V2_COPY_COLUMNS = (
+    "display_object_id",
+    "active_model_revision",
+    "active_model_task_id",
+    "active_model_asset_hash",
+    "latest_hololens_pose_revision",
+    "latest_hololens_pose_aruco_json",
+    "latest_hololens_task_id",
+    "latest_hololens_captured_at",
+    "latest_tracking_pose_revision",
+    "latest_tracking_model_revision",
+    "latest_tracking_pose_aruco_json",
+    "latest_tracking_observation_seq",
+    "created_at",
+    "updated_at",
+)
+_POSE_HISTORY_V2_COPY_COLUMNS = (
+    "id",
+    "display_object_id",
+    "task_id",
+    "model_revision",
+    "pose_revision",
+    "pose_aruco_json",
+    "captured_at",
+    "created_at",
+    "updated_at",
+)
+
+
+def _table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    return {
+        str(row["name"])
+        for row in conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+
+
+def _rebuild_display_state_table_v2(conn: sqlite3.Connection) -> None:
+    old_columns = _table_columns(conn, DISPLAY_OBJECT_STATE_TABLE)
+    missing = set(_DISPLAY_STATE_V2_COPY_COLUMNS) - old_columns
+    if missing:
+        raise RuntimeError(
+            "Cannot migrate display object state; missing columns: "
+            + ", ".join(sorted(missing))
+        )
+    temporary = "display_object_states__v2"
+    conn.execute(f"DROP TABLE IF EXISTS {temporary}")
+    conn.execute(_create_display_object_state_table_sql(temporary))
+    columns = ", ".join(_DISPLAY_STATE_V2_COPY_COLUMNS)
+    conn.execute(
+        f"INSERT INTO {temporary} ({columns}) "
+        f"SELECT {columns} FROM {DISPLAY_OBJECT_STATE_TABLE}"
+    )
+    conn.execute(f"DROP TABLE {DISPLAY_OBJECT_STATE_TABLE}")
+    conn.execute(f"ALTER TABLE {temporary} RENAME TO {DISPLAY_OBJECT_STATE_TABLE}")
+
+
+def _rebuild_pose_history_table_v2(conn: sqlite3.Connection) -> None:
+    old_columns = _table_columns(conn, DISPLAY_OBJECT_POSE_HISTORY_TABLE)
+    missing = set(_POSE_HISTORY_V2_COPY_COLUMNS) - old_columns
+    if missing:
+        raise RuntimeError(
+            "Cannot migrate display object pose history; missing columns: "
+            + ", ".join(sorted(missing))
+        )
+    temporary = "display_object_pose_history__v2"
+    conn.execute(f"DROP TABLE IF EXISTS {temporary}")
+    conn.execute(_create_display_object_pose_history_table_sql(temporary))
+    columns = ", ".join(_POSE_HISTORY_V2_COPY_COLUMNS)
+    conn.execute(
+        f"INSERT INTO {temporary} ({columns}) "
+        f"SELECT {columns} FROM {DISPLAY_OBJECT_POSE_HISTORY_TABLE}"
+    )
+    conn.execute(f"DROP TABLE {DISPLAY_OBJECT_POSE_HISTORY_TABLE}")
+    conn.execute(f"ALTER TABLE {temporary} RENAME TO {DISPLAY_OBJECT_POSE_HISTORY_TABLE}")
+
+
+def _ensure_display_tables_v2(conn: sqlite3.Connection) -> None:
+    state_sql = _table_sql(conn, DISPLAY_OBJECT_STATE_TABLE)
+    if state_sql is None:
+        conn.execute(_create_display_object_state_table_sql())
+    elif _normalized_table_definition(state_sql) != _normalized_table_definition(
+        _create_display_object_state_table_sql()
+    ):
+        _rebuild_display_state_table_v2(conn)
+
+    history_sql = _table_sql(conn, DISPLAY_OBJECT_POSE_HISTORY_TABLE)
+    if history_sql is None:
+        conn.execute(_create_display_object_pose_history_table_sql())
+    elif _normalized_table_definition(history_sql) != _normalized_table_definition(
+        _create_display_object_pose_history_table_sql()
+    ):
+        _rebuild_pose_history_table_v2(conn)
 
 
 def _load_aruco_template_config() -> Dict[str, Any]:
@@ -675,13 +1146,28 @@ def _sync_marker_registry_from_reference_folder(conn: sqlite3.Connection) -> int
     return synced_count
 
 
-def initialize_task_table() -> None:
+def migrate_legacy_task_database_to_v2_once() -> None:
+    """Explicitly rebuild a legacy database into the strict v2 schema.
+
+    Runtime code must never call this function.  Destructive legacy cleanup is
+    intentionally reachable only from the offline migration command.
+    """
+
     global _SCHEMA_INITIALIZED
     if _SCHEMA_INITIALIZED:
         return
     with _get_connection() as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("BEGIN IMMEDIATE")
+
+        try:
+            _validate_v2_schema(conn)
+        except RuntimeError:
+            pass
+        else:
+            conn.commit()
+            _SCHEMA_INITIALIZED = True
+            return
 
         if _table_sql(conn, TABLE_NAME) is None:
             conn.execute(_create_task_table_sql())
@@ -792,8 +1278,12 @@ def initialize_task_table() -> None:
             """
         )
 
-        if _table_sql(conn, DISPLAY_OBJECT_STATE_TABLE) is None:
-            conn.execute(_create_display_object_state_table_sql())
+        # V2 is a clean protocol cut. Old event/body rows cannot prove a
+        # Shigure runtime identity, so they are intentionally not adapted.
+        conn.execute("DROP TABLE IF EXISTS realtime_tracking_events")
+        conn.execute("DROP TABLE IF EXISTS auxiliary_jobs")
+
+        _ensure_display_tables_v2(conn)
         if _table_sql(conn, DISPLAY_OBJECT_MODEL_REVISION_TABLE) is None:
             conn.execute(_create_display_object_model_revision_table_sql())
         conn.execute(
@@ -802,36 +1292,156 @@ def initialize_task_table() -> None:
             ON {DISPLAY_OBJECT_MODEL_REVISION_TABLE} (display_object_id, model_revision DESC)
             """
         )
-        if _table_sql(conn, DISPLAY_OBJECT_POSE_HISTORY_TABLE) is None:
-            conn.execute(_create_display_object_pose_history_table_sql())
         conn.execute(
             f"""
             CREATE INDEX IF NOT EXISTS idx_{DISPLAY_OBJECT_POSE_HISTORY_TABLE}_display_revision
             ON {DISPLAY_OBJECT_POSE_HISTORY_TABLE} (display_object_id, pose_revision DESC)
             """
         )
-        if _table_sql(conn, REALTIME_TRACKING_EVENT_TABLE) is None:
-            conn.execute(_create_realtime_tracking_event_table_sql())
+
+        table_builders = (
+            (SCHEMA_METADATA_TABLE, _create_schema_metadata_table_sql),
+            (SHIGURE_RUNTIME_SESSION_TABLE, _create_shigure_runtime_session_table_sql),
+            (SHIGURE_SOURCE_EPOCH_TABLE, _create_shigure_source_epoch_table_sql),
+            (SHIGURE_OBJECT_BINDING_TABLE, _create_shigure_object_binding_table_sql),
+            (SHIGURE_CANONICAL_EVENT_TABLE, _create_shigure_canonical_event_table_sql),
+            (OBJECT_LIFECYCLE_EVENT_TABLE, _create_object_lifecycle_event_table_sql),
+            (OBJECT_IDENTITY_REFERENCE_TABLE, _create_object_identity_reference_table_sql),
+            (IDENTITY_SYNC_JOB_TABLE, _create_identity_sync_job_table_sql),
+        )
+        for table_name, builder in table_builders:
+            if _table_sql(conn, table_name) is None:
+                conn.execute(builder())
+
         conn.execute(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_{REALTIME_TRACKING_EVENT_TABLE}_display_created
-            ON {REALTIME_TRACKING_EVENT_TABLE} (display_object_id, created_at DESC)
+            CREATE INDEX IF NOT EXISTS idx_{SHIGURE_RUNTIME_SESSION_TABLE}_status
+            ON {SHIGURE_RUNTIME_SESSION_TABLE} (status, started_at DESC)
             """
         )
-        if _table_sql(conn, AUXILIARY_JOB_TABLE) is None:
-            conn.execute(_create_auxiliary_job_table_sql())
         conn.execute(
             f"""
-            CREATE INDEX IF NOT EXISTS idx_{AUXILIARY_JOB_TABLE}_task_branch
-            ON {AUXILIARY_JOB_TABLE} (task_id, branch_name, updated_at DESC)
+            CREATE INDEX IF NOT EXISTS idx_{SHIGURE_SOURCE_EPOCH_TABLE}_runtime_status
+            ON {SHIGURE_SOURCE_EPOCH_TABLE} (runtime_session_id, status, generation DESC)
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_{SHIGURE_OBJECT_BINDING_TABLE}_active_raw
+            ON {SHIGURE_OBJECT_BINDING_TABLE} (source_epoch_id, raw_shigure_object_id)
+            WHERE status = 'ACTIVE'
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_{SHIGURE_OBJECT_BINDING_TABLE}_active_display
+            ON {SHIGURE_OBJECT_BINDING_TABLE} (source_epoch_id, display_object_id)
+            WHERE status = 'ACTIVE'
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{SHIGURE_CANONICAL_EVENT_TABLE}_display_created
+            ON {SHIGURE_CANONICAL_EVENT_TABLE} (display_object_id, created_at DESC)
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{OBJECT_LIFECYCLE_EVENT_TABLE}_display_history
+            ON {OBJECT_LIFECYCLE_EVENT_TABLE} (display_object_id, id DESC)
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{OBJECT_IDENTITY_REFERENCE_TABLE}_display_active
+            ON {OBJECT_IDENTITY_REFERENCE_TABLE} (display_object_id, active, created_at DESC)
+            """
+        )
+        conn.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS idx_{IDENTITY_SYNC_JOB_TABLE}_status_created
+            ON {IDENTITY_SYNC_JOB_TABLE} (status, created_at)
             """
         )
 
-        if ARUCO_SYNC_MARKER_REGISTRY_ON_START:
-            _sync_marker_registry_from_reference_folder(conn)
+        conn.execute(
+            f"""
+            INSERT INTO {SCHEMA_METADATA_TABLE} (
+                schema_name, schema_version, migrated_at, detail_json
+            ) VALUES ('shigure_runtime', ?, ?, ?)
+            ON CONFLICT(schema_name) DO UPDATE SET
+                schema_version = excluded.schema_version,
+                migrated_at = excluded.migrated_at,
+                detail_json = excluded.detail_json
+            """,
+            (
+                SHIGURE_SCHEMA_VERSION,
+                _utc_now_text(),
+                json.dumps(
+                    {
+                        "legacy_realtime_events": "deleted_unmigratable",
+                        "legacy_body_jobs": "deleted_retired",
+                        "hololens_capture_history": "preserved",
+                    },
+                    ensure_ascii=False,
+                ),
+            ),
+        )
 
+        # Some legacy databases contain canonical tables but lack indexes
+        # because older startup code created an index only with its table.
+        for index_sql in _v2_index_sql():
+            conn.execute(index_sql)
+
+        _validate_v2_schema(conn)
         conn.commit()
         _SCHEMA_INITIALIZED = True
+
+
+def initialize_task_table() -> None:
+    """Create a brand-new v2 database or validate an existing one read-only.
+
+    An existing database is never repaired, rebuilt, dropped, or version-
+    upserted here.  Operators must run the explicit one-shot migration command
+    when this strict boundary rejects a legacy or divergent schema.
+    """
+
+    global _SCHEMA_INITIALIZED
+    if _SCHEMA_INITIALIZED:
+        return
+
+    with _get_connection() as conn:
+        existing_tables = _application_table_names(conn)
+        if not existing_tables:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("BEGIN IMMEDIATE")
+            for _, builder in _v2_table_builders():
+                conn.execute(builder())
+            for index_sql in _v2_index_sql():
+                conn.execute(index_sql)
+            conn.execute(
+                f"""
+                INSERT INTO {SCHEMA_METADATA_TABLE} (
+                    schema_name, schema_version, migrated_at, detail_json
+                ) VALUES ('shigure_runtime', ?, ?, ?)
+                """,
+                (
+                    SHIGURE_SCHEMA_VERSION,
+                    _utc_now_text(),
+                    json.dumps({"installation": "fresh_v2"}, ensure_ascii=False),
+                ),
+            )
+            _validate_v2_schema(conn)
+            conn.commit()
+        else:
+            _validate_v2_schema(conn)
+
+        if ARUCO_SYNC_MARKER_REGISTRY_ON_START:
+            conn.execute("BEGIN IMMEDIATE")
+            _sync_marker_registry_from_reference_folder(conn)
+            conn.commit()
+
+    _SCHEMA_INITIALIZED = True
 
 
 def get_latest_10_records() -> List[Dict[str, Any]]:
@@ -2010,8 +2620,8 @@ def commit_display_object_capture_state(
             f"""
             INSERT INTO {DISPLAY_OBJECT_POSE_HISTORY_TABLE} (
                 display_object_id, task_id, model_revision, pose_revision,
-                pose_aruco_json, body_revision, captured_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+                pose_aruco_json, captured_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 display_object_id,
@@ -2033,9 +2643,6 @@ def commit_display_object_capture_state(
                 latest_hololens_pose_aruco_json = ?,
                 latest_hololens_task_id = ?,
                 latest_hololens_captured_at = ?,
-                latest_tracking_model_revision = 0,
-                latest_tracking_pose_aruco_json = NULL,
-                latest_tracking_observation_seq = 0,
                 updated_at = ?
             WHERE display_object_id = ?
             """,
@@ -2075,13 +2682,65 @@ def list_display_object_states(*, limit: int) -> List[Dict[str, Any]]:
     with _get_connection() as conn:
         rows = conn.execute(
             f"""
-            SELECT *
-            FROM {DISPLAY_OBJECT_STATE_TABLE}
-            WHERE latest_hololens_pose_aruco_json IS NOT NULL
-            ORDER BY latest_hololens_captured_at DESC, created_at DESC
+            SELECT state.*
+            FROM {DISPLAY_OBJECT_STATE_TABLE} AS state
+            WHERE state.active_model_revision > 0
+              AND EXISTS (
+                  SELECT 1 FROM {OBJECT_IDENTITY_REFERENCE_TABLE} AS reference
+                  WHERE reference.display_object_id = state.display_object_id
+                    AND reference.active = 1
+              )
+            ORDER BY state.updated_at DESC, state.created_at DESC
             LIMIT ?
             """,
             (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_live_display_object_states(*, limit: int) -> List[Dict[str, Any]]:
+    """Return lifecycle-known objects ordered only by Shigure activity."""
+
+    initialize_task_table()
+    limit = max(1, min(int(limit), 50))
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {DISPLAY_OBJECT_STATE_TABLE}
+            WHERE presence IN ('PRESENT', 'ABSENT')
+              AND (
+                    latest_tracking_pose_aruco_json IS NOT NULL
+                    OR latest_hololens_pose_aruco_json IS NOT NULL
+                  )
+            ORDER BY presence_epoch DESC,
+                     MAX(latest_tracking_observation_seq,
+                         latest_spatial_observation_seq,
+                         latest_skeleton_observation_seq) DESC,
+                     updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def list_live_spatial_box_states() -> List[Dict[str, Any]]:
+    """Return the complete Shigure box registry without a display limit."""
+
+    initialize_task_table()
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT *
+            FROM {DISPLAY_OBJECT_STATE_TABLE}
+            WHERE active_model_revision > 0
+              AND presence IN ('PRESENT', 'ABSENT')
+            ORDER BY presence_epoch DESC,
+                     latest_spatial_observation_seq DESC,
+                     updated_at DESC,
+                     display_object_id ASC
+            """
         ).fetchall()
     return [dict(row) for row in rows]
 
@@ -2161,235 +2820,1339 @@ def commit_realtime_tracking_pose(
     return dict(row) if row is not None else None
 
 
-def record_realtime_tracking_event(
-    *,
-    status: str,
-    display_object_id: str | None = None,
-    startup_session_id: str | None = None,
-    ingress_session_id: str | None = None,
-    shigure_object_id: str | None = None,
-    observation_seq: int = 0,
-    tracking_epoch: int = 0,
-    mode_epoch: int = 0,
-    model_revision: int = 0,
-    reason: str | None = None,
-    source_stamp: Any = None,
-    pose_aruco: Any = None,
-    detail: Any = None,
-) -> int:
+def start_shigure_runtime_session(
+    *, server_boot_id: str | None = None, config: Any = None
+) -> Dict[str, Any]:
+    """Start a server-local identity session and invalidate every older raw ID."""
+
     initialize_task_table()
+    now = _utc_now_text()
+    runtime_session_id = uuid.uuid4().hex
+    resolved_boot_id = str(server_boot_id or uuid.uuid4().hex).strip()
     with _get_connection() as conn:
-        cursor = conn.execute(
+        conn.execute("BEGIN IMMEDIATE")
+        stale_sync_jobs = conn.execute(
             f"""
-            INSERT INTO {REALTIME_TRACKING_EVENT_TABLE} (
-                display_object_id, startup_session_id, ingress_session_id,
-                shigure_object_id, observation_seq, tracking_epoch, mode_epoch,
-                model_revision, status, reason, source_stamp_json,
-                pose_aruco_json, detail_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            SELECT sync_job_id, result_json
+            FROM {IDENTITY_SYNC_JOB_TABLE}
+            WHERE status IN ('PENDING', 'RUNNING')
+            """
+        ).fetchall()
+        for stale_job in stale_sync_jobs:
+            try:
+                stale_result = (
+                    json.loads(stale_job["result_json"])
+                    if stale_job["result_json"]
+                    else {}
+                )
+            except (json.JSONDecodeError, TypeError):
+                stale_result = {}
+            if not isinstance(stale_result, dict):
+                stale_result = {}
+            stale_result.update(
+                {
+                    "status": "FAILED",
+                    "reason": "server_restart",
+                    "updated_utc": now,
+                }
+            )
+            conn.execute(
+                f"""
+                UPDATE {IDENTITY_SYNC_JOB_TABLE}
+                SET status = 'FAILED',
+                    result_json = ?,
+                    error_message = 'server_restart',
+                    completed_at = ?,
+                    updated_at = ?
+                WHERE sync_job_id = ?
+                  AND status IN ('PENDING', 'RUNNING')
+                """,
+                (
+                    json.dumps(stale_result, ensure_ascii=False),
+                    now,
+                    now,
+                    str(stale_job["sync_job_id"]),
+                ),
+            )
+        conn.execute(
+            f"""
+            UPDATE {SHIGURE_RUNTIME_SESSION_TABLE}
+            SET status = 'CLOSED', ended_at = ?, close_reason = 'server_restart'
+            WHERE status = 'ACTIVE'
+            """,
+            (now,),
+        )
+        conn.execute(
+            f"""
+            UPDATE {SHIGURE_SOURCE_EPOCH_TABLE}
+            SET status = 'CLOSED', closed_at = ?, close_reason = 'server_restart'
+            WHERE status = 'ACTIVE'
+            """,
+            (now,),
+        )
+        conn.execute(
+            f"""
+            UPDATE {SHIGURE_OBJECT_BINDING_TABLE}
+            SET status = 'REVOKED', valid_until = ?, revoke_reason = 'server_restart'
+            WHERE status = 'ACTIVE'
+            """,
+            (now,),
+        )
+        conn.execute(
+            f"""
+            UPDATE {DISPLAY_OBJECT_STATE_TABLE}
+            SET presence = 'UNKNOWN',
+                presence_epoch = presence_epoch + 1,
+                active_shigure_binding_id = NULL,
+                latest_tracking_model_revision = 0,
+                latest_tracking_observation_seq = 0,
+                latest_spatial_observation_seq = 0,
+                latest_skeleton_observation_seq = 0,
+                latest_spatial_box_aruco_json = NULL,
+                latest_skeleton_json = NULL,
+                updated_at = ?
+            WHERE active_shigure_binding_id IS NOT NULL
+            """,
+            (now,),
+        )
+        conn.execute(
+            f"""
+            INSERT INTO {SHIGURE_RUNTIME_SESSION_TABLE} (
+                runtime_session_id, server_boot_id, status, started_at, config_json
+            ) VALUES (?, ?, 'ACTIVE', ?, ?)
             """,
             (
-                display_object_id,
-                startup_session_id,
-                ingress_session_id,
-                shigure_object_id,
-                int(observation_seq),
-                int(tracking_epoch),
-                int(mode_epoch),
-                int(model_revision),
-                str(status),
-                reason,
-                _dump_optional_json(source_stamp),
-                _dump_optional_json(pose_aruco),
-                json.dumps(detail if detail is not None else {}, ensure_ascii=False),
+                runtime_session_id,
+                resolved_boot_id,
+                now,
+                json.dumps(config if config is not None else {}, ensure_ascii=False),
             ),
         )
-        conn.commit()
-        return int(cursor.lastrowid)
+        row = conn.execute(
+            f"SELECT * FROM {SHIGURE_RUNTIME_SESSION_TABLE} WHERE runtime_session_id = ?",
+            (runtime_session_id,),
+        ).fetchone()
+    return dict(row)
 
 
-def get_latest_realtime_tracking_event(display_object_id: str) -> Optional[Dict[str, Any]]:
-    """Return the newest durable tracking diagnostic for one display object."""
+def close_shigure_runtime_session(runtime_session_id: str, *, reason: str) -> None:
+    initialize_task_table()
+    now = _utc_now_text()
+    runtime_session_id = str(runtime_session_id or "").strip()
+    if not runtime_session_id or not str(reason or "").strip():
+        raise ValueError("runtime_session_id and reason are required")
+    with _get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            f"""
+            UPDATE {DISPLAY_OBJECT_STATE_TABLE}
+            SET presence = 'UNKNOWN',
+                presence_epoch = presence_epoch + 1,
+                active_shigure_binding_id = NULL,
+                latest_tracking_model_revision = 0,
+                latest_tracking_observation_seq = 0,
+                latest_spatial_observation_seq = 0,
+                latest_skeleton_observation_seq = 0,
+                latest_spatial_box_aruco_json = NULL,
+                latest_skeleton_json = NULL,
+                updated_at = ?
+            WHERE active_shigure_binding_id IN (
+                SELECT binding_id
+                FROM {SHIGURE_OBJECT_BINDING_TABLE}
+                WHERE runtime_session_id = ? AND status = 'ACTIVE'
+            )
+            """,
+            (now, runtime_session_id),
+        )
+        conn.execute(
+            f"""
+            UPDATE {SHIGURE_OBJECT_BINDING_TABLE}
+            SET status = 'REVOKED', valid_until = ?, revoke_reason = ?
+            WHERE runtime_session_id = ? AND status = 'ACTIVE'
+            """,
+            (now, reason, runtime_session_id),
+        )
+        conn.execute(
+            f"""
+            UPDATE {SHIGURE_SOURCE_EPOCH_TABLE}
+            SET status = 'CLOSED', closed_at = ?, close_reason = ?
+            WHERE runtime_session_id = ? AND status = 'ACTIVE'
+            """,
+            (now, reason, runtime_session_id),
+        )
+        conn.execute(
+            f"""
+            UPDATE {SHIGURE_RUNTIME_SESSION_TABLE}
+            SET status = 'CLOSED', ended_at = ?, close_reason = ?
+            WHERE runtime_session_id = ? AND status = 'ACTIVE'
+            """,
+            (now, reason, runtime_session_id),
+        )
+
+
+def open_shigure_source_epoch(
+    *,
+    runtime_session_id: str,
+    reason: str,
+    publisher_fingerprint: Any = None,
+    raw_id_prefix: str | None = None,
+) -> Dict[str, Any]:
+    """Open one short-lived raw-ID namespace and revoke its predecessor."""
 
     initialize_task_table()
-    display_object_id = str(display_object_id or "").strip()
-    if not display_object_id:
-        return None
+    runtime_session_id = str(runtime_session_id or "").strip()
+    reason = str(reason or "").strip()
+    if not runtime_session_id or not reason:
+        raise ValueError("runtime_session_id and reason are required")
+    now = _utc_now_text()
+    source_epoch_id = uuid.uuid4().hex
+    with _get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        session = conn.execute(
+            f"""
+            SELECT * FROM {SHIGURE_RUNTIME_SESSION_TABLE}
+            WHERE runtime_session_id = ? AND status = 'ACTIVE'
+            """,
+            (runtime_session_id,),
+        ).fetchone()
+        if session is None:
+            raise ValueError("runtime session is not active")
+        previous = conn.execute(
+            f"""
+            SELECT COALESCE(MAX(generation), 0) AS generation
+            FROM {SHIGURE_SOURCE_EPOCH_TABLE}
+            WHERE runtime_session_id = ?
+            """,
+            (runtime_session_id,),
+        ).fetchone()
+        generation = int(previous["generation"] or 0) + 1
+        conn.execute(
+            f"""
+            UPDATE {DISPLAY_OBJECT_STATE_TABLE}
+            SET presence = 'UNKNOWN',
+                presence_epoch = presence_epoch + 1,
+                active_shigure_binding_id = NULL,
+                latest_tracking_model_revision = 0,
+                latest_tracking_observation_seq = 0,
+                latest_spatial_observation_seq = 0,
+                latest_skeleton_observation_seq = 0,
+                latest_spatial_box_aruco_json = NULL,
+                latest_skeleton_json = NULL,
+                updated_at = ?
+            WHERE active_shigure_binding_id IN (
+                SELECT binding_id
+                FROM {SHIGURE_OBJECT_BINDING_TABLE}
+                WHERE runtime_session_id = ? AND status = 'ACTIVE'
+            )
+            """,
+            (now, runtime_session_id),
+        )
+        conn.execute(
+            f"""
+            UPDATE {SHIGURE_OBJECT_BINDING_TABLE}
+            SET status = 'REVOKED', valid_until = ?, revoke_reason = 'source_epoch_changed'
+            WHERE runtime_session_id = ? AND status = 'ACTIVE'
+            """,
+            (now, runtime_session_id),
+        )
+        conn.execute(
+            f"""
+            UPDATE {SHIGURE_SOURCE_EPOCH_TABLE}
+            SET status = 'CLOSED', closed_at = ?, close_reason = 'superseded'
+            WHERE runtime_session_id = ? AND status = 'ACTIVE'
+            """,
+            (now, runtime_session_id),
+        )
+        conn.execute(
+            f"""
+            INSERT INTO {SHIGURE_SOURCE_EPOCH_TABLE} (
+                source_epoch_id, runtime_session_id, generation, status,
+                opened_at, open_reason, publisher_fingerprint_json, raw_id_prefix
+            ) VALUES (?, ?, ?, 'ACTIVE', ?, ?, ?, ?)
+            """,
+            (
+                source_epoch_id,
+                runtime_session_id,
+                generation,
+                now,
+                reason,
+                json.dumps(
+                    publisher_fingerprint if publisher_fingerprint is not None else {},
+                    ensure_ascii=False,
+                ),
+                str(raw_id_prefix).strip() if raw_id_prefix else None,
+            ),
+        )
+        row = conn.execute(
+            f"SELECT * FROM {SHIGURE_SOURCE_EPOCH_TABLE} WHERE source_epoch_id = ?",
+            (source_epoch_id,),
+        ).fetchone()
+    return dict(row)
+
+
+def get_active_shigure_source_epoch(runtime_session_id: str) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
     with _get_connection() as conn:
         row = conn.execute(
             f"""
-            SELECT *
-            FROM {REALTIME_TRACKING_EVENT_TABLE}
-            WHERE display_object_id = ?
-            ORDER BY id DESC
+            SELECT * FROM {SHIGURE_SOURCE_EPOCH_TABLE}
+            WHERE runtime_session_id = ? AND status = 'ACTIVE'
+            ORDER BY generation DESC
             LIMIT 1
             """,
-            (display_object_id,),
+            (str(runtime_session_id),),
         ).fetchone()
     return _row_to_dict(row)
 
 
-def set_latest_body_revision(
-    *, display_object_id: str, task_id: str, body_revision: int | None = None
-) -> Optional[Dict[str, Any]]:
-    """Attach a body result to its capture without letting late jobs win.
-
-    Auxiliary body jobs can finish out of order.  The durable "latest" pointer
-    therefore follows capture ``pose_revision`` order, not completion order.
-    Replaying the same successful auxiliary job is idempotent.
-    """
+def establish_shigure_binding(
+    *,
+    runtime_session_id: str,
+    source_epoch_id: str,
+    raw_shigure_object_id: str,
+    display_object_id: str,
+    established_by: str,
+    established_event_uid: str | None = None,
+    confidence: float | None = None,
+    detail: Any = None,
+) -> Dict[str, Any]:
+    """Create an epoch-scoped one-to-one binding; ambiguity fails closed."""
 
     initialize_task_table()
+    runtime_session_id = str(runtime_session_id or "").strip()
+    source_epoch_id = str(source_epoch_id or "").strip()
+    raw_id = str(raw_shigure_object_id or "").strip()
     display_object_id = str(display_object_id or "").strip()
-    task_id = str(task_id or "").strip()
-    if not display_object_id or not task_id:
-        raise ValueError("display_object_id and task_id are required")
+    established_by = str(established_by or "").strip()
+    if not all((runtime_session_id, source_epoch_id, raw_id, display_object_id, established_by)):
+        raise ValueError("all binding identity fields are required")
     now = _utc_now_text()
     with _get_connection() as conn:
         conn.execute("BEGIN IMMEDIATE")
+        epoch = conn.execute(
+            f"""
+            SELECT * FROM {SHIGURE_SOURCE_EPOCH_TABLE}
+            WHERE source_epoch_id = ? AND runtime_session_id = ? AND status = 'ACTIVE'
+            """,
+            (source_epoch_id, runtime_session_id),
+        ).fetchone()
+        if epoch is None:
+            raise ValueError("source epoch is not active")
+        if conn.execute(
+            f"SELECT 1 FROM {DISPLAY_OBJECT_TABLE} WHERE display_object_id = ?",
+            (display_object_id,),
+        ).fetchone() is None:
+            raise ValueError(f"unknown display object: {display_object_id}")
+
+        raw_binding = conn.execute(
+            f"""
+            SELECT * FROM {SHIGURE_OBJECT_BINDING_TABLE}
+            WHERE source_epoch_id = ? AND raw_shigure_object_id = ? AND status = 'ACTIVE'
+            """,
+            (source_epoch_id, raw_id),
+        ).fetchone()
+        display_binding = conn.execute(
+            f"""
+            SELECT * FROM {SHIGURE_OBJECT_BINDING_TABLE}
+            WHERE source_epoch_id = ? AND display_object_id = ? AND status = 'ACTIVE'
+            """,
+            (source_epoch_id, display_object_id),
+        ).fetchone()
+        if raw_binding is not None or display_binding is not None:
+            if (
+                raw_binding is not None
+                and display_binding is not None
+                and raw_binding["binding_id"] == display_binding["binding_id"]
+            ):
+                return dict(raw_binding)
+            raise ValueError("binding conflicts with the active one-to-one assignment")
+
+        previous = conn.execute(
+            f"""
+            SELECT COALESCE(MAX(binding_epoch), 0) AS binding_epoch
+            FROM {SHIGURE_OBJECT_BINDING_TABLE}
+            WHERE source_epoch_id = ? AND raw_shigure_object_id = ?
+            """,
+            (source_epoch_id, raw_id),
+        ).fetchone()
+        binding_epoch = int(previous["binding_epoch"] or 0) + 1
+        binding_id = uuid.uuid4().hex
+        conn.execute(
+            f"""
+            INSERT INTO {SHIGURE_OBJECT_BINDING_TABLE} (
+                binding_id, runtime_session_id, source_epoch_id,
+                raw_shigure_object_id, display_object_id, binding_epoch,
+                status, established_by, established_event_uid, valid_from,
+                confidence, detail_json
+            ) VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', ?, ?, ?, ?, ?)
+            """,
+            (
+                binding_id,
+                runtime_session_id,
+                source_epoch_id,
+                raw_id,
+                display_object_id,
+                binding_epoch,
+                established_by,
+                established_event_uid,
+                now,
+                float(confidence) if confidence is not None else None,
+                json.dumps(detail if detail is not None else {}, ensure_ascii=False),
+            ),
+        )
+        row = conn.execute(
+            f"SELECT * FROM {SHIGURE_OBJECT_BINDING_TABLE} WHERE binding_id = ?",
+            (binding_id,),
+        ).fetchone()
+    return dict(row)
+
+
+def get_active_shigure_binding(
+    *, source_epoch_id: str, raw_shigure_object_id: str
+) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"""
+            SELECT * FROM {SHIGURE_OBJECT_BINDING_TABLE}
+            WHERE source_epoch_id = ? AND raw_shigure_object_id = ? AND status = 'ACTIVE'
+            """,
+            (str(source_epoch_id), str(raw_shigure_object_id)),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def list_active_shigure_bindings(source_epoch_id: str) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM {SHIGURE_OBJECT_BINDING_TABLE}
+            WHERE source_epoch_id = ? AND status = 'ACTIVE'
+            ORDER BY valid_from ASC
+            """,
+            (str(source_epoch_id),),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def revoke_shigure_binding(binding_id: str, *, reason: str) -> None:
+    initialize_task_table()
+    if not str(reason or "").strip():
+        raise ValueError("reason is required")
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            UPDATE {SHIGURE_OBJECT_BINDING_TABLE}
+            SET status = 'REVOKED', valid_until = ?, revoke_reason = ?
+            WHERE binding_id = ? AND status = 'ACTIVE'
+            """,
+            (_utc_now_text(), str(reason), str(binding_id)),
+        )
+
+
+def _canonical_shigure_action(value: str) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    actions = {
+        "bring_in": "BRING_IN",
+        "bringin": "BRING_IN",
+        "take_out": "TAKE_OUT",
+        "takeout": "TAKE_OUT",
+        "move": "MOVE",
+        "obj_move": "MOVE",
+    }
+    try:
+        return actions[normalized]
+    except KeyError as exc:
+        raise ValueError(f"unsupported Shigure action: {value}") from exc
+
+
+def record_shigure_canonical_event(
+    *,
+    runtime_session_id: str,
+    source_epoch_id: str,
+    stamp_sec: int,
+    stamp_nanosec: int,
+    frame_id: str,
+    detection_index: int,
+    action: str,
+    bbox: Any,
+    resolution_status: str,
+    raw_shigure_object_id: str | None = None,
+    binding_id: str | None = None,
+    display_object_id: str | None = None,
+    resolution_method: str | None = None,
+    collider: Any = None,
+    mask_artifact_path: str | Path | None = None,
+    scene_image_path: str | Path | None = None,
+    object_crop_path: str | Path | None = None,
+    skeleton: Any = None,
+    source_stamp: Any = None,
+    detail: Any = None,
+) -> Dict[str, Any]:
+    """Persist one immutable exact-stamp canonical event slot and its resolution."""
+
+    initialize_task_table()
+    status = str(resolution_status or "").strip().upper()
+    if status not in {"RESOLVED", "UNRESOLVED", "AMBIGUOUS", "CONFLICT", "REJECTED"}:
+        raise ValueError("invalid resolution_status")
+    if not isinstance(bbox, dict):
+        raise ValueError("bbox must be an object")
+    action_value = _canonical_shigure_action(action)
+    frame_value = str(frame_id or "")
+    stamp_sec = int(stamp_sec)
+    stamp_nanosec = int(stamp_nanosec)
+    detection_index = int(detection_index)
+    source_stamp_value = source_stamp or {
+        "sec": stamp_sec,
+        "nanosec": stamp_nanosec,
+        "frame_id": frame_value,
+    }
+    key = (
+        f"{runtime_session_id}|{source_epoch_id}|{stamp_sec}|"
+        f"{stamp_nanosec}|{frame_value}|{detection_index}"
+    )
+    event_uid = uuid.uuid5(uuid.NAMESPACE_URL, f"shigure-detection:{key}").hex
+    if status == "RESOLVED" and not all(
+        (raw_shigure_object_id, binding_id, display_object_id, resolution_method)
+    ):
+        raise ValueError("resolved events require raw ID, binding, display object and method")
+
+    def stored_path(value: str | Path | None) -> str | None:
+        return normalize_path_for_storage(value) if value is not None else None
+
+    with _get_connection() as conn:
+        conn.execute(
+            f"""
+            INSERT INTO {SHIGURE_CANONICAL_EVENT_TABLE} (
+                event_uid, runtime_session_id, source_epoch_id,
+                stamp_sec, stamp_nanosec, frame_id, detection_index, action,
+                raw_shigure_object_id, binding_id, display_object_id,
+                resolution_status, resolution_method, bbox_json, collider_json,
+                mask_artifact_path, scene_image_path, object_crop_path,
+                skeleton_json, source_stamp_json, detail_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(event_uid) DO UPDATE SET
+                raw_shigure_object_id = CASE
+                    WHEN {SHIGURE_CANONICAL_EVENT_TABLE}.resolution_status = 'RESOLVED'
+                    THEN {SHIGURE_CANONICAL_EVENT_TABLE}.raw_shigure_object_id
+                    ELSE excluded.raw_shigure_object_id
+                END,
+                binding_id = CASE
+                    WHEN {SHIGURE_CANONICAL_EVENT_TABLE}.resolution_status = 'RESOLVED'
+                    THEN {SHIGURE_CANONICAL_EVENT_TABLE}.binding_id
+                    ELSE excluded.binding_id
+                END,
+                display_object_id = CASE
+                    WHEN {SHIGURE_CANONICAL_EVENT_TABLE}.resolution_status = 'RESOLVED'
+                    THEN {SHIGURE_CANONICAL_EVENT_TABLE}.display_object_id
+                    ELSE excluded.display_object_id
+                END,
+                resolution_status = CASE
+                    WHEN {SHIGURE_CANONICAL_EVENT_TABLE}.resolution_status = 'RESOLVED'
+                    THEN {SHIGURE_CANONICAL_EVENT_TABLE}.resolution_status
+                    ELSE excluded.resolution_status
+                END,
+                resolution_method = CASE
+                    WHEN {SHIGURE_CANONICAL_EVENT_TABLE}.resolution_status = 'RESOLVED'
+                    THEN {SHIGURE_CANONICAL_EVENT_TABLE}.resolution_method
+                    ELSE excluded.resolution_method
+                END,
+                collider_json = COALESCE(
+                    excluded.collider_json,
+                    {SHIGURE_CANONICAL_EVENT_TABLE}.collider_json
+                ),
+                mask_artifact_path = COALESCE(
+                    excluded.mask_artifact_path,
+                    {SHIGURE_CANONICAL_EVENT_TABLE}.mask_artifact_path
+                ),
+                scene_image_path = COALESCE(
+                    excluded.scene_image_path,
+                    {SHIGURE_CANONICAL_EVENT_TABLE}.scene_image_path
+                ),
+                object_crop_path = COALESCE(
+                    excluded.object_crop_path,
+                    {SHIGURE_CANONICAL_EVENT_TABLE}.object_crop_path
+                ),
+                skeleton_json = COALESCE(
+                    excluded.skeleton_json,
+                    {SHIGURE_CANONICAL_EVENT_TABLE}.skeleton_json
+                ),
+                detail_json = CASE
+                    WHEN {SHIGURE_CANONICAL_EVENT_TABLE}.resolution_status = 'RESOLVED'
+                         AND excluded.resolution_status != 'RESOLVED'
+                    THEN {SHIGURE_CANONICAL_EVENT_TABLE}.detail_json
+                    ELSE excluded.detail_json
+                END
+            """,
+            (
+                event_uid,
+                str(runtime_session_id),
+                str(source_epoch_id),
+                stamp_sec,
+                stamp_nanosec,
+                frame_value,
+                detection_index,
+                action_value,
+                str(raw_shigure_object_id) if raw_shigure_object_id else None,
+                str(binding_id) if binding_id else None,
+                str(display_object_id) if display_object_id else None,
+                status,
+                str(resolution_method) if resolution_method else None,
+                json.dumps(bbox, ensure_ascii=False),
+                _dump_optional_json(collider),
+                stored_path(mask_artifact_path),
+                stored_path(scene_image_path),
+                stored_path(object_crop_path),
+                _dump_optional_json(skeleton),
+                json.dumps(source_stamp_value, ensure_ascii=False),
+                json.dumps(detail if detail is not None else {}, ensure_ascii=False),
+            ),
+        )
+        row = conn.execute(
+            f"SELECT * FROM {SHIGURE_CANONICAL_EVENT_TABLE} WHERE event_uid = ?",
+            (event_uid,),
+        ).fetchone()
+    return dict(row)
+
+
+def get_shigure_canonical_event(event_uid: str) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"SELECT * FROM {SHIGURE_CANONICAL_EVENT_TABLE} WHERE event_uid = ?",
+            (str(event_uid),),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def activate_recovered_shigure_binding(binding_id: str) -> Dict[str, Any]:
+    """Mark a DINO-recovered static object present without fabricating an event."""
+
+    initialize_task_table()
+    now = _utc_now_text()
+    with _get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        binding = conn.execute(
+            f"""
+            SELECT * FROM {SHIGURE_OBJECT_BINDING_TABLE}
+            WHERE binding_id = ? AND status = 'ACTIVE'
+            """,
+            (str(binding_id),),
+        ).fetchone()
+        if binding is None:
+            raise ValueError("binding is not active")
+        display_object_id = str(binding["display_object_id"])
+        conn.execute(
+            f"""
+            INSERT INTO {DISPLAY_OBJECT_STATE_TABLE} (display_object_id, updated_at)
+            VALUES (?, ?)
+            ON CONFLICT(display_object_id) DO NOTHING
+            """,
+            (display_object_id, now),
+        )
+        conn.execute(
+            f"""
+            UPDATE {DISPLAY_OBJECT_STATE_TABLE}
+            SET presence = 'PRESENT',
+                presence_epoch = presence_epoch + 1,
+                active_shigure_binding_id = ?,
+                latest_tracking_model_revision = 0,
+                latest_tracking_pose_aruco_json = NULL,
+                latest_tracking_observation_seq = 0,
+                latest_spatial_box_aruco_json = NULL,
+                latest_spatial_observation_seq = 0,
+                latest_skeleton_json = NULL,
+                latest_skeleton_observation_seq = 0,
+                updated_at = ?
+            WHERE display_object_id = ?
+            """,
+            (str(binding_id), now, display_object_id),
+        )
+        row = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
+            (display_object_id,),
+        ).fetchone()
+    return dict(row)
+
+
+def update_shigure_live_observation(
+    *,
+    binding_id: str,
+    observation_seq: int,
+    model_revision: int,
+    pose_aruco: Any = None,
+    spatial_box_corners_aruco: Any = None,
+    spatial_box_observed: bool = False,
+    skeleton: Any = None,
+) -> Optional[Dict[str, Any]]:
+    """Commit live compute while presentation may independently show history."""
+
+    initialize_task_table()
+    if pose_aruco is not None and not isinstance(pose_aruco, dict):
+        raise ValueError("pose_aruco must be an object")
+    if spatial_box_corners_aruco is not None and (
+        not isinstance(spatial_box_corners_aruco, list)
+        or len(spatial_box_corners_aruco) != 8
+    ):
+        raise ValueError("spatial_box_corners_aruco must contain exactly 8 points")
+    now = _utc_now_text()
+    with _get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        binding = conn.execute(
+            f"""
+            SELECT * FROM {SHIGURE_OBJECT_BINDING_TABLE}
+            WHERE binding_id = ? AND status = 'ACTIVE'
+            """,
+            (str(binding_id),),
+        ).fetchone()
+        if binding is None:
+            return None
+        display_object_id = str(binding["display_object_id"])
+        state = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
+            (display_object_id,),
+        ).fetchone()
+        if (
+            state is None
+            or str(state["presence"]) != "PRESENT"
+            or str(state["active_shigure_binding_id"] or "") != str(binding_id)
+            or int(state["active_model_revision"] or 0) != int(model_revision)
+        ):
+            return None
+        accept_pose = pose_aruco is not None and int(state["latest_tracking_observation_seq"] or 0) < int(observation_seq)
+        accept_box = bool(spatial_box_observed) and int(state["latest_spatial_observation_seq"] or 0) < int(observation_seq)
+        accept_skeleton = skeleton is not None and int(state["latest_skeleton_observation_seq"] or 0) < int(observation_seq)
+        if not any((accept_pose, accept_box, accept_skeleton)):
+            return None
+        pose_revision = int(state["latest_tracking_pose_revision"] or 0)
+        if accept_pose:
+            pose_revision += 1
+        conn.execute(
+            f"""
+            UPDATE {DISPLAY_OBJECT_STATE_TABLE}
+            SET latest_tracking_pose_revision = ?,
+                latest_tracking_model_revision = ?,
+                latest_tracking_pose_aruco_json = COALESCE(?, latest_tracking_pose_aruco_json),
+                latest_tracking_observation_seq = ?,
+                latest_spatial_box_aruco_json = CASE WHEN ? THEN ? ELSE latest_spatial_box_aruco_json END,
+                latest_spatial_observation_seq = ?,
+                latest_skeleton_json = COALESCE(?, latest_skeleton_json),
+                latest_skeleton_observation_seq = ?,
+                updated_at = ?
+            WHERE display_object_id = ?
+            """,
+            (
+                pose_revision,
+                int(model_revision),
+                _dump_optional_json(pose_aruco) if accept_pose else None,
+                int(observation_seq) if accept_pose else int(state["latest_tracking_observation_seq"] or 0),
+                1 if accept_box else 0,
+                _dump_optional_json(spatial_box_corners_aruco) if accept_box else None,
+                int(observation_seq) if accept_box else int(state["latest_spatial_observation_seq"] or 0),
+                _dump_optional_json(skeleton) if accept_skeleton else None,
+                int(observation_seq) if accept_skeleton else int(state["latest_skeleton_observation_seq"] or 0),
+                now,
+                display_object_id,
+            ),
+        )
+        row = conn.execute(
+            f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
+            (display_object_id,),
+        ).fetchone()
+    result = dict(row)
+    result["_pose_accepted"] = bool(accept_pose)
+    result["_spatial_box_accepted"] = bool(accept_box)
+    result["_skeleton_accepted"] = bool(accept_skeleton)
+    return result
+
+
+def apply_object_lifecycle_event(
+    *,
+    canonical_event_uid: str,
+    pose_aruco: Any = None,
+    spatial_box_corners_aruco: Any = None,
+    skeleton: Any = None,
+    calibration_revision: str | None = None,
+    occurred_at: str | None = None,
+) -> Dict[str, Any]:
+    """Atomically authorize a resolved Shigure event and change presence."""
+
+    initialize_task_table()
+    if pose_aruco is not None and not isinstance(pose_aruco, dict):
+        raise ValueError("pose_aruco must be an object")
+    if spatial_box_corners_aruco is not None and (
+        not isinstance(spatial_box_corners_aruco, list)
+        or len(spatial_box_corners_aruco) != 8
+    ):
+        raise ValueError("spatial_box_corners_aruco must contain exactly 8 points")
+    now = _utc_now_text()
+    event_time = str(occurred_at or now)
+    lifecycle_uid = uuid.uuid5(
+        uuid.NAMESPACE_URL, f"shigure-lifecycle:{canonical_event_uid}"
+    ).hex
+    with _get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        event = conn.execute(
+            f"""
+            SELECT * FROM {SHIGURE_CANONICAL_EVENT_TABLE}
+            WHERE event_uid = ? AND resolution_status = 'RESOLVED'
+            """,
+            (str(canonical_event_uid),),
+        ).fetchone()
+        if event is None:
+            raise ValueError("canonical event is not resolved")
+        replay = conn.execute(
+            f"""
+            SELECT * FROM {OBJECT_LIFECYCLE_EVENT_TABLE}
+            WHERE canonical_event_uid = ?
+            """,
+            (str(canonical_event_uid),),
+        ).fetchone()
+        if replay is not None:
+            # The compatibility adapter may emit the lifecycle event before
+            # camera/person/contact inputs for the same exact ROS stamp arrive.
+            # Replay supplements evidence without advancing presence or creating
+            # a second history row. A late exact event skeleton supersedes the
+            # state fallback captured by the first emission.
+            supplemental_skeleton = (
+                _dump_optional_json(skeleton) if skeleton is not None else None
+            )
+            conn.execute(
+                f"""
+                UPDATE {OBJECT_LIFECYCLE_EVENT_TABLE}
+                SET pose_aruco_json = COALESCE(pose_aruco_json, ?),
+                    spatial_box_corners_aruco_json = COALESCE(
+                        spatial_box_corners_aruco_json, ?
+                    ),
+                    scene_image_path = COALESCE(scene_image_path, ?),
+                    object_crop_path = COALESCE(object_crop_path, ?),
+                    mask_artifact_path = COALESCE(mask_artifact_path, ?),
+                    skeleton_json = COALESCE(?, skeleton_json),
+                    calibration_revision = COALESCE(calibration_revision, ?)
+                WHERE canonical_event_uid = ?
+                """,
+                (
+                    _dump_optional_json(pose_aruco),
+                    _dump_optional_json(spatial_box_corners_aruco),
+                    event["scene_image_path"],
+                    event["object_crop_path"],
+                    event["mask_artifact_path"],
+                    supplemental_skeleton,
+                    str(calibration_revision) if calibration_revision else None,
+                    str(canonical_event_uid),
+                ),
+            )
+            updated = conn.execute(
+                f"""
+                SELECT * FROM {OBJECT_LIFECYCLE_EVENT_TABLE}
+                WHERE canonical_event_uid = ?
+                """,
+                (str(canonical_event_uid),),
+            ).fetchone()
+            result = dict(updated)
+            result["_replayed"] = True
+            return result
+
+        binding = conn.execute(
+            f"""
+            SELECT * FROM {SHIGURE_OBJECT_BINDING_TABLE}
+            WHERE binding_id = ? AND status = 'ACTIVE'
+            """,
+            (str(event["binding_id"]),),
+        ).fetchone()
+        if binding is None or any(
+            (
+                str(binding["source_epoch_id"]) != str(event["source_epoch_id"]),
+                str(binding["raw_shigure_object_id"]) != str(event["raw_shigure_object_id"]),
+                str(binding["display_object_id"]) != str(event["display_object_id"]),
+            )
+        ):
+            raise ValueError("canonical event no longer matches the active binding")
+
+        display_object_id = str(binding["display_object_id"])
         state = conn.execute(
             f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
             (display_object_id,),
         ).fetchone()
         if state is None:
-            conn.rollback()
-            return None
+            raise ValueError("display object has no model/capture state")
+        action = str(event["action"])
+        before = str(state["presence"])
+        if action == "BRING_IN":
+            if before == "PRESENT":
+                raise ValueError("duplicate bring-in for a present object")
+            after = "PRESENT"
+        elif action == "TAKE_OUT":
+            if before != "PRESENT":
+                raise ValueError("take-out requires a present object")
+            after = "ABSENT"
+        else:
+            if before != "PRESENT":
+                raise ValueError("move requires a present object")
+            after = "PRESENT"
 
-        capture = conn.execute(
-            f"""
-            SELECT *
-            FROM {DISPLAY_OBJECT_POSE_HISTORY_TABLE}
-            WHERE display_object_id = ? AND task_id = ?
-            """,
-            (display_object_id, task_id),
-        ).fetchone()
-        if capture is None:
-            # The auxiliary branch may complete before DisplayIdentity commits
-            # this capture.  Its caller replays the link after that stage.
-            conn.rollback()
-            return None
-
-        existing_revision = capture["body_revision"]
-        revision = int(
-            existing_revision
-            if existing_revision is not None
-            else (body_revision if body_revision is not None else capture["pose_revision"])
+        resolved_pose = pose_aruco
+        if resolved_pose is None:
+            raw_pose = (
+                state["latest_tracking_pose_aruco_json"]
+                or state["latest_hololens_pose_aruco_json"]
+            )
+            resolved_pose = json.loads(raw_pose) if raw_pose else None
+        resolved_skeleton = skeleton
+        if resolved_skeleton is None and action != "BRING_IN":
+            raw_skeleton = event["skeleton_json"] or state["latest_skeleton_json"]
+            resolved_skeleton = json.loads(raw_skeleton) if raw_skeleton else None
+        resolved_box = spatial_box_corners_aruco
+        if resolved_box is None and action != "BRING_IN":
+            raw_box = state["latest_spatial_box_aruco_json"]
+            resolved_box = json.loads(raw_box) if raw_box else None
+        presence_epoch = int(state["presence_epoch"] or 0) + 1
+        pose_revision = int(
+            state["latest_tracking_pose_revision"]
+            or state["latest_hololens_pose_revision"]
+            or 0
         )
         conn.execute(
             f"""
-            UPDATE {DISPLAY_OBJECT_POSE_HISTORY_TABLE}
-            SET body_revision = ?, updated_at = ?
-            WHERE display_object_id = ? AND task_id = ?
+            INSERT INTO {OBJECT_LIFECYCLE_EVENT_TABLE} (
+                lifecycle_event_uid, canonical_event_uid, display_object_id,
+                binding_id, source_epoch_id, raw_shigure_object_id, action,
+                presence_before, presence_after, presence_epoch, model_revision,
+                pose_revision, pose_aruco_json, spatial_box_corners_aruco_json,
+                scene_image_path, object_crop_path, mask_artifact_path,
+                skeleton_json, calibration_revision, source_stamp_json, occurred_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (revision, now, display_object_id, task_id),
+            (
+                lifecycle_uid,
+                str(canonical_event_uid),
+                display_object_id,
+                str(binding["binding_id"]),
+                str(binding["source_epoch_id"]),
+                str(binding["raw_shigure_object_id"]),
+                action,
+                before,
+                after,
+                presence_epoch,
+                int(state["active_model_revision"] or 0),
+                pose_revision,
+                _dump_optional_json(resolved_pose),
+                _dump_optional_json(resolved_box),
+                event["scene_image_path"],
+                event["object_crop_path"],
+                event["mask_artifact_path"],
+                _dump_optional_json(resolved_skeleton),
+                str(calibration_revision) if calibration_revision else None,
+                str(event["source_stamp_json"]),
+                event_time,
+            ),
         )
-
-        current_body_capture = None
-        current_body_task_id = str(state["latest_body_task_id"] or "").strip()
-        if current_body_task_id:
-            current_body_capture = conn.execute(
-                f"""
-                SELECT pose_revision
-                FROM {DISPLAY_OBJECT_POSE_HISTORY_TABLE}
-                WHERE display_object_id = ? AND task_id = ?
-                """,
-                (display_object_id, current_body_task_id),
-            ).fetchone()
-        current_pose_revision = (
-            int(current_body_capture["pose_revision"])
-            if current_body_capture is not None
-            else -1
+        conn.execute(
+            f"""
+            UPDATE {DISPLAY_OBJECT_STATE_TABLE}
+            SET presence = ?,
+                presence_epoch = ?,
+                active_shigure_binding_id = ?,
+                last_lifecycle_event_uid = ?,
+                latest_tracking_model_revision = CASE
+                    WHEN ? = 'BRING_IN' THEN 0
+                    ELSE latest_tracking_model_revision
+                END,
+                latest_tracking_pose_aruco_json = CASE
+                    WHEN ? = 'BRING_IN' THEN NULL
+                    ELSE latest_tracking_pose_aruco_json
+                END,
+                latest_tracking_observation_seq = CASE
+                    WHEN ? = 'BRING_IN' THEN 0
+                    ELSE latest_tracking_observation_seq
+                END,
+                latest_spatial_box_aruco_json = CASE
+                    WHEN ? IN ('BRING_IN', 'TAKE_OUT') THEN NULL
+                    ELSE COALESCE(?, latest_spatial_box_aruco_json)
+                END,
+                latest_spatial_observation_seq = CASE
+                    WHEN ? IN ('BRING_IN', 'TAKE_OUT') THEN 0
+                    ELSE latest_spatial_observation_seq
+                END,
+                latest_skeleton_json = CASE
+                    WHEN ? = 'BRING_IN' THEN ?
+                    ELSE COALESCE(?, latest_skeleton_json)
+                END,
+                latest_skeleton_observation_seq = CASE
+                    WHEN ? = 'BRING_IN' THEN 0
+                    ELSE latest_skeleton_observation_seq
+                END,
+                updated_at = ?
+            WHERE display_object_id = ?
+            """,
+            (
+                after,
+                presence_epoch,
+                None if action == "TAKE_OUT" else str(binding["binding_id"]),
+                lifecycle_uid,
+                action,
+                action,
+                action,
+                action,
+                _dump_optional_json(resolved_box),
+                action,
+                action,
+                _dump_optional_json(resolved_skeleton),
+                _dump_optional_json(resolved_skeleton),
+                action,
+                now,
+                display_object_id,
+            ),
         )
-        if int(capture["pose_revision"]) >= current_pose_revision:
+        if action == "TAKE_OUT":
+            # Shigure allocates a fresh raw ID for a later bring-in. Release
+            # this epoch-local one-to-one slot immediately after the take-out
+            # history row has captured the old binding and pre-take pose.
             conn.execute(
                 f"""
-                UPDATE {DISPLAY_OBJECT_STATE_TABLE}
-                SET latest_body_revision = ?, latest_body_task_id = ?, updated_at = ?
-                WHERE display_object_id = ?
+                UPDATE {SHIGURE_OBJECT_BINDING_TABLE}
+                SET status = 'REVOKED',
+                    valid_until = ?,
+                    revoke_reason = 'take_out_completed'
+                WHERE binding_id = ? AND status = 'ACTIVE'
                 """,
-                (revision, task_id, now, display_object_id),
+                (now, str(binding["binding_id"])),
             )
-        conn.commit()
         row = conn.execute(
-            f"SELECT * FROM {DISPLAY_OBJECT_STATE_TABLE} WHERE display_object_id = ?",
-            (display_object_id,),
+            f"""
+            SELECT * FROM {OBJECT_LIFECYCLE_EVENT_TABLE}
+            WHERE lifecycle_event_uid = ?
+            """,
+            (lifecycle_uid,),
         ).fetchone()
-    return dict(row) if row is not None else None
+    result = dict(row)
+    result["_replayed"] = False
+    return result
 
 
-def upsert_auxiliary_job(
+def list_object_lifecycle_history(
+    display_object_id: str,
     *,
-    task_id: str,
-    branch_name: str,
+    limit: int = 20,
+    before_id: int | None = None,
+    take_out_only: bool = True,
+) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    limit = max(1, min(int(limit), 100))
+    where = ["display_object_id = ?"]
+    values: list[Any] = [str(display_object_id)]
+    if before_id is not None:
+        where.append("id < ?")
+        values.append(int(before_id))
+    if take_out_only:
+        where.append("action = 'TAKE_OUT'")
+    values.append(limit)
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM {OBJECT_LIFECYCLE_EVENT_TABLE}
+            WHERE {" AND ".join(where)}
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            tuple(values),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_latest_shigure_canonical_event(
+    display_object_id: str,
+) -> Optional[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        row = conn.execute(
+            f"""
+            SELECT * FROM {SHIGURE_CANONICAL_EVENT_TABLE}
+            WHERE display_object_id = ?
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (str(display_object_id),),
+        ).fetchone()
+    return _row_to_dict(row)
+
+
+def add_object_identity_reference(
+    *,
+    display_object_id: str,
+    source: str,
+    image_path: str | Path,
+    view_hash: str,
+    mask_path: str | Path | None = None,
+    embedding_path: str | Path | None = None,
+    source_event_uid: str | None = None,
+    source_task_id: str | None = None,
+    quality: Any = None,
+) -> Dict[str, Any]:
+    initialize_task_table()
+    source_value = str(source or "").strip().upper()
+    if source_value not in {"SHIGURE", "HOLOLENS"}:
+        raise ValueError("source must be SHIGURE or HOLOLENS")
+
+    admission: Dict[str, Any] | None = None
+    if source_value == "SHIGURE":
+        if mask_path is None:
+            raise ValueError("SHIGURE identity references require a mask")
+        if not isinstance(quality, dict):
+            raise ValueError("SHIGURE identity references require admission quality")
+        admission = quality
+        if (
+            str(admission.get("admission_method") or "")
+            != "DINOV2_STRICT_SHIGURE_EXAMPLE"
+            or str(admission.get("admission_status") or "") != "MATCHED"
+            or str(admission.get("admission_display_object_id") or "")
+            != str(display_object_id)
+            or not str(admission.get("admission_reference_id") or "").strip()
+            or not str(admission.get("admission_source_epoch_id") or "").strip()
+            or not str(admission.get("admission_binding_id") or "").strip()
+            or not str(
+                admission.get("admission_raw_shigure_object_id") or ""
+            ).strip()
+        ):
+            raise ValueError("SHIGURE identity reference admission is invalid")
+        try:
+            admission_distance = float(admission["admission_distance"])
+            admission_margin_value = admission.get("admission_margin")
+            admission_margin = (
+                None
+                if admission_margin_value is None
+                else float(admission_margin_value)
+            )
+            admission_competitor_count = int(
+                admission["admission_competitor_count"]
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(
+                "SHIGURE identity reference admission scores are invalid"
+            ) from exc
+        if (
+            not math.isfinite(admission_distance)
+            or admission_distance < 0.0
+            or admission_distance > SHIGURE_EXAMPLE_DINO_DISTANCE_THRESHOLD
+            or admission_competitor_count < 0
+            or (
+                admission_competitor_count > 0
+                and admission_margin is None
+            )
+            or (
+                admission_margin is not None
+                and (
+                    not math.isfinite(admission_margin)
+                    or admission_margin < SHIGURE_EXAMPLE_DINO_SECOND_MARGIN
+                )
+            )
+        ):
+            raise ValueError(
+                "SHIGURE identity reference admission is not strict enough"
+            )
+
+    reference_id = uuid.uuid4().hex
+    with _get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        if admission is not None:
+            binding = conn.execute(
+                f"""
+                SELECT binding_id
+                FROM {SHIGURE_OBJECT_BINDING_TABLE}
+                WHERE binding_id = ?
+                  AND source_epoch_id = ?
+                  AND raw_shigure_object_id = ?
+                  AND display_object_id = ?
+                  AND status = 'ACTIVE'
+                """,
+                (
+                    str(admission["admission_binding_id"]),
+                    str(admission["admission_source_epoch_id"]),
+                    str(admission["admission_raw_shigure_object_id"]),
+                    str(display_object_id),
+                ),
+            ).fetchone()
+            if binding is None:
+                raise ValueError(
+                    "SHIGURE identity admission binding is unavailable"
+                )
+            anchor = conn.execute(
+                f"""
+                SELECT reference_id
+                FROM {OBJECT_IDENTITY_REFERENCE_TABLE}
+                WHERE reference_id = ?
+                  AND display_object_id = ?
+                  AND active = 1
+                """,
+                (
+                    str(admission["admission_reference_id"]),
+                    str(display_object_id),
+                ),
+            ).fetchone()
+            if anchor is None:
+                raise ValueError(
+                    "SHIGURE identity admission anchor is unavailable"
+                )
+        conn.execute(
+            f"""
+            INSERT INTO {OBJECT_IDENTITY_REFERENCE_TABLE} (
+                reference_id, display_object_id, source, source_event_uid,
+                source_task_id, image_path, mask_path, embedding_path,
+                view_hash, quality_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(display_object_id, view_hash) DO UPDATE SET
+                active = 1,
+                image_path = excluded.image_path,
+                mask_path = COALESCE(excluded.mask_path, mask_path),
+                embedding_path = COALESCE(excluded.embedding_path, embedding_path),
+                quality_json = excluded.quality_json
+            """,
+            (
+                reference_id,
+                str(display_object_id),
+                source_value,
+                source_event_uid,
+                source_task_id,
+                normalize_path_for_storage(image_path),
+                normalize_path_for_storage(mask_path) if mask_path else None,
+                normalize_path_for_storage(embedding_path) if embedding_path else None,
+                str(view_hash),
+                json.dumps(quality if quality is not None else {}, ensure_ascii=False),
+            ),
+        )
+        row = conn.execute(
+            f"""
+            SELECT * FROM {OBJECT_IDENTITY_REFERENCE_TABLE}
+            WHERE display_object_id = ? AND view_hash = ?
+            """,
+            (str(display_object_id), str(view_hash)),
+        ).fetchone()
+    return dict(row)
+
+
+def list_object_identity_references(
+    display_object_id: str, *, limit: int = 20
+) -> List[Dict[str, Any]]:
+    initialize_task_table()
+    with _get_connection() as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM {OBJECT_IDENTITY_REFERENCE_TABLE}
+            WHERE display_object_id = ? AND active = 1
+            ORDER BY created_at DESC, reference_id DESC
+            LIMIT ?
+            """,
+            (str(display_object_id), max(1, min(int(limit), 100))),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def set_object_identity_reference_embedding(
+    reference_id: str,
+    *,
+    embedding_path: str | Path,
+) -> Dict[str, Any]:
+    """Attach a durable embedding sidecar to one active identity reference."""
+
+    initialize_task_table()
+    reference_id = str(reference_id or "").strip()
+    if not reference_id:
+        raise ValueError("reference_id is required")
+    resolved = resolve_project_path(embedding_path, require_exists=True)
+    root = IDENTITY_REFERENCE_ROOT.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("embedding_path must be inside the identity reference root") from exc
+    if resolved.name != "embedding.json":
+        raise ValueError("identity embedding sidecar must be named embedding.json")
+    normalized = normalize_path_for_storage(resolved)
+    with _get_connection() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            f"SELECT * FROM {OBJECT_IDENTITY_REFERENCE_TABLE} WHERE reference_id = ? AND active = 1",
+            (reference_id,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("identity reference is missing or inactive")
+        conn.execute(
+            f"UPDATE {OBJECT_IDENTITY_REFERENCE_TABLE} SET embedding_path = ? WHERE reference_id = ?",
+            (normalized, reference_id),
+        )
+        updated = conn.execute(
+            f"SELECT * FROM {OBJECT_IDENTITY_REFERENCE_TABLE} WHERE reference_id = ?",
+            (reference_id,),
+        ).fetchone()
+    return dict(updated)
+
+
+def upsert_identity_sync_job(
+    *,
+    sync_job_id: str,
+    kind: str,
     status: str,
-    result_path: str | Path | None = None,
-    detail: Any = None,
+    runtime_session_id: str | None = None,
+    source_epoch_id: str | None = None,
+    display_object_id: str | None = None,
+    candidate_limit: int = 5,
+    result: Any = None,
     error_message: str | None = None,
 ) -> Dict[str, Any]:
-    allowed = {"pending", "running", "completed", "failed", "cancelled"}
-    if status not in allowed:
-        raise ValueError(f"Invalid auxiliary job status: {status}")
     initialize_task_table()
+    kind_value = str(kind or "").strip().upper()
+    status_value = str(status or "").strip().upper()
+    if kind_value not in {"STARTUP_RECOVERY", "HOLOLENS_CAPTURE"}:
+        raise ValueError("invalid identity sync kind")
+    if status_value not in {"PENDING", "RUNNING", "COMPLETED", "FAILED"}:
+        raise ValueError("invalid identity sync status")
     now = _utc_now_text()
-    job_id = f"{task_id}:{branch_name}"
-    started_at = now if status == "running" else None
-    completed_at = now if status in {"completed", "failed", "cancelled"} else None
     with _get_connection() as conn:
         conn.execute(
             f"""
-            INSERT INTO {AUXILIARY_JOB_TABLE} (
-                job_id, task_id, branch_name, status, result_path, detail_json,
-                error_message, started_at, completed_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(task_id, branch_name) DO UPDATE SET
+            INSERT INTO {IDENTITY_SYNC_JOB_TABLE} (
+                sync_job_id, kind, status, runtime_session_id, source_epoch_id,
+                display_object_id, candidate_limit, result_json, error_message,
+                started_at, completed_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(sync_job_id) DO UPDATE SET
                 status = excluded.status,
-                result_path = COALESCE(excluded.result_path, result_path),
-                detail_json = excluded.detail_json,
+                result_json = excluded.result_json,
                 error_message = excluded.error_message,
                 started_at = COALESCE(started_at, excluded.started_at),
                 completed_at = excluded.completed_at,
                 updated_at = excluded.updated_at
             """,
             (
-                job_id,
-                str(task_id),
-                str(branch_name),
-                status,
-                normalize_path_for_storage(result_path) if result_path else None,
-                json.dumps(detail if detail is not None else {}, ensure_ascii=False),
+                str(sync_job_id),
+                kind_value,
+                status_value,
+                runtime_session_id,
+                source_epoch_id,
+                display_object_id,
+                max(1, min(int(candidate_limit), 5)),
+                _dump_optional_json(result),
                 error_message,
-                started_at,
-                completed_at,
+                now if status_value == "RUNNING" else None,
+                now if status_value in {"COMPLETED", "FAILED"} else None,
                 now,
             ),
         )
-        conn.commit()
         row = conn.execute(
-            f"SELECT * FROM {AUXILIARY_JOB_TABLE} WHERE task_id = ? AND branch_name = ?",
-            (str(task_id), str(branch_name)),
+            f"SELECT * FROM {IDENTITY_SYNC_JOB_TABLE} WHERE sync_job_id = ?",
+            (str(sync_job_id),),
         ).fetchone()
     return dict(row)
 
 
-def get_auxiliary_jobs(task_id: str) -> List[Dict[str, Any]]:
+def get_identity_sync_job(sync_job_id: str) -> Optional[Dict[str, Any]]:
     initialize_task_table()
+    sync_job_id = str(sync_job_id or "").strip()
+    if not sync_job_id:
+        raise ValueError("sync_job_id is required")
     with _get_connection() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM {AUXILIARY_JOB_TABLE} WHERE task_id = ? ORDER BY id ASC",
-            (str(task_id),),
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
-def list_auxiliary_jobs(*, statuses: Iterable[str] = ("pending", "running")) -> List[Dict[str, Any]]:
-    initialize_task_table()
-    requested = tuple(dict.fromkeys(str(value).strip() for value in statuses if str(value).strip()))
-    if not requested:
-        return []
-    placeholders = ", ".join("?" for _ in requested)
-    with _get_connection() as conn:
-        rows = conn.execute(
-            f"SELECT * FROM {AUXILIARY_JOB_TABLE} WHERE status IN ({placeholders}) ORDER BY id ASC",
-            requested,
-        ).fetchall()
-    return [dict(row) for row in rows]
+        row = conn.execute(
+            f"SELECT * FROM {IDENTITY_SYNC_JOB_TABLE} WHERE sync_job_id = ?",
+            (sync_job_id,),
+        ).fetchone()
+    return _row_to_dict(row)
