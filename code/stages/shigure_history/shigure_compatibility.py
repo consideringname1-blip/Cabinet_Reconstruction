@@ -557,13 +557,54 @@ def parse_segments_candidates(
             }
         )
 
-    tracking_items = [
+    raw_tracking_items = [
         item
         for item in ((object_tracking or {}).get("objects") or [])
         if isinstance(item, Mapping)
         and str(item.get("action") or "").strip().lower() not in {"take_out", "obj_move"}
         and str(item.get("object_id") or "").strip()
     ]
+    tracking_items: list[Mapping[str, Any]] = []
+    for tracked in raw_tracking_items:
+        tracked_bbox = _bbox_xyxy(tracked)
+        duplicate_index = None
+        duplicate_iou = 0.0
+        if tracked_bbox is not None:
+            for index, existing in enumerate(tracking_items):
+                existing_bbox = _bbox_xyxy(existing)
+                if existing_bbox is None:
+                    continue
+                overlap = _bbox_iou(tracked_bbox, existing_bbox)
+                if overlap >= 0.90:
+                    duplicate_index = index
+                    duplicate_iou = float(overlap)
+                    break
+        if duplicate_index is None:
+            tracking_items.append(tracked)
+            continue
+        previous = tracking_items[duplicate_index]
+        previous_id = str(previous.get("object_id") or "")
+        tracked_id = str(tracked.get("object_id") or "")
+        previous_suffix = previous_id.rpartition("_")[2]
+        tracked_suffix = tracked_id.rpartition("_")[2]
+        if (
+            tracked_suffix.isdigit()
+            and (
+                not previous_suffix.isdigit()
+                or int(tracked_suffix) >= int(previous_suffix)
+            )
+        ):
+            tracking_items[duplicate_index] = tracked
+        diagnostics.append(
+            {
+                "code": "TRACKING_DUPLICATE_BBOX_COLLAPSED",
+                "raw_ids": sorted({previous_id, tracked_id}),
+                "representative_raw_id": str(
+                    tracking_items[duplicate_index].get("object_id") or ""
+                ),
+                "bbox_iou": duplicate_iou,
+            }
+        )
     score_matrix: dict[tuple[int, int], float] = {}
     for candidate_index, candidate in enumerate(candidates):
         candidate_bbox = _bbox_xyxy(candidate)

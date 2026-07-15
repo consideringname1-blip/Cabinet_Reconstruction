@@ -72,7 +72,12 @@ public class RuntimeModelEventIdentity : MonoBehaviour, IMixedRealityPointerHand
 
     public void OnPointerClicked(MixedRealityPointerEventData eventData)
     {
-        ToggleEventPopup();
+        HistoryPresentationController controller =
+            HistoryPresentationController.Instance;
+        if (controller != null && !string.IsNullOrEmpty(displayObjectId))
+        {
+            controller.OnModelClicked(displayObjectId);
+        }
         if (eventData != null)
         {
             eventData.Use();
@@ -92,15 +97,4 @@ public class RuntimeModelEventIdentity : MonoBehaviour, IMixedRealityPointerHand
     }
 
 
-    private void ToggleEventPopup()
-    {
-        ModelEventDisplay display = ModelEventDisplay.Instance;
-        if (display == null)
-        {
-            Debug.LogWarning("[ModelEvent] ModelEventDisplay is missing from SampleScene/Scripts.");
-            return;
-        }
-
-        display.ToggleForModel(this);
-    }
 }

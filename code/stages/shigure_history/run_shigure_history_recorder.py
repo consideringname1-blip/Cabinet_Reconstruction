@@ -103,6 +103,9 @@ from stages.shigure_history.debug_cache import (  # noqa: E402
     validate_debug_cache_limits,
 )
 from stages.shigure_history.marker_history import MarkerHistoryWarmup  # noqa: E402
+from stages.shigure_history.raw_tracking_box_relay import (  # noqa: E402
+    publish_raw_tracking_box_snapshot,
+)
 from stages.shigure_history.shigure_compatibility import ShigureCompatibilityAdapter  # noqa: E402
 
 _running = True
@@ -342,14 +345,18 @@ def object_tracking_payload(sample: TopicSample) -> dict[str, Any]:
         bbox = _object_bbox_xyxy(obj)
         object_id = str(getattr(obj, "object_id", "") or "").strip()
         action = str(getattr(obj, "action", "") or "").strip().lower()
-        if bbox is None or not object_id:
+        if not object_id:
             continue
         objects.append(
             {
                 "index": int(index),
                 "object_id": object_id,
                 "action": action,
-                "bbox_xyxy": [float(value) for value in bbox],
+                "bbox_xyxy": (
+                    [float(value) for value in bbox]
+                    if bbox is not None
+                    else None
+                ),
                 "collider": _cube_payload(getattr(obj, "collider", None)),
             }
         )
@@ -740,6 +747,16 @@ def main() -> int:
         return stored
 
     adapter = ShigureCompatibilityAdapter(append_canonical_frame)
+    try:
+        publish_raw_tracking_box_snapshot(
+            {"objects": [], "object_count": 0},
+            revision=1,
+        )
+    except Exception as exc:
+        print(
+            f"[shigure_history] initial raw box snapshot failed: {exc}",
+            flush=True,
+        )
     debug_ring = ShigureDebugDiskRing(
         args.debug_cache_root,
         enabled=args.debug_cache_enable,
@@ -767,10 +784,27 @@ def main() -> int:
                     try:
                         header = getattr(msg, "header", None)
                         frame_id = str(getattr(header, "frame_id", "") or "")
+                        normalized_payload = compatibility_payload(
+                            topic_key,
+                            sample,
+                        )
+                        if topic_key == "object_tracking":
+                            try:
+                                publish_raw_tracking_box_snapshot(
+                                    normalized_payload,
+                                    revision=sample.count,
+                                    source_stamp=sample.stamp.to_dict(),
+                                )
+                            except Exception as exc:
+                                print(
+                                    "[shigure_history] raw box relay failed "
+                                    f"at {sample.stamp.to_dict()}: {exc}",
+                                    flush=True,
+                                )
                         adapter.ingest(
                             topic_key,
                             sample.stamp,
-                            compatibility_payload(topic_key, sample),
+                            normalized_payload,
                             frame_id=frame_id,
                         )
                     except Exception as exc:

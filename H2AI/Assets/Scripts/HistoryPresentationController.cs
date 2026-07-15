@@ -218,9 +218,13 @@ public class HistoryPresentationController : MonoBehaviour
             requestUri,
             HTTPMethods.Get,
             OnHistoryRequestFinished);
+        request.ConnectTimeout = TimeSpan.FromSeconds(2);
+        request.Timeout = TimeSpan.FromSeconds(8);
         request.Tag = context;
         request.AddHeader("Accept", "application/json");
         requestsByDisplayObjectId[displayObjectId] = request;
+        Debug.Log(
+            "[HistoryPresentation] GET " + requestUri.AbsoluteUri);
         request.Send();
         if (!wasGlobalRequest)
         {
@@ -289,7 +293,9 @@ public class HistoryPresentationController : MonoBehaviour
         {
             Debug.LogWarning(
                 "[HistoryPresentation] History request failed for "
-                + context.DisplayObjectId);
+                + context.DisplayObjectId
+                + " response="
+                + (response != null ? response.DataAsText : "null"));
             ShowFrontMessage("history_presentation_ERR_request");
             FinishGlobalBatchIfNeeded();
             return;
@@ -392,21 +398,6 @@ public class HistoryPresentationController : MonoBehaviour
             ShowFrontMessage("history_presentation_model_missing");
             return false;
         }
-        if (manager.TryGetPresentationState(
-                displayObjectId,
-                out RuntimeObjectPresentationState currentState)
-            && currentState.LatestLive.HasPose
-            && !string.IsNullOrEmpty(
-                currentState.LatestLive.CoordinateEpoch)
-            && currentState.LatestLive.CoordinateEpoch != coordinateEpoch)
-        {
-            Debug.LogWarning(
-                "[HistoryPresentation] Reject coordinate epoch mismatch for "
-                + displayObjectId);
-            ShowFrontMessage("history_presentation_ERR_coordinate_epoch");
-            return false;
-        }
-
         if (!manager.EnterHistoryPresentation(
                 displayObjectId,
                 eventUid,
@@ -441,6 +432,15 @@ public class HistoryPresentationController : MonoBehaviour
         }
 
         ShowFrontMessage("history_presentation_history");
+        Debug.Log(
+            "[HistoryPresentation] Applied history event="
+            + eventUid
+            + " display="
+            + displayObjectId
+            + " coordinate_epoch="
+            + coordinateEpoch
+            + " position="
+            + historyPose.HololensPosition.ToString("F4"));
         return true;
     }
 

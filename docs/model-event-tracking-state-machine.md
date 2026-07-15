@@ -65,20 +65,20 @@ optional canonical model metadata
 
 `HistoryPresentationController` 的 URL override 默认为空；此时它从 `ShuJuQingQiu` 已配置的 realtime status/mode URL 提取 scheme、host、port 和服务路径，再派生同源 `/api/v2/`，不写死另一台服务器。
 
-每次 live snapshot 应用前，`RuntimeModelManager` 会比较 `coordinate_epoch`。仍在显示旧 epoch 历史的对象会自动恢复 `FollowLive`、应用最新 live state，并隐藏历史照片/骨骼；历史响应本身若与当前 live epoch 不同则拒绝应用。
+每次 live snapshot 应用前，`RuntimeModelManager` 会比较 `coordinate_epoch`。仍在显示旧 epoch 历史的对象会自动恢复 `FollowLive`、应用最新 live state，并隐藏历史照片/骨骼；历史接口已按请求中的当前 startup reference 完成坐标转换，因此该响应的 `coordinate_epoch` 是本次历史放置的权威值，不再用可能滞后的客户端 live epoch 拒绝。
 
 ShuJuQingQiu 从应用启动起约每 1 秒请求 `/api/v2/shigure/object-tracking-boxes/latest`，不等待 realtime handshake、模型下载或历史状态。成功响应按 tracking_id 直接 replace：能解析的条目立即新增或覆盖，缺席条目立即删除，成功空数组清空；请求失败时保留上一快照等待下一轮。服务器不做 freshness、稳定、平滑、identity 或整批等待。
 
 ## 单击某个模型
 
-`ModelEventDisplay` 把单击交给 `HistoryPresentationController`：
+模型的 MRTK 单击和 PointObject 命中都把 `display_object_id` 直接交给 `HistoryPresentationController`：
 
 1. 请求该 `display_object_id` 最新一条完整 `take_out` 历史。
 2. 收到后把该模型的 presentation mode 设为 `History`，应用拿取前 pose 和对应历史 box。
 3. 自动显示该事件的 scene image 与 Shigure 点线骨骼，不需要第二次点击图片。
 4. 再次点击同一物体，把当前 `history_cursor` 作为 `before_cursor`，显示更老的一条记录及其照片/骨骼。
 
-服务端会跳过无 pose、无 scene image、无有效骨骼或无法转换的历史行，并继续跨数据库页查找；只有真正耗尽后才返回 `history_event=null`。没有更老的完整记录或客户端校验失败时，保留当前呈现，不用不完整记录覆盖它。
+服务端只跳过无 pose 或无法转换的历史行，并继续跨数据库页查找；scene image、骨骼和 spatial box 均为可选证据，只有真正耗尽后才返回 `history_event=null`。没有更老的完整记录或客户端校验失败时，保留当前呈现，不用不完整记录覆盖它。
 
 模型处于 `History` 时，`RuntimeModelManager` 仍接受更新的 live pose/box revision 并保存到 `LatestLive`，但不把它们应用到该模型 transform。恢复后直接应用期间收到的最新 live state，不需要服务器回滚或重算。
 
@@ -91,7 +91,7 @@ ShuJuQingQiu 从应用启动起约每 1 秒请求 `/api/v2/shigure/object-tracki
 
 全体进入历史后仍可继续单击某个物体，逐条向更老的 `history_cursor` 翻页。全体继续追踪不会停掉服务端任务；它只切换 Unity transform/evidence 的呈现。
 
-SampleScene 的 HistoryPlacement 按钮明确调用 ShowLatestPlacements，每次为各已加载 display_object_id 重新请求最新 take-out 位置，不复用可能卡住的 toggle 状态。PointObject 内部使用右手食指方向命中当前已加载模型的 world bounds，只为命中的 display_object_id 请求最新/下一条历史位置，不再误触发全局 HistoryPlacement；该方向只参与命中计算，不创建 LineRenderer、红线或任何手部射线可视物。当前 startup 有 ArMarker 时，服务器用该 startup 最新 reference 转换历史位置；没有 ArMarker 时，只允许使用同一 startup 最近 capture 的 object_aruco ↔ object_hololens_current 相对锚点，并过滤掉该锚点任务创建前的事件，返回与 live 一致的 startup-local coordinate epoch。没有同启动锚点时返回明确错误，不复用跨启动局部坐标。
+SampleScene 的 HistoryPlacement 按钮明确调用 ShowLatestPlacements，每次为各已加载 display_object_id 重新请求最新 take-out 位置。模型的 MRTK OnPointerClicked 与 PointObject 命中都直接把 display_object_id 交给同一个 history controller；服务器返回的当前 startup 坐标是应用权威，不再因客户端缓存的旧 live coordinate epoch 拒绝。自定义食指方向只参与命中计算，MRTK debug pointing rays 关闭；ShellHandRayPointer 自带白色手掌虚线保持启用。当前 startup 有 ArMarker 时，服务器用该 startup 最新 reference 转换历史位置；没有 ArMarker 时，只允许使用同一 startup 最近 capture 的 object_aruco ↔ object_hololens_current 相对锚点，并过滤掉该锚点任务创建前的事件，返回与 live 一致的 startup-local coordinate epoch。没有同启动锚点时返回明确错误，不复用跨启动局部坐标。
 
 ## 照片与骨骼证据
 
@@ -101,7 +101,7 @@ SampleScene 的 HistoryPlacement 按钮明确调用 ShowLatestPlacements，每�
 
 ## Runtime spatial box
 
-live tracking box 完全独立于模型与 display identity：服务器只中继最新 /shigure/object_tracking collider，以 source_epoch:raw_id 作为 tracking_id，并转换到当前 HoloLens local。Unity 每约 1 秒直接用成功响应替换本地线框集合，不做 revision、身份、稳定、平滑或延时验证；Shigure 删除的 ID 消失，新增的 ID 增加，移动的 ID 直接更新。线框不绑定模型，也不用于 PointObject、identity、pose 或其他操作。无当前启动 ArMarker 时无法安全完成坐标变换，因此成功响应为空。
+live tracking box 完全独立于模型与 display identity：recorder 在 ROS callback 内实时发布最新 /shigure/object_tracking collider，以 raw_id 作为 tracking_id；身份 runtime 不再写该文件。Unity 固定每 1 秒直接用成功响应替换本地线框集合，不做 revision、身份、稳定、平滑或延时验证；Shigure 删除的 ID 消失，新增的 ID 增加，移动的 ID 直接更新。线框不绑定模型，也不用于 PointObject、identity、pose 或其他操作。无当前启动 ArMarker 时无法安全完成坐标变换，因此成功响应为空。
 
 ## 本地容量与隐藏
 

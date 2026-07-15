@@ -82,7 +82,7 @@ Shigure raw ID 不是持久身份。空 tracking snapshot 继承上一 namespace
 <sec>_<nanosec>:detection:<index>
 ```
 
-随后只在 exact-stamp 数据中，用 action、bbox、tracking/segment 的唯一匹配解析 raw ID。segment 与 tracking 必须双向互为最高 IoU，且双方相对各自次优项的 margin 都至少为 0.1；唯一对应时事件标记 `RESOLVED`，闪烁重复、歧义、缺失或冲突保持 `UNRESOLVED/REJECTED`。这个临时键和解析出的 raw ID 都只在当前 `source_incarnation_id/source_epoch_id` 有效，不能跨 recorder 或 object-tracking node 重启持久复用。
+随后只在 exact-stamp 数据中，用 action、bbox、tracking/segment 的唯一匹配解析 raw ID。上游若同时保留多个 IoU 至少 0.90 的近同 bbox raw ID，先折叠为同一连续物体并选数字后缀较新的代表 ID；原始 box relay 仍保留并显示全部 raw ID。折叠后 segment 与 tracking 必须双向互为最高 IoU，且双方相对真正不同 bbox 的次优项 margin 都至少为 0.1。启动恢复只把已经 `RESOLVED` 到 tracking 的同物体 segment 交给 DINOv2；其他背景 Segments 不再要求全部绑定。这个代表 raw ID 仍只在当前 source epoch 有效，最终同一物体身份必须由 DINOv2 的持久 `display_object_id` reference 确认。
 
 ## bbox-local mask
 

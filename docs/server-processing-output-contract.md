@@ -279,8 +279,8 @@ startup_session_id=<unity-startup-uuid>
 
 - `GET /api/v2/shigure/object-tracking-boxes/latest?startup_session_id=<uuid>`；它不依赖 realtime handshake、模型状态、历史模式或下载队列。
 - Unity 从应用启动后长期约每 1 秒轮询。每次成功响应都是权威最新快照：同 tracking_id 直接覆盖，新增 ID 立即增加，响应中缺失的旧 ID 立即删除，成功空数组会清空全部线框；网络失败仅保留上一帧等待下次轮询。
-- 服务器只读取 Shigure 最新 object_tracking collider 并转换 Shigure-camera 到当前 HoloLens-local 坐标；不做 freshness、稳定性、平滑、debounce、身份、模型或整批等待校验。单个无法完成坐标转换的条目只能被跳过，不能阻塞其他条目。
-- tracking_id 使用 source_epoch:raw_id，仅用于原始线框显示；Unity 只画 8 点线框，不把它绑定到 RuntimeModelRecord，也不用于 PointObject、identity、pose 或其他操作。
+- recorder 在每条 ROS object_tracking callback 内立即把当前 collider 完整快照原子写入 relay 文件；此路径不经过 runtime、DINOv2、FoundationPose、模型或启动恢复。API 只读取该最新快照并转换 Shigure-camera 到当前 HoloLens-local 坐标，不做 freshness、稳定性、平滑、debounce 或整批等待校验。
+- tracking_id 直接使用当前 raw_id，仅用于原始线框显示；Unity 只画 8 点线框，不把它绑定到 RuntimeModelRecord，也不用于 PointObject、identity、pose 或其他操作。
 - 当前 startup 没有 ArMarker reference 时接口成功返回空数组，因为无法安全完成坐标变换。
 - raw Shigure ID 与持久物体身份严格分离。旧 ID 意外消失、随后在配置时间窗内出现新 ID 时，runtime 会另开 source epoch，并以 DINOv2 对现有 display identity 做一对一相似度恢复；这不会改变上述 raw box 的逐 ID 直接显示行为。
 

@@ -87,7 +87,7 @@ recorder 的在线 RGB-D/canonical ring 只存在内存并通过 Unix socket 提
 
 1. 等待候选所在 exact stamp 的 `object_tracking=present`。
 2. 继续等待完全相同 stamp 的 RGB-D、非空 CameraInfo、可用的 Shigure-camera 到 ArMarker 校准，以及能按 RGB 尺寸解码且非空的 candidate mask。任一条件缺失时 job 保持 `PENDING`，记录原因与输入图片，但恢复 attempts 不增加。
-3. 校准输入全部就绪后，才从最新完整 `/Segments`/tracking canonical frame 取得候选并开始一次实际 DINO 尝试。
+3. 校准输入全部就绪后，才从最新完整 `/Segments`/tracking canonical frame 取得候选；身份映射阶段先把 IoU 极高、实为同一连续物体的重复 tracking raw ID 折叠为一个代表，再只让已解析到可信 raw ID 的同一物体候选开始一次实际 DINO 尝试。背景 segment 和尚未解析 tracking 的候选不消耗恢复次数。
 4. 只取最近 5 个已有模型 revision 且有活动 identity reference 的持久 `display_object_id`；不要求它曾保存 HoloLens pose。为每个 candidate 计算到每个 display 的 DINOv2 edge cost。
 5. 在完整 candidate×display 矩阵上做全局一对一分配：先优先覆盖带可信 raw ID 的 candidate，再最大化可绑定数量，最后最小化总代价；不会按 ROS 顺序逐个贪心。最佳与次佳同规模方案的总代价 margin 不足时，相关 candidate 保持 ambiguous。
 6. 有可信 raw ID 时建立 epoch-scoped binding；没有 raw ID 时只记录 provisional 结果，并让恢复 job 保持 `PENDING`。
@@ -95,7 +95,7 @@ recorder 的在线 RGB-D/canonical ring 只存在内存并通过 Unix socket 提
 
 每种等待原因与每次实际尝试的 `report.json` 都包含 input state、canonical diagnostics（含旧/新 raw ID handoff）、候选、分数、assignment margin 和最终原因；对应 `scene.png`、`mask.png`、`object_crop.png` 保留在同一目录。raw ID 只用于当前 epoch；跨 ID 的同一物体基准始终是持久 `display_object_id` 的 DINOv2 reference，而不是复用旧 raw ID。
 
-`segments=explicit_empty` 且 `object_tracking=explicit_empty` 的无 candidate frame 是一份完整空 snapshot：runtime 会以 0 match 完成本次启动恢复。任一 topic 仍为 `missing` 时不能用空列表结束恢复；非空 segments 但 tracking 尚未到达、exact RGB-D 尚未到达，或存在 `UNBOUND`、`AMBIGUOUS`、`CONFLICT`、`PROVISIONAL` candidate 时，恢复均保持 `PENDING`。后续不同 source stamp 会按 `SHIGURE_STARTUP_RECOVERY_RETRY_SECONDS` 节流重试；同 epoch 已绑定 candidate 固定保留，不参与重复 DINO 分配。全部 candidate 为 `BOUND` 才 `COMPLETED`，达到 `SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS` 后才以 `FAILED` 终止。
+`segments=explicit_empty` 且 `object_tracking=explicit_empty` 的无 candidate frame 是一份完整空 snapshot：runtime 会以 0 match 完成本次启动恢复。任一 topic 仍为 `missing` 时不能用空列表结束恢复；非空 segments 但 tracking 尚未到达、exact RGB-D 尚未到达，或可信 tracking 候选存在 `UNBOUND`、`AMBIGUOUS`、`CONFLICT`、`PROVISIONAL` 时，恢复均保持 `PENDING`。未映射到 tracking 的背景 segment 不参与完成判定。后续不同 source stamp 会按 `SHIGURE_STARTUP_RECOVERY_RETRY_SECONDS` 节流重试；同 epoch 已绑定 candidate 固定保留，不参与重复 DINO 分配。全部可信 tracking candidate 为 `BOUND` 才 `COMPLETED`，达到 `SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS` 后才以 `FAILED` 终止。
 
 HoloLens 拍摄提供 `HOLOLENS` reference 作为辅助条件。已有 Shigure reference 时优先使用 Shigure 多视角参考。
 
@@ -131,9 +131,9 @@ Shigure 是 presence/lifecycle 的权威来源：
 
 mask、depth、有效像素都不能作为 spatial box 的替代来源。无合法 collider 时返回无 box，不生成降级框。
 
-服务端另行按 source_epoch:raw_tracking_id 维护模型无关 box：直接读取每条 object_tracking collider 并立即发布完整快照；下一条快照缺失即删除，不做平滑或稳定等待。此显示链路不查询 binding、display_object_id、presence 或模型 revision。
+recorder 在每条 ROS object_tracking callback 中直接读取 collider，并把以 raw_tracking_id 为键的完整快照原子写入 relay 文件；下一条快照缺失即删除。该路径不经过可能执行 DINO/FP 的身份 runtime，不要求有效 bbox，也不查询 binding、display_object_id、presence 或模型 revision。
 
-live API 以 tracking_boxes 提供无数量上限的完整 raw tracking 快照；每项含 tracking_id、revision 和 ready 八角点。Unity 按 tracking_id 独立绘制，完整快照缺席即删除，不影响历史框、照片、骨骼或模型。
+独立 latest API 提供无数量上限的完整 raw tracking 快照。Unity 从应用启动起固定每 1 秒请求一次，成功响应按 tracking_id 整体替换；ArMarker 上传前返回空，上传完成后轮询不会停止，后续每条 Shigure 更新都会继续反映。
 
 ## Unity live 与历史展示
 

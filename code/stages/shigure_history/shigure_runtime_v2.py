@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -31,7 +31,6 @@ from artifact_layout import (
     IDENTITY_REFERENCE_ROOT,
     SHIGURE_EVENT_ROOT,
     SHIGURE_RECOVERY_DEBUG_ROOT,
-    SHIGURE_TRACKING_BOX_SNAPSHOT_PATH,
 )
 from config import (
     FOUNDATIONPOSE_POOL_SIZE,
@@ -596,13 +595,6 @@ class SpatialBoxObservationState:
 
 
 @dataclass
-class RawTrackingBoxState:
-    raw_id: str
-    published_corners_aruco: list[list[float]] | None = None
-    published_revision: int = 0
-
-
-@dataclass
 class PendingHoloSync:
     job_id: str
     display_object_id: str
@@ -683,8 +675,6 @@ class ShigureRuntimeEngine:
         self._view_inflight: set[str] = set()
         self._view_windows: dict[str, dict[str, Any]] = {}
         self._spatial_boxes: dict[str, SpatialBoxObservationState] = {}
-        self._raw_tracking_boxes: dict[str, RawTrackingBoxState] = {}
-        self._last_raw_tracking_stamp: tuple[int, int] | None = None
         self._last_geometry_stamp: tuple[int, int] | None = None
         self._runtime_obj_move_quarantine_active = False
         self._runtime_obj_move_barrier_stamp: tuple[int, int] | None = None
@@ -746,9 +736,6 @@ class ShigureRuntimeEngine:
                 )
             except Exception as exc:
                 print(f"[shigure-v2] failed to terminate pending Holo sync: {exc}")
-        with self._lock:
-            self._raw_tracking_boxes.clear()
-            self._publish_raw_tracking_box_snapshot()
         self._pose_executor.shutdown(wait=False, cancel_futures=True)
         runtime = self.runtime_session_id
         self._identity_executor.shutdown(wait=False, cancel_futures=True)
@@ -772,7 +759,6 @@ class ShigureRuntimeEngine:
         if latest is None:
             now_monotonic = time.monotonic()
             self._expire_pending_spatial_boxes(now_monotonic)
-            self._expire_raw_tracking_boxes(now_monotonic)
             return 0
         if latest.source_incarnation_id != self.source_incarnation_id:
             self._open_incarnation(
@@ -806,7 +792,6 @@ class ShigureRuntimeEngine:
             processed = 1
         now_monotonic = time.monotonic()
         self._expire_pending_spatial_boxes(now_monotonic)
-        self._expire_raw_tracking_boxes(now_monotonic)
         return processed
 
     def _reset_epoch_local_runtime_state(self, *, holo_reason: str) -> None:
@@ -826,8 +811,6 @@ class ShigureRuntimeEngine:
             self._view_windows.clear()
             self._view_inflight.clear()
             self._spatial_boxes.clear()
-            self._raw_tracking_boxes.clear()
-            self._last_raw_tracking_stamp = None
             self._last_geometry_stamp = None
             self._runtime_obj_move_quarantine_active = False
             self._runtime_obj_move_barrier_stamp = None
@@ -843,7 +826,6 @@ class ShigureRuntimeEngine:
                 job.last_attempt_source_key = ""
                 job.last_stable_source_key = ""
                 job.last_reason = str(holo_reason)
-        self._publish_raw_tracking_box_snapshot()
         for job in pending_jobs:
             self._record_holo_sync_status(
                 job,
@@ -928,6 +910,9 @@ class ShigureRuntimeEngine:
         return {
             "candidate_id": candidate.get("candidate_id"),
             "raw_shigure_object_id": candidate.get("shigure_object_id"),
+            "tracking_match_status": candidate.get("tracking_match_status"),
+            "tracking_mapping_method": candidate.get("tracking_mapping_method"),
+            "tracking_candidates": candidate.get("tracking_candidates") or [],
             "bbox": _bbox(candidate),
             "mask_available": bool(candidate.get("mask_b64")),
         }
@@ -1451,6 +1436,61 @@ class ShigureRuntimeEngine:
                 },
             )
             return False
+        if frame.recovery_candidates:
+            tracked_candidates = [
+                candidate
+                for candidate in frame.recovery_candidates
+                if str(candidate.get("shigure_object_id") or "").strip()
+                and str(
+                    candidate.get("tracking_match_status") or ""
+                ).upper() == "RESOLVED"
+            ]
+            if not tracked_candidates:
+                wait_reason = (
+                    "waiting_for_same_object_segment_tracking_assignment"
+                )
+                wait_root = self._persist_recovery_observation(
+                    frame,
+                    wait_reason,
+                )
+                upsert_identity_sync_job(
+                    sync_job_id=job_id,
+                    kind="STARTUP_RECOVERY",
+                    status="PENDING",
+                    runtime_session_id=self.runtime_session_id,
+                    source_epoch_id=self.source_epoch_id,
+                    candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
+                    result={
+                        "reason": wait_reason,
+                        "input_candidate_count": len(
+                            frame.recovery_candidates
+                        ),
+                        "attempts": self._startup_recovery_attempts,
+                        "debug_report_path": (
+                            str(wait_root / "report.json")
+                            if wait_root is not None
+                            else None
+                        ),
+                    },
+                )
+                return False
+            input_candidate_count = len(frame.recovery_candidates)
+            frame = replace(
+                frame,
+                recovery_candidates=tracked_candidates,
+                diagnostics=[
+                    *frame.diagnostics,
+                    {
+                        "code": (
+                            "STARTUP_RECOVERY_TRACKED_CANDIDATES_ONLY"
+                        ),
+                        "input_candidate_count": input_candidate_count,
+                        "tracked_candidate_count": len(
+                            tracked_candidates
+                        ),
+                    },
+                ],
+            )
         calibrated_input_reason = (
             self._startup_recovery_calibrated_input_reason(frame)
             if frame.recovery_candidates
@@ -2637,7 +2677,6 @@ class ShigureRuntimeEngine:
         )
 
     def _process_frame(self, frame: CachedShigureFrame) -> None:
-        self._update_raw_tracking_boxes(frame)
         frame_stamp = (
             int(frame.source_stamp.sec),
             int(frame.source_stamp.nanosec),
@@ -2853,118 +2892,6 @@ class ShigureRuntimeEngine:
                         self._last_view_sequence.pop(raw_id, None)
         except Exception as exc:
             print(f"[shigure-v2] lifecycle event rejected: {exc}")
-
-    def _publish_raw_tracking_box_snapshot(self) -> None:
-        boxes = []
-        source_epoch_id = str(self.source_epoch_id or "")
-        for raw_id, state in sorted(self._raw_tracking_boxes.items()):
-            if (
-                state.published_corners_aruco is None
-                or state.published_revision <= 0
-            ):
-                continue
-            boxes.append(
-                {
-                    "tracking_id": f"{source_epoch_id}:{raw_id}",
-                    "raw_tracking_id": raw_id,
-                    "revision": int(state.published_revision),
-                    "corners_aruco": state.published_corners_aruco,
-                }
-            )
-        payload = {
-            "schema_version": 1,
-            "source_epoch_id": source_epoch_id,
-            "generated_utc": _utc_now(),
-            "snapshot_complete": True,
-            "count": len(boxes),
-            "boxes": boxes,
-        }
-        try:
-            _write_json(SHIGURE_TRACKING_BOX_SNAPSHOT_PATH, payload)
-        except Exception as exc:
-            print(f"[shigure-v2] failed to publish raw tracking boxes: {exc}")
-
-    def _expire_raw_tracking_boxes(self, now_monotonic: float) -> None:
-        # Raw Shigure tracking boxes are complete snapshots. Deletion is
-        # driven immediately by the next tracking message, never by a
-        # stability timer.
-        return
-
-    def _update_raw_tracking_boxes(
-        self, frame: CachedShigureFrame
-    ) -> None:
-        if not self.source_epoch_id:
-            return
-        tracking_state = str(
-            frame.input_states.get("object_tracking") or "missing"
-        )
-        if tracking_state not in {"present", "explicit_empty"}:
-            return
-        tracking_stamp = (
-            int(frame.source_stamp.sec),
-            int(frame.source_stamp.nanosec),
-        )
-        if (
-            self._last_raw_tracking_stamp is not None
-            and tracking_stamp <= self._last_raw_tracking_stamp
-        ):
-            return
-
-        camera_to_aruco = None
-        if tracking_state == "present":
-            try:
-                camera_to_aruco = np.asarray(
-                    _camera_to_aruco()[0], dtype=np.float64
-                )
-            except Exception:
-                camera_to_aruco = None
-            if camera_to_aruco is None:
-                self._raw_tracking_boxes.clear()
-                self._last_raw_tracking_stamp = tracking_stamp
-                self._publish_raw_tracking_box_snapshot()
-                return
-
-        observed_raw_ids: set[str] = set()
-        if camera_to_aruco is not None:
-            for tracked in frame.tracked_objects:
-                if not isinstance(tracked, Mapping):
-                    continue
-                raw_id = str(tracked.get("object_id") or "").strip()
-                action = str(
-                    tracked.get("action") or ""
-                ).strip().lower()
-                if not raw_id or action == "take_out":
-                    continue
-                try:
-                    raw_box = build_spatial_box_v2(
-                        tracked.get("collider"),
-                        camera_to_aruco,
-                        np.eye(4),
-                    )
-                    corners = np.asarray(
-                        raw_box["corners_aruco_m"], dtype=np.float64
-                    )
-                    if corners.shape != (8, 3) or not np.isfinite(corners).all():
-                        continue
-                except Exception:
-                    continue
-
-                observed_raw_ids.add(raw_id)
-                state = self._raw_tracking_boxes.get(raw_id)
-                if state is None:
-                    state = RawTrackingBoxState(raw_id=raw_id)
-                    self._raw_tracking_boxes[raw_id] = state
-                state.published_corners_aruco = corners.tolist()
-                state.published_revision = int(frame.sequence)
-
-        for raw_id in tuple(self._raw_tracking_boxes):
-            if raw_id not in observed_raw_ids:
-                self._raw_tracking_boxes.pop(raw_id, None)
-
-        self._last_raw_tracking_stamp = tracking_stamp
-        # Publish every complete upstream tracking snapshot. This intentionally
-        # mirrors Shigure without temporal smoothing, debounce, or model binding.
-        self._publish_raw_tracking_box_snapshot()
 
     def _spatial_box_state(
         self,

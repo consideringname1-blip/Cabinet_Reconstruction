@@ -88,6 +88,7 @@ code/stages/shigure_history/
   spatial_box_v2.py
   shigure_runtime_v2.py
   marker_history.py
+  raw_tracking_box_relay.py
   run_shigure_history_recorder.py
 ```
 
@@ -95,7 +96,8 @@ code/stages/shigure_history/
 
 - recorder 只订阅并适配不可修改的远端 ROS topics，生成 exact-stamp canonical frame，并暴露内存 socket cache。
 - compatibility adapter 处理稀疏 bring-in/take-out/obj_move、tracking、bbox-local mask、RGB-D 和 Shigure 骨骼；临时 raw ID 只在 source epoch 内有效。tracking namespace 改变，或旧 ID 意外消失后在可配置接收时间窗内出现新 ID，都会打开新 incarnation/epoch 并留下 DINOv2 handoff 诊断；显式 take_out 不触发该判定。
-- runtime 的 identity/模型位姿候选仍最多 5 个；另维护无数量上限、按 raw tracking ID 精确覆盖的最新 collider box snapshot，不绑定 display identity、不滤波、不 coasting。runtime 还负责启动恢复、bring-in 绑定、take-out 原子历史、严格示例准入和 DINO 后置 FoundationPose；恢复候选缺 tracking、exact RGB-D、CameraInfo、Shigure-camera 到 ArMarker 校准或图像对齐非空 mask 时保持 `PENDING`，且不增加实际尝试次数。
+- recorder callback 通过 `raw_tracking_box_relay.py` 立即发布无数量上限、按 raw tracking ID 精确覆盖的 collider snapshot；身份 runtime 不参与该显示链，DINO/FP 阻塞不会延迟 box 更新。
+- runtime 负责启动恢复、bring-in 绑定、take-out 原子历史、严格示例准入和 DINO 后置 FoundationPose。近同 bbox 的重复 raw ID 先折叠为较新代表 ID，随后只对已解析到 tracking 的同物体 segment 做 DINO；无关背景 Segments 不进入完成条件。缺 tracking、exact RGB-D、CameraInfo、校准或对齐 mask 时保持 `PENDING` 且不增加尝试次数。
 - `spatial_box_v2.py` 只从原始 collider 与 ArUco 校准生成严格 8 点 box，不从 mask/depth 降级。
 - debug disk ring 默认开启；只写 exact-stamp 事件/RGB-D 与 canonical 诊断，最多保留 10 分钟、18,000 条且默认不超过 10 GiB，不参与主程序判定或恢复。
 - `data/shigure_recovery_debug` 独立持久保存每个 runtime/source epoch 的 bootstrap、等待观察、实际尝试报告，以及 scene/mask/crop；它只用于解释恢复为何等待、失败或 ambiguous，不作为后续业务输入。

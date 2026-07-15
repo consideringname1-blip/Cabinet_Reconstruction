@@ -33,6 +33,7 @@ public class ShuJuQingQiu : MonoBehaviour
     const int MARKER_CAPTURE_MIN_SUCCESS = 1;
     const int STARTUP_CAMERA_MARKER_RETRY_FRAMES = 90;
     const float ASYNC_TASK_QUEUE_POLL_INTERVAL_SECONDS = 3.0f;
+    const float SHIGURE_BOX_POLL_INTERVAL_SECONDS = 1.0f;
     const string DEFAULT_REALTIME_TRACKING_MODE_URL =
         "http://10.40.1.122:7355/realtime-tracking/mode";
     const string DEFAULT_REALTIME_TRACKING_STATUS_URL =
@@ -1399,7 +1400,7 @@ public class ShuJuQingQiu : MonoBehaviour
                 RequestLatestObjectTrackingBoxes();
             }
             yield return new WaitForSecondsRealtime(
-                Mathf.Max(0.25f, realtimeTrackingStatusPollIntervalSeconds));
+                SHIGURE_BOX_POLL_INTERVAL_SECONDS);
         }
     }
 

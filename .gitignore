@@ -54,6 +54,7 @@ __pycache__/
 /data/console_logs/
 /data/aruco/runtime/
 /data/aruco/shigure_marker_history/
+/data/shigure_recovery_debug/
 /data_backup/
 /.test/
 /tests/
