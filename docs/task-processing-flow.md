@@ -101,7 +101,7 @@ HoloLens 拍摄提供 `HOLOLENS` reference 作为辅助条件。已有 Shigure r
 
 SAM3 mask 与 historical DINO 完成后、耗时模型生成开始前，worker 立即建立 HoloLens capture identity、登记 HOLOLENS reference 并排队 HOLOLENS_CAPTURE sync；ModelBounds 尚未生成时使用可信 raw-ID 候选的 DINO fallback。最终 display_identity stage 仍幂等提交模型 revision/ArUco pose。同步以连续 2 帧稳定可信 raw ID 建立 epoch binding；长期 Shigure identity reference 仍须独立严格 5 帧准入。
 
-仅由 HoloLens 新建的对象以 `presence=UNKNOWN` 持久化；completed `model_instance` 可供 Unity 预览，但不因此进入 Shigure live 清单或成为 `PRESENT`。只有 Shigure 生命周期事件或可信 recovery snapshot（包括上述 sync 成功）能够改变该状态。
+仅由 HoloLens 新建的对象以 `presence=UNKNOWN` 持久化；completed `model_instance` 可供 Unity 预览，并持续列入 realtime 模型目录，保证重启和新 ArMarker 校准后仍可自动下载及访问历史。该目录成员关系不表示对象成为 `PRESENT`；只有 Shigure 生命周期事件或可信 recovery snapshot（包括上述 sync 成功）能够改变 presence。
 
 ## 生命周期事件
 

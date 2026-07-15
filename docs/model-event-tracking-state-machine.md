@@ -48,7 +48,7 @@ Unity 保留普通上传和强制重建入口。普通上传按身份复用规�
 
 HoloLens 只承担更精确的拍照、模型生成和校准辅助，不是物体存在或 take-out 的判定源。presence 与拿取前位置以 Shigure 生命周期为准。
 
-新 HoloLens 对象保持 `presence=UNKNOWN`，completed 模型只作为 capture preview 交付。随后运行的 identity sync 只有在连续 2 帧稳定且 raw ID 可信的 Shigure recovery snapshot 中匹配成功，才会建立 epoch binding、激活 `PRESENT` 并立即发布当前 collider box；长期 identity reference 仍由独立的严格 5 帧准入收集。presence authority 来自该 Shigure snapshot，而不是 capture。
+新 HoloLens 对象保持 `presence=UNKNOWN`，completed 模型先作为 capture preview 交付，并在后续 ArMarker 校准后继续出现在模型目录中；模型下载和历史访问不以 presence 为门。随后运行的 identity sync 只有在连续 2 帧稳定且 raw ID 可信的 Shigure recovery snapshot 中匹配成功，才会建立 epoch binding、激活 `PRESENT` 并立即发布当前 collider box；长期 identity reference 仍由独立的严格 5 帧准入收集。presence authority 来自该 Shigure snapshot，而不是 capture。
 
 ## Live transport
 

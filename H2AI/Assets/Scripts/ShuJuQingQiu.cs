@@ -1128,6 +1128,16 @@ public class ShuJuQingQiu : MonoBehaviour
             startupArUcoReferenceReady = arucoDetected;
             if (startupArUcoReferenceReady)
             {
+                // A successful ArMarker capture starts a new coordinate epoch
+                // and is the explicit trigger for restoring/downloading every
+                // retained model. A prior local-hide action must not keep the
+                // new epoch permanently suppressed.
+                automaticModelDeliverySuppressed = false;
+                RuntimeModelManager manager = RuntimeModelManager.Instance;
+                if (manager != null)
+                {
+                    manager.ShowAllRuntimeModels();
+                }
                 RequestHistoryTrackingMode(false, true);
             }
             ShowFrontMessage(arucoDetected ? "aruco_completed" : "aruco_ERR_missing_reference");

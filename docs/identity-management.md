@@ -19,7 +19,7 @@ HoloLens 拍摄始终可更新模型、精确 capture pose 和 identity referenc
 
 完成 capture 后，服务器建立 `HOLOLENS_CAPTURE` identity sync job。它在当前 canonical 全图候选中先比较 HoloLens/ArUco capture box 与 Shigure collider 经 ArUco AABB 重建后得到的中心和 extent；单个可信候选通过宽松几何门时直接使用 collider 几何；多个候选通过时在门内用宽松 DINOv2 判别；若可信 tracking raw-ID 候选已偏离原 capture 几何位置，则启用带距离阈值和次优间隔的 DINO fallback。用于快速建立 object-tracking binding 的 recovery candidate 必须连续 2 个不同 tracking stamp 保持可信 raw ID 与严格 bbox/mask 一致；首次完成候选判别后，第二帧复用同一可信 tracking raw ID，避免重复计算整组 DINO。segment/tracking 仍须双向互为唯一最佳，且两侧 IoU margin 均至少 0.1。成功时可建立当前 epoch binding、激活 presence；快速两帧同步本身不登记长期 Shigure identity reference，后续独立稳定视图收集仍须连续 5 帧并通过严格 DINO anchor 距离与次优 margin。授权来源记录为 `shigure_recovery_snapshot`，不是 HoloLens capture 本身。
 
-仅由 HoloLens 新建的对象保持 `presence=UNKNOWN`。completed 模型可以交付给 Unity 作 capture preview，但不会仅因上传成功就出现在 Shigure 权威 live 清单中；`PRESENT/ABSENT` 只能来自 Shigure bring-in/take-out 或可信 recovery snapshot。
+仅由 HoloLens 新建的对象保持 `presence=UNKNOWN`。completed 模型可以交付给 Unity 作 capture preview，也会持续列入 realtime 模型目录以支持自动下载和历史访问；这不会使它成为 Shigure 权威的 `PRESENT`。`PRESENT/ABSENT` 只能来自 Shigure bring-in/take-out 或可信 recovery snapshot。
 
 ## 模型后端
 

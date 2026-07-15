@@ -2699,7 +2699,13 @@ def list_display_object_states(*, limit: int) -> List[Dict[str, Any]]:
 
 
 def list_live_display_object_states(*, limit: int) -> List[Dict[str, Any]]:
-    """Return lifecycle-known objects ordered only by Shigure activity."""
+    """Return every downloadable model with a usable canonical pose.
+
+    Model delivery is a catalog concern, not a Shigure-presence concern. In
+    particular, a recorder restart can legitimately leave presence UNKNOWN
+    until the next tracking observation; that must not make retained models
+    or their history disappear from HoloLens.
+    """
 
     initialize_task_table()
     limit = max(1, min(int(limit), 50))
@@ -2708,7 +2714,8 @@ def list_live_display_object_states(*, limit: int) -> List[Dict[str, Any]]:
             f"""
             SELECT *
             FROM {DISPLAY_OBJECT_STATE_TABLE}
-            WHERE presence IN ('PRESENT', 'ABSENT')
+            WHERE active_model_revision > 0
+              AND active_model_task_id IS NOT NULL
               AND (
                     latest_tracking_pose_aruco_json IS NOT NULL
                     OR latest_hololens_pose_aruco_json IS NOT NULL

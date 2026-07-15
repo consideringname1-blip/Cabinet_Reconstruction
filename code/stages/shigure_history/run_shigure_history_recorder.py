@@ -760,16 +760,10 @@ def main() -> int:
         return stored
 
     adapter = ShigureCompatibilityAdapter(append_canonical_frame)
-    try:
-        publish_raw_tracking_box_snapshot(
-            {"objects": [], "object_count": 0},
-            revision=1,
-        )
-    except Exception as exc:
-        print(
-            f"[shigure_history] initial raw box snapshot failed: {exc}",
-            flush=True,
-        )
+    # The relay snapshot is persistent by design: recorder and Shigure startup
+    # are not continuous. Do not interpret "no callback received yet" as an
+    # authoritative empty Shigure frame. A real object_tracking callback,
+    # including a real zero-object frame, replaces the snapshot below.
     debug_ring = ShigureDebugDiskRing(
         args.debug_cache_root,
         enabled=args.debug_cache_enable,
