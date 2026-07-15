@@ -3258,6 +3258,8 @@ def _canonical_shigure_action(value: str) -> str:
         "bringin": "BRING_IN",
         "take_out": "TAKE_OUT",
         "takeout": "TAKE_OUT",
+        "takeaway": "TAKE_OUT",
+        "take_away": "TAKE_OUT",
         "move": "MOVE",
         "obj_move": "MOVE",
     }
@@ -3621,7 +3623,7 @@ def apply_object_lifecycle_event(
             conn.execute(
                 f"""
                 UPDATE {OBJECT_LIFECYCLE_EVENT_TABLE}
-                SET pose_aruco_json = COALESCE(pose_aruco_json, ?),
+                SET pose_aruco_json = COALESCE(?, pose_aruco_json),
                     spatial_box_corners_aruco_json = COALESCE(
                         spatial_box_corners_aruco_json, ?
                     ),

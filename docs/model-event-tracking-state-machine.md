@@ -78,7 +78,7 @@ ShuJuQingQiu 从应用启动起约每 1 秒请求 `/api/v2/shigure/object-tracki
 3. 自动显示该事件的 scene image 与 Shigure 点线骨骼，不需要第二次点击图片。
 4. 再次点击同一物体，把当前 `history_cursor` 作为 `before_cursor`，显示更老的一条记录及其照片/骨骼。
 
-服务端只跳过无 pose 或无法转换的历史行，并继续跨数据库页查找；scene image、骨骼和 spatial box 均为可选证据，只有真正耗尽后才返回 `history_event=null`。没有更老的完整记录或客户端校验失败时，保留当前呈现，不用不完整记录覆盖它。
+历史 pose 只由 Shigure `take_out` 打开的 1 秒候选窗口更新：近邻 take_out 取更早帧或 DINO 更优帧，bring_in 取更后帧或 DINO 更优帧；take_out/bring_in 的 mask+depth 三维中心移动小于 20 cm 时按遮挡未移动处理，不覆盖历史位置。服务端只跳过无 pose 或无法转换的历史行，并继续跨数据库页查找；scene image、骨骼和 spatial box 均为可选证据，只有真正耗尽后才返回 `history_event=null`。没有更老的完整记录或客户端校验失败时，保留当前呈现，不用不完整记录覆盖它。
 
 模型处于 `History` 时，`RuntimeModelManager` 仍接受更新的 live pose/box revision 并保存到 `LatestLive`，但不把它们应用到该模型 transform。恢复后直接应用期间收到的最新 live state，不需要服务器回滚或重算。
 

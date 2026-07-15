@@ -105,21 +105,21 @@ SAM3 mask 与 historical DINO 完成后、耗时模型生成开始前，worker �
 
 ## 生命周期事件
 
-Shigure 是 presence/lifecycle 的权威来源：
+Shigure 是 presence/lifecycle 的权威来源。recorder 会把上游 `takeaway`、`take_away`、`takeout` 统一规范为协议动作 `take_out`：
 
 - `bring_in`：允许使用 DINOv2 解析新 binding，并将对象置为 `PRESENT`。
-- `take_out`：只接受当前 source epoch 内已有 binding；不使用 DINO 猜测。在同一数据库事务中记录拿走前最后有效 pose、scene image、mask/crop、raw collider box 和 Shigure 骨骼，把对象置为 `ABSENT`，清空 active binding，并以 `take_out_completed` 撤销旧 binding。物体再次 bring-in 时可用上游新分配的 raw ID 重新绑定到同一持久 `display_object_id`。
+- `take_out`：只接受当前 source epoch 内已有 binding；不使用 DINO 猜测身份。事件先保存生命周期和证据，同时打开 1 秒 pose 选择窗口；同一物体、mask 三维中心距离不超过 20 cm 的重复 `take_out` 默认取更早帧，存在有效 DINO 距离时取距离更优帧。窗口结束后仅由所选 `take_out` 的 exact RGB-D/mask 触发 FoundationPose，并用验收通过的结果覆盖该历史事件的 fallback pose。随后对象为 `ABSENT`，旧 binding 已以 `take_out_completed` 撤销；同窗内同物体的迟到 take_out 只作为 pose 候选，不创建第二条 lifecycle。
 - `obj_move`：上游消息无法可靠证明实际移动对象。适配器对每个新的 move stamp 只轮换一次 source incarnation，立即发出空 epoch barrier，并丢弃时间不晚于该 barrier 的所有 canonical topic payload。barrier 之后、首个严格更晚的干净 tracking 之前，camera/segments/people 等辅助 topic 可以暂存在 exact-stamp bucket，但禁止 emit canonical frame、禁止触发 Holo sync 重试；解锁时只保留该干净 tracking 同 stamp 的辅助 bucket，其余隔离期 bucket 丢弃，且不进行第二次 incarnation 轮换。污染帧不进入 segment/raw-ID 映射、live box、示例采集或 FoundationPose。
 
-每个稀疏检测项以 `(runtime session, source epoch, sec, nanosec, frame_id, index)` 唯一化。canonical event 与 lifecycle event 持久化后可供复查，临时 raw ID 不跨服务器启动复用。同一 exact stamp 的 people/contact 等 topic 迟到时，adapter 会发出 enriched canonical revision；相同 canonical event 的 replay 不再次推进 presence，也不创建第二条 lifecycle/history 记录。新 pose、box 和图片只补原记录中的 `NULL` 证据；迟到的 exact event skeleton 可以替换首次 emission 从 live state 取得的非空 fallback skeleton。
+每个稀疏检测项以 `(runtime session, source epoch, sec, nanosec, frame_id, index)` 唯一化。canonical event 与 lifecycle event 持久化后可供复查，临时 raw ID 不跨服务器启动复用。同一 exact stamp 的 people/contact 等 topic 迟到时，adapter 会发出 enriched canonical revision；相同 canonical event 的 replay 不再次推进 presence，也不创建第二条 lifecycle/history 记录。通过验收的 take_out FoundationPose 可以覆盖首次 fallback pose；box 和图片只补空证据，迟到的 exact event skeleton 可以替换首次 emission 从 live state 取得的非空 fallback skeleton。
 
 ## 实时位姿、box 与骨骼
 
 实时计算持续进行，不受 Unity 当前展示 live/history 的影响：
 
-- 已绑定且 `PRESENT` 的 tracking 观测只有先通过连续 5 帧严格 mask 共识和 DINO identity-anchor admission，才可提交 FoundationPose；闪烁/遮挡帧不先行更新 pose。
-- 同一对象使用 latest-wins 排队；旧结果不能覆盖更新的观测或模型 revision。
-- FoundationPose 结果通过 bbox IoU 与 depth residual 验收后，保存为 ArUco pose。
+- 已绑定且 `PRESENT` 的连续 tracking/mask 仍用于严格 DINO identity-reference 准入，但不再自动提交物体 pose；更新历史/latest 位置的唯一 FoundationPose 触发是 `take_out`。
+- 1 秒窗口内的近邻候选以 mask+depth 反投影后的 ArUco 三维中点计算距离；`take_out` 默认取更早、`bring_in` 默认取更后，DINO 距离更优者可覆盖时间优先。
+- 同窗 `take_out` 与 `bring_in` 的 mask 中点移动小于 20 cm 时判为前景遮挡造成的未移动，不运行 pose 覆盖；FoundationPose 结果仍须通过 bbox IoU 与 depth residual 验收后才写入历史 ArUco pose。
 - 人体使用 Shigure `/people_detection` 点线骨骼，不生成或下发人体 mesh。
 
 空间框只使用 `/shigure/object_tracking` 的 raw collider：

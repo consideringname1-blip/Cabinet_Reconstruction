@@ -312,6 +312,17 @@ def _cube_payload(cube: Any | None) -> dict[str, Any] | None:
         return None
 
 
+def _canonical_object_action(value: Any) -> str:
+    action = str(value or "").strip().lower().replace("-", "_")
+    aliases = {
+        "takeaway": "take_out",
+        "take_away": "take_out",
+        "takeout": "take_out",
+        "bringin": "bring_in",
+    }
+    return aliases.get(action, action)
+
+
 def object_detection_payload(sample: TopicSample) -> dict[str, Any]:
     msg = sample.message
     objects: list[dict[str, Any]] = []
@@ -322,7 +333,9 @@ def object_detection_payload(sample: TopicSample) -> dict[str, Any]:
         mask_msg = getattr(obj, "mask", None)
         mask_raw = bytes(getattr(mask_msg, "data", b"")) if mask_msg is not None else b""
         x0, y0, x1, y1 = bbox
-        action = str(getattr(obj, "action", "object") or "object")
+        action = _canonical_object_action(
+            getattr(obj, "action", "object") or "object"
+        )
         objects.append(
             {
                 "index": int(index),
@@ -344,7 +357,7 @@ def object_tracking_payload(sample: TopicSample) -> dict[str, Any]:
     for index, obj in enumerate(getattr(sample.message, "tracked_object_list", []) or []):
         bbox = _object_bbox_xyxy(obj)
         object_id = str(getattr(obj, "object_id", "") or "").strip()
-        action = str(getattr(obj, "action", "") or "").strip().lower()
+        action = _canonical_object_action(getattr(obj, "action", ""))
         if not object_id:
             continue
         objects.append(

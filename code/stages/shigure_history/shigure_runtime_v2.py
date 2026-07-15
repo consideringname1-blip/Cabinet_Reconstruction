@@ -50,6 +50,8 @@ from config import (
     SHIGURE_HOLO_SYNC_MAX_RECOVERY_ATTEMPTS,
     SHIGURE_HOLO_SYNC_STABLE_MASK_FRAMES,
     SHIGURE_HOLO_SYNC_SIZE_LOG_TOLERANCE,
+    SHIGURE_LIFECYCLE_NO_MOVE_DISTANCE_M,
+    SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS,
     SHIGURE_IDENTITY_HOLOLENS_DISTANCE_PENALTY,
     SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
     SHIGURE_IDENTITY_CAPTURE_MAX_ATTEMPTS,
@@ -562,6 +564,21 @@ class EventArtifacts:
     temporary_root: Path | None = None
 
 
+@dataclass(frozen=True)
+class LifecyclePoseCandidate:
+    action: str
+    canonical_event_uid: str
+    target_take_out_uid: str
+    display_object_id: str
+    raw_id: str
+    sequence: int
+    stamp_seconds: float
+    source_generation: int
+    artifacts: EventArtifacts
+    mask_center_aruco: np.ndarray | None
+    dino_distance: float | None
+
+
 def _cleanup_event_artifacts(artifacts: EventArtifacts | None) -> None:
     if artifacts is None or artifacts.temporary_root is None:
         return
@@ -669,12 +686,12 @@ class ShigureRuntimeEngine:
         self._stable: dict[str, deque[tuple[int, tuple[float, float, float, float], Mapping[str, Any], np.ndarray]]] = {}
         self._last_stable_source_key: dict[str, str] = {}
         self._last_strict_candidate_snapshot_source_key = ""
-        self._last_fp_sequence: dict[str, int] = {}
-        self._fp_inflight: set[str] = set()
         self._last_view_sequence: dict[str, int] = {}
         self._view_inflight: set[str] = set()
         self._view_windows: dict[str, dict[str, Any]] = {}
         self._spatial_boxes: dict[str, SpatialBoxObservationState] = {}
+        self._lifecycle_pose_windows: dict[str, dict[str, Any]] = {}
+        self._recent_take_out_targets: dict[tuple[str, str], dict[str, Any]] = {}
         self._last_geometry_stamp: tuple[int, int] | None = None
         self._runtime_obj_move_quarantine_active = False
         self._runtime_obj_move_barrier_stamp: tuple[int, int] | None = None
@@ -759,6 +776,7 @@ class ShigureRuntimeEngine:
         if latest is None:
             now_monotonic = time.monotonic()
             self._expire_pending_spatial_boxes(now_monotonic)
+            self._flush_lifecycle_pose_windows(now_monotonic)
             return 0
         if latest.source_incarnation_id != self.source_incarnation_id:
             self._open_incarnation(
@@ -792,6 +810,7 @@ class ShigureRuntimeEngine:
             processed = 1
         now_monotonic = time.monotonic()
         self._expire_pending_spatial_boxes(now_monotonic)
+        self._flush_lifecycle_pose_windows(now_monotonic)
         return processed
 
     def _reset_epoch_local_runtime_state(self, *, holo_reason: str) -> None:
@@ -806,11 +825,12 @@ class ShigureRuntimeEngine:
             self._stable.clear()
             self._last_stable_source_key.clear()
             self._last_strict_candidate_snapshot_source_key = ""
-            self._last_fp_sequence.clear()
             self._last_view_sequence.clear()
             self._view_windows.clear()
             self._view_inflight.clear()
             self._spatial_boxes.clear()
+            self._lifecycle_pose_windows.clear()
+            self._recent_take_out_targets.clear()
             self._last_geometry_stamp = None
             self._runtime_obj_move_quarantine_active = False
             self._runtime_obj_move_barrier_stamp = None
@@ -2731,6 +2751,317 @@ class ShigureRuntimeEngine:
 
         self._schedule_hololens_syncs(frame)
 
+    def _masked_center_aruco(
+        self, artifacts: EventArtifacts
+    ) -> np.ndarray | None:
+        sample = artifacts.sample
+        mask = artifacts.mask_array
+        if sample is None or mask is None:
+            return None
+        depth = np.asarray(sample.depth)
+        if depth.shape[:2] != mask.shape[:2]:
+            return None
+        valid = np.asarray(mask, dtype=bool) & np.isfinite(depth) & (depth > 0)
+        ys, xs = np.nonzero(valid)
+        if xs.size < 32:
+            return None
+        if xs.size > 20000:
+            indexes = np.linspace(0, xs.size - 1, 20000).astype(np.int64)
+            xs, ys = xs[indexes], ys[indexes]
+        z = depth[ys, xs].astype(np.float64) / 1000.0
+        k = np.asarray(sample.camera_info.get("k"), dtype=np.float64).reshape(3, 3)
+        points = np.column_stack(
+            (
+                (xs.astype(np.float64) - k[0, 2]) * z / k[0, 0],
+                (ys.astype(np.float64) - k[1, 2]) * z / k[1, 1],
+                z,
+            )
+        )
+        center_camera = np.median(points, axis=0)
+        transform = np.asarray(_camera_to_aruco()[0], dtype=np.float64)
+        center = transform @ np.append(center_camera, 1.0)
+        if not np.isfinite(center).all() or abs(float(center[3])) < 1.0e-9:
+            return None
+        return center[:3] / center[3]
+
+    def _event_identity_distance(
+        self, display_object_id: str, artifacts: EventArtifacts
+    ) -> float | None:
+        try:
+            embedded = self._embed_artifacts(artifacts)
+            if embedded is None:
+                return None
+            scores = self._identity_scores(embedded[0], [display_object_id])
+            return float(scores[0]["distance"]) if scores else None
+        except Exception as exc:
+            print(
+                "[shigure-v2] lifecycle DINO scoring unavailable "
+                f"for {display_object_id}: {exc}"
+            )
+            return None
+
+    def _queue_lifecycle_pose_candidate(
+        self,
+        *,
+        action: str,
+        canonical_event_uid: str,
+        target_take_out_uid: str,
+        display_object_id: str,
+        raw_id: str,
+        frame: CachedShigureFrame,
+        artifacts: EventArtifacts,
+    ) -> None:
+        center = None
+        try:
+            center = self._masked_center_aruco(artifacts)
+        except Exception as exc:
+            print(f"[shigure-v2] lifecycle mask center unavailable: {exc}")
+        distance = self._event_identity_distance(
+            display_object_id, artifacts
+        )
+        candidate = LifecyclePoseCandidate(
+            action=str(action),
+            canonical_event_uid=str(canonical_event_uid),
+            target_take_out_uid=str(target_take_out_uid),
+            display_object_id=str(display_object_id),
+            raw_id=str(raw_id),
+            sequence=int(frame.sequence),
+            stamp_seconds=(
+                float(frame.source_stamp.sec)
+                + float(frame.source_stamp.nanosec) * 1.0e-9
+            ),
+            source_generation=int(self._source_generation),
+            artifacts=artifacts,
+            mask_center_aruco=(center.copy() if center is not None else None),
+            dino_distance=distance,
+        )
+        now = time.monotonic()
+        with self._lock:
+            window = self._lifecycle_pose_windows.setdefault(
+                str(display_object_id),
+                {"opened": now, "candidates": []},
+            )
+            existing_index = next(
+                (
+                    index
+                    for index, item in enumerate(window["candidates"])
+                    if item.canonical_event_uid
+                    == candidate.canonical_event_uid
+                ),
+                None,
+            )
+            if existing_index is None:
+                window["candidates"].append(candidate)
+            else:
+                previous = window["candidates"][existing_index]
+                previous_quality = (
+                    previous.mask_center_aruco is not None,
+                    previous.dino_distance is not None,
+                )
+                candidate_quality = (
+                    candidate.mask_center_aruco is not None,
+                    candidate.dino_distance is not None,
+                )
+                if candidate_quality > previous_quality:
+                    window["candidates"][existing_index] = candidate
+        print(
+            "[shigure-v2] lifecycle pose candidate queued "
+            f"action={action} display={display_object_id} raw={raw_id} "
+            f"center={center.tolist() if center is not None else None} "
+            f"dino_distance={distance}"
+        )
+
+    @staticmethod
+    def _choose_lifecycle_candidate(
+        candidates: Sequence[LifecyclePoseCandidate], action: str
+    ) -> LifecyclePoseCandidate | None:
+        rows = [item for item in candidates if item.action == action]
+        if not rows:
+            return None
+        temporal = (
+            min(rows, key=lambda item: (item.stamp_seconds, item.sequence))
+            if action == "take_out"
+            else max(rows, key=lambda item: (item.stamp_seconds, item.sequence))
+        )
+        if temporal.mask_center_aruco is None:
+            close = [temporal]
+        else:
+            close = [
+                item
+                for item in rows
+                if item.mask_center_aruco is not None
+                and abs(item.stamp_seconds - temporal.stamp_seconds)
+                <= SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS
+                and float(
+                    np.linalg.norm(
+                        item.mask_center_aruco - temporal.mask_center_aruco
+                    )
+                ) <= SHIGURE_LIFECYCLE_NO_MOVE_DISTANCE_M
+            ]
+        scored = [item for item in close if item.dino_distance is not None]
+        if scored:
+            direction = 1.0 if action == "take_out" else -1.0
+            return min(
+                scored,
+                key=lambda item: (
+                    float(item.dino_distance),
+                    direction * item.stamp_seconds,
+                    direction * item.sequence,
+                ),
+            )
+        return temporal
+
+    def _flush_lifecycle_pose_windows(self, now_monotonic: float) -> None:
+        ready: list[tuple[str, list[LifecyclePoseCandidate]]] = []
+        with self._lock:
+            for display_object_id, window in tuple(
+                self._lifecycle_pose_windows.items()
+            ):
+                if (
+                    float(now_monotonic) - float(window["opened"])
+                    < SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS
+                ):
+                    continue
+                ready.append(
+                    (display_object_id, list(window["candidates"]))
+                )
+                self._lifecycle_pose_windows.pop(display_object_id, None)
+            self._recent_take_out_targets = {
+                key: value
+                for key, value in self._recent_take_out_targets.items()
+                if float(value.get("expires", 0.0))
+                >= float(now_monotonic)
+            }
+        for display_object_id, candidates in ready:
+            self._pose_executor.submit(
+                self._run_lifecycle_pose_window,
+                display_object_id,
+                candidates,
+            )
+
+    def _run_lifecycle_pose_window(
+        self,
+        display_object_id: str,
+        candidates: Sequence[LifecyclePoseCandidate],
+    ) -> None:
+        take_out = self._choose_lifecycle_candidate(candidates, "take_out")
+        bring_in = self._choose_lifecycle_candidate(candidates, "bring_in")
+        if take_out is None:
+            return
+        if take_out.source_generation != self._source_generation:
+            return
+        print(
+            "[shigure-v2] lifecycle pose window selected "
+            f"display={display_object_id} take_out="
+            f"{take_out.canonical_event_uid} bring_in="
+            f"{bring_in.canonical_event_uid if bring_in is not None else None} "
+            f"take_out_dino={take_out.dino_distance} "
+            f"bring_in_dino="
+            f"{bring_in.dino_distance if bring_in is not None else None}"
+        )
+        movement_distance = None
+        if (
+            bring_in is not None
+            and take_out.mask_center_aruco is not None
+            and bring_in.mask_center_aruco is not None
+            and abs(bring_in.stamp_seconds - take_out.stamp_seconds)
+            <= SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS
+        ):
+            movement_distance = float(
+                np.linalg.norm(
+                    bring_in.mask_center_aruco
+                    - take_out.mask_center_aruco
+                )
+            )
+        if (
+            movement_distance is not None
+            and movement_distance < SHIGURE_LIFECYCLE_NO_MOVE_DISTANCE_M
+        ):
+            print(
+                "[shigure-v2] lifecycle pose suppressed as foreground "
+                f"occlusion/no-move display={display_object_id} "
+                f"mask_move_m={movement_distance:.6f}"
+            )
+            return
+        try:
+            pose_aruco = self._foundationpose_pose_for_lifecycle(
+                take_out
+            )
+            apply_object_lifecycle_event(
+                canonical_event_uid=take_out.target_take_out_uid,
+                pose_aruco=pose_aruco,
+            )
+            print(
+                "[shigure-v2] take_out FoundationPose committed "
+                f"display={display_object_id} selected_event="
+                f"{take_out.canonical_event_uid} target_history="
+                f"{take_out.target_take_out_uid} dino_distance="
+                f"{take_out.dino_distance} mask_move_m={movement_distance}"
+            )
+        except Exception as exc:
+            print(
+                "[shigure-v2] take_out FoundationPose failed "
+                f"for {display_object_id}: {exc}"
+            )
+
+    def _foundationpose_pose_for_lifecycle(
+        self, candidate: LifecyclePoseCandidate
+    ) -> dict[str, Any]:
+        artifacts = candidate.artifacts
+        sample = artifacts.sample
+        if sample is None or artifacts.mask_array is None:
+            raise ValueError("take_out requires exact RGB-D and a full mask")
+        state = get_display_object_state(candidate.display_object_id) or {}
+        model_revision = int(state.get("active_model_revision") or 0)
+        task_row = get_task_by_task_id(
+            str(state.get("active_model_task_id") or "")
+        )
+        if model_revision <= 0 or not task_row:
+            raise RuntimeError("active model revision/task is unavailable")
+        task = load_task_json(resolve_task_json_path_from_record(task_row))
+        source = resolve_model_generation_source(
+            task, require_mtl_image=False
+        )
+        scale = float(
+            (task.get("object_alignment") or {}).get("model_real_scale")
+            or 0.0
+        )
+        if scale <= 0.0:
+            raise RuntimeError("active model scale is missing")
+        snapshot = self._foundationpose_snapshot(
+            {"sequence": candidate.sequence}, artifacts, sample
+        )
+        response = self.foundationpose_request(
+            {
+                "mesh_file": str(source.mesh_path),
+                "color_file": snapshot["color_file"],
+                "depth_file": snapshot["depth_file"],
+                "mask_file": snapshot["mask_file"],
+                "k": snapshot["k"],
+                "model_scale": scale,
+                "iteration": 5,
+            },
+            candidate.display_object_id,
+        )
+        if not response.get("ok"):
+            raise RuntimeError(str(response.get("error") or "FoundationPose failed"))
+        result = response.get("result")
+        result = result if isinstance(result, Mapping) else {}
+        pose_cv = np.asarray(result.get("pose"), dtype=np.float64)
+        if pose_cv.shape != (4, 4) or not np.isfinite(pose_cv).all():
+            raise RuntimeError("FoundationPose returned an invalid pose")
+        quality = self._validate_foundationpose(
+            source.mesh_path,
+            pose_cv,
+            scale,
+            np.asarray(artifacts.mask_array, dtype=bool),
+            np.asarray(sample.depth),
+            np.asarray(snapshot["k"], dtype=np.float64),
+        )
+        if not quality["accepted"]:
+            raise RuntimeError(f"FoundationPose quality rejected: {quality}")
+        return self._foundationpose_to_aruco_pose(pose_cv, scale)
+
     def _process_event(self, frame: CachedShigureFrame, event: Mapping[str, Any], position: int) -> None:
         if not self.runtime_session_id or not self.source_epoch_id:
             return
@@ -2780,6 +3111,7 @@ class ShigureRuntimeEngine:
         resolution_method = None
         identity: dict[str, Any] = {}
         embedded: tuple[np.ndarray, dict[str, Any]] | None = None
+        recent_take_out: dict[str, Any] | None = None
         if action == "obj_move":
             resolution_status = "REJECTED"
             identity = {
@@ -2795,10 +3127,32 @@ class ShigureRuntimeEngine:
             resolution_status = "RESOLVED"
             resolution_method = "TRUSTED_EPOCH_BINDING"
         elif action == "take_out":
-            # A take-out may only consume a binding established earlier in the
-            # same source epoch. DINO is intentionally forbidden here.
-            resolution_status = "UNRESOLVED"
-            identity = {"reason": "takeout_has_no_epoch_binding", "dino_attempted": False}
+            # The first event revokes the active binding immediately. Keep
+            # accepting same-raw-ID observations inside the one-second
+            # selection window as pose candidates, but never as a second
+            # lifecycle transition.
+            recent_take_out = self._recent_take_out_targets.get(
+                (str(self.source_epoch_id), raw_id)
+            )
+            if (
+                recent_take_out is not None
+                and time.monotonic()
+                <= float(recent_take_out.get("expires", 0.0))
+            ):
+                resolution_status = "UNRESOLVED"
+                identity = {
+                    "reason": "takeout_pose_candidate_after_binding_release",
+                    "display_object_id": recent_take_out["display_object_id"],
+                    "target_take_out_uid": recent_take_out["canonical_event_uid"],
+                    "dino_attempted": True,
+                }
+            else:
+                recent_take_out = None
+                resolution_status = "UNRESOLVED"
+                identity = {
+                    "reason": "takeout_has_no_epoch_binding",
+                    "dino_attempted": False,
+                }
         elif action == "bring_in":
             try:
                 embedded = self._embed_artifacts(artifacts)
@@ -2859,7 +3213,53 @@ class ShigureRuntimeEngine:
             canonical.get("resolution_status") or resolution_status
         ).upper()
         if canonical_status != "RESOLVED":
+            if action == "take_out" and recent_take_out is not None:
+                self._queue_lifecycle_pose_candidate(
+                    action=action,
+                    canonical_event_uid=str(canonical["event_uid"]),
+                    target_take_out_uid=str(
+                        recent_take_out["canonical_event_uid"]
+                    ),
+                    display_object_id=str(
+                        recent_take_out["display_object_id"]
+                    ),
+                    raw_id=raw_id,
+                    frame=frame,
+                    artifacts=artifacts,
+                )
             return
+        if action in {"take_out", "bring_in"}:
+            candidate_display_id = str(
+                (binding or {}).get("display_object_id")
+                or canonical.get("display_object_id")
+                or ""
+            )
+            target_take_out_uid = (
+                str(canonical["event_uid"])
+                if action == "take_out"
+                else ""
+            )
+            if action == "take_out" and candidate_display_id:
+                self._recent_take_out_targets[
+                    (str(self.source_epoch_id), raw_id)
+                ] = {
+                    "display_object_id": candidate_display_id,
+                    "canonical_event_uid": target_take_out_uid,
+                    "expires": (
+                        time.monotonic()
+                        + SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS
+                    ),
+                }
+            if candidate_display_id:
+                self._queue_lifecycle_pose_candidate(
+                    action=action,
+                    canonical_event_uid=str(canonical["event_uid"]),
+                    target_take_out_uid=target_take_out_uid,
+                    display_object_id=candidate_display_id,
+                    raw_id=raw_id,
+                    frame=frame,
+                    artifacts=artifacts,
+                )
         try:
             lifecycle = apply_object_lifecycle_event(
                 canonical_event_uid=str(canonical["event_uid"]),
@@ -2888,7 +3288,6 @@ class ShigureRuntimeEngine:
                         )
                         self._stable.pop(raw_id, None)
                         self._last_stable_source_key.pop(raw_id, None)
-                        self._last_fp_sequence.pop(raw_id, None)
                         self._last_view_sequence.pop(raw_id, None)
         except Exception as exc:
             print(f"[shigure-v2] lifecycle event rejected: {exc}")
@@ -3426,18 +3825,9 @@ class ShigureRuntimeEngine:
                     raw_shigure_object_id=raw_id,
                     admission=admission,
                 )
-            self._schedule_admitted_foundationpose(
-                inflight_key=inflight_key,
-                raw_id=raw_id,
-                display_object_id=display_object_id,
-                sequence=sequence,
-                source_stamp=source_stamp,
-                artifacts=artifacts,
-                source_generation=source_generation,
-                source_epoch_id=source_epoch_id,
-                binding_id=binding_id,
-                admission=admission,
-            )
+            # Stable tracking frames remain identity-reference inputs only.
+            # A lifecycle take_out is the sole trigger allowed to update the
+            # object's historical/latest position through FoundationPose.
         except Exception as exc:
             print(
                 f"[shigure-v2] strict stable candidate failed for "
@@ -3462,107 +3852,6 @@ class ShigureRuntimeEngine:
                     ):
                         window["closed"] = True
             _cleanup_event_artifacts(artifacts)
-
-    def _schedule_admitted_foundationpose(
-        self,
-        *,
-        inflight_key: str,
-        raw_id: str,
-        display_object_id: str,
-        sequence: int,
-        source_stamp: Mapping[str, Any],
-        artifacts: EventArtifacts,
-        source_generation: int,
-        source_epoch_id: str,
-        binding_id: str,
-        admission: Mapping[str, Any],
-    ) -> bool:
-        if (
-            str(admission.get("admission_status") or "") != "MATCHED"
-            or str(admission.get("admission_display_object_id") or "")
-            != display_object_id
-        ):
-            return False
-        with self._lock:
-            if (
-                self._source_generation != source_generation
-                or str(self.source_epoch_id) != source_epoch_id
-                or inflight_key in self._fp_inflight
-                or self._last_fp_sequence.get(raw_id, 0) >= int(sequence)
-            ):
-                return False
-        binding = get_active_shigure_binding(
-            source_epoch_id=source_epoch_id,
-            raw_shigure_object_id=raw_id,
-        )
-        if (
-            binding is None
-            or str(binding["binding_id"]) != binding_id
-            or str(binding["display_object_id"]) != display_object_id
-        ):
-            return False
-        state = get_display_object_state(display_object_id) or {}
-        model_revision = int(state.get("active_model_revision") or 0)
-        if model_revision <= 0 or str(state.get("presence")) != "PRESENT":
-            return False
-        sample = artifacts.sample
-        mask = artifacts.mask_array
-        if sample is None or mask is None:
-            return False
-
-        root = Path(tempfile.mkdtemp(prefix="shigure-v2-fp-admitted-"))
-        fp_artifacts: EventArtifacts | None = None
-        try:
-            scene_path = root / "scene.png"
-            mask_path = root / "mask.png"
-            _write_image(scene_path, sample.rgb_bgr)
-            _write_image(mask_path, mask.astype(np.uint8) * 255)
-            fp_artifacts = EventArtifacts(
-                scene_path,
-                mask_path,
-                None,
-                sample,
-                mask.copy(),
-                root,
-            )
-            snapshot = self._foundationpose_snapshot(
-                source_stamp, fp_artifacts, sample
-            )
-            with self._lock:
-                if (
-                    self._source_generation != source_generation
-                    or str(self.source_epoch_id) != source_epoch_id
-                    or inflight_key in self._fp_inflight
-                ):
-                    _cleanup_event_artifacts(fp_artifacts)
-                    return False
-                self._fp_inflight.add(inflight_key)
-                self._last_fp_sequence[raw_id] = int(sequence)
-            future = self._pose_executor.submit(
-                self._run_foundationpose_guarded,
-                inflight_key,
-                dict(binding),
-                model_revision,
-                int(sequence),
-                snapshot,
-                source_generation,
-                source_epoch_id,
-                raw_id,
-                binding_id,
-            )
-            future.add_done_callback(
-                lambda _future, key=inflight_key, owned=fp_artifacts: (
-                    self._finish_foundationpose_future(key, owned)
-                )
-            )
-            return True
-        except Exception:
-            with self._lock:
-                self._fp_inflight.discard(inflight_key)
-            _cleanup_event_artifacts(fp_artifacts)
-            if fp_artifacts is None:
-                shutil.rmtree(root, ignore_errors=True)
-            raise
 
     def _collect_stable_pose_candidates(
         self, frame: CachedShigureFrame
@@ -3699,13 +3988,6 @@ class ShigureRuntimeEngine:
                 self._stable.pop(stale_raw_id, None)
                 self._last_stable_source_key.pop(stale_raw_id, None)
 
-    def _finish_foundationpose_future(
-        self, inflight_key: str, artifacts: EventArtifacts | None
-    ) -> None:
-        with self._lock:
-            self._fp_inflight.discard(inflight_key)
-        _cleanup_event_artifacts(artifacts)
-
     def _foundationpose_snapshot(
         self,
         source_stamp: Mapping[str, Any],
@@ -3726,135 +4008,6 @@ class ShigureRuntimeEngine:
             "source_stamp": dict(source_stamp),
             "temporary_root": str(artifacts.temporary_root or ""),
         }
-
-    def _foundationpose_attempt_current(
-        self,
-        *,
-        source_generation: int,
-        source_epoch_id: str,
-        raw_id: str,
-        binding_id: str,
-        display_object_id: str,
-    ) -> bool:
-        with self._lock:
-            if (
-                self._source_generation != int(source_generation)
-                or str(self.source_epoch_id) != str(source_epoch_id)
-            ):
-                return False
-        active = get_active_shigure_binding(
-            source_epoch_id=source_epoch_id,
-            raw_shigure_object_id=raw_id,
-        )
-        return bool(
-            active is not None
-            and str(active["binding_id"]) == str(binding_id)
-            and str(active["display_object_id"]) == str(display_object_id)
-        )
-
-    def _run_foundationpose_guarded(
-        self,
-        inflight_key: str,
-        binding: Mapping[str, Any],
-        model_revision: int,
-        sequence: int,
-        snapshot: Mapping[str, Any],
-        source_generation: int,
-        source_epoch_id: str,
-        raw_id: str,
-        binding_id: str,
-    ) -> None:
-        try:
-            self._run_foundationpose(
-                binding,
-                model_revision,
-                sequence,
-                snapshot,
-                source_generation=source_generation,
-                source_epoch_id=source_epoch_id,
-                raw_id=raw_id,
-                binding_id=binding_id,
-            )
-        finally:
-            with self._lock:
-                self._fp_inflight.discard(inflight_key)
-            temporary_root = str(snapshot.get("temporary_root") or "")
-            if temporary_root:
-                shutil.rmtree(temporary_root, ignore_errors=True)
-
-    def _run_foundationpose(
-        self,
-        binding: Mapping[str, Any],
-        model_revision: int,
-        sequence: int,
-        snapshot: Mapping[str, Any],
-        *,
-        source_generation: int,
-        source_epoch_id: str,
-        raw_id: str,
-        binding_id: str,
-    ) -> None:
-        display_object_id = str(binding["display_object_id"])
-        try:
-            if not self._foundationpose_attempt_current(
-                source_generation=source_generation,
-                source_epoch_id=source_epoch_id,
-                raw_id=raw_id,
-                binding_id=binding_id,
-                display_object_id=display_object_id,
-            ):
-                return
-            state = get_display_object_state(display_object_id) or {}
-            if int(state.get("active_model_revision") or 0) != int(model_revision) or str(state.get("presence")) != "PRESENT":
-                return
-            task_row = get_task_by_task_id(str(state.get("active_model_task_id") or ""))
-            if not task_row:
-                raise RuntimeError("active model task is missing")
-            task = load_task_json(resolve_task_json_path_from_record(task_row))
-            source = resolve_model_generation_source(task, require_mtl_image=False)
-            scale = float((task.get("object_alignment") or {}).get("model_real_scale") or 0.0)
-            if scale <= 0.0:
-                raise RuntimeError("active model scale is missing")
-            response = self.foundationpose_request(
-                {
-                    "mesh_file": str(source.mesh_path),
-                    "color_file": snapshot["color_file"],
-                    "depth_file": snapshot["depth_file"],
-                    "mask_file": snapshot["mask_file"],
-                    "k": snapshot["k"],
-                    "model_scale": scale,
-                    "iteration": 5,
-                },
-                display_object_id,
-            )
-            if not response.get("ok"):
-                raise RuntimeError(str(response.get("error") or "FoundationPose failed"))
-            result = response.get("result") if isinstance(response.get("result"), Mapping) else {}
-            pose_cv = np.asarray(result.get("pose"), dtype=np.float64)
-            if pose_cv.shape != (4, 4) or not np.isfinite(pose_cv).all():
-                raise RuntimeError("FoundationPose returned an invalid pose")
-            mask = cv2.imread(str(snapshot["mask_file"]), cv2.IMREAD_GRAYSCALE) > 0
-            depth = cv2.imread(str(snapshot["depth_file"]), cv2.IMREAD_UNCHANGED)
-            quality = self._validate_foundationpose(source.mesh_path, pose_cv, scale, mask, depth, np.asarray(snapshot["k"], dtype=np.float64))
-            if not quality["accepted"]:
-                raise RuntimeError(f"FoundationPose quality rejected: {quality}")
-            pose_aruco = self._foundationpose_to_aruco_pose(pose_cv, scale)
-            if not self._foundationpose_attempt_current(
-                source_generation=source_generation,
-                source_epoch_id=source_epoch_id,
-                raw_id=raw_id,
-                binding_id=binding_id,
-                display_object_id=display_object_id,
-            ):
-                return
-            update_shigure_live_observation(
-                binding_id=str(binding["binding_id"]),
-                observation_seq=int(sequence),
-                model_revision=int(model_revision),
-                pose_aruco=pose_aruco,
-            )
-        except Exception as exc:
-            print(f"[shigure-v2] FoundationPose update failed for {display_object_id}: {exc}")
 
     @staticmethod
     def _foundationpose_to_aruco_pose(pose_cv: np.ndarray, scale: float) -> dict[str, Any]:
