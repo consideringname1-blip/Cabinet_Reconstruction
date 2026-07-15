@@ -1,7 +1,7 @@
 # 远端 Shigure 数据入口与内存缓存
 
 更新日期：2026-07-14
-状态：Shigure v2 当前协议
+状态：当前 ROS ingress 契约（canonical frame schema v2，供 Shigure runtime v3 使用）
 
 Shigure 在独立服务器运行。本仓库不修改 `code/reconstruction/shigure_core`；`code/stages/shigure_history` 只适配既有 ROS 消息，生成 canonical frame，并通过 Unix socket 向 runtime 提供有界内存数据。
 

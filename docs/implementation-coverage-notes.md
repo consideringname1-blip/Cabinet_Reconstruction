@@ -1,7 +1,9 @@
 # Implementation Coverage Notes
 
 更新日期：2026-07-14
-状态：Shigure v2 当前协议
+状态：Shigure v2 历史说明（已被 v3 取代）
+
+> 本文保留旧入口覆盖表用于追溯；Shigure v3 的 active 数据链、迁移与测试见 [`shigure-v3-runtime.md`](shigure-v3-runtime.md)。
 
 本文列出主模型生成流程之外仍属于当前实现的入口和执行单元。
 

@@ -117,9 +117,11 @@ public class RuntimeLatestLiveState
     public long ModelRevision = -1;
     public long HololensPoseRevision = -1;
     public long TrackingPoseRevision = -1;
+    public long OriginPoseRevision = -1;
     public long ModeEpoch = -1;
     public string CoordinateEpoch = "";
     public string PoseSource = "";
+    public string LatestOriginCursor = "";
     public RuntimeModelPoseData Pose = new RuntimeModelPoseData();
     public long SpatialBoxRevision = -1;
     public string SpatialBoxCoordinateEpoch = "";
@@ -136,15 +138,6 @@ public class RuntimeObjectPresentationState
     public string HistoryCursor = "";
     public string DisplayedCoordinateEpoch = "";
     public RuntimeModelPoseData DisplayedPose = new RuntimeModelPoseData();
-    public RuntimeSpatialBoxData HistorySpatialBox;
-}
-
-public class RuntimeRawTrackingBoxState
-{
-    public string TrackingId = "";
-    public long Revision = -1;
-    public string CoordinateEpoch = "";
-    public RuntimeSpatialBoxData SpatialBox;
 }
 
 public class RuntimeModelInstance
@@ -168,6 +161,7 @@ public class RuntimeModelRecord
     public long ModelRevision = -1;
     public long HololensPoseRevision = -1;
     public long TrackingPoseRevision = -1;
+    public long OriginPoseRevision = -1;
     public long LastAppliedModeEpoch = -1;
     public string CoordinateEpoch = "";
     public string AppliedPoseSource = "";
@@ -185,8 +179,10 @@ public class RuntimeModelManager : MonoBehaviour
 {
     public const string CACHE_FOLDER_NAME = "RuntimeModels";
 
-    [SerializeField] private int maxVisibleModels = 5;
-    [SerializeField] private int maxCachedModelFiles = 5;
+    [Tooltip("Zero keeps every current display object loaded.")]
+    [SerializeField] private int maxVisibleModels = 0;
+    [Tooltip("Zero disables count-based current-model cache eviction.")]
+    [SerializeField] private int maxCachedModelFiles = 0;
 
     private static RuntimeModelManager _instance;
 
@@ -194,10 +190,6 @@ public class RuntimeModelManager : MonoBehaviour
     private readonly Dictionary<string, RuntimeObjectPresentationState> _objectPresentationStates =
         new Dictionary<string, RuntimeObjectPresentationState>(StringComparer.Ordinal);
     private readonly Dictionary<string, GameObject> _spatialBoxOverlays =
-        new Dictionary<string, GameObject>(StringComparer.Ordinal);
-    private readonly Dictionary<string, RuntimeRawTrackingBoxState> _rawTrackingBoxes =
-        new Dictionary<string, RuntimeRawTrackingBoxState>(StringComparer.Ordinal);
-    private readonly Dictionary<string, GameObject> _rawTrackingBoxOverlays =
         new Dictionary<string, GameObject>(StringComparer.Ordinal);
     private readonly Dictionary<string, Coroutine> _poseTransitions =
         new Dictionary<string, Coroutine>(StringComparer.Ordinal);
@@ -230,12 +222,12 @@ public class RuntimeModelManager : MonoBehaviour
 
     public int MaxVisibleModels
     {
-        get { return Mathf.Clamp(maxVisibleModels, 1, 5); }
+        get { return maxVisibleModels <= 0 ? int.MaxValue : maxVisibleModels; }
     }
 
     public int MaxCachedModelFiles
     {
-        get { return Mathf.Max(1, maxCachedModelFiles); }
+        get { return maxCachedModelFiles <= 0 ? int.MaxValue : maxCachedModelFiles; }
     }
 
     private static void EnsureInstance()
@@ -407,6 +399,7 @@ public class RuntimeModelManager : MonoBehaviour
                 instance.ModelRevision;
             presentationState.LatestLive.HololensPoseRevision = -1;
             presentationState.LatestLive.TrackingPoseRevision = -1;
+            presentationState.LatestLive.OriginPoseRevision = -1;
             presentationState.LatestLive.ModeEpoch = -1;
             presentationState.LatestLive.CoordinateEpoch = "";
             presentationState.LatestLive.PoseSource = "hololens";
@@ -518,6 +511,19 @@ public class RuntimeModelManager : MonoBehaviour
     /// Accepts the latest live pose even while an older history pose is shown.
     /// Presentation state alone decides whether the accepted live pose is applied.
     /// </summary>
+    public void UpdateDisplayObjectLatestOriginCursor(
+        string displayObjectId,
+        string latestOriginCursor)
+    {
+        if (string.IsNullOrEmpty(displayObjectId))
+        {
+            return;
+        }
+        GetOrCreatePresentationState(displayObjectId)
+            .LatestLive.LatestOriginCursor =
+                (latestOriginCursor ?? "").Trim();
+    }
+
     public bool UpdateDisplayObjectPose(
         string displayObjectId,
         long modelRevision,
@@ -579,10 +585,13 @@ public class RuntimeModelManager : MonoBehaviour
         {
             presentationState.LatestLive.HololensPoseRevision = -1;
             presentationState.LatestLive.TrackingPoseRevision = -1;
+            presentationState.LatestLive.OriginPoseRevision = -1;
         }
         long currentSourceRevision = normalizedSource == "tracking"
             ? presentationState.LatestLive.TrackingPoseRevision
-            : presentationState.LatestLive.HololensPoseRevision;
+            : normalizedSource == "origin"
+                ? presentationState.LatestLive.OriginPoseRevision
+                : presentationState.LatestLive.HololensPoseRevision;
         if (sourcePoseRevision <= 0)
         {
             rejectionReason = "pose_revision_missing";
@@ -632,6 +641,12 @@ public class RuntimeModelManager : MonoBehaviour
                 presentationState.LatestLive.TrackingPoseRevision,
                 sourcePoseRevision);
         }
+        else if (normalizedSource == "origin")
+        {
+            presentationState.LatestLive.OriginPoseRevision = Math.Max(
+                presentationState.LatestLive.OriginPoseRevision,
+                sourcePoseRevision);
+        }
         else
         {
             presentationState.LatestLive.HololensPoseRevision = Math.Max(
@@ -649,6 +664,10 @@ public class RuntimeModelManager : MonoBehaviour
         if (normalizedSource == "tracking")
         {
             record.TrackingPoseRevision = Math.Max(record.TrackingPoseRevision, sourcePoseRevision);
+        }
+        else if (normalizedSource == "origin")
+        {
+            record.OriginPoseRevision = Math.Max(record.OriginPoseRevision, sourcePoseRevision);
         }
         else
         {
@@ -731,10 +750,7 @@ public class RuntimeModelManager : MonoBehaviour
         state.LatestLive.SpatialBoxCoordinateEpoch = coordinateEpoch;
         state.LatestLive.SpatialBox = accepted;
         state.LatestLive.SpatialBoxVisibleInLatestSnapshot = true;
-        if (state.Mode == RuntimePresentationMode.FollowLive)
-        {
-            ApplySpatialBoxOverlay(state, accepted);
-        }
+        ApplySpatialBoxOverlay(state, accepted);
         return true;
     }
 
@@ -783,10 +799,7 @@ public class RuntimeModelManager : MonoBehaviour
         state.LatestLive.SpatialBoxCoordinateEpoch = coordinateEpoch;
         state.LatestLive.SpatialBox = null;
         state.LatestLive.SpatialBoxVisibleInLatestSnapshot = false;
-        if (state.Mode == RuntimePresentationMode.FollowLive)
-        {
-            ApplySpatialBoxOverlay(state, null);
-        }
+        ApplySpatialBoxOverlay(state, null);
         return true;
     }
 
@@ -815,10 +828,10 @@ public class RuntimeModelManager : MonoBehaviour
     }
 
     /// <summary>
-    /// Reconciles live box state against one complete, unbounded Shigure
+    /// Reconciles live box state against the complete per-display live
     /// snapshot. Missing boxes are deleted from LatestLive while the revision
     /// watermark remains, so delayed older responses cannot resurrect them.
-    /// History presentation is intentionally unaffected.
+    /// Historical pose presentation is intentionally unaffected.
     /// </summary>
     public void ReconcileLiveSpatialBoxSnapshot(
         ISet<string> readyDisplayObjectIds)
@@ -843,186 +856,7 @@ public class RuntimeModelManager : MonoBehaviour
             {
                 state.LatestLive.SpatialBox = null;
             }
-            if (state.Mode == RuntimePresentationMode.FollowLive)
-            {
-                ApplySpatialBoxOverlay(state, visible ? cachedBox : null);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Replaces the HoloLens raw Shigure overlays with the latest server relay.
-    /// This path intentionally has no revision, identity, stability, or model
-    /// admission gate: present IDs are overwritten and absent IDs are deleted.
-    /// </summary>
-    public void ReplaceRawTrackingBoxSnapshot(
-        IDictionary<string, RuntimeSpatialBoxData> latestBoxes,
-        string coordinateEpoch)
-    {
-        HashSet<string> presentIds =
-            new HashSet<string>(StringComparer.Ordinal);
-        if (latestBoxes != null)
-        {
-            foreach (KeyValuePair<string, RuntimeSpatialBoxData> pair
-                in latestBoxes)
-            {
-                string trackingId = pair.Key ?? "";
-                RuntimeSpatialBoxData spatialBox = pair.Value;
-                if (string.IsNullOrEmpty(trackingId) || spatialBox == null)
-                {
-                    continue;
-                }
-                if (!_rawTrackingBoxes.TryGetValue(
-                        trackingId,
-                        out RuntimeRawTrackingBoxState state)
-                    || state == null)
-                {
-                    state = new RuntimeRawTrackingBoxState
-                    {
-                        TrackingId = trackingId,
-                    };
-                    _rawTrackingBoxes[trackingId] = state;
-                }
-
-                RuntimeSpatialBoxData relayed = spatialBox.Clone();
-                relayed.CoordinateEpoch = coordinateEpoch ?? "";
-                state.Revision = relayed.Revision;
-                state.CoordinateEpoch = relayed.CoordinateEpoch;
-                state.SpatialBox = relayed;
-                presentIds.Add(trackingId);
-                ApplyRawTrackingBoxOverlay(trackingId, relayed);
-            }
-        }
-
-        List<string> removedIds = new List<string>();
-        foreach (string trackingId in _rawTrackingBoxes.Keys)
-        {
-            if (!presentIds.Contains(trackingId))
-            {
-                removedIds.Add(trackingId);
-            }
-        }
-        foreach (string trackingId in removedIds)
-        {
-            _rawTrackingBoxes.Remove(trackingId);
-            DestroyRawTrackingBoxOverlay(trackingId);
-        }
-    }
-
-    public bool UpdateRawTrackingBox(
-        string trackingId,
-        long revision,
-        string coordinateEpoch,
-        RuntimeSpatialBoxData spatialBox,
-        out string rejectionReason)
-    {
-        rejectionReason = "";
-        if (string.IsNullOrEmpty(trackingId))
-        {
-            rejectionReason = "tracking_id_missing";
-            return false;
-        }
-        if (revision <= 0)
-        {
-            rejectionReason = "tracking_box_revision_missing";
-            return false;
-        }
-        if (string.IsNullOrEmpty(coordinateEpoch))
-        {
-            rejectionReason = "coordinate_epoch_missing";
-            return false;
-        }
-        if (spatialBox == null
-            || !spatialBox.IsReady
-            || !spatialBox.HasFiniteCorners
-            || spatialBox.CoordinateSpace != "hololens_current_local")
-        {
-            rejectionReason = "tracking_box_invalid";
-            return false;
-        }
-
-        if (!_rawTrackingBoxes.TryGetValue(
-                trackingId, out RuntimeRawTrackingBoxState state)
-            || state == null)
-        {
-            state = new RuntimeRawTrackingBoxState
-            {
-                TrackingId = trackingId,
-            };
-            _rawTrackingBoxes[trackingId] = state;
-        }
-        bool coordinateAdvanced = !string.Equals(
-            state.CoordinateEpoch,
-            coordinateEpoch,
-            StringComparison.Ordinal);
-        if (!coordinateAdvanced && state.Revision > revision)
-        {
-            rejectionReason = "tracking_box_revision_stale";
-            return false;
-        }
-        if (!coordinateAdvanced && state.Revision == revision)
-        {
-            rejectionReason = "tracking_box_revision_duplicate";
-            return false;
-        }
-
-        RuntimeSpatialBoxData accepted = spatialBox.Clone();
-        accepted.Revision = revision;
-        accepted.CoordinateEpoch = coordinateEpoch;
-        state.Revision = revision;
-        state.CoordinateEpoch = coordinateEpoch;
-        state.SpatialBox = accepted;
-        ApplyRawTrackingBoxOverlay(trackingId, accepted);
-        return true;
-    }
-
-    public bool HasReadyRawTrackingBox(
-        string trackingId,
-        string coordinateEpoch)
-    {
-        return !string.IsNullOrEmpty(trackingId)
-            && !string.IsNullOrEmpty(coordinateEpoch)
-            && _rawTrackingBoxes.TryGetValue(
-                trackingId, out RuntimeRawTrackingBoxState state)
-            && state != null
-            && string.Equals(
-                state.CoordinateEpoch,
-                coordinateEpoch,
-                StringComparison.Ordinal)
-            && state.SpatialBox != null
-            && state.SpatialBox.IsReady
-            && state.SpatialBox.HasFiniteCorners
-            && state.SpatialBox.CoordinateSpace
-                == "hololens_current_local";
-    }
-
-    public void ReconcileRawTrackingBoxSnapshot(
-        ISet<string> readyTrackingIds)
-    {
-        foreach (RuntimeRawTrackingBoxState state in _rawTrackingBoxes.Values)
-        {
-            if (state == null || string.IsNullOrEmpty(state.TrackingId))
-            {
-                continue;
-            }
-            bool visible = readyTrackingIds != null
-                && readyTrackingIds.Contains(state.TrackingId)
-                && state.SpatialBox != null
-                && state.SpatialBox.IsReady
-                && state.SpatialBox.HasFiniteCorners
-                && state.SpatialBox.CoordinateSpace
-                    == "hololens_current_local";
-            if (visible)
-            {
-                ApplyRawTrackingBoxOverlay(
-                    state.TrackingId,
-                    state.SpatialBox);
-            }
-            else
-            {
-                state.SpatialBox = null;
-                DestroyRawTrackingBoxOverlay(state.TrackingId);
-            }
+            ApplySpatialBoxOverlay(state, visible ? cachedBox : null);
         }
     }
 
@@ -1032,7 +866,6 @@ public class RuntimeModelManager : MonoBehaviour
         string historyCursor,
         string coordinateEpoch,
         RuntimeModelPoseData pose,
-        RuntimeSpatialBoxData spatialBox,
         out string rejectionReason)
     {
         rejectionReason = "";
@@ -1053,23 +886,28 @@ public class RuntimeModelManager : MonoBehaviour
             rejectionReason = "coordinate_epoch_missing";
             return false;
         }
-        if (spatialBox != null
-            && (!spatialBox.IsReady
-                || !spatialBox.HasFiniteCorners
-                || spatialBox.CoordinateSpace
-                    != "hololens_current_local"))
+        RuntimeObjectPresentationState state = GetOrCreatePresentationState(displayObjectId);
+        if (!state.LatestLive.HasPose
+            || state.LatestLive.Pose == null
+            || !state.LatestLive.Pose.HasHololensPose)
         {
-            rejectionReason = "history_spatial_box_invalid";
+            rejectionReason = "latest_live_pose_missing";
             return false;
         }
-
-        RuntimeObjectPresentationState state = GetOrCreatePresentationState(displayObjectId);
+        if (string.IsNullOrEmpty(state.LatestLive.CoordinateEpoch)
+            || !string.Equals(
+                state.LatestLive.CoordinateEpoch,
+                coordinateEpoch,
+                StringComparison.Ordinal))
+        {
+            rejectionReason = "coordinate_epoch_mismatch";
+            return false;
+        }
         state.Mode = RuntimePresentationMode.History;
         state.HistoryEventUid = eventUid;
         state.HistoryCursor = historyCursor;
         state.DisplayedCoordinateEpoch = coordinateEpoch;
         state.DisplayedPose = ClonePose(pose);
-        state.HistorySpatialBox = spatialBox != null ? spatialBox.Clone() : null;
 
         RuntimeModelRecord record = FindDisplayObjectRecord(displayObjectId);
         if (record != null && record.RootGameObject != null)
@@ -1077,7 +915,67 @@ public class RuntimeModelManager : MonoBehaviour
             record.Pose = ClonePose(pose);
             ApplyResolvedPose(record, true);
         }
-        ApplySpatialBoxOverlay(state, state.HistorySpatialBox);
+        return true;
+    }
+
+    /// <summary>
+    /// Returns one object to its latest accepted live/original pose using the
+    /// same animated transition as history placement. The response epoch must
+    /// still match LatestLive so a late history reply cannot move the model in
+    /// a newer coordinate frame.
+    /// </summary>
+    public bool AnimateToLatestLivePose(
+        string displayObjectId,
+        string coordinateEpoch,
+        out string rejectionReason)
+    {
+        rejectionReason = "";
+        if (string.IsNullOrEmpty(displayObjectId)
+            || !_objectPresentationStates.TryGetValue(
+                displayObjectId,
+                out RuntimeObjectPresentationState state)
+            || state == null)
+        {
+            rejectionReason = "latest_live_state_missing";
+            return false;
+        }
+        if (!state.LatestLive.HasPose
+            || state.LatestLive.Pose == null
+            || !state.LatestLive.Pose.HasHololensPose)
+        {
+            rejectionReason = "latest_live_pose_missing";
+            return false;
+        }
+        if (string.IsNullOrEmpty(coordinateEpoch)
+            || string.IsNullOrEmpty(state.LatestLive.CoordinateEpoch)
+            || !string.Equals(
+                state.LatestLive.CoordinateEpoch,
+                coordinateEpoch,
+                StringComparison.Ordinal))
+        {
+            rejectionReason = "coordinate_epoch_mismatch";
+            return false;
+        }
+
+        RuntimeModelRecord record = FindDisplayObjectRecord(displayObjectId);
+        if (record == null || record.RootGameObject == null)
+        {
+            rejectionReason = "display_object_model_not_loaded";
+            return false;
+        }
+
+        state.Mode = RuntimePresentationMode.FollowLive;
+        state.HistoryEventUid = "";
+        state.HistoryCursor = "";
+        state.DisplayedCoordinateEpoch = state.LatestLive.CoordinateEpoch;
+        state.DisplayedPose = ClonePose(state.LatestLive.Pose);
+        record.Pose = ClonePose(state.LatestLive.Pose);
+        ApplyResolvedPose(record, true);
+        ApplySpatialBoxOverlay(
+            state,
+            state.LatestLive.SpatialBoxVisibleInLatestSnapshot
+                ? state.LatestLive.SpatialBox
+                : null);
         return true;
     }
 
@@ -1104,8 +1002,6 @@ public class RuntimeModelManager : MonoBehaviour
         }
 
         int resumed = 0;
-        ObjectEvidenceDisplay evidenceDisplay =
-            ObjectEvidenceDisplay.Instance;
         List<string> displayObjectIds =
             new List<string>(_objectPresentationStates.Keys);
         foreach (string displayObjectId in displayObjectIds)
@@ -1130,10 +1026,6 @@ public class RuntimeModelManager : MonoBehaviour
             }
 
             resumed++;
-            if (evidenceDisplay != null)
-            {
-                evidenceDisplay.HideEvidenceForModel(displayObjectId);
-            }
         }
         return resumed;
     }
@@ -1153,7 +1045,6 @@ public class RuntimeModelManager : MonoBehaviour
         state.Mode = RuntimePresentationMode.FollowLive;
         state.HistoryEventUid = "";
         state.HistoryCursor = "";
-        state.HistorySpatialBox = null;
         if (state.LatestLive.HasPose)
         {
             state.DisplayedPose = ClonePose(state.LatestLive.Pose);
@@ -1236,6 +1127,10 @@ public class RuntimeModelManager : MonoBehaviour
         {
             return "tracking";
         }
+        if (normalized == "origin")
+        {
+            return "origin";
+        }
         if (normalized == "hololens")
         {
             return "hololens";
@@ -1305,11 +1200,9 @@ public class RuntimeModelManager : MonoBehaviour
             if (state != null)
             {
                 RuntimeSpatialBoxData selectedBox =
-                    state.Mode == RuntimePresentationMode.History
-                        ? state.HistorySpatialBox
-                        : (state.LatestLive.SpatialBoxVisibleInLatestSnapshot
-                            ? state.LatestLive.SpatialBox
-                            : null);
+                    state.LatestLive.SpatialBoxVisibleInLatestSnapshot
+                        ? state.LatestLive.SpatialBox
+                        : null;
                 ApplySpatialBoxOverlay(state, selectedBox);
             }
         }
@@ -1447,55 +1340,6 @@ public class RuntimeModelManager : MonoBehaviour
             HololensPosition = pose.HololensPosition,
             HololensRotation = pose.HololensRotation,
         };
-    }
-
-    private void ApplyRawTrackingBoxOverlay(
-        string trackingId,
-        RuntimeSpatialBoxData spatialBox)
-    {
-        if (string.IsNullOrEmpty(trackingId))
-        {
-            return;
-        }
-        if (spatialBox == null
-            || !spatialBox.IsReady
-            || !spatialBox.HasFiniteCorners
-            || spatialBox.CoordinateSpace != "hololens_current_local")
-        {
-            DestroyRawTrackingBoxOverlay(trackingId);
-            return;
-        }
-        if (!_rawTrackingBoxOverlays.TryGetValue(
-                trackingId, out GameObject overlay)
-            || overlay == null)
-        {
-            overlay = new GameObject("ShigureRawTrackingBox_" + trackingId);
-            _rawTrackingBoxOverlays[trackingId] = overlay;
-        }
-        RuntimeSpatialBoxDisplay display =
-            overlay.GetComponent<RuntimeSpatialBoxDisplay>();
-        if (display == null)
-        {
-            display = overlay.AddComponent<RuntimeSpatialBoxDisplay>();
-        }
-        display.Configure(spatialBox.Clone(), "");
-        overlay.SetActive(true);
-    }
-
-    private void DestroyRawTrackingBoxOverlay(string trackingId)
-    {
-        if (string.IsNullOrEmpty(trackingId)
-            || !_rawTrackingBoxOverlays.TryGetValue(
-                trackingId, out GameObject overlay))
-        {
-            return;
-        }
-        if (overlay != null)
-        {
-            overlay.SetActive(false);
-            Destroy(overlay);
-        }
-        _rawTrackingBoxOverlays.Remove(trackingId);
     }
 
     private void ApplySpatialBoxOverlay(

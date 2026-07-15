@@ -269,20 +269,30 @@ def bind_capture_identity(
         candidate_scores=candidate_scores,
         detail=result,
     )
-    object_aruco = task.get("object_aruco") if isinstance(task.get("object_aruco"), dict) else None
-    if object_aruco is not None:
-        reused_model = bool(historical_payload.get("reuse_model"))
-        selected_model_task_id = str(historical_payload.get("selected_model_task_id") or "").strip() or None
-        state = commit_display_object_capture_state(
-            display_object_id=display_object_id,
-            capture_task_id=task_id,
-            pose_aruco=object_aruco,
-            captured_at=timestamp,
-            generated_new_model=not reused_model,
-            active_model_task_id=selected_model_task_id if reused_model else task_id,
-        )
-        result["model_revision"] = int(state.get("active_model_revision") or 0)
-        result["hololens_pose_revision"] = int(state.get("latest_hololens_pose_revision") or 0)
+    object_aruco = (
+        task.get("object_aruco")
+        if isinstance(task.get("object_aruco"), dict)
+        else None
+    )
+    reused_model = bool(historical_payload.get("reuse_model"))
+    selected_model_task_id = (
+        str(historical_payload.get("selected_model_task_id") or "").strip()
+        or None
+    )
+    state = commit_display_object_capture_state(
+        display_object_id=display_object_id,
+        capture_task_id=task_id,
+        pose_aruco=object_aruco,
+        captured_at=timestamp,
+        generated_new_model=not reused_model,
+        active_model_task_id=(
+            selected_model_task_id if reused_model else task_id
+        ),
+    )
+    result["model_revision"] = int(state.get("active_model_revision") or 0)
+    result["hololens_pose_revision"] = int(
+        state.get("latest_hololens_pose_revision") or 0
+    )
     _store_result_in_task_json(json_path, task, result)
     return result
 

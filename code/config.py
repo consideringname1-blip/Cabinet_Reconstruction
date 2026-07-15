@@ -32,9 +32,10 @@ SHIGURE_DEBUG_CACHE_MAX_BYTES = int(
 )
 if SHIGURE_DEBUG_CACHE_MAX_BYTES <= 0:
     raise ValueError("SHIGURE_DEBUG_CACHE_MAX_BYTES must be positive")
-# Model/live-pose delivery remains bounded. Shigure spatial boxes use an
-# independent complete snapshot and deliberately do not use this limit.
-MAX_REALTIME_MODEL_POSE_ITEMS = 5
+# A live snapshot is a complete display-object registry.  The value is only a
+# defensive database/page bound; it must not be confused with the per-object
+# identity/history retention limit below.
+MAX_REALTIME_MODEL_POSE_ITEMS = 50
 REALTIME_TRACKING_EVENT_POLL_SEC = float(os.environ.get("REALTIME_TRACKING_EVENT_POLL_SEC", "0.25"))
 REALTIME_TRACKING_FP_MIN_BBOX_IOU = float(os.environ.get("REALTIME_TRACKING_FP_MIN_BBOX_IOU", "0.20"))
 REALTIME_TRACKING_FP_MAX_DEPTH_RESIDUAL_M = float(os.environ.get("REALTIME_TRACKING_FP_MAX_DEPTH_RESIDUAL_M", "0.20"))
@@ -43,18 +44,20 @@ TASK_DEBUG_OUTPUT_ENABLE = os.environ.get("TASK_DEBUG_OUTPUT_ENABLE", "1").strip
 TASK_LOG_OUTPUT_ENABLE = os.environ.get("TASK_LOG_OUTPUT_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
 
 # HoloLens historical-capture reuse / DINOv2 matching. This is only the
-# database scan window used to find distinct objects; actual scoring shares
-# the strict recent-five object cap below.
+# database scan window used to discover distinct objects. Shigure scoring has
+# its own 50-object bound and uses the newest five HoloLens views per object.
 DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC = int(os.environ.get("DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC", "300"))
 DINO_IDENTITY_CANDIDATE_LIMIT = int(os.environ.get("DINO_IDENTITY_CANDIDATE_LIMIT", "500"))
 DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD = float(os.environ.get("DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD", "0.20"))
 DINO_IDENTITY_MATCH_SECOND_MARGIN = float(os.environ.get("DINO_IDENTITY_MATCH_SECOND_MARGIN", "0.05"))
 DINO_IDENTITY_MATCH_REQUIRE_MARGIN = os.environ.get("DINO_IDENTITY_MATCH_REQUIRE_MARGIN", "1").strip().lower() in {"1", "true", "yes", "on"}
 
-# Every identity path keeps the same recent-five object policy. Changing
-# transport capacity must never silently change identity candidate capacity.
-# Shigure-local IDs are never persisted as object identity.
-SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS = 5
+# Every known display object participates in classification (bounded only to
+# protect malformed databases).  Each object contributes its five newest
+# HoloLens uploads; Shigure images are query observations and are never added
+# to this reference bank.
+SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS = 50
+SHIGURE_IDENTITY_MAX_HOLOLENS_REFERENCES = 5
 SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD = float(
     os.environ.get("SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD", "0.20")
 )

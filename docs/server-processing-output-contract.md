@@ -1,7 +1,9 @@
 # 服务器输入输出契约
 
 更新日期：2026-07-14
-状态：Shigure v2 当前协议
+状态：Shigure v2 历史说明（v3 live/history 已取代相关章节）
+
+> 模型任务 artifact 的通用部分仍可参考，但 Shigure live/history 当前契约不再使用 raw tracking box、`kind=take_out` 或历史照片/骨骼。请以 [`shigure-v3-runtime.md`](shigure-v3-runtime.md) 为准。
 
 服务器只接受本文列出的字段名、类型和坐标空间。模型生成后端可选 InstantMesh 或 SAM3D Objects，但两者写入相同的公开模型契约。
 

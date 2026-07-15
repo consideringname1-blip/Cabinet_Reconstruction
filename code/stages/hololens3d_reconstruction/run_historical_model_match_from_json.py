@@ -7,18 +7,18 @@ import socket
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import _bootstrap
 import numpy as np
 
 from artifact_layout import model_result_dir, model_result_file, model_worker_file
 from config import (
-    DINO_IDENTITY_CANDIDATE_LIMIT,
     DINO_IDENTITY_MATCH_DISTANCE_THRESHOLD,
     DINO_IDENTITY_MATCH_REQUIRE_MARGIN,
     DINO_IDENTITY_MATCH_SECOND_MARGIN,
     SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
+    SHIGURE_IDENTITY_MAX_HOLOLENS_REFERENCES,
 )
 from stages.hololens3d_reconstruction.model_generation_common import (
     build_model_generation_payload,
@@ -29,7 +29,7 @@ from stage_common import ensure_file, load_stage_task
 from task_db import (
     get_latest_completed_task_for_display_object,
     get_task_by_task_id,
-    list_identity_candidate_captures,
+    list_identity_candidate_captures_by_display,
     update_capture_instance_feature,
 )
 from task_json import (
@@ -104,6 +104,11 @@ def _cosine_distance(left: dict[str, Any], right: dict[str, Any]) -> float:
     if a.shape != b.shape:
         return 1.0
     return float(max(0.0, min(2.0, 1.0 - float(np.dot(a, b)))))
+
+
+def _candidate_distance(value: Mapping[str, Any]) -> float:
+    distance_value = value.get("dinov2_distance")
+    return 999.0 if distance_value is None else float(distance_value)
 
 
 def _request_embedding(socket_path: Path, json_path: Path) -> dict[str, Any]:
@@ -363,26 +368,23 @@ def run_historical_model_match(json_path: Path) -> dict[str, Any]:
     _embedding_array(current_embedding)
 
     current_task_id = str(task.get("task_id") or "").strip()
-    rows = list_identity_candidate_captures(limit=int(DINO_IDENTITY_CANDIDATE_LIMIT))
-    # The query limit is only a backward scan window. Score exactly one latest
-    # capture for each of at most five distinct display objects so the old
-    # HoloLens matcher cannot bypass the shared candidate bound.
+    rows = list_identity_candidate_captures_by_display(
+        display_object_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
+        references_per_display=SHIGURE_IDENTITY_MAX_HOLOLENS_REFERENCES,
+    )
+    # The database ranks views per display object before applying either cap,
+    # so one frequently photographed object cannot consume the global scan.
     latest_distinct_rows: list[dict[str, Any]] = []
-    selected_display_ids: set[str] = set()
     for row in rows:
         if current_task_id and str(row.get("task_id") or "").strip() == current_task_id:
             continue
         display_object_id = str(row.get("display_object_id") or "").strip()
         if not display_object_id:
             raise ValueError("identity candidate is missing display_object_id")
-        if display_object_id in selected_display_ids:
-            continue
-        selected_display_ids.add(display_object_id)
         latest_distinct_rows.append(row)
-        if len(latest_distinct_rows) >= SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS:
-            break
 
     best_by_display: dict[str, dict[str, Any]] = {}
+
     for row in latest_distinct_rows:
         display_object_id = str(row.get("display_object_id") or "").strip()
         candidate_embedding = _candidate_embedding(socket_path, row)
@@ -394,16 +396,16 @@ def run_historical_model_match(json_path: Path) -> dict[str, Any]:
             "dinov2_distance": distance,
         }
         old = best_by_display.get(display_object_id)
-        if old is None or distance < float(old.get("dinov2_distance") or 999.0):
+        if old is None or distance < _candidate_distance(old):
             best_by_display[display_object_id] = candidate
 
-    candidates = sorted(best_by_display.values(), key=lambda item: float(item.get("dinov2_distance") or 999.0))
+    candidates = sorted(best_by_display.values(), key=_candidate_distance)
     best = candidates[0] if candidates else None
     second = candidates[1] if len(candidates) > 1 else None
     second_margin_ok = True
     if best is not None and second is not None:
         second_margin_ok = (
-            float(second.get("dinov2_distance") or 999.0) - float(best.get("dinov2_distance") or 999.0)
+            _candidate_distance(second) - _candidate_distance(best)
         ) >= float(DINO_IDENTITY_MATCH_SECOND_MARGIN)
     elif best is not None:
         second_margin_ok = True
@@ -419,7 +421,7 @@ def run_historical_model_match(json_path: Path) -> dict[str, Any]:
     }
 
     if best is not None:
-        best_distance = float(best.get("dinov2_distance") or 999.0)
+        best_distance = _candidate_distance(best)
         payload["dinov2_distance"] = best_distance
         payload["second_margin_ok"] = bool(second_margin_ok)
         margin_required = bool(DINO_IDENTITY_MATCH_REQUIRE_MARGIN)

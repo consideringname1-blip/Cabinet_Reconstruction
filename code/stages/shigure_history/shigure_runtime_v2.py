@@ -54,12 +54,12 @@ from config import (
     SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS,
     SHIGURE_IDENTITY_HOLOLENS_DISTANCE_PENALTY,
     SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
+    SHIGURE_IDENTITY_MAX_HOLOLENS_REFERENCES,
     SHIGURE_IDENTITY_CAPTURE_MAX_ATTEMPTS,
     SHIGURE_IDENTITY_CAPTURE_MAX_NEW_VIEWS,
     SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD,
     SHIGURE_IDENTITY_MATCH_REQUIRE_MARGIN,
     SHIGURE_IDENTITY_MATCH_SECOND_MARGIN,
-    SHIGURE_IDENTITY_VIEW_NOVELTY_DISTANCE,
     SHIGURE_SPATIAL_BOX_ACQUIRE_FRAMES,
     SHIGURE_SPATIAL_BOX_CENTER_DEADBAND_M,
     SHIGURE_SPATIAL_BOX_EMA_ALPHA,
@@ -92,9 +92,11 @@ from stages.shigure_history.shigure_identity import cosine_distance
 from stages.shigure_history.spatial_box_v2 import NoBoxError, build_spatial_box_v2
 from task_db import (
     activate_recovered_shigure_binding,
-    add_object_identity_reference,
+    add_display_object_origin,
     apply_object_lifecycle_event,
     close_shigure_runtime_session,
+    commit_pending_bring_in_lifecycle_event,
+    commit_pending_take_out_lifecycle_event,
     establish_shigure_binding,
     get_active_shigure_binding,
     get_display_object_state,
@@ -103,6 +105,7 @@ from task_db import (
     list_display_object_states,
     list_object_identity_references,
     open_shigure_source_epoch,
+    reject_pending_shigure_canonical_event,
     record_shigure_canonical_event,
     set_object_identity_reference_embedding,
     start_shigure_runtime_session,
@@ -278,11 +281,7 @@ def _global_identity_assignment(
     *,
     candidate_priorities: Sequence[int] | None = None,
 ) -> dict[str, Any]:
-    """Priority/cardinality preserving minimum-cost one-to-one assignment.
-
-    Candidate count is unbounded, but persistent display candidates are capped
-    at five. A display-bitmask DP therefore avoids exponential Segments scans.
-    """
+    """Independently select each mask so raw-ID aliases remain possible."""
 
     priorities = (
         [1] * len(candidate_scores)
@@ -291,172 +290,67 @@ def _global_identity_assignment(
     )
     if len(priorities) != len(candidate_scores):
         raise ValueError("candidate_priorities must match candidate_scores")
-    eligible: list[list[dict[str, Any]]] = []
-    for scores in candidate_scores:
+    assignments: dict[int, dict[str, Any]] = {}
+    ambiguous_candidates: set[int] = set()
+    candidate_margins: list[float] = []
+    for candidate_index, raw_scores in enumerate(candidate_scores):
         by_display: dict[str, dict[str, Any]] = {}
-        for score in scores:
-            display_object_id = str(score.get("display_object_id") or "").strip()
+        for raw_score in raw_scores:
+            display_object_id = str(
+                raw_score.get("display_object_id") or ""
+            ).strip()
             try:
-                distance = float(score["distance"])
+                distance = float(raw_score["distance"])
             except (KeyError, TypeError, ValueError):
                 continue
-            if (
-                not display_object_id
-                or not np.isfinite(distance)
-                or distance > SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD
-            ):
+            if not display_object_id or not np.isfinite(distance):
                 continue
-            item = dict(score)
+            score = dict(raw_score)
             previous = by_display.get(display_object_id)
             if previous is None or distance < float(previous["distance"]):
-                by_display[display_object_id] = item
-        eligible.append(
-            sorted(
-                by_display.values(),
-                key=lambda item: (float(item["distance"]), str(item["display_object_id"])),
-            )
-        )
-    display_ids = sorted(
-        {
-            str(score["display_object_id"])
-            for scores in eligible
-            for score in scores
-        }
-    )
-    if len(display_ids) > SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS:
-        raise ValueError(
-            "global identity assignment received more than five display candidates"
-        )
-    display_indexes = {
-        display_object_id: index
-        for index, display_object_id in enumerate(display_ids)
-    }
-    score_maps = [
-        {str(score["display_object_id"]): score for score in scores}
-        for scores in eligible
-    ]
-
-    # State: priority sum, distance, deterministic signature, per-candidate
-    # display index (-1 means unmatched). At a fixed used-display mask, only
-    # the highest-priority/lowest-cost prefix can improve any suffix.
-    DpState = tuple[int, float, tuple[str, ...], tuple[int, ...]]
-
-    def solve(
-        different_at: tuple[int, str | None] | None = None,
-    ) -> dict[str, Any] | None:
-        states: dict[int, DpState] = {0: (0, 0.0, (), ())}
-
-        def retain(mask: int, candidate: DpState, output: dict[int, DpState]) -> None:
-            current = output.get(mask)
-            candidate_rank = (-candidate[0], candidate[1], candidate[2])
-            current_rank = (
-                (-current[0], current[1], current[2])
-                if current is not None
-                else None
-            )
-            if current_rank is None or candidate_rank < current_rank:
-                output[mask] = candidate
-
-        for candidate_index, scores in enumerate(eligible):
-            next_states: dict[int, DpState] = {}
-            constrained = (
-                different_at is not None and different_at[0] == candidate_index
-            )
-            forbidden = different_at[1] if constrained else object()
-            for mask, state in states.items():
-                if not constrained or forbidden is not None:
-                    retain(
-                        mask,
-                        (
-                            state[0],
-                            state[1],
-                            (*state[2], "\uffff"),
-                            (*state[3], -1),
-                        ),
-                        next_states,
-                    )
-                for score in scores:
-                    display_object_id = str(score["display_object_id"])
-                    if constrained and forbidden == display_object_id:
-                        continue
-                    display_index = display_indexes[display_object_id]
-                    bit = 1 << display_index
-                    if mask & bit:
-                        continue
-                    retain(
-                        mask | bit,
-                        (
-                            state[0] + priorities[candidate_index],
-                            state[1] + float(score["distance"]),
-                            (*state[2], display_object_id),
-                            (*state[3], display_index),
-                        ),
-                        next_states,
-                    )
-            states = next_states
-            if not states:
-                return None
-
-        best_mask, best_state = min(
-            states.items(),
+                by_display[display_object_id] = score
+        scores = sorted(
+            by_display.values(),
             key=lambda item: (
-                -item[1][0],
-                -int(item[0]).bit_count(),
-                item[1][1],
-                item[1][2],
+                float(item["distance"]),
+                str(item["display_object_id"]),
             ),
         )
-        assignments = {
-            candidate_index: score_maps[candidate_index][display_ids[display_index]]
-            for candidate_index, display_index in enumerate(best_state[3])
-            if display_index >= 0
-        }
-        return {
-            "assignments": assignments,
-            "priority_matched_count": int(best_state[0]),
-            "matched_count": int(best_mask).bit_count(),
-            "total_distance": float(best_state[1]),
-        }
-
-    best = solve()
-    assert best is not None
-    assignments = best["assignments"]
-    best_priority_count = int(best["priority_matched_count"])
-    best_cardinality = int(best["matched_count"])
-    best_distance = float(best["total_distance"])
-    ambiguous_candidates: set[int] = set()
-    alternative_distances: list[float] = []
-    for candidate_index in range(len(eligible)):
-        selected_display = (
-            str(assignments[candidate_index]["display_object_id"])
-            if candidate_index in assignments
-            else None
-        )
-        alternative = solve((candidate_index, selected_display))
         if (
-            alternative is None
-            or int(alternative["priority_matched_count"]) != best_priority_count
-            or int(alternative["matched_count"]) != best_cardinality
+            not scores
+            or float(scores[0]["distance"])
+            > SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD
         ):
             continue
-        distance = float(alternative["total_distance"])
-        alternative_distances.append(distance)
+        margin = (
+            float(scores[1]["distance"])
+            - float(scores[0]["distance"])
+            if len(scores) > 1
+            else None
+        )
+        if margin is not None:
+            candidate_margins.append(margin)
         if (
             SHIGURE_IDENTITY_MATCH_REQUIRE_MARGIN
-            and distance - best_distance < SHIGURE_IDENTITY_MATCH_SECOND_MARGIN
+            and margin is not None
+            and margin < SHIGURE_IDENTITY_MATCH_SECOND_MARGIN
         ):
             ambiguous_candidates.add(candidate_index)
-    second_distance = min(alternative_distances, default=None)
+            continue
+        assignments[candidate_index] = scores[0]
+    total_distance = sum(
+        float(score["distance"]) for score in assignments.values()
+    )
     return {
         "assignments": assignments,
         "ambiguous_candidates": ambiguous_candidates,
-        "priority_matched_count": best_priority_count,
-        "matched_count": best_cardinality,
-        "total_distance": best_distance,
-        "second_total_distance": second_distance,
-        "assignment_margin": (
-            second_distance - best_distance if second_distance is not None else None
+        "priority_matched_count": sum(
+            priorities[index] for index in assignments
         ),
+        "matched_count": len(assignments),
+        "total_distance": total_distance,
+        "second_total_distance": None,
+        "assignment_margin": min(candidate_margins, default=None),
     }
 
 
@@ -568,15 +462,23 @@ class EventArtifacts:
 class LifecyclePoseCandidate:
     action: str
     canonical_event_uid: str
-    target_take_out_uid: str
     display_object_id: str
     raw_id: str
+    binding_id: str | None
+    resolution_method: str
     sequence: int
     stamp_seconds: float
     source_generation: int
+    source_epoch_id: str
     artifacts: EventArtifacts
     mask_center_aruco: np.ndarray | None
     dino_distance: float | None
+    identity: dict[str, Any]
+    skeleton: Any
+    calibration_revision: str | None
+    marker_rotation: np.ndarray | None
+    marker_translation: np.ndarray | None
+    occurred_at: str
 
 
 def _cleanup_event_artifacts(artifacts: EventArtifacts | None) -> None:
@@ -691,13 +593,16 @@ class ShigureRuntimeEngine:
         self._view_windows: dict[str, dict[str, Any]] = {}
         self._spatial_boxes: dict[str, SpatialBoxObservationState] = {}
         self._lifecycle_pose_windows: dict[str, dict[str, Any]] = {}
-        self._recent_take_out_targets: dict[tuple[str, str], dict[str, Any]] = {}
         self._last_geometry_stamp: tuple[int, int] | None = None
         self._runtime_obj_move_quarantine_active = False
         self._runtime_obj_move_barrier_stamp: tuple[int, int] | None = None
         self._last_camera_calibration: tuple[
             np.ndarray, np.ndarray, np.ndarray, str
         ] | None = None
+        self._mask_identity_attempts: dict[str, np.ndarray] = {}
+        self._initial_pose_attempts: dict[str, int] = {}
+        self._initial_pose_inflight: set[str] = set()
+        self._initial_pose_completed: set[str] = set()
 
     def start(self) -> None:
         with self._lock:
@@ -743,6 +648,16 @@ class ShigureRuntimeEngine:
             self._source_generation += 1
             pending_jobs = list(self._pending_holo_syncs.values())
             self._pending_holo_syncs.clear()
+            pending_lifecycle = [
+                candidate
+                for window in self._lifecycle_pose_windows.values()
+                for candidate in window["candidates"]
+            ]
+            self._lifecycle_pose_windows.clear()
+        self._reject_lifecycle_candidates(
+            pending_lifecycle,
+            reason="RUNTIME_STOPPED_DURING_LIFECYCLE_WINDOW",
+        )
         for job in pending_jobs:
             try:
                 self._record_holo_sync_status(
@@ -815,6 +730,11 @@ class ShigureRuntimeEngine:
 
     def _reset_epoch_local_runtime_state(self, *, holo_reason: str) -> None:
         with self._lock:
+            pending_lifecycle = [
+                candidate
+                for window in self._lifecycle_pose_windows.values()
+                for candidate in window["candidates"]
+            ]
             self._source_generation += 1
             self._startup_recovery_pending = True
             self._startup_recovery_attempts = 0
@@ -830,11 +750,14 @@ class ShigureRuntimeEngine:
             self._view_inflight.clear()
             self._spatial_boxes.clear()
             self._lifecycle_pose_windows.clear()
-            self._recent_take_out_targets.clear()
             self._last_geometry_stamp = None
             self._runtime_obj_move_quarantine_active = False
             self._runtime_obj_move_barrier_stamp = None
             self._last_camera_calibration = None
+            self._mask_identity_attempts.clear()
+            self._initial_pose_attempts.clear()
+            self._initial_pose_inflight.clear()
+            self._initial_pose_completed.clear()
             pending_jobs = list(self._pending_holo_syncs.values())
             for job in pending_jobs:
                 job.source_generation = self._source_generation
@@ -846,6 +769,10 @@ class ShigureRuntimeEngine:
                 job.last_attempt_source_key = ""
                 job.last_stable_source_key = ""
                 job.last_reason = str(holo_reason)
+        self._reject_lifecycle_candidates(
+            pending_lifecycle,
+            reason="SOURCE_EPOCH_CHANGED_DURING_LIFECYCLE_WINDOW",
+        )
         for job in pending_jobs:
             self._record_holo_sync_status(
                 job,
@@ -911,8 +838,11 @@ class ShigureRuntimeEngine:
         self._last_geometry_stamp = barrier_stamp
 
     def _maybe_startup_recovery(self, frame: CachedShigureFrame) -> None:
-        if self._startup_recovery_pending and self._startup_recovery(frame):
-            self._startup_recovery_pending = False
+        if self._startup_recovery_pending:
+            # Startup and steady-state identity use the same per-mask,
+            # HoloLens-only matcher. A global one-to-one assignment is
+            # incompatible with the required raw-ID aliases.
+            self._reconcile_mask_bindings(frame)
 
     def _sample_exact(self, frame: CachedShigureFrame) -> CachedRgbdSample | None:
         sample = self.cache.get_sample(frame.source_stamp)
@@ -1008,6 +938,91 @@ class ShigureRuntimeEngine:
             if not np.any(mask):
                 return "waiting_for_nonempty_candidate_mask"
         return None
+
+    @staticmethod
+    def _startup_recovery_complete_empty(
+        frame: CachedShigureFrame,
+    ) -> bool:
+        return (
+            not frame.recovery_candidates
+            and frame.input_states.get("segments") == "explicit_empty"
+            and frame.input_states.get("object_tracking")
+            == "explicit_empty"
+        )
+
+    def _startup_recovery_readiness_reason(
+        self,
+        frame: CachedShigureFrame,
+    ) -> str | None:
+        """Return why a non-empty startup snapshot cannot be reconciled yet."""
+
+        if self._startup_recovery_complete_empty(frame):
+            return None
+        if frame.input_states.get("segments") != "present":
+            return "waiting_for_present_segments_snapshot"
+        if frame.input_states.get("object_tracking") != "present":
+            return "waiting_for_present_object_tracking_snapshot"
+        if not frame.recovery_candidates:
+            return "waiting_for_explicit_empty_or_resolved_candidates"
+        calibrated_reason = self._startup_recovery_calibrated_input_reason(
+            frame
+        )
+        if calibrated_reason is not None:
+            return calibrated_reason
+        for index, candidate in enumerate(frame.recovery_candidates):
+            raw_id = str(
+                candidate.get("shigure_object_id") or ""
+            ).strip()
+            match_status = str(
+                candidate.get("tracking_match_status") or ""
+            ).upper()
+            if not raw_id or match_status != "RESOLVED":
+                candidate_id = str(
+                    candidate.get("candidate_id") or f"candidate_{index}"
+                )
+                return (
+                    "waiting_for_resolved_candidate_raw_id:"
+                    f"{candidate_id}"
+                )
+        return None
+
+    def _record_startup_recovery_pending(
+        self,
+        frame: CachedShigureFrame,
+        reason: str,
+    ) -> None:
+        report_root = self._persist_recovery_observation(frame, reason)
+        job_id = uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            (
+                f"shigure-recovery:{self.runtime_session_id}:"
+                f"{self.source_epoch_id}"
+            ),
+        ).hex
+        result = {
+            "schema_version": 1,
+            "status": "PENDING",
+            "reason": str(reason),
+            "frame_sequence": int(frame.sequence),
+            "source_stamp": frame.source_stamp.to_dict(),
+            "input_states": dict(frame.input_states),
+            "candidate_count": len(frame.recovery_candidates),
+            "candidates": [
+                self._recovery_candidate_summary(candidate)
+                for candidate in frame.recovery_candidates
+            ],
+        }
+        if report_root is not None:
+            result["debug_report_path"] = str(report_root / "report.json")
+        upsert_identity_sync_job(
+            sync_job_id=job_id,
+            kind="STARTUP_RECOVERY",
+            status="PENDING",
+            runtime_session_id=self.runtime_session_id,
+            source_epoch_id=self.source_epoch_id,
+            candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
+            result=result,
+        )
 
     def _persist_recovery_observation(
         self,
@@ -1145,16 +1160,14 @@ class ShigureRuntimeEngine:
         references = list_object_identity_references(display_object_id, limit=100)
         vectors: list[tuple[str, str, np.ndarray]] = []
         for reference in references:
+            if str(reference.get("source") or "").upper() != "HOLOLENS":
+                continue
             vector = self._ensure_reference_embedding(reference)
             if vector is not None:
                 vectors.append((str(reference["reference_id"]), str(reference["source"]), vector))
-        # Shigure views are the primary multi-view identity bank. Preserve the
-        # newest HoloLens view as an auxiliary condition even after Shigure
-        # references exist; its distance receives a source penalty below so it
-        # cannot displace an equally-good Shigure observation.
-        shigure = [item for item in vectors if item[1] == "SHIGURE"]
-        latest_hololens = next((item for item in vectors if item[1] == "HOLOLENS"), None)
-        return shigure + ([latest_hololens] if latest_hololens is not None else [])
+            if len(vectors) >= SHIGURE_IDENTITY_MAX_HOLOLENS_REFERENCES:
+                break
+        return vectors
 
     def _recent_display_ids(self) -> list[str]:
         rows = list_display_object_states(
@@ -1171,15 +1184,10 @@ class ShigureRuntimeEngine:
             candidates = []
             for reference_id, source, vector in references:
                 raw_distance = cosine_distance(observation, vector)
-                source_penalty = (
-                    SHIGURE_IDENTITY_HOLOLENS_DISTANCE_PENALTY
-                    if source == "HOLOLENS"
-                    else 0.0
-                )
                 candidates.append(
-                    (raw_distance + source_penalty, raw_distance, source_penalty, reference_id, source)
+                    (raw_distance, raw_distance, 0.0, reference_id, source)
                 )
-            best = min(candidates, key=lambda item: (item[0], item[4] != "SHIGURE", item[3]))
+            best = min(candidates, key=lambda item: (item[0], item[3]))
             scores.append(
                 {
                     "display_object_id": display_object_id,
@@ -1324,569 +1332,9 @@ class ShigureRuntimeEngine:
         raw_shigure_object_id: str,
         admission: Mapping[str, Any] | None = None,
     ) -> dict[str, Any] | None:
-        if artifacts.scene is None or artifacts.mask is None:
-            return None
-        resolved_admission = self._verify_shigure_view_admission(
-            display_object_id, embedding
-        )
-        if admission is not None and any(
-            str(admission.get(key) or "")
-            != str(resolved_admission.get(key) or "")
-            for key in (
-                "admission_status",
-                "admission_display_object_id",
-                "admission_reference_id",
-            )
-        ):
-            return None
-        if (
-            str(resolved_admission.get("admission_status") or "")
-            != "MATCHED"
-            or str(
-                resolved_admission.get("admission_display_object_id") or ""
-            )
-            != str(display_object_id)
-        ):
-            return None
-        identity_quality = {
-            **dict(quality),
-            **resolved_admission,
-            "admission_source_epoch_id": str(source_epoch_id),
-            "admission_binding_id": str(binding_id),
-            "admission_raw_shigure_object_id": str(
-                raw_shigure_object_id
-            ),
-        }
-        existing_vectors: list[np.ndarray] = []
-        for reference in list_object_identity_references(display_object_id, limit=100):
-            if str(reference.get("source") or "") != "SHIGURE":
-                continue
-            vector = self._ensure_reference_embedding(reference)
-            if vector is not None:
-                existing_vectors.append(vector)
-        novelty = min((cosine_distance(embedding, item) for item in existing_vectors), default=None)
-        if novelty is not None and novelty < SHIGURE_IDENTITY_VIEW_NOVELTY_DISTANCE:
-            return None
-        digest = hashlib.sha256()
-        digest.update(artifacts.scene.read_bytes())
-        digest.update(artifacts.mask.read_bytes())
-        view_digest = digest.hexdigest()
-        # Candidate inference files are temporary. Persist only a view that
-        # passed novelty filtering, under identity storage independent of the
-        # lifecycle/debug artifact tree.
-        view_root = IDENTITY_REFERENCE_ROOT / "views" / view_digest
-        persistent_scene = view_root / "scene.png"
-        persistent_mask = view_root / "mask.png"
-        scene_preexisted = persistent_scene.exists()
-        mask_preexisted = persistent_mask.exists()
-        _atomic_bytes(persistent_scene, artifacts.scene.read_bytes())
-        _atomic_bytes(persistent_mask, artifacts.mask.read_bytes())
-        try:
-            reference = add_object_identity_reference(
-                display_object_id=display_object_id,
-                source="SHIGURE",
-                source_event_uid=source_event_uid,
-                image_path=persistent_scene,
-                mask_path=persistent_mask,
-                view_hash=f"shigure:{view_digest}",
-                quality={
-                    **identity_quality,
-                    "novelty_distance": novelty,
-                },
-            )
-        except Exception:
-            if not scene_preexisted:
-                persistent_scene.unlink(missing_ok=True)
-            if not mask_preexisted:
-                persistent_mask.unlink(missing_ok=True)
-            try:
-                view_root.rmdir()
-            except OSError:
-                pass
-            raise
-        sidecar = self._embedding_sidecar(str(reference["reference_id"]), embedding_response)
-        return set_object_identity_reference_embedding(str(reference["reference_id"]), embedding_path=sidecar)
-
-    def _startup_recovery(self, frame: CachedShigureFrame) -> bool:
-        if not self.runtime_session_id or not self.source_epoch_id:
-            return False
-        complete_empty_snapshot = (
-            not frame.recovery_candidates
-            and frame.input_states.get("segments") == "explicit_empty"
-            and frame.input_states.get("object_tracking") == "explicit_empty"
-        )
-        if not frame.recovery_candidates and not complete_empty_snapshot:
-            self._persist_recovery_observation(
-                frame,
-                "waiting_for_nonempty_or_explicit_empty_recovery_snapshot",
-            )
-            return False
-        job_id = uuid.uuid5(
-            uuid.NAMESPACE_URL,
-            f"shigure-recovery:{self.runtime_session_id}:{self.source_epoch_id}",
-        ).hex
-        tracking_state = frame.input_states.get("object_tracking")
-        if frame.recovery_candidates and tracking_state != "present":
-            # Segments is often published before same-stamp tracking. Running
-            # DINO now can produce a terminal ambiguous/unbound decision before
-            # the only input that supplies the epoch-local raw ID arrives.
-            wait_reason = (
-                "waiting_for_same_stamp_tracking"
-                if tracking_state == "missing"
-                else "segments_nonempty_but_tracking_empty"
-            )
-            wait_root = self._persist_recovery_observation(frame, wait_reason)
-            upsert_identity_sync_job(
-                sync_job_id=job_id,
-                kind="STARTUP_RECOVERY",
-                status="PENDING",
-                runtime_session_id=self.runtime_session_id,
-                source_epoch_id=self.source_epoch_id,
-                candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
-                result={
-                    "frame_sequence": frame.sequence,
-                    "source_stamp": frame.source_stamp.to_dict(),
-                    "matches": [],
-                    "reason": wait_reason,
-                    "debug_report_path": (
-                        str(wait_root / "report.json")
-                        if wait_root is not None
-                        else None
-                    ),
-                },
-            )
-            return False
-        if frame.recovery_candidates:
-            tracked_candidates = [
-                candidate
-                for candidate in frame.recovery_candidates
-                if str(candidate.get("shigure_object_id") or "").strip()
-                and str(
-                    candidate.get("tracking_match_status") or ""
-                ).upper() == "RESOLVED"
-            ]
-            if not tracked_candidates:
-                wait_reason = (
-                    "waiting_for_same_object_segment_tracking_assignment"
-                )
-                wait_root = self._persist_recovery_observation(
-                    frame,
-                    wait_reason,
-                )
-                upsert_identity_sync_job(
-                    sync_job_id=job_id,
-                    kind="STARTUP_RECOVERY",
-                    status="PENDING",
-                    runtime_session_id=self.runtime_session_id,
-                    source_epoch_id=self.source_epoch_id,
-                    candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
-                    result={
-                        "reason": wait_reason,
-                        "input_candidate_count": len(
-                            frame.recovery_candidates
-                        ),
-                        "attempts": self._startup_recovery_attempts,
-                        "debug_report_path": (
-                            str(wait_root / "report.json")
-                            if wait_root is not None
-                            else None
-                        ),
-                    },
-                )
-                return False
-            input_candidate_count = len(frame.recovery_candidates)
-            frame = replace(
-                frame,
-                recovery_candidates=tracked_candidates,
-                diagnostics=[
-                    *frame.diagnostics,
-                    {
-                        "code": (
-                            "STARTUP_RECOVERY_TRACKED_CANDIDATES_ONLY"
-                        ),
-                        "input_candidate_count": input_candidate_count,
-                        "tracked_candidate_count": len(
-                            tracked_candidates
-                        ),
-                    },
-                ],
-            )
-        calibrated_input_reason = (
-            self._startup_recovery_calibrated_input_reason(frame)
-            if frame.recovery_candidates
-            else None
-        )
-        if calibrated_input_reason is not None:
-            wait_root = self._persist_recovery_observation(
-                frame,
-                calibrated_input_reason,
-            )
-            upsert_identity_sync_job(
-                sync_job_id=job_id,
-                kind="STARTUP_RECOVERY",
-                status="PENDING",
-                runtime_session_id=self.runtime_session_id,
-                source_epoch_id=self.source_epoch_id,
-                candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
-                result={
-                    "reason": calibrated_input_reason,
-                    "attempts": self._startup_recovery_attempts,
-                    "debug_report_path": (
-                        str(wait_root / "report.json")
-                        if wait_root is not None
-                        else None
-                    ),
-                },
-            )
-            return False
-        if complete_empty_snapshot:
-            upsert_identity_sync_job(
-                sync_job_id=job_id,
-                kind="STARTUP_RECOVERY",
-                status="COMPLETED",
-                runtime_session_id=self.runtime_session_id,
-                source_epoch_id=self.source_epoch_id,
-                candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
-                result={
-                    "frame_sequence": frame.sequence,
-                    "source_stamp": frame.source_stamp.to_dict(),
-                    "assignment": {
-                        "priority_matched_count": 0,
-                        "matched_count": 0,
-                        "total_distance": 0.0,
-                        "second_total_distance": None,
-                        "assignment_margin": None,
-                    },
-                    "matches": [],
-                    "reason": "complete_empty_recovery_snapshot",
-                },
-            )
-            return True
-        source_key = sample_key(frame.source_stamp)
-        attempt_monotonic = float(frame.received_monotonic)
-        if self._startup_recovery_last_source_key == source_key:
-            return False
-        if (
-            attempt_monotonic - self._startup_recovery_last_attempt_monotonic
-            < SHIGURE_STARTUP_RECOVERY_RETRY_SECONDS
-        ):
-            return False
-        self._startup_recovery_attempts += 1
-        self._startup_recovery_last_source_key = source_key
-        self._startup_recovery_last_attempt_monotonic = attempt_monotonic
-        attempt_root = (
-            self._recovery_debug_epoch_root()
-            / f"attempt_{self._startup_recovery_attempts:03d}_sequence_{int(frame.sequence):09d}"
-        )
-        input_artifacts = self._write_recovery_input_artifacts(
-            attempt_root,
-            frame,
-            self._sample_exact(frame),
-        )
-        _write_json(
-            attempt_root / "report.json",
-            {
-                "schema_version": 1,
-                "runtime_session_id": self.runtime_session_id,
-                "source_epoch_id": self.source_epoch_id,
-                "recorded_utc": _utc_now(),
-                "status": "RUNNING",
-                "attempt": self._startup_recovery_attempts,
-                "frame_sequence": int(frame.sequence),
-                "source_stamp": frame.source_stamp.to_dict(),
-                "input_states": dict(frame.input_states),
-                "canonical_diagnostics": list(frame.diagnostics),
-                "candidates": input_artifacts,
-            },
-        )
-        print(
-            "[shigure-v2] startup recovery attempt started: "
-            f"attempt={self._startup_recovery_attempts} "
-            f"report={attempt_root / 'report.json'}"
-        )
-
-        upsert_identity_sync_job(
-            sync_job_id=job_id,
-            kind="STARTUP_RECOVERY",
-            status="RUNNING",
-            runtime_session_id=self.runtime_session_id,
-            source_epoch_id=self.source_epoch_id,
-            candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
-        )
-        results: list[dict[str, Any]] = []
-        temporary_artifacts: list[EventArtifacts] = []
-        try:
-            sample = self._sample_exact(frame)
-            active_display_ids = {
-                str(item["display_object_id"])
-                for item in list_active_shigure_bindings(self.source_epoch_id)
-            }
-            display_ids = [item for item in self._recent_display_ids() if item not in active_display_ids]
-            candidates: list[dict[str, Any]] = []
-            if sample is not None:
-                for candidate in frame.recovery_candidates:
-                    raw_id = str(candidate.get("shigure_object_id") or "").strip()
-                    existing = (
-                        get_active_shigure_binding(
-                            source_epoch_id=self.source_epoch_id,
-                            raw_shigure_object_id=raw_id,
-                        )
-                        if raw_id
-                        else None
-                    )
-                    if existing is not None:
-                        state = get_display_object_state(str(existing["display_object_id"])) or {}
-                        if (
-                            str(state.get("presence") or "") != "PRESENT"
-                            or str(state.get("active_shigure_binding_id") or "")
-                            != str(existing["binding_id"])
-                        ):
-                            activate_recovered_shigure_binding(str(existing["binding_id"]))
-                        results.append(
-                            {
-                                "candidate_id": candidate.get("candidate_id"),
-                                "status": "BOUND",
-                                "raw_shigure_object_id": raw_id,
-                                "display_object_id": str(existing["display_object_id"]),
-                                "reason": "existing_epoch_binding",
-                            }
-                        )
-                        continue
-                    try:
-                        artifacts = self._candidate_artifacts(frame, candidate, sample)
-                        temporary_artifacts.append(artifacts)
-                        embedded = self._embed_artifacts(artifacts)
-                        if embedded is None:
-                            raise ValueError("candidate mask is unavailable")
-                        vector, response = embedded
-                        scores = self._identity_scores(vector, display_ids)
-                        candidates.append(
-                            {
-                                "candidate": candidate,
-                                "artifacts": artifacts,
-                                "embedding": vector,
-                                "response": response,
-                                "scores": scores,
-                            }
-                        )
-                    except Exception as exc:
-                        results.append({"candidate_id": candidate.get("candidate_id"), "status": "UNBOUND", "reason": str(exc)})
-            assignment = _global_identity_assignment(
-                [item["scores"] for item in candidates],
-                candidate_priorities=[
-                    1
-                    if str(item["candidate"].get("shigure_object_id") or "").strip()
-                    else 0
-                    for item in candidates
-                ],
-            )
-            assigned = assignment["assignments"]
-            ambiguous_candidates = assignment["ambiguous_candidates"]
-            assignment_summary = {
-                "priority_matched_count": assignment["priority_matched_count"],
-                "matched_count": assignment["matched_count"],
-                "total_distance": assignment["total_distance"],
-                "second_total_distance": assignment["second_total_distance"],
-                "assignment_margin": assignment["assignment_margin"],
-            }
-            for index, item in enumerate(candidates):
-                item = candidates[index]
-                candidate = item["candidate"]
-                raw_id = str(candidate.get("shigure_object_id") or "").strip()
-                selected = assigned.get(index)
-                if selected is None:
-                    has_viable_edge = any(
-                        float(score["distance"])
-                        <= SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD
-                        for score in item["scores"]
-                    )
-                    results.append(
-                        {
-                            "candidate_id": candidate.get("candidate_id"),
-                            "status": "UNBOUND",
-                            "reason": (
-                                "global_one_to_one_capacity"
-                                if has_viable_edge
-                                else "distance_threshold_or_no_identity_references"
-                            ),
-                            "scores": item["scores"],
-                        }
-                    )
-                    continue
-                display_object_id = str(selected["display_object_id"])
-                distance = float(selected["distance"])
-                decision = {
-                    "status": "MATCHED",
-                    "display_object_id": display_object_id,
-                    "distance": distance,
-                    "reference_id": selected.get("reference_id"),
-                    "reference_source": selected.get("reference_source"),
-                    **assignment_summary,
-                }
-                if index in ambiguous_candidates:
-                    results.append(
-                        {
-                            "candidate_id": candidate.get("candidate_id"),
-                            "status": "AMBIGUOUS",
-                            "display_object_id": display_object_id,
-                            "distance": distance,
-                            "reason": "global_assignment_margin",
-                            **assignment_summary,
-                        }
-                    )
-                    continue
-                if not raw_id:
-                    results.append(
-                        {
-                            "candidate_id": candidate.get("candidate_id"),
-                            "status": "PROVISIONAL",
-                            "display_object_id": display_object_id,
-                            "distance": distance,
-                            "reason": "segment_has_no_resolved_raw_id",
-                            **assignment_summary,
-                        }
-                    )
-                    continue
-                try:
-                    binding = establish_shigure_binding(
-                        runtime_session_id=self.runtime_session_id,
-                        source_epoch_id=self.source_epoch_id,
-                        raw_shigure_object_id=raw_id,
-                        display_object_id=display_object_id,
-                        established_by="STARTUP_DINO_GLOBAL_ONE_TO_ONE",
-                        confidence=max(0.0, 1.0 - distance),
-                        detail=decision,
-                    )
-                    state = get_display_object_state(display_object_id) or {}
-                    if (
-                        str(state.get("presence") or "") != "PRESENT"
-                        or str(state.get("active_shigure_binding_id") or "")
-                        != str(binding["binding_id"])
-                    ):
-                        activate_recovered_shigure_binding(str(binding["binding_id"]))
-                    results.append({"candidate_id": candidate.get("candidate_id"), "status": "BOUND", "raw_shigure_object_id": raw_id, "display_object_id": display_object_id, "distance": distance})
-                except Exception as exc:
-                    results.append({"candidate_id": candidate.get("candidate_id"), "status": "CONFLICT", "reason": str(exc)})
-            recovery_complete = (
-                bool(frame.recovery_candidates)
-                and len(results) == len(frame.recovery_candidates)
-                and all(
-                    str(item.get("status") or "") == "BOUND"
-                    for item in results
-                )
-            )
-            attempts_exhausted = (
-                self._startup_recovery_attempts
-                >= SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS
-            )
-            job_status = (
-                "COMPLETED"
-                if recovery_complete
-                else "FAILED" if attempts_exhausted else "PENDING"
-            )
-            reason = (
-                None
-                if recovery_complete
-                else (
-                    "retry_limit_reached_with_unresolved_candidates"
-                    if attempts_exhausted
-                    else "waiting_for_retryable_identity_decision"
-                )
-            )
-            upsert_identity_sync_job(
-                sync_job_id=job_id,
-                kind="STARTUP_RECOVERY",
-                status=job_status,
-                runtime_session_id=self.runtime_session_id,
-                source_epoch_id=self.source_epoch_id,
-                candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
-                result={
-                    "frame_sequence": frame.sequence,
-                    "source_stamp": frame.source_stamp.to_dict(),
-                    "assignment": assignment_summary,
-                    "matches": results,
-                    "attempts": self._startup_recovery_attempts,
-                    "max_attempts": SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS,
-                    "reason": reason,
-                    "debug_report_path": str(attempt_root / "report.json"),
-                },
-                error_message=reason if job_status == "FAILED" else None,
-            )
-            _write_json(
-                attempt_root / "report.json",
-                {
-                    "schema_version": 1,
-                    "runtime_session_id": self.runtime_session_id,
-                    "source_epoch_id": self.source_epoch_id,
-                    "recorded_utc": _utc_now(),
-                    "status": job_status,
-                    "reason": reason,
-                    "attempt": self._startup_recovery_attempts,
-                    "max_attempts": SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS,
-                    "frame_sequence": int(frame.sequence),
-                    "source_stamp": frame.source_stamp.to_dict(),
-                    "input_states": dict(frame.input_states),
-                    "canonical_diagnostics": list(frame.diagnostics),
-                    "assignment": assignment_summary,
-                    "matches": results,
-                    "candidates": input_artifacts,
-                },
-            )
-            print(
-                "[shigure-v2] startup recovery attempt finished: "
-                f"status={job_status} reason={reason} "
-                f"report={attempt_root / 'report.json'}"
-            )
-            return recovery_complete or attempts_exhausted
-        except Exception as exc:
-            attempts_exhausted = (
-                self._startup_recovery_attempts
-                >= SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS
-            )
-            failure_reason = f"startup_recovery_attempt_failed:{exc}"
-            upsert_identity_sync_job(
-                sync_job_id=job_id,
-                kind="STARTUP_RECOVERY",
-                status="FAILED" if attempts_exhausted else "PENDING",
-                runtime_session_id=self.runtime_session_id,
-                source_epoch_id=self.source_epoch_id,
-                candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
-                result={
-                    "partial": results,
-                    "attempts": self._startup_recovery_attempts,
-                    "max_attempts": SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS,
-                    "reason": failure_reason,
-                    "debug_report_path": str(attempt_root / "report.json"),
-                },
-                error_message=failure_reason if attempts_exhausted else None,
-            )
-            _write_json(
-                attempt_root / "report.json",
-                {
-                    "schema_version": 1,
-                    "runtime_session_id": self.runtime_session_id,
-                    "source_epoch_id": self.source_epoch_id,
-                    "recorded_utc": _utc_now(),
-                    "status": "FAILED" if attempts_exhausted else "PENDING",
-                    "reason": failure_reason,
-                    "attempt": self._startup_recovery_attempts,
-                    "max_attempts": SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS,
-                    "frame_sequence": int(frame.sequence),
-                    "source_stamp": frame.source_stamp.to_dict(),
-                    "input_states": dict(frame.input_states),
-                    "canonical_diagnostics": list(frame.diagnostics),
-                    "partial_matches": results,
-                    "candidates": input_artifacts,
-                },
-            )
-            print(
-                "[shigure-v2] startup recovery attempt exception: "
-                f"reason={failure_reason} report={attempt_root / 'report.json'}"
-            )
-            return attempts_exhausted
-        finally:
-            for artifacts in temporary_artifacts:
-                _cleanup_event_artifacts(artifacts)
+        # Shigure scene/mask artifacts are diagnostics and query observations,
+        # never long-term identity examples.
+        return None
 
     def _candidate_artifacts(
         self, frame: CachedShigureFrame, candidate: Mapping[str, Any], sample: CachedRgbdSample
@@ -1912,6 +1360,897 @@ class ShigureRuntimeEngine:
             _write_image(crop_path, crop)
         return EventArtifacts(scene, mask_path, crop_path, sample, mask, root)
 
+    def _mask_identity_attempt_is_new(
+        self, raw_id: str, mask: np.ndarray
+    ) -> bool:
+        """Return true only for a materially new mask for an unbound raw id."""
+
+        previous = self._mask_identity_attempts.get(str(raw_id))
+        if previous is not None and _mask_iou(previous, mask) >= 0.80:
+            return False
+        self._mask_identity_attempts[str(raw_id)] = np.asarray(
+            mask, dtype=bool
+        ).copy()
+        return True
+
+    @staticmethod
+    def _mask_depth_aabb_aruco(
+        sample: CachedRgbdSample, mask: np.ndarray
+    ) -> list[list[float]]:
+        """Build a robust ArUco-axis-aligned AABB from exact mask/depth."""
+
+        depth = np.asarray(sample.depth)
+        mask = np.asarray(mask, dtype=bool)
+        if depth.shape[:2] != mask.shape:
+            raise ValueError("mask/depth shapes differ")
+        valid = mask & np.isfinite(depth) & (depth > 0)
+        ys, xs = np.nonzero(valid)
+        if xs.size < 32:
+            raise ValueError("mask has fewer than 32 valid depth pixels")
+        if xs.size > 30000:
+            indexes = np.linspace(0, xs.size - 1, 30000).astype(np.int64)
+            xs, ys = xs[indexes], ys[indexes]
+        z = depth[ys, xs].astype(np.float64)
+        # Shigure publishes depth in millimetres.  The fallback keeps this
+        # helper usable with already-metric local regression fixtures.
+        if float(np.median(z)) > 20.0:
+            z *= 0.001
+        k = np.asarray(
+            sample.camera_info.get("k"), dtype=np.float64
+        ).reshape(3, 3)
+        if (
+            not np.isfinite(k).all()
+            or abs(float(k[0, 0])) < 1.0e-9
+            or abs(float(k[1, 1])) < 1.0e-9
+        ):
+            raise ValueError("camera intrinsics are invalid")
+        camera_points = np.column_stack(
+            (
+                (xs.astype(np.float64) - k[0, 2]) * z / k[0, 0],
+                (ys.astype(np.float64) - k[1, 2]) * z / k[1, 1],
+                z,
+                np.ones_like(z),
+            )
+        )
+        transform = np.asarray(_camera_to_aruco()[0], dtype=np.float64)
+        homogeneous = (transform @ camera_points.T).T
+        valid_w = np.isfinite(homogeneous).all(axis=1) & (
+            np.abs(homogeneous[:, 3]) > 1.0e-9
+        )
+        points = homogeneous[valid_w, :3] / homogeneous[valid_w, 3:4]
+        if points.shape[0] < 32:
+            raise ValueError("too few finite ArUco mask points")
+        minimum = np.percentile(points, 2.0, axis=0)
+        maximum = np.percentile(points, 98.0, axis=0)
+        center = (minimum + maximum) * 0.5
+        extent = np.maximum(maximum - minimum, 0.01)
+        if not np.isfinite(center).all() or not np.isfinite(extent).all():
+            raise ValueError("mask AABB is non-finite")
+        return _corners_from_center_extent(center, extent)
+
+    def _commit_primary_mask_box(
+        self,
+        binding: Mapping[str, Any],
+        frame: CachedShigureFrame,
+        sample: CachedRgbdSample,
+        mask: np.ndarray,
+    ) -> bool:
+        state = get_display_object_state(str(binding["display_object_id"])) or {}
+        if str(state.get("active_shigure_binding_id") or "") != str(
+            binding["binding_id"]
+        ):
+            return False
+        model_revision = int(state.get("active_model_revision") or 0)
+        if model_revision <= 0:
+            return False
+        corners = self._mask_depth_aabb_aruco(sample, mask)
+        result = update_shigure_live_observation(
+            binding_id=str(binding["binding_id"]),
+            observation_seq=int(frame.sequence),
+            model_revision=model_revision,
+            spatial_box_corners_aruco=corners,
+            spatial_box_observed=True,
+        )
+        return bool(result and result.get("_spatial_box_accepted"))
+
+    def _clear_primary_mask_box(
+        self,
+        binding: Mapping[str, Any],
+        frame: CachedShigureFrame,
+    ) -> bool:
+        """Publish an explicit no-box observation for the current primary."""
+
+        state = get_display_object_state(
+            str(binding["display_object_id"])
+        ) or {}
+        if str(state.get("active_shigure_binding_id") or "") != str(
+            binding["binding_id"]
+        ):
+            return False
+        model_revision = int(state.get("active_model_revision") or 0)
+        if model_revision <= 0:
+            return False
+        result = update_shigure_live_observation(
+            binding_id=str(binding["binding_id"]),
+            observation_seq=int(frame.sequence),
+            model_revision=model_revision,
+            spatial_box_corners_aruco=None,
+            spatial_box_observed=True,
+        )
+        return bool(result and result.get("_spatial_box_accepted"))
+
+    @staticmethod
+    def _select_primary_mask_observation(
+        observations: Mapping[str, Mapping[str, Any]],
+        primary_binding_id: str,
+        *,
+        complete_snapshot: bool,
+    ) -> Mapping[str, Any] | None:
+        """Select one primary, preferring the lower-distance new alias."""
+
+        def rank(observation: Mapping[str, Any]) -> tuple[str, int, float, str]:
+            binding = observation.get("binding")
+            binding = binding if isinstance(binding, Mapping) else {}
+            try:
+                binding_epoch = int(binding.get("binding_epoch") or 0)
+            except (TypeError, ValueError):
+                binding_epoch = 0
+            try:
+                confidence = float(binding.get("confidence") or 0.0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            return (
+                str(binding.get("valid_from") or ""),
+                binding_epoch,
+                confidence,
+                str(binding.get("binding_id") or ""),
+            )
+
+        current = observations.get(str(primary_binding_id or ""))
+        if current is not None:
+            current_distance = current.get("identity_distance")
+            try:
+                current_distance_value = (
+                    float(current_distance)
+                    if current_distance is not None
+                    else None
+                )
+            except (TypeError, ValueError):
+                current_distance_value = None
+            newcomers: list[tuple[float, Mapping[str, Any]]] = []
+            for observation in observations.values():
+                if observation is current or not bool(
+                    observation.get("new_binding")
+                ):
+                    continue
+                value = observation.get("identity_distance")
+                try:
+                    distance = float(value)
+                except (TypeError, ValueError):
+                    continue
+                if np.isfinite(distance):
+                    newcomers.append((distance, observation))
+            if current_distance_value is None or not np.isfinite(
+                current_distance_value
+            ) or not newcomers:
+                return current
+            best_distance = min(item[0] for item in newcomers)
+            best_newcomer = max(
+                (
+                    observation
+                    for distance, observation in newcomers
+                    if distance == best_distance
+                ),
+                key=rank,
+            )
+            return (
+                best_newcomer
+                if best_distance <= current_distance_value
+                else current
+            )
+        if not complete_snapshot or not observations:
+            return None
+
+        scored: list[tuple[float, Mapping[str, Any]]] = []
+        for observation in observations.values():
+            value = observation.get("identity_distance")
+            try:
+                distance = float(value)
+            except (TypeError, ValueError):
+                continue
+            if np.isfinite(distance):
+                scored.append((distance, observation))
+        if scored:
+            best_distance = min(item[0] for item in scored)
+            return max(
+                (
+                    observation
+                    for distance, observation in scored
+                    if distance == best_distance
+                ),
+                key=rank,
+            )
+
+        return max(observations.values(), key=rank)
+
+    def _initialization_artifacts(
+        self,
+        frame: CachedShigureFrame,
+        candidate: Mapping[str, Any],
+        sample: CachedRgbdSample,
+        display_object_id: str,
+        attempt: int,
+    ) -> tuple[EventArtifacts, Path]:
+        root = (
+            self._recovery_debug_epoch_root()
+            / "initialization"
+            / _safe_token(display_object_id, "display")
+            / f"attempt_{attempt:03d}_sequence_{int(frame.sequence):09d}"
+        )
+        root.mkdir(parents=True, exist_ok=True)
+        mask = _decode_full_mask(
+            candidate.get("mask_b64"), sample.rgb_bgr.shape[:2]
+        )
+        scene_path = root / "scene.png"
+        mask_path = root / "mask.png"
+        depth_path = root / "depth.png"
+        _write_image(scene_path, sample.rgb_bgr)
+        _write_image(mask_path, mask.astype(np.uint8) * 255)
+        _write_image(depth_path, np.asarray(sample.depth, dtype=np.uint16))
+        box = _bbox(candidate) or _mask_bbox(mask)
+        x0, y0, x1, y1 = [int(round(value)) for value in box]
+        x0, y0 = max(0, x0), max(0, y0)
+        x1 = min(sample.rgb_bgr.shape[1], x1)
+        y1 = min(sample.rgb_bgr.shape[0], y1)
+        crop_path: Path | None = None
+        if x1 > x0 and y1 > y0:
+            crop = sample.rgb_bgr[y0:y1, x0:x1].copy()
+            crop[~mask[y0:y1, x0:x1]] = 0
+            crop_path = root / "object_crop.png"
+            _write_image(crop_path, crop)
+        _write_json(
+            root / "report.json",
+            {
+                "schema_version": 1,
+                "status": "RUNNING",
+                "runtime_session_id": self.runtime_session_id,
+                "source_epoch_id": self.source_epoch_id,
+                "display_object_id": display_object_id,
+                "raw_shigure_object_id": candidate.get(
+                    "shigure_object_id"
+                ),
+                "attempt": attempt,
+                "frame_sequence": int(frame.sequence),
+                "source_stamp": frame.source_stamp.to_dict(),
+                "candidate": self._recovery_candidate_summary(candidate),
+                "scene_path": str(scene_path),
+                "mask_path": str(mask_path),
+                "depth_path": str(depth_path),
+                "crop_path": str(crop_path) if crop_path else None,
+            },
+        )
+        return (
+            EventArtifacts(
+                scene_path,
+                mask_path,
+                crop_path,
+                sample,
+                mask,
+                None,
+            ),
+            root,
+        )
+
+    def _schedule_initial_pose(
+        self,
+        *,
+        binding: Mapping[str, Any],
+        frame: CachedShigureFrame,
+        candidate: Mapping[str, Any],
+        sample: CachedRgbdSample,
+    ) -> bool:
+        try:
+            _camera_to_aruco()
+        except Exception:
+            self._persist_recovery_observation(
+                frame,
+                "initialization_waiting_for_shigure_camera_to_armarker_calibration",
+            )
+            return False
+        display_object_id = str(binding["display_object_id"])
+        state = get_display_object_state(display_object_id) or {}
+        model_revision = int(state.get("active_model_revision") or 0)
+        model_task_id = str(
+            state.get("active_model_task_id") or ""
+        ).strip()
+        model_task = (
+            get_task_by_task_id(model_task_id) if model_task_id else None
+        )
+        if (
+            model_revision <= 0
+            or not model_task
+            or str(model_task.get("status") or "") != "completed"
+        ):
+            # Display identity is intentionally established before a slow
+            # model-generation stage.  Waiting here must not burn one of the
+            # five real FoundationPose attempts; the bounded RGB-D cache and
+            # persistent recovery report retain the evidence meanwhile.
+            self._persist_recovery_observation(
+                frame,
+                "initialization_waiting_for_completed_model_artifacts",
+            )
+            return False
+        with self._lock:
+            if (
+                display_object_id in self._initial_pose_completed
+                or display_object_id in self._initial_pose_inflight
+            ):
+                return False
+            attempt = self._initial_pose_attempts.get(display_object_id, 0) + 1
+            if attempt > 5:
+                return False
+            self._initial_pose_attempts[display_object_id] = attempt
+            self._initial_pose_inflight.add(display_object_id)
+            generation = int(self._source_generation)
+        try:
+            artifacts, root = self._initialization_artifacts(
+                frame,
+                candidate,
+                sample,
+                display_object_id,
+                attempt,
+            )
+            self._pose_executor.submit(
+                self._run_initial_pose,
+                dict(binding),
+                int(frame.sequence),
+                artifacts,
+                root,
+                generation,
+                attempt,
+            )
+            return True
+        except Exception:
+            with self._lock:
+                self._initial_pose_inflight.discard(display_object_id)
+            raise
+
+    def _run_initial_pose(
+        self,
+        binding: Mapping[str, Any],
+        sequence: int,
+        artifacts: EventArtifacts,
+        report_root: Path,
+        source_generation: int,
+        attempt: int,
+    ) -> None:
+        display_object_id = str(binding["display_object_id"])
+        report_path = report_root / "report.json"
+        try:
+            if source_generation != self._source_generation:
+                raise RuntimeError("source epoch changed during initialization")
+            current = get_active_shigure_binding(
+                source_epoch_id=str(binding["source_epoch_id"]),
+                raw_shigure_object_id=str(binding["raw_shigure_object_id"]),
+            )
+            state = get_display_object_state(display_object_id) or {}
+            if (
+                current is None
+                or str(current["binding_id"]) != str(binding["binding_id"])
+                or str(state.get("active_shigure_binding_id") or "")
+                != str(binding["binding_id"])
+            ):
+                raise RuntimeError("initialization binding is no longer primary")
+            model_revision = int(state.get("active_model_revision") or 0)
+            if model_revision <= 0:
+                raise RuntimeError(
+                    "initialization active model revision is unavailable"
+                )
+            pose_aruco = self._foundationpose_pose(
+                display_object_id, sequence, artifacts
+            )
+            if source_generation != self._source_generation:
+                raise RuntimeError("source epoch changed after FoundationPose")
+            if str(self.source_epoch_id or "") != str(
+                binding["source_epoch_id"]
+            ):
+                raise RuntimeError(
+                    "source epoch identity changed after FoundationPose"
+                )
+            current = get_active_shigure_binding(
+                source_epoch_id=str(binding["source_epoch_id"]),
+                raw_shigure_object_id=str(
+                    binding["raw_shigure_object_id"]
+                ),
+            )
+            state = get_display_object_state(display_object_id) or {}
+            if (
+                current is None
+                or str(current["binding_id"]) != str(binding["binding_id"])
+                or str(state.get("active_shigure_binding_id") or "")
+                != str(binding["binding_id"])
+            ):
+                raise RuntimeError(
+                    "initialization binding changed during FoundationPose"
+                )
+            if int(state.get("active_model_revision") or 0) != model_revision:
+                raise RuntimeError(
+                    "initialization model revision changed during FoundationPose"
+                )
+            origin = add_display_object_origin(
+                display_object_id=display_object_id,
+                pose_aruco=pose_aruco,
+                kind="INITIALIZATION",
+                model_revision=model_revision,
+                source_epoch_id=str(binding["source_epoch_id"]),
+                binding_id=str(binding["binding_id"]),
+                raw_shigure_object_id=str(
+                    binding["raw_shigure_object_id"]
+                ),
+            )
+            with self._lock:
+                self._initial_pose_completed.add(display_object_id)
+            _write_json(
+                report_path,
+                {
+                    "schema_version": 1,
+                    "status": "COMPLETED",
+                    "runtime_session_id": self.runtime_session_id,
+                    "source_epoch_id": binding["source_epoch_id"],
+                    "display_object_id": display_object_id,
+                    "raw_shigure_object_id": binding[
+                        "raw_shigure_object_id"
+                    ],
+                    "attempt": attempt,
+                    "frame_sequence": sequence,
+                    "pose_aruco": pose_aruco,
+                    "origin_id": origin.get("id"),
+                    "origin_deduplicated": bool(
+                        origin.get("_deduplicated")
+                    ),
+                    "scene_path": str(artifacts.scene),
+                    "mask_path": str(artifacts.mask),
+                    "depth_path": str(report_root / "depth.png"),
+                },
+            )
+            print(
+                "[shigure-v2] initialization FoundationPose committed "
+                f"display={display_object_id} attempt={attempt} "
+                f"report={report_path}"
+            )
+        except Exception as exc:
+            _write_json(
+                report_path,
+                {
+                    "schema_version": 1,
+                    "status": "FAILED",
+                    "runtime_session_id": self.runtime_session_id,
+                    "source_epoch_id": binding.get("source_epoch_id"),
+                    "display_object_id": display_object_id,
+                    "raw_shigure_object_id": binding.get(
+                        "raw_shigure_object_id"
+                    ),
+                    "attempt": attempt,
+                    "frame_sequence": sequence,
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                    "scene_path": str(artifacts.scene),
+                    "mask_path": str(artifacts.mask),
+                    "depth_path": str(report_root / "depth.png"),
+                },
+            )
+            print(
+                "[shigure-v2] initialization FoundationPose failed "
+                f"display={display_object_id} attempt={attempt} "
+                f"error={exc} report={report_path}"
+            )
+        finally:
+            with self._lock:
+                self._initial_pose_inflight.discard(display_object_id)
+
+    def _reconcile_mask_bindings(self, frame: CachedShigureFrame) -> None:
+        """Reconcile new masks to Holo identities and publish primary AABBs."""
+
+        if not self.runtime_session_id or not self.source_epoch_id:
+            return
+        startup_complete_empty = self._startup_recovery_complete_empty(frame)
+        if self._startup_recovery_pending and not startup_complete_empty:
+            readiness_reason = self._startup_recovery_readiness_reason(frame)
+            if readiness_reason is not None:
+                self._record_startup_recovery_pending(
+                    frame, readiness_reason
+                )
+                return
+        sample = self._sample_exact(frame)
+        display_ids = self._recent_display_ids()
+        results: list[dict[str, Any]] = []
+        terminal_candidate_indexes: set[int] = set()
+        observed_primary_bindings: set[str] = set()
+        observations_by_display: dict[
+            str, dict[str, dict[str, Any]]
+        ] = {}
+        attempted_identity = False
+        complete_snapshot = (
+            frame.input_states.get("segments")
+            in {"present", "explicit_empty"}
+            and frame.input_states.get("object_tracking")
+            in {"present", "explicit_empty"}
+            and (sample is not None or not frame.recovery_candidates)
+        )
+
+        for candidate_index, candidate in enumerate(
+            frame.recovery_candidates
+        ):
+            raw_id = str(candidate.get("shigure_object_id") or "").strip()
+            if (
+                not raw_id
+                or str(candidate.get("tracking_match_status") or "").upper()
+                != "RESOLVED"
+                or sample is None
+            ):
+                continue
+            try:
+                mask = _decode_full_mask(
+                    candidate.get("mask_b64"), sample.rgb_bgr.shape[:2]
+                )
+            except Exception as exc:
+                results.append(
+                    {
+                        "candidate_id": candidate.get("candidate_id"),
+                        "raw_shigure_object_id": raw_id,
+                        "status": "UNBOUND",
+                        "reason": f"invalid_mask:{exc}",
+                    }
+                )
+                terminal_candidate_indexes.add(candidate_index)
+                continue
+
+            binding = get_active_shigure_binding(
+                source_epoch_id=self.source_epoch_id,
+                raw_shigure_object_id=raw_id,
+            )
+            temporary: EventArtifacts | None = None
+            identity_distance: float | None = None
+            new_binding = False
+            try:
+                if binding is None:
+                    if not self._mask_identity_attempt_is_new(raw_id, mask):
+                        terminal_candidate_indexes.add(candidate_index)
+                        results.append(
+                            {
+                                "candidate_id": candidate.get(
+                                    "candidate_id"
+                                ),
+                                "raw_shigure_object_id": raw_id,
+                                "status": "UNCHANGED_MASK_PRIOR_RESULT",
+                                "reason": (
+                                    "waiting_for_materially_new_mask_after_"
+                                    "prior_identity_attempt"
+                                ),
+                            }
+                        )
+                        continue
+                    attempted_identity = True
+                    temporary = self._candidate_artifacts(
+                        frame, candidate, sample
+                    )
+                    embedded = self._embed_artifacts(temporary)
+                    if embedded is None:
+                        raise ValueError("candidate has no query embedding")
+                    identity = self._select_identity(
+                        self._identity_scores(embedded[0], display_ids)
+                    )
+                    result = {
+                        "candidate_id": candidate.get("candidate_id"),
+                        "raw_shigure_object_id": raw_id,
+                        **identity,
+                    }
+                    if identity.get("status") != "MATCHED":
+                        results.append(result)
+                        terminal_candidate_indexes.add(candidate_index)
+                        continue
+                    identity_distance = float(identity["distance"])
+                    binding = establish_shigure_binding(
+                        runtime_session_id=self.runtime_session_id,
+                        source_epoch_id=self.source_epoch_id,
+                        raw_shigure_object_id=raw_id,
+                        display_object_id=str(
+                            identity["display_object_id"]
+                        ),
+                        established_by="NEW_MASK_HOLOLENS_DINOV2",
+                        confidence=max(
+                            0.0, 1.0 - float(identity["distance"])
+                        ),
+                        detail={
+                            **identity,
+                            "candidate_id": candidate.get("candidate_id"),
+                            "frame_sequence": int(frame.sequence),
+                            "mask_is_query_only": True,
+                        },
+                    )
+                    new_binding = True
+                    results.append({**result, "status": "BOUND_ALIAS"})
+
+                if not new_binding:
+                    results.append(
+                        {
+                            "candidate_id": candidate.get("candidate_id"),
+                            "raw_shigure_object_id": raw_id,
+                            "display_object_id": binding.get(
+                                "display_object_id"
+                            ),
+                            "binding_id": binding.get("binding_id"),
+                            "status": "BOUND_EXISTING_ALIAS",
+                        }
+                    )
+
+                display_object_id = str(binding["display_object_id"])
+                binding_id = str(binding["binding_id"])
+                observations_by_display.setdefault(
+                    display_object_id, {}
+                )[binding_id] = {
+                    "binding": dict(binding),
+                    "candidate": candidate,
+                    "mask": mask,
+                    "identity_distance": identity_distance,
+                    "new_binding": new_binding,
+                }
+                terminal_candidate_indexes.add(candidate_index)
+            except Exception as exc:
+                results.append(
+                    {
+                        "candidate_id": candidate.get("candidate_id"),
+                        "raw_shigure_object_id": raw_id,
+                        "status": "CONFLICT",
+                        "reason": f"{exc.__class__.__name__}: {exc}",
+                    }
+                )
+                terminal_candidate_indexes.add(candidate_index)
+            finally:
+                _cleanup_event_artifacts(temporary)
+
+        # Select after consuming the complete frame.  This lets a previously
+        # known alias become primary when the newer raw ID disappears, while a
+        # partial snapshot can only update the already-authoritative primary.
+        for display_object_id, observations in (
+            observations_by_display.items()
+        ):
+            state = get_display_object_state(display_object_id) or {}
+            primary_binding_id = str(
+                state.get("active_shigure_binding_id") or ""
+            )
+            primary_observation = observations.get(primary_binding_id)
+            if (
+                primary_observation is not None
+                and primary_observation.get("identity_distance") is None
+                and any(
+                    bool(observation.get("new_binding"))
+                    for observation in observations.values()
+                )
+            ):
+                primary_artifacts: EventArtifacts | None = None
+                try:
+                    primary_artifacts = self._candidate_artifacts(
+                        frame,
+                        primary_observation["candidate"],
+                        sample,
+                    )
+                    embedded = self._embed_artifacts(primary_artifacts)
+                    if embedded is None:
+                        raise ValueError("primary mask has no query embedding")
+                    primary_scores = self._identity_scores(
+                        embedded[0], [display_object_id]
+                    )
+                    if primary_scores:
+                        primary_observation["identity_distance"] = float(
+                            primary_scores[0]["distance"]
+                        )
+                except Exception as exc:
+                    results.append(
+                        {
+                            "display_object_id": display_object_id,
+                            "binding_id": primary_binding_id,
+                            "status": "PRIMARY_RETAINED",
+                            "reason": (
+                                "primary_competition_dino_unavailable:"
+                                f"{exc.__class__.__name__}:{exc}"
+                            ),
+                        }
+                    )
+                finally:
+                    _cleanup_event_artifacts(primary_artifacts)
+            selected = self._select_primary_mask_observation(
+                observations,
+                primary_binding_id,
+                complete_snapshot=complete_snapshot,
+            )
+            if selected is None:
+                continue
+            binding = selected["binding"]
+            binding_id = str(binding["binding_id"])
+            raw_id = str(binding["raw_shigure_object_id"])
+            latest_state = get_display_object_state(display_object_id) or {}
+            if (
+                binding_id
+                != str(latest_state.get("active_shigure_binding_id") or "")
+                or str(latest_state.get("presence") or "") != "PRESENT"
+            ):
+                try:
+                    activate_recovered_shigure_binding(binding_id)
+                    results.append(
+                        {
+                            "raw_shigure_object_id": raw_id,
+                            "display_object_id": display_object_id,
+                            "binding_id": binding_id,
+                            "status": "PRIMARY_ALIAS_PROMOTED",
+                            "reason": (
+                                "lower_dino_distance_or_previous_primary_missing"
+                            ),
+                        }
+                    )
+                except Exception as exc:
+                    results.append(
+                        {
+                            "raw_shigure_object_id": raw_id,
+                            "display_object_id": display_object_id,
+                            "binding_id": binding_id,
+                            "status": "CONFLICT",
+                            "reason": (
+                                "alias_promotion_failed:"
+                                f"{exc.__class__.__name__}:{exc}"
+                            ),
+                        }
+                    )
+                    continue
+
+            box_handled = False
+            try:
+                box_handled = self._commit_primary_mask_box(
+                    binding,
+                    frame,
+                    sample,
+                    np.asarray(selected["mask"], dtype=bool),
+                )
+            except Exception as exc:
+                print(
+                    "[shigure-v2] mask AABB unavailable; clearing stale box "
+                    f"display={display_object_id} raw={raw_id}: {exc}"
+                )
+                try:
+                    box_handled = self._clear_primary_mask_box(
+                        binding, frame
+                    )
+                except Exception as clear_exc:
+                    print(
+                        "[shigure-v2] mask AABB clear failed "
+                        f"display={display_object_id} raw={raw_id}: "
+                        f"{clear_exc}"
+                    )
+            if box_handled:
+                observed_primary_bindings.add(binding_id)
+            try:
+                self._schedule_initial_pose(
+                    binding=binding,
+                    frame=frame,
+                    candidate=selected["candidate"],
+                    sample=sample,
+                )
+            except Exception as exc:
+                results.append(
+                    {
+                        "raw_shigure_object_id": raw_id,
+                        "display_object_id": display_object_id,
+                        "binding_id": binding_id,
+                        "status": "CONFLICT",
+                        "reason": (
+                            "initialization_schedule_failed:"
+                            f"{exc.__class__.__name__}:{exc}"
+                        ),
+                    }
+                )
+
+        if complete_snapshot:
+            for binding in list_active_shigure_bindings(
+                self.source_epoch_id
+            ):
+                state = get_display_object_state(
+                    str(binding["display_object_id"])
+                ) or {}
+                binding_id = str(binding["binding_id"])
+                if (
+                    str(state.get("active_shigure_binding_id") or "")
+                    != binding_id
+                    or binding_id in observed_primary_bindings
+                ):
+                    continue
+                model_revision = int(
+                    state.get("active_model_revision") or 0
+                )
+                if model_revision <= 0:
+                    continue
+                update_shigure_live_observation(
+                    binding_id=binding_id,
+                    observation_seq=int(frame.sequence),
+                    model_revision=model_revision,
+                    spatial_box_corners_aruco=None,
+                    spatial_box_observed=True,
+                )
+
+        all_candidates_terminal = (
+            len(terminal_candidate_indexes)
+            == len(frame.recovery_candidates)
+        )
+        startup_recovery_complete = complete_snapshot and (
+            startup_complete_empty or all_candidates_terminal
+        )
+        if (
+            self._startup_recovery_pending
+            and complete_snapshot
+            and not startup_recovery_complete
+        ):
+            self._record_startup_recovery_pending(
+                frame, "waiting_for_terminal_candidate_results"
+            )
+        should_report = attempted_identity or (
+            self._startup_recovery_pending and startup_recovery_complete
+        )
+        if should_report:
+            root = (
+                self._recovery_debug_epoch_root()
+                / "mask_reconcile"
+                / f"sequence_{int(frame.sequence):09d}"
+            )
+            input_artifacts = self._write_recovery_input_artifacts(
+                root, frame, sample
+            )
+            report = {
+                "schema_version": 1,
+                "status": "COMPLETED",
+                "runtime_session_id": self.runtime_session_id,
+                "source_epoch_id": self.source_epoch_id,
+                "frame_sequence": int(frame.sequence),
+                "source_stamp": frame.source_stamp.to_dict(),
+                "identity_policy": {
+                    "reference_source": "HOLOLENS_ONLY",
+                    "views_per_display_object": (
+                        SHIGURE_IDENTITY_MAX_HOLOLENS_REFERENCES
+                    ),
+                    "new_mask_only": True,
+                    "query_masks_persisted_as_references": False,
+                },
+                "candidate_count": len(frame.recovery_candidates),
+                "results": results,
+                "candidates": input_artifacts,
+            }
+            _write_json(root / "report.json", report)
+            if (
+                self._startup_recovery_pending
+                and startup_recovery_complete
+            ):
+                job_id = uuid.uuid5(
+                    uuid.NAMESPACE_URL,
+                    (
+                        f"shigure-recovery:{self.runtime_session_id}:"
+                        f"{self.source_epoch_id}"
+                    ),
+                ).hex
+                upsert_identity_sync_job(
+                    sync_job_id=job_id,
+                    kind="STARTUP_RECOVERY",
+                    status="COMPLETED",
+                    runtime_session_id=self.runtime_session_id,
+                    source_epoch_id=self.source_epoch_id,
+                    candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
+                    result={
+                        **report,
+                        "debug_report_path": str(root / "report.json"),
+                    },
+                )
+                self._startup_recovery_pending = False
+            print(
+                "[shigure-v2] mask reconcile report "
+                f"results={len(results)} report={root / 'report.json'}"
+            )
+
     def queue_hololens_capture_sync(
         self,
         *,
@@ -1927,6 +2266,35 @@ class ShigureRuntimeEngine:
             uuid.NAMESPACE_URL,
             f"shigure-hololens-sync:{task_id}",
         ).hex
+
+        # The upload pipeline has already persisted the HoloLens identity
+        # reference.  Runtime binding is intentionally deferred until a new
+        # Shigure mask appears; no geometry/stability gate may bind here.
+        payload = {
+            "status": "COMPLETED",
+            "sync_job_id": job_id,
+            "display_object_id": str(display_object_id),
+            "task_id": str(task_id),
+            "reason": "hololens_reference_registered_waiting_for_new_shigure_mask",
+            "attempts": 0,
+            "method": "MASK_TRIGGERED_DINOV2",
+            "lifecycle_authority": "shigure_mask_reconcile",
+            "lifecycle_binding_changed": False,
+            "updated_utc": _utc_now(),
+        }
+        task["ShigureIdentitySync"] = payload
+        _write_json(path, task)
+        upsert_identity_sync_job(
+            sync_job_id=job_id,
+            kind="HOLOLENS_CAPTURE",
+            status="COMPLETED",
+            runtime_session_id=self.runtime_session_id,
+            source_epoch_id=self.source_epoch_id,
+            display_object_id=str(display_object_id),
+            candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
+            result=payload,
+        )
+        return payload
 
         def fail_validation(reason: str) -> dict[str, Any]:
             payload = {
@@ -2021,6 +2389,8 @@ class ShigureRuntimeEngine:
     def resume_unbound_hololens_capture_syncs(self) -> int:
         """Requeue latest active model syncs that have no Shigure binding."""
 
+        return 0
+
         resumed = 0
         # Resume only the most recently updated active model. Older unbound
         # models are not evidence that they are still present, and replaying
@@ -2106,6 +2476,7 @@ class ShigureRuntimeEngine:
         return payload
 
     def _schedule_hololens_syncs(self, frame: CachedShigureFrame) -> None:
+        return
         # Holo identity matching can only make a decision from a complete,
         # non-empty recovery snapshot. Segments/tracking/RGB-D arrive as
         # separate same-stamp revisions; missing or explicit-empty revisions
@@ -2743,13 +3114,37 @@ class ShigureRuntimeEngine:
                 return
             self._runtime_obj_move_quarantine_active = False
 
-        self._maybe_startup_recovery(frame)
-        for position, event in enumerate(frame.events):
+        lifecycle_in_frame = any(
+            str(event.get("action") or "").strip().lower()
+            in {"take_out", "bring_in"}
+            for event in frame.events
+            if isinstance(event, Mapping)
+        )
+        with self._lock:
+            lifecycle_window_pending = bool(
+                self._lifecycle_pose_windows
+            )
+        # Reconciliation can establish/activate a new mask binding, promote
+        # an alias, clear a box, or schedule initialization.  None of those
+        # writes may run before the lifecycle no-move decision for this frame
+        # (or while an earlier one-second window is still open).
+        if not lifecycle_in_frame and not lifecycle_window_pending:
+            self._reconcile_mask_bindings(frame)
+        ordered_events = sorted(
+            enumerate(frame.events),
+            key=lambda item: (
+                {
+                    "take_out": 0,
+                    "bring_in": 1,
+                }.get(
+                    str(item[1].get("action") or "").strip().lower(),
+                    2,
+                ),
+                item[0],
+            ),
+        )
+        for position, event in ordered_events:
             self._process_event(frame, event, position)
-        self._update_tracked_geometry(frame)
-        self._collect_stable_pose_candidates(frame)
-
-        self._schedule_hololens_syncs(frame)
 
     def _masked_center_aruco(
         self, artifacts: EventArtifacts
@@ -2805,9 +3200,16 @@ class ShigureRuntimeEngine:
         *,
         action: str,
         canonical_event_uid: str,
-        target_take_out_uid: str,
         display_object_id: str,
         raw_id: str,
+        binding_id: str | None,
+        resolution_method: str,
+        identity: Mapping[str, Any],
+        skeleton: Any,
+        calibration_revision: str | None,
+        marker_rotation: np.ndarray | None,
+        marker_translation: np.ndarray | None,
+        occurred_at: str,
         frame: CachedShigureFrame,
         artifacts: EventArtifacts,
     ) -> None:
@@ -2816,24 +3218,47 @@ class ShigureRuntimeEngine:
             center = self._masked_center_aruco(artifacts)
         except Exception as exc:
             print(f"[shigure-v2] lifecycle mask center unavailable: {exc}")
-        distance = self._event_identity_distance(
-            display_object_id, artifacts
+        identity_distance = identity.get("distance")
+        distance = (
+            float(identity_distance)
+            if identity_distance is not None
+            else self._event_identity_distance(
+                display_object_id, artifacts
+            )
         )
         candidate = LifecyclePoseCandidate(
             action=str(action),
             canonical_event_uid=str(canonical_event_uid),
-            target_take_out_uid=str(target_take_out_uid),
             display_object_id=str(display_object_id),
             raw_id=str(raw_id),
+            binding_id=(str(binding_id) if binding_id else None),
+            resolution_method=str(resolution_method),
             sequence=int(frame.sequence),
             stamp_seconds=(
                 float(frame.source_stamp.sec)
                 + float(frame.source_stamp.nanosec) * 1.0e-9
             ),
             source_generation=int(self._source_generation),
+            source_epoch_id=str(self.source_epoch_id or ""),
             artifacts=artifacts,
             mask_center_aruco=(center.copy() if center is not None else None),
             dino_distance=distance,
+            identity=dict(identity),
+            skeleton=skeleton,
+            calibration_revision=(
+                str(calibration_revision) if calibration_revision else None
+            ),
+            marker_rotation=(
+                np.asarray(marker_rotation, dtype=np.float64).copy()
+                if marker_rotation is not None
+                else None
+            ),
+            marker_translation=(
+                np.asarray(marker_translation, dtype=np.float64).copy()
+                if marker_translation is not None
+                else None
+            ),
+            occurred_at=str(occurred_at),
         )
         now = time.monotonic()
         with self._lock:
@@ -2854,13 +3279,41 @@ class ShigureRuntimeEngine:
                 window["candidates"].append(candidate)
             else:
                 previous = window["candidates"][existing_index]
+                previous_identity = (
+                    previous.action,
+                    previous.display_object_id,
+                    previous.raw_id,
+                    previous.binding_id,
+                    previous.source_epoch_id,
+                )
+                candidate_identity = (
+                    candidate.action,
+                    candidate.display_object_id,
+                    candidate.raw_id,
+                    candidate.binding_id,
+                    candidate.source_epoch_id,
+                )
+                if candidate_identity != previous_identity:
+                    print(
+                        "[shigure-v2] canonical lifecycle replay identity "
+                        "conflict ignored "
+                        f"event={candidate.canonical_event_uid} "
+                        f"stored={previous_identity} incoming={candidate_identity}"
+                    )
+                    return
                 previous_quality = (
                     previous.mask_center_aruco is not None,
                     previous.dino_distance is not None,
+                    -float(previous.dino_distance)
+                    if previous.dino_distance is not None
+                    else float("-inf"),
                 )
                 candidate_quality = (
                     candidate.mask_center_aruco is not None,
                     candidate.dino_distance is not None,
+                    -float(candidate.dino_distance)
+                    if candidate.dino_distance is not None
+                    else float("-inf"),
                 )
                 if candidate_quality > previous_quality:
                     window["candidates"][existing_index] = candidate
@@ -2926,18 +3379,78 @@ class ShigureRuntimeEngine:
                     (display_object_id, list(window["candidates"]))
                 )
                 self._lifecycle_pose_windows.pop(display_object_id, None)
-            self._recent_take_out_targets = {
-                key: value
-                for key, value in self._recent_take_out_targets.items()
-                if float(value.get("expires", 0.0))
-                >= float(now_monotonic)
-            }
         for display_object_id, candidates in ready:
-            self._pose_executor.submit(
-                self._run_lifecycle_pose_window,
-                display_object_id,
-                candidates,
+            # Identity/presence decisions must not wait behind a long-running
+            # FoundationPose job.  Only the pose estimation itself is queued.
+            self._run_lifecycle_pose_window(display_object_id, candidates)
+
+    def _has_pending_take_out(self, display_object_id: str) -> bool:
+        with self._lock:
+            window = self._lifecycle_pose_windows.get(str(display_object_id))
+            return bool(
+                window
+                and any(
+                    candidate.action == "take_out"
+                    for candidate in window["candidates"]
+                )
             )
+
+    def _reject_lifecycle_candidates(
+        self,
+        candidates: Sequence[LifecyclePoseCandidate],
+        *,
+        reason: str,
+        detail: Mapping[str, Any] | None = None,
+    ) -> None:
+        seen: set[str] = set()
+        for candidate in candidates:
+            if candidate.canonical_event_uid in seen:
+                continue
+            seen.add(candidate.canonical_event_uid)
+            audit = {
+                "lifecycle_window": {
+                    "action": candidate.action,
+                    "display_object_id": candidate.display_object_id,
+                    "raw_shigure_object_id": candidate.raw_id,
+                    "sequence": candidate.sequence,
+                    "source_generation": candidate.source_generation,
+                    "source_epoch_id": candidate.source_epoch_id,
+                }
+            }
+            if detail:
+                audit["lifecycle_window"].update(dict(detail))
+            try:
+                reject_pending_shigure_canonical_event(
+                    candidate.canonical_event_uid,
+                    reason=reason,
+                    detail=audit,
+                )
+            except Exception as exc:
+                print(
+                    "[shigure-v2] failed to reject lifecycle candidate "
+                    f"event={candidate.canonical_event_uid} reason={reason}: "
+                    f"{exc}"
+                )
+
+    @staticmethod
+    def _lifecycle_movement_distance(
+        take_out: LifecyclePoseCandidate | None,
+        bring_in: LifecyclePoseCandidate | None,
+    ) -> float | None:
+        if (
+            take_out is None
+            or bring_in is None
+            or take_out.mask_center_aruco is None
+            or bring_in.mask_center_aruco is None
+            or abs(bring_in.stamp_seconds - take_out.stamp_seconds)
+            > SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS
+        ):
+            return None
+        return float(
+            np.linalg.norm(
+                bring_in.mask_center_aruco - take_out.mask_center_aruco
+            )
+        )
 
     def _run_lifecycle_pose_window(
         self,
@@ -2945,10 +3458,29 @@ class ShigureRuntimeEngine:
         candidates: Sequence[LifecyclePoseCandidate],
     ) -> None:
         take_out = self._choose_lifecycle_candidate(candidates, "take_out")
-        bring_in = self._choose_lifecycle_candidate(candidates, "bring_in")
         if take_out is None:
+            self._reject_lifecycle_candidates(
+                candidates,
+                reason="LIFECYCLE_WINDOW_HAS_NO_TAKE_OUT",
+            )
             return
-        if take_out.source_generation != self._source_generation:
+        bring_in = self._choose_lifecycle_candidate(
+            [
+                candidate
+                for candidate in candidates
+                if candidate.action == "bring_in"
+                and candidate.stamp_seconds >= take_out.stamp_seconds
+            ],
+            "bring_in",
+        )
+        if (
+            take_out.source_generation != self._source_generation
+            or take_out.source_epoch_id != str(self.source_epoch_id or "")
+        ):
+            self._reject_lifecycle_candidates(
+                candidates,
+                reason="STALE_LIFECYCLE_SOURCE_EPOCH",
+            )
             return
         print(
             "[shigure-v2] lifecycle pose window selected "
@@ -2959,20 +3491,9 @@ class ShigureRuntimeEngine:
             f"bring_in_dino="
             f"{bring_in.dino_distance if bring_in is not None else None}"
         )
-        movement_distance = None
-        if (
-            bring_in is not None
-            and take_out.mask_center_aruco is not None
-            and bring_in.mask_center_aruco is not None
-            and abs(bring_in.stamp_seconds - take_out.stamp_seconds)
-            <= SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS
-        ):
-            movement_distance = float(
-                np.linalg.norm(
-                    bring_in.mask_center_aruco
-                    - take_out.mask_center_aruco
-                )
-            )
+        movement_distance = self._lifecycle_movement_distance(
+            take_out, bring_in
+        )
         if (
             movement_distance is not None
             and movement_distance < SHIGURE_LIFECYCLE_NO_MOVE_DISTANCE_M
@@ -2982,36 +3503,259 @@ class ShigureRuntimeEngine:
                 f"occlusion/no-move display={display_object_id} "
                 f"mask_move_m={movement_distance:.6f}"
             )
-            return
-        try:
-            pose_aruco = self._foundationpose_pose_for_lifecycle(
-                take_out
+            self._reject_lifecycle_candidates(
+                candidates,
+                reason="NO_MOVE_MASK_CENTER_LT_20CM",
+                detail={
+                    "mask_move_m": movement_distance,
+                    "selected_take_out_event_uid": (
+                        take_out.canonical_event_uid
+                    ),
+                    "selected_bring_in_event_uid": (
+                        bring_in.canonical_event_uid
+                        if bring_in is not None
+                        else None
+                    ),
+                },
             )
+            return
+
+        selected_uids = {take_out.canonical_event_uid}
+        if bring_in is not None:
+            selected_uids.add(bring_in.canonical_event_uid)
+        self._reject_lifecycle_candidates(
+            [
+                candidate
+                for candidate in candidates
+                if candidate.canonical_event_uid not in selected_uids
+            ],
+            reason="LIFECYCLE_WINDOW_CANDIDATE_NOT_SELECTED",
+            detail={
+                "selected_take_out_event_uid": take_out.canonical_event_uid,
+                "selected_bring_in_event_uid": (
+                    bring_in.canonical_event_uid
+                    if bring_in is not None
+                    else None
+                ),
+                "mask_move_m": movement_distance,
+            },
+        )
+
+        active_take_out = (
+            get_active_shigure_binding(
+                source_epoch_id=take_out.source_epoch_id,
+                raw_shigure_object_id=take_out.raw_id,
+            )
+            if take_out.binding_id
+            else None
+        )
+        if (
+            active_take_out is None
+            or str(active_take_out["binding_id"]) != take_out.binding_id
+            or str(active_take_out["display_object_id"])
+            != str(display_object_id)
+        ):
+            self._reject_lifecycle_candidates(
+                [take_out] + ([bring_in] if bring_in is not None else []),
+                reason="TAKE_OUT_BINDING_CHANGED_DURING_WINDOW",
+            )
+            return
+
+        aliases = [
+            binding
+            for binding in list_active_shigure_bindings(
+                take_out.source_epoch_id
+            )
+            if str(binding["display_object_id"]) == str(display_object_id)
+        ]
+        audit = {
+            "selected_take_out_event_uid": take_out.canonical_event_uid,
+            "selected_bring_in_event_uid": (
+                bring_in.canonical_event_uid if bring_in is not None else None
+            ),
+            "mask_move_m": movement_distance,
+            "take_out_dino_distance": take_out.dino_distance,
+            "bring_in_dino_distance": (
+                bring_in.dino_distance if bring_in is not None else None
+            ),
+        }
+        try:
+            committed_take_out = commit_pending_take_out_lifecycle_event(
+                take_out.canonical_event_uid,
+                binding_id=take_out.binding_id,
+                display_object_id=str(display_object_id),
+                raw_id=take_out.raw_id,
+                resolution_method=take_out.resolution_method,
+                detail={"lifecycle_window": audit},
+                skeleton=take_out.skeleton,
+                calibration_revision=take_out.calibration_revision,
+                occurred_at=take_out.occurred_at,
+            )
+            lifecycle = committed_take_out["lifecycle_event"]
+        except Exception as exc:
+            print(
+                "[shigure-v2] deferred take_out commit failed "
+                f"for {display_object_id}: {exc}"
+            )
+            if bring_in is not None:
+                self._reject_lifecycle_candidates(
+                    [bring_in], reason="TAKE_OUT_COMMIT_FAILED"
+                )
+            return
+
+        with self._lock:
+            for alias in aliases:
+                alias_raw = str(alias["raw_shigure_object_id"])
+                self._view_windows.pop(alias_raw, None)
+                self._spatial_boxes.pop(str(alias["binding_id"]), None)
+                self._stable.pop(alias_raw, None)
+                self._last_stable_source_key.pop(alias_raw, None)
+                self._last_view_sequence.pop(alias_raw, None)
+
+        if bring_in is not None:
+            try:
+                distance = bring_in.identity.get("distance")
+                if distance is None:
+                    distance = bring_in.dino_distance
+                confidence = (
+                    max(0.0, 1.0 - float(distance))
+                    if distance is not None
+                    else None
+                )
+                committed_bring_in = commit_pending_bring_in_lifecycle_event(
+                    bring_in.canonical_event_uid,
+                    runtime_session_id=str(self.runtime_session_id),
+                    source_epoch_id=bring_in.source_epoch_id,
+                    raw_id=bring_in.raw_id,
+                    display_object_id=str(display_object_id),
+                    resolution_method=bring_in.resolution_method,
+                    confidence=confidence,
+                    binding_detail={
+                        **bring_in.identity,
+                        "lifecycle_window": audit,
+                    },
+                    resolution_detail={"lifecycle_window": audit},
+                    skeleton=bring_in.skeleton,
+                    calibration_revision=bring_in.calibration_revision,
+                    occurred_at=bring_in.occurred_at,
+                )
+                bring_in_binding = committed_bring_in["binding"]
+                with self._lock:
+                    self._view_windows[bring_in.raw_id] = {
+                        "display_object_id": str(display_object_id),
+                        "source_generation": self._source_generation,
+                        "attempts": 0,
+                        "added": 0,
+                    }
+            except Exception as exc:
+                print(
+                    "[shigure-v2] deferred bring_in commit failed "
+                    f"for {display_object_id}: {exc}"
+                )
+                self._reject_lifecycle_candidates(
+                    [bring_in], reason="BRING_IN_COMMIT_FAILED"
+                )
+
+        try:
+            self._pose_executor.submit(
+                self._run_take_out_foundationpose,
+                take_out,
+                movement_distance,
+                int(lifecycle.get("model_revision") or 0),
+            )
+        except RuntimeError as exc:
+            print(
+                "[shigure-v2] take_out FoundationPose was not queued "
+                f"for {display_object_id}: {exc}"
+            )
+
+    def _run_take_out_foundationpose(
+        self,
+        take_out: LifecyclePoseCandidate,
+        movement_distance: float | None,
+        model_revision: int,
+    ) -> None:
+        try:
+            if (
+                take_out.source_generation != self._source_generation
+                or take_out.source_epoch_id
+                != str(self.source_epoch_id or "")
+            ):
+                raise RuntimeError(
+                    "source epoch changed before take_out FoundationPose"
+                )
+            state = get_display_object_state(take_out.display_object_id) or {}
+            if int(state.get("active_model_revision") or 0) != model_revision:
+                raise RuntimeError(
+                    "model revision changed before take_out FoundationPose"
+                )
+            pose_aruco = self._foundationpose_pose_for_lifecycle(take_out)
+            state = get_display_object_state(take_out.display_object_id) or {}
+            if (
+                take_out.source_generation != self._source_generation
+                or take_out.source_epoch_id
+                != str(self.source_epoch_id or "")
+                or int(state.get("active_model_revision") or 0)
+                != model_revision
+            ):
+                raise RuntimeError(
+                    "source epoch/model changed during take_out FoundationPose"
+                )
             apply_object_lifecycle_event(
-                canonical_event_uid=take_out.target_take_out_uid,
+                canonical_event_uid=take_out.canonical_event_uid,
                 pose_aruco=pose_aruco,
+            )
+            origin = add_display_object_origin(
+                display_object_id=take_out.display_object_id,
+                pose_aruco=pose_aruco,
+                kind="TAKE_OUT",
+                model_revision=model_revision,
+                source_epoch_id=take_out.source_epoch_id,
+                canonical_event_uid=take_out.canonical_event_uid,
+                raw_shigure_object_id=take_out.raw_id,
+                occurred_at=take_out.occurred_at,
+                dedup_distance_m=SHIGURE_LIFECYCLE_NO_MOVE_DISTANCE_M,
             )
             print(
                 "[shigure-v2] take_out FoundationPose committed "
-                f"display={display_object_id} selected_event="
-                f"{take_out.canonical_event_uid} target_history="
-                f"{take_out.target_take_out_uid} dino_distance="
-                f"{take_out.dino_distance} mask_move_m={movement_distance}"
+                f"display={take_out.display_object_id} selected_event="
+                f"{take_out.canonical_event_uid} dino_distance="
+                f"{take_out.dino_distance} mask_move_m={movement_distance} "
+                f"origin_id={origin.get('id')} "
+                f"origin_deduplicated={bool(origin.get('_deduplicated'))}"
             )
         except Exception as exc:
             print(
                 "[shigure-v2] take_out FoundationPose failed "
-                f"for {display_object_id}: {exc}"
+                f"for {take_out.display_object_id}: {exc}"
             )
 
     def _foundationpose_pose_for_lifecycle(
         self, candidate: LifecyclePoseCandidate
     ) -> dict[str, Any]:
-        artifacts = candidate.artifacts
+        return self._foundationpose_pose(
+            candidate.display_object_id,
+            candidate.sequence,
+            candidate.artifacts,
+            marker_calibration=(
+                (candidate.marker_rotation, candidate.marker_translation)
+                if candidate.marker_rotation is not None
+                and candidate.marker_translation is not None
+                else None
+            ),
+        )
+
+    def _foundationpose_pose(
+        self,
+        display_object_id: str,
+        sequence: int,
+        artifacts: EventArtifacts,
+        marker_calibration: tuple[np.ndarray, np.ndarray] | None = None,
+    ) -> dict[str, Any]:
         sample = artifacts.sample
         if sample is None or artifacts.mask_array is None:
-            raise ValueError("take_out requires exact RGB-D and a full mask")
-        state = get_display_object_state(candidate.display_object_id) or {}
+            raise ValueError("FoundationPose requires exact RGB-D and a full mask")
+        state = get_display_object_state(display_object_id) or {}
         model_revision = int(state.get("active_model_revision") or 0)
         task_row = get_task_by_task_id(
             str(state.get("active_model_task_id") or "")
@@ -3029,7 +3773,7 @@ class ShigureRuntimeEngine:
         if scale <= 0.0:
             raise RuntimeError("active model scale is missing")
         snapshot = self._foundationpose_snapshot(
-            {"sequence": candidate.sequence}, artifacts, sample
+            {"sequence": int(sequence)}, artifacts, sample
         )
         response = self.foundationpose_request(
             {
@@ -3041,7 +3785,7 @@ class ShigureRuntimeEngine:
                 "model_scale": scale,
                 "iteration": 5,
             },
-            candidate.display_object_id,
+            display_object_id,
         )
         if not response.get("ok"):
             raise RuntimeError(str(response.get("error") or "FoundationPose failed"))
@@ -3060,7 +3804,9 @@ class ShigureRuntimeEngine:
         )
         if not quality["accepted"]:
             raise RuntimeError(f"FoundationPose quality rejected: {quality}")
-        return self._foundationpose_to_aruco_pose(pose_cv, scale)
+        return self._foundationpose_to_aruco_pose(
+            pose_cv, scale, marker_calibration=marker_calibration
+        )
 
     def _process_event(self, frame: CachedShigureFrame, event: Mapping[str, Any], position: int) -> None:
         if not self.runtime_session_id or not self.source_epoch_id:
@@ -3097,8 +3843,14 @@ class ShigureRuntimeEngine:
         artifacts = self._event_artifacts(frame, event)
         skeleton = None
         calibration_revision = None
+        marker_rotation = None
+        marker_translation = None
         try:
             _transform, rotation, translation, calibration_revision = _camera_to_aruco()
+            marker_rotation = np.asarray(rotation, dtype=np.float64).copy()
+            marker_translation = np.asarray(
+                translation, dtype=np.float64
+            ).copy()
             person = _event_person(event)
             if person is None:
                 person = _nearest_person(frame.people, box)
@@ -3111,7 +3863,9 @@ class ShigureRuntimeEngine:
         resolution_method = None
         identity: dict[str, Any] = {}
         embedded: tuple[np.ndarray, dict[str, Any]] | None = None
-        recent_take_out: dict[str, Any] | None = None
+        candidate_display_id = ""
+        candidate_binding_id: str | None = None
+        defer_lifecycle = False
         if action == "obj_move":
             resolution_status = "REJECTED"
             identity = {
@@ -3123,62 +3877,104 @@ class ShigureRuntimeEngine:
             }
         elif adapter_status != "RESOLVED" or not raw_id:
             resolution_status = "UNRESOLVED"
-        elif binding is not None:
-            resolution_status = "RESOLVED"
-            resolution_method = "TRUSTED_EPOCH_BINDING"
         elif action == "take_out":
-            # The first event revokes the active binding immediately. Keep
-            # accepting same-raw-ID observations inside the one-second
-            # selection window as pose candidates, but never as a second
-            # lifecycle transition.
-            recent_take_out = self._recent_take_out_targets.get(
-                (str(self.source_epoch_id), raw_id)
-            )
-            if (
-                recent_take_out is not None
-                and time.monotonic()
-                <= float(recent_take_out.get("expires", 0.0))
-            ):
+            if binding is not None:
+                candidate_display_id = str(binding["display_object_id"])
+                candidate_binding_id = str(binding["binding_id"])
+                defer_lifecycle = True
                 resolution_status = "UNRESOLVED"
+                resolution_method = "TAKE_OUT_WINDOW"
                 identity = {
-                    "reason": "takeout_pose_candidate_after_binding_release",
-                    "display_object_id": recent_take_out["display_object_id"],
-                    "target_take_out_uid": recent_take_out["canonical_event_uid"],
+                    "status": "PENDING",
+                    "reason": "awaiting_lifecycle_no_move_window",
+                    "display_object_id": candidate_display_id,
+                    "binding_id": candidate_binding_id,
                     "dino_attempted": True,
                 }
             else:
-                recent_take_out = None
                 resolution_status = "UNRESOLVED"
                 identity = {
                     "reason": "takeout_has_no_epoch_binding",
                     "dino_attempted": False,
                 }
         elif action == "bring_in":
-            try:
-                embedded = self._embed_artifacts(artifacts)
-                if embedded is None:
-                    raise ValueError("bring-in has no valid full-frame mask")
-                active_displays = {str(row["display_object_id"]) for row in list_active_shigure_bindings(self.source_epoch_id)}
-                display_ids = [item for item in self._recent_display_ids() if item not in active_displays]
-                identity = self._select_identity(self._identity_scores(embedded[0], display_ids))
-                if identity.get("status") == "MATCHED":
-                    binding = establish_shigure_binding(
-                        runtime_session_id=self.runtime_session_id,
-                        source_epoch_id=self.source_epoch_id,
-                        raw_shigure_object_id=raw_id,
-                        display_object_id=str(identity["display_object_id"]),
-                        established_by="BRING_IN_DINO",
-                        established_event_uid=str(event.get("event_uid") or "") or None,
-                        confidence=max(0.0, 1.0 - float(identity["distance"])),
-                        detail=identity,
+            if binding is not None:
+                candidate_display_id = str(binding["display_object_id"])
+                if self._has_pending_take_out(candidate_display_id):
+                    defer_lifecycle = True
+                    resolution_status = "UNRESOLVED"
+                    resolution_method = "BRING_IN_EPOCH_WINDOW"
+                    current_distance = self._event_identity_distance(
+                        candidate_display_id,
+                        artifacts,
                     )
-                    resolution_status = "RESOLVED"
-                    resolution_method = "BRING_IN_DINO"
+                    identity = {
+                        "status": "MATCHED",
+                        "reason": "trusted_binding_awaiting_take_out_window",
+                        "display_object_id": candidate_display_id,
+                        "previous_binding_id": str(binding["binding_id"]),
+                        "distance": current_distance,
+                        "dino_attempted": True,
+                    }
                 else:
-                    resolution_status = "AMBIGUOUS" if identity.get("status") == "AMBIGUOUS" else "UNRESOLVED"
-            except Exception as exc:
-                resolution_status = "UNRESOLVED"
-                identity = {"status": "UNBOUND", "reason": str(exc)}
+                    resolution_status = "RESOLVED"
+                    resolution_method = "TRUSTED_EPOCH_BINDING"
+            else:
+                try:
+                    embedded = self._embed_artifacts(artifacts)
+                    if embedded is None:
+                        raise ValueError("bring-in has no valid full-frame mask")
+                    display_ids = self._recent_display_ids()
+                    identity = self._select_identity(
+                        self._identity_scores(embedded[0], display_ids)
+                    )
+                    if identity.get("status") == "MATCHED":
+                        candidate_display_id = str(
+                            identity["display_object_id"]
+                        )
+                        if self._has_pending_take_out(
+                            candidate_display_id
+                        ):
+                            defer_lifecycle = True
+                            resolution_status = "UNRESOLVED"
+                            resolution_method = "BRING_IN_DINO_WINDOW"
+                        else:
+                            binding = establish_shigure_binding(
+                                runtime_session_id=self.runtime_session_id,
+                                source_epoch_id=self.source_epoch_id,
+                                raw_shigure_object_id=raw_id,
+                                display_object_id=candidate_display_id,
+                                established_by="BRING_IN_DINO",
+                                established_event_uid=(
+                                    str(event.get("event_uid") or "") or None
+                                ),
+                                confidence=max(
+                                    0.0, 1.0 - float(identity["distance"])
+                                ),
+                                detail=identity,
+                            )
+                            resolution_status = "RESOLVED"
+                            resolution_method = "BRING_IN_DINO"
+                    else:
+                        resolution_status = (
+                            "AMBIGUOUS"
+                            if identity.get("status") == "AMBIGUOUS"
+                            else "UNRESOLVED"
+                        )
+                except Exception as exc:
+                    resolution_status = "UNRESOLVED"
+                    identity = {"status": "UNBOUND", "reason": str(exc)}
+
+        recorded_binding_id = None
+        recorded_display_id = None
+        if defer_lifecycle:
+            recorded_binding_id = (
+                candidate_binding_id if action == "take_out" else None
+            )
+            recorded_display_id = candidate_display_id or None
+        elif binding is not None and resolution_status == "RESOLVED":
+            recorded_binding_id = str(binding["binding_id"])
+            recorded_display_id = str(binding["display_object_id"])
         canonical = record_shigure_canonical_event(
             runtime_session_id=self.runtime_session_id,
             source_epoch_id=self.source_epoch_id,
@@ -3190,8 +3986,8 @@ class ShigureRuntimeEngine:
             bbox=bbox_payload,
             resolution_status=resolution_status,
             raw_shigure_object_id=raw_id or None,
-            binding_id=str(binding["binding_id"]) if binding is not None and resolution_status == "RESOLVED" else None,
-            display_object_id=str(binding["display_object_id"]) if binding is not None and resolution_status == "RESOLVED" else None,
+            binding_id=recorded_binding_id,
+            display_object_id=recorded_display_id,
             resolution_method=resolution_method,
             collider=tracking.get("collider"),
             mask_artifact_path=artifacts.mask,
@@ -3212,54 +4008,28 @@ class ShigureRuntimeEngine:
         canonical_status = str(
             canonical.get("resolution_status") or resolution_status
         ).upper()
-        if canonical_status != "RESOLVED":
-            if action == "take_out" and recent_take_out is not None:
-                self._queue_lifecycle_pose_candidate(
-                    action=action,
-                    canonical_event_uid=str(canonical["event_uid"]),
-                    target_take_out_uid=str(
-                        recent_take_out["canonical_event_uid"]
-                    ),
-                    display_object_id=str(
-                        recent_take_out["display_object_id"]
-                    ),
-                    raw_id=raw_id,
-                    frame=frame,
-                    artifacts=artifacts,
-                )
+        if defer_lifecycle and canonical_status not in {"RESOLVED", "REJECTED"}:
+            self._queue_lifecycle_pose_candidate(
+                action=action,
+                canonical_event_uid=str(canonical["event_uid"]),
+                display_object_id=candidate_display_id,
+                raw_id=raw_id,
+                binding_id=(
+                    candidate_binding_id if action == "take_out" else None
+                ),
+                resolution_method=str(resolution_method),
+                identity=identity,
+                skeleton=skeleton,
+                calibration_revision=calibration_revision,
+                marker_rotation=marker_rotation,
+                marker_translation=marker_translation,
+                occurred_at=frame.received_utc,
+                frame=frame,
+                artifacts=artifacts,
+            )
             return
-        if action in {"take_out", "bring_in"}:
-            candidate_display_id = str(
-                (binding or {}).get("display_object_id")
-                or canonical.get("display_object_id")
-                or ""
-            )
-            target_take_out_uid = (
-                str(canonical["event_uid"])
-                if action == "take_out"
-                else ""
-            )
-            if action == "take_out" and candidate_display_id:
-                self._recent_take_out_targets[
-                    (str(self.source_epoch_id), raw_id)
-                ] = {
-                    "display_object_id": candidate_display_id,
-                    "canonical_event_uid": target_take_out_uid,
-                    "expires": (
-                        time.monotonic()
-                        + SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS
-                    ),
-                }
-            if candidate_display_id:
-                self._queue_lifecycle_pose_candidate(
-                    action=action,
-                    canonical_event_uid=str(canonical["event_uid"]),
-                    target_take_out_uid=target_take_out_uid,
-                    display_object_id=candidate_display_id,
-                    raw_id=raw_id,
-                    frame=frame,
-                    artifacts=artifacts,
-                )
+        if canonical_status != "RESOLVED":
+            return
         try:
             lifecycle = apply_object_lifecycle_event(
                 canonical_event_uid=str(canonical["event_uid"]),
@@ -4010,13 +4780,29 @@ class ShigureRuntimeEngine:
         }
 
     @staticmethod
-    def _foundationpose_to_aruco_pose(pose_cv: np.ndarray, scale: float) -> dict[str, Any]:
+    def _foundationpose_to_aruco_pose(
+        pose_cv: np.ndarray,
+        scale: float,
+        marker_calibration: tuple[np.ndarray, np.ndarray] | None = None,
+    ) -> dict[str, Any]:
         camera_basis = np.asarray(OPENCV_CAMERA_TO_CANONICAL_RH_BASIS, dtype=np.float64)
         model_basis = np.asarray(MODEL_INPUT_TO_CANONICAL_RH_BASIS, dtype=np.float64)
         local_rotation_rh = camera_basis @ pose_cv[:3, :3] @ model_basis.T
         local_translation_rh = camera_basis @ pose_cv[:3, 3]
         local_rotation, local_translation = model_pose_canonical_rh_to_unity_camera(local_rotation_rh, local_translation_rh)
-        _transform, marker_rotation, marker_translation, _revision = _camera_to_aruco()
+        if marker_calibration is None:
+            (
+                _transform,
+                marker_rotation,
+                marker_translation,
+                _revision,
+            ) = _camera_to_aruco()
+        else:
+            marker_rotation, marker_translation = marker_calibration
+        marker_rotation = np.asarray(marker_rotation, dtype=np.float64)
+        marker_translation = np.asarray(
+            marker_translation, dtype=np.float64
+        )
         basis = np.asarray(UNITY_TO_OPENCV_CAMERA_BASIS, dtype=np.float64)
         aruco_from_camera_rotation = orthonormalize_rotation(basis @ marker_rotation.T @ basis)
         camera_origin_aruco = basis @ (marker_rotation.T @ (-marker_translation))

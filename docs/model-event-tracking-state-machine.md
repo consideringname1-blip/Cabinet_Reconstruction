@@ -1,7 +1,9 @@
 # Unity 模型、缓存与追踪状态机
 
 更新日期：2026-07-14
-状态：Shigure v2 当前协议
+状态：Shigure v2 历史说明（已被 v3 取代）
+
+> 本文中的 raw collider box 轮询、take-out 照片/骨骼和 5 模型限制不是当前 HoloLens 行为。v3 使用完整 display-object snapshot、mask-depth AABB 和最多 5 个持久 origin；见 [`shigure-v3-runtime.md`](shigure-v3-runtime.md)。
 
 Unity 以 `display_object_id` 管理模型，把服务器的 latest live state 与场景中的 presentation state 分开。历史位置只冻结所选模型的场景呈现；live status、pose、box 和模型 metadata 仍继续接收和更新。
 
@@ -65,7 +67,7 @@ optional canonical model metadata
 
 `HistoryPresentationController` 的 URL override 默认为空；此时它从 `ShuJuQingQiu` 已配置的 realtime status/mode URL 提取 scheme、host、port 和服务路径，再派生同源 `/api/v2/`，不写死另一台服务器。
 
-每次 live snapshot 应用前，`RuntimeModelManager` 会比较 `coordinate_epoch`。仍在显示旧 epoch 历史的对象会自动恢复 `FollowLive`、应用最新 live state，并隐藏历史照片/骨骼；历史接口已按请求中的当前 startup reference 完成坐标转换，因此该响应的 `coordinate_epoch` 是本次历史放置的权威值，不再用可能滞后的客户端 live epoch 拒绝。
+每次 live snapshot 应用前，`RuntimeModelManager` 会比较 `coordinate_epoch`。仍在显示旧 epoch 历史的对象会自动恢复 `FollowLive` 并应用最新 live state。v3 历史响应只有在应用瞬间与该对象非空 `LatestLive.CoordinateEpoch` 完全相等才可进入 History；迟到的旧 epoch 响应在修改 transform 或 cursor 前被拒绝。
 
 ShuJuQingQiu 从应用启动起约每 1 秒请求 `/api/v2/shigure/object-tracking-boxes/latest`，不等待 realtime handshake、模型下载或历史状态。成功响应按 tracking_id 直接 replace：能解析的条目立即新增或覆盖，缺席条目立即删除，成功空数组清空；请求失败时保留上一快照等待下一轮。服务器不做 freshness、稳定、平滑、identity 或整批等待。
 
@@ -91,7 +93,7 @@ ShuJuQingQiu 从应用启动起约每 1 秒请求 `/api/v2/shigure/object-tracki
 
 全体进入历史后仍可继续单击某个物体，逐条向更老的 `history_cursor` 翻页。全体继续追踪不会停掉服务端任务；它只切换 Unity transform/evidence 的呈现。
 
-SampleScene 的 HistoryPlacement 按钮明确调用 ShowLatestPlacements，每次为各已加载 display_object_id 重新请求最新 take-out 位置。模型的 MRTK OnPointerClicked 与 PointObject 命中都直接把 display_object_id 交给同一个 history controller；服务器返回的当前 startup 坐标是应用权威，不再因客户端缓存的旧 live coordinate epoch 拒绝。自定义食指方向只参与命中计算，MRTK debug pointing rays 关闭；ShellHandRayPointer 自带白色手掌虚线保持启用。当前 startup 有 ArMarker 时，服务器用该 startup 最新 reference 转换历史位置；没有 ArMarker 时，只允许使用同一 startup 最近 capture 的 object_aruco ↔ object_hololens_current 相对锚点，并过滤掉该锚点任务创建前的事件，返回与 live 一致的 startup-local coordinate epoch。没有同启动锚点时返回明确错误，不复用跨启动局部坐标。
+SampleScene 的 HistoryPlacement 按钮明确调用 ShowLatestPlacements，每次为各已加载 display_object_id 请求 origin。模型的 MRTK OnPointerClicked 与 PointObject 命中都把 display_object_id 交给同一个 history controller。自定义食指方向只参与命中计算，MRTK debug pointing rays 关闭；ShellHandRayPointer 自带白色手掌虚线保持启用。当前 startup 有 ArMarker 时，服务器用该 startup 最新 reference 转换历史位置；没有 ArMarker 时，只允许同启动 anchor 可证明的坐标。没有同启动锚点时返回成功的 startup-local 空事件，客户端沿用飞行动画回到 LatestLive，不复用跨启动局部坐标。
 
 ## 照片与骨骼证据
 

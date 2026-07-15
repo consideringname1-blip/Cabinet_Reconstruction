@@ -80,9 +80,11 @@ public class HistoryPresentationController : MonoBehaviour
         if (manager.TryGetPresentationState(
                 displayObjectId,
                 out RuntimeObjectPresentationState state)
-            && state.Mode == RuntimePresentationMode.History)
+            && state != null)
         {
-            beforeCursor = state.HistoryCursor;
+            beforeCursor = state.Mode == RuntimePresentationMode.History
+                ? state.HistoryCursor
+                : state.LatestLive.LatestOriginCursor;
         }
         RequestHistory(
             displayObjectId,
@@ -147,12 +149,6 @@ public class HistoryPresentationController : MonoBehaviour
         int resumed = manager != null
             ? manager.ResumeAllLivePresentations()
             : 0;
-        ObjectEvidenceDisplay evidenceDisplay =
-            ObjectEvidenceDisplay.Instance;
-        if (evidenceDisplay != null)
-        {
-            evidenceDisplay.HideAll();
-        }
         if (showMessage)
         {
             ShowFrontMessage(
@@ -165,7 +161,8 @@ public class HistoryPresentationController : MonoBehaviour
         string displayObjectId,
         string beforeCursor,
         long batchGeneration,
-        bool wasGlobalRequest)
+        bool wasGlobalRequest,
+        bool wrapToLatest = false)
     {
         string startupSessionId = ShuJuQingQiu.initialize != null
             ? ShuJuQingQiu.initialize.startup_session_id
@@ -193,7 +190,7 @@ public class HistoryPresentationController : MonoBehaviour
         string url = baseUrl
             + "/display-objects/"
             + Uri.EscapeDataString(displayObjectId)
-            + "/history?kind=take_out&limit=1&startup_session_id="
+            + "/history?kind=origin&limit=1&startup_session_id="
             + Uri.EscapeDataString(startupSessionId);
         if (!string.IsNullOrEmpty(beforeCursor))
         {
@@ -213,6 +210,7 @@ public class HistoryPresentationController : MonoBehaviour
             ObjectGeneration = objectGeneration,
             GlobalGeneration = batchGeneration,
             WasGlobalRequest = wasGlobalRequest,
+            WrapToLatest = wrapToLatest,
         };
         HTTPRequest request = new HTTPRequest(
             requestUri,
@@ -343,8 +341,21 @@ public class HistoryPresentationController : MonoBehaviour
         JToken eventToken = root["history_event"];
         if (eventToken == null || eventToken.Type == JTokenType.Null)
         {
-            ShowFrontMessage("history_presentation_no_older_event");
-            return false;
+            if (!string.IsNullOrEmpty(context.BeforeCursor)
+                && !context.WrapToLatest)
+            {
+                RequestHistory(
+                    context.DisplayObjectId,
+                    "",
+                    context.GlobalGeneration,
+                    context.WasGlobalRequest,
+                    true);
+                return false;
+            }
+            return TryApplyLatestLiveFallback(
+                context,
+                root,
+                coordinateEpoch);
         }
         JObject historyEvent = eventToken as JObject;
         if (historyEvent == null)
@@ -358,7 +369,6 @@ public class HistoryPresentationController : MonoBehaviour
         string eventUid = ReadString(historyEvent, "event_uid");
         string historyCursor = ReadString(historyEvent, "history_cursor");
         JObject poseObject = historyEvent["pose"] as JObject;
-        JObject evidence = historyEvent["evidence"] as JObject;
         if (displayObjectId != context.DisplayObjectId
             || string.IsNullOrEmpty(eventUid)
             || string.IsNullOrEmpty(historyCursor)
@@ -366,22 +376,7 @@ public class HistoryPresentationController : MonoBehaviour
                 && historyCursor == context.BeforeCursor)
             || !TryParsePose(
                 poseObject,
-                out RuntimeModelPoseData historyPose)
-            || (evidence != null
-                && !ObjectEvidenceDisplay.ValidateHistoryEvidence(evidence)))
-        {
-            ShowFrontMessage("history_presentation_ERR_invalid_response");
-            return false;
-        }
-
-        RuntimeSpatialBoxData spatialBox = null;
-        JToken boxToken = historyEvent["spatial_box"];
-        if (boxToken != null
-            && boxToken.Type != JTokenType.Null
-            && !TryParseSpatialBox(
-                boxToken as JObject,
-                coordinateEpoch,
-                out spatialBox))
+                out RuntimeModelPoseData historyPose))
         {
             ShowFrontMessage("history_presentation_ERR_invalid_response");
             return false;
@@ -404,7 +399,6 @@ public class HistoryPresentationController : MonoBehaviour
                 historyCursor,
                 coordinateEpoch,
                 historyPose,
-                spatialBox,
                 out string rejectionReason))
         {
             Debug.LogWarning(
@@ -413,23 +407,9 @@ public class HistoryPresentationController : MonoBehaviour
             ShowFrontMessage("history_presentation_ERR_rejected");
             return false;
         }
-
-        if (evidence != null)
-        {
-            ObjectEvidenceDisplay evidenceDisplay =
-                ObjectEvidenceDisplay.Instance;
-            if (evidenceDisplay == null
-                || !evidenceDisplay.ShowHistoryEvidence(
-                    displayObjectId,
-                    eventUid,
-                    evidence,
-                    coordinateEpoch))
-            {
-                Debug.LogWarning(
-                    "[HistoryPresentation] Optional evidence could not be displayed; "
-                    + "historical model placement remains active.");
-            }
-        }
+        manager.UpdateDisplayObjectLatestOriginCursor(
+            displayObjectId,
+            ReadString(root, "latest_origin_cursor"));
 
         ShowFrontMessage("history_presentation_history");
         Debug.Log(
@@ -441,6 +421,45 @@ public class HistoryPresentationController : MonoBehaviour
             + coordinateEpoch
             + " position="
             + historyPose.HololensPosition.ToString("F4"));
+        return true;
+    }
+
+    private bool TryApplyLatestLiveFallback(
+        HistoryRequestContext context,
+        JObject root,
+        string coordinateEpoch)
+    {
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
+        if (manager == null)
+        {
+            ShowFrontMessage("history_presentation_manager_missing");
+            return false;
+        }
+
+        if (!manager.AnimateToLatestLivePose(
+                context.DisplayObjectId,
+                coordinateEpoch,
+                out string rejectionReason))
+        {
+            Debug.LogWarning(
+                "[HistoryPresentation] Original-pose fallback rejected for "
+                + context.DisplayObjectId
+                + ": "
+                + rejectionReason);
+            ShowFrontMessage("history_presentation_ERR_rejected");
+            return false;
+        }
+        manager.UpdateDisplayObjectLatestOriginCursor(
+            context.DisplayObjectId,
+            ReadString(root, "latest_origin_cursor"));
+
+        ShowFrontMessage("history_presentation_original");
+        Debug.Log(
+            "[HistoryPresentation] No origin row; animated latest live pose "
+            + "for display="
+            + context.DisplayObjectId
+            + " coordinate_epoch="
+            + coordinateEpoch);
         return true;
     }
 
@@ -664,5 +683,6 @@ public class HistoryPresentationController : MonoBehaviour
         public long ObjectGeneration;
         public long GlobalGeneration;
         public bool WasGlobalRequest;
+        public bool WrapToLatest;
     }
 }

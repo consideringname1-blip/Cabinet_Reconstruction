@@ -47,9 +47,12 @@ from task_db import (
     get_identity_sync_job,
     get_latest_aruco_reference,
     get_completed_tasks_for_startup,
+    get_latest_display_object_origin,
     get_latest_shigure_canonical_event,
+    get_shigure_binding,
     list_live_display_object_states,
-    list_object_lifecycle_history,
+    list_display_object_alias_bindings,
+    list_display_object_origins,
     get_task_by_task_id,
     sync_marker_registry_from_reference_folder,
     update_task_status,
@@ -1326,8 +1329,8 @@ def _live_snapshot_items(
     *,
     startup_session_id: str,
 ) -> tuple[list[dict], str, dict | None]:
-    # Model and pose transport intentionally remains bounded at five. Spatial
-    # boxes use the separate complete snapshot below and are never truncated.
+    # This is the complete display-object registry consumed atomically by
+    # HoloLens.  Identity-reference/history limits do not truncate it.
     states = list_live_display_object_states(
         limit=MAX_REALTIME_MODEL_POSE_ITEMS
     )
@@ -1359,6 +1362,18 @@ def _live_snapshot_items(
             state.get("active_model_task_id") or ""
         ).strip()
         active_task = get_task(active_task_id) if active_task_id else None
+        latest_hololens_task_id = str(
+            state.get("latest_hololens_task_id") or ""
+        ).strip()
+        latest_hololens_task = (
+            get_task(latest_hololens_task_id)
+            if latest_hololens_task_id
+            else None
+        )
+        latest_origin = get_latest_display_object_origin(display_object_id)
+        origin_history = list_display_object_origins(
+            display_object_id, limit=5
+        )
         selected_source = "hololens"
         selected_revision = int(
             state.get("latest_hololens_pose_revision") or 0
@@ -1366,41 +1381,44 @@ def _live_snapshot_items(
         try:
             if reference_pose is None:
                 if (
-                    not active_task
-                    or str(active_task.get("startup_session_id") or "")
+                    not latest_hololens_task
+                    or str(
+                        latest_hololens_task.get("startup_session_id") or ""
+                    )
                     != startup_session_id
                 ):
                     continue
-                active_task_json = active_task.get("task_json") or {}
-                selected_pose = minimal_pose_payload(
-                    active_task_json.get("object_hololens_current"),
-                    include_scale=True,
+                local_pose_task_json = (
+                    latest_hololens_task.get("task_json") or {}
                 )
-                selected_revision = max(1, selected_revision)
+                selected_pose = minimal_pose_payload(
+                    local_pose_task_json.get("object_hololens_current"),
+                    include_scale=False,
+                )
+                selected_revision = int(
+                    latest_hololens_task.get("id") or 0
+                )
+                if selected_revision <= 0:
+                    raise ValueError(
+                        "latest HoloLens task database id is unavailable"
+                    )
             else:
                 hololens_pose_aruco = _json_column(
                     state.get("latest_hololens_pose_aruco_json"),
                     "latest_hololens_pose_aruco_json",
                     dict,
                 )
-                tracking_pose_aruco = _json_column(
-                    state.get("latest_tracking_pose_aruco_json"),
-                    "latest_tracking_pose_aruco_json",
-                    dict,
-                )
                 selected_pose_aruco = hololens_pose_aruco
-                if (
-                    isinstance(tracking_pose_aruco, dict)
-                    and int(
-                        state.get("latest_tracking_model_revision") or 0
+                if latest_origin is not None:
+                    origin_pose_aruco = _json_column(
+                        latest_origin.get("pose_aruco_json"),
+                        "display_object_origin_history.pose_aruco_json",
+                        dict,
                     )
-                    == model_revision
-                ):
-                    selected_source = "tracking"
-                    selected_revision = int(
-                        state.get("latest_tracking_pose_revision") or 0
-                    )
-                    selected_pose_aruco = tracking_pose_aruco
+                    if origin_pose_aruco is not None:
+                        selected_source = "origin"
+                        selected_revision = int(latest_origin["id"])
+                        selected_pose_aruco = origin_pose_aruco
                 if selected_pose_aruco is None or selected_revision <= 0:
                     continue
                 selected_pose = _strict_current_pose(
@@ -1412,6 +1430,51 @@ def _live_snapshot_items(
             )
             continue
 
+        primary_binding_id = str(
+            state.get("active_shigure_binding_id") or ""
+        ).strip()
+        primary_binding = (
+            get_shigure_binding(primary_binding_id)
+            if primary_binding_id
+            else None
+        )
+        alias_rows = []
+        if (
+            primary_binding is not None
+            and str(primary_binding.get("status") or "") == "ACTIVE"
+        ):
+            alias_rows = list_display_object_alias_bindings(
+                str(primary_binding["source_epoch_id"]),
+                display_object_id,
+            )
+
+        spatial_revision = _live_spatial_revision(
+            int(state.get("presence_epoch") or 0),
+            int(state.get("latest_spatial_observation_seq") or 0),
+        )
+        try:
+            corners_aruco = _json_column(
+                state.get("latest_spatial_box_aruco_json"),
+                "latest_spatial_box_aruco_json",
+                list,
+            )
+            spatial_box = _strict_current_box(
+                corners_aruco if reference_pose is not None else None,
+                reference_pose or {},
+                revision=spatial_revision,
+                emit_no_box=True,
+            )
+        except Exception as exc:
+            print(
+                f"[WARN] invalid live mask box for {display_object_id}: {exc}"
+            )
+            spatial_box = _strict_current_box(
+                None,
+                reference_pose or {},
+                revision=spatial_revision,
+                emit_no_box=True,
+            )
+
         item = {
             "display_object_id": display_object_id,
             "model_revision": model_revision,
@@ -1422,6 +1485,32 @@ def _live_snapshot_items(
             "coordinate_space": "hololens_current_local",
             "presence": str(state.get("presence") or "UNKNOWN"),
             "presence_epoch": int(state.get("presence_epoch") or 0),
+            "latest_origin_cursor": (
+                str(latest_origin["id"])
+                if latest_origin is not None
+                else None
+            ),
+            "origin_history_count": len(origin_history),
+            "primary_binding_id": primary_binding_id or None,
+            "primary_raw_shigure_object_id": (
+                str(primary_binding["raw_shigure_object_id"])
+                if primary_binding is not None
+                else None
+            ),
+            "shigure_aliases": [
+                {
+                    "binding_id": str(alias["binding_id"]),
+                    "raw_shigure_object_id": str(
+                        alias["raw_shigure_object_id"]
+                    ),
+                    "primary": str(alias["binding_id"])
+                    == primary_binding_id,
+                    "confidence": alias.get("confidence"),
+                    "valid_from": alias.get("valid_from"),
+                }
+                for alias in alias_rows
+            ],
+            "spatial_box": spatial_box,
         }
         latest_event = get_latest_shigure_canonical_event(display_object_id)
         if latest_event is not None:
@@ -1573,10 +1662,9 @@ def _live_handshake_status(startup_session_id: str) -> dict:
 
 
 def _live_transport_response(startup_session_id: str, state: dict):
-    items, coordinate_epoch, reference_pose = _live_snapshot_items(
+    items, coordinate_epoch, _reference_pose = _live_snapshot_items(
         startup_session_id=startup_session_id,
     )
-    tracking_boxes = _live_tracking_box_items(reference_pose)
     return {
         "success": True,
         "startup_session_id": startup_session_id,
@@ -1586,9 +1674,6 @@ def _live_transport_response(startup_session_id: str, state: dict):
         "coordinate_epoch": coordinate_epoch,
         "count": len(items),
         "items": items,
-        "tracking_box_snapshot_complete": True,
-        "tracking_box_count": len(tracking_boxes),
-        "tracking_boxes": tracking_boxes,
     }
 
 
@@ -1664,8 +1749,8 @@ def display_object_history_v2(display_object_id: str):
         for key in expected:
             if len(request.args.getlist(key)) != 1:
                 raise ValueError(f"query field {key} must appear exactly once")
-        if request.args["kind"] != "take_out":
-            raise ValueError("kind must be take_out")
+        if request.args["kind"] != "origin":
+            raise ValueError("kind must be origin")
         limit = _strict_json_integer(
             int(request.args["limit"]),
             "limit",
@@ -1706,8 +1791,16 @@ def display_object_history_v2(display_object_id: str):
                 str(display_object_id or "").strip(),
             )
             if fallback is None:
-                raise ValueError(
-                    "no ArMarker and no same-startup object anchor"
+                return jsonify(
+                    {
+                        "success": True,
+                        "coordinate_space": "hololens_current_local",
+                        "coordinate_epoch": (
+                            f"startup-local:{startup_session_id}"
+                        ),
+                        "latest_origin_cursor": None,
+                        "history_event": None,
+                    }
                 )
             reference_pose, _anchor_task_id, anchor_created_at = fallback
             # The derived reference maps canonical ArUco poses into this
@@ -1718,19 +1811,17 @@ def display_object_history_v2(display_object_id: str):
         if not coordinate_epoch:
             raise ValueError("current coordinate epoch is unavailable")
 
-        host = request.host_url.rstrip("/")
+        latest_origin = get_latest_display_object_origin(display_object_id)
         history_event = None
-        # The response contains one usable history event. Invalid or incomplete
-        # rows must not form an artificial pagination wall: otherwise a client
-        # using limit=1 can never reach the first valid row below 20 bad rows.
+        # The response contains one usable persistent origin. Invalid rows do
+        # not form an artificial pagination wall.
         scan_before_id = before_id
-        page_size = 100
+        page_size = 5
         while history_event is None:
-            candidates = list_object_lifecycle_history(
+            candidates = list_display_object_origins(
                 display_object_id,
                 limit=page_size,
                 before_id=scan_before_id,
-                take_out_only=True,
             )
             if not candidates:
                 break
@@ -1745,56 +1836,21 @@ def display_object_history_v2(display_object_id: str):
                         "pose_aruco_json",
                         dict,
                     )
-                    skeleton_aruco = _json_column(
-                        event.get("skeleton_json"),
-                        "skeleton_json",
-                        dict,
-                    )
                     if pose_aruco is None:
                         continue
-                    scene_image_url = _event_artifact_url(
-                        host,
-                        event.get("scene_image_path"),
-                    )
                     pose = _strict_current_pose(pose_aruco, reference_pose)
-                    skeleton = (
-                        _strict_current_skeleton(
-                            skeleton_aruco, reference_pose
-                        )
-                        if skeleton_aruco is not None
-                        else None
-                    )
-                    corners_aruco = _json_column(
-                        event.get("spatial_box_corners_aruco_json"),
-                        "spatial_box_corners_aruco_json",
-                        list,
-                    )
-                    spatial_box = _strict_current_box(
-                        corners_aruco,
-                        reference_pose,
-                        revision=int(event.get("presence_epoch") or 1),
-                    )
                 except Exception as exc:
                     print(
-                        f"[WARN] skipped invalid history event "
-                        f"{event.get('lifecycle_event_uid')}: {exc}"
+                        f"[WARN] skipped invalid origin history row "
+                        f"{event.get('origin_uid')}: {exc}"
                     )
                     continue
-                evidence = (
-                    {
-                        "scene_image_url": scene_image_url,
-                        "skeleton": skeleton,
-                    }
-                    if scene_image_url is not None and skeleton is not None
-                    else None
-                )
                 history_event = {
                     "display_object_id": str(event["display_object_id"]),
-                    "event_uid": str(event["lifecycle_event_uid"]),
+                    "event_uid": str(event["origin_uid"]),
                     "history_cursor": str(event["id"]),
+                    "origin_kind": str(event["kind"]),
                     "pose": pose,
-                    "spatial_box": spatial_box,
-                    "evidence": evidence,
                 }
                 break
             if history_event is not None or len(candidates) < page_size:
@@ -1809,6 +1865,11 @@ def display_object_history_v2(display_object_id: str):
                 "success": True,
                 "coordinate_space": "hololens_current_local",
                 "coordinate_epoch": coordinate_epoch,
+                "latest_origin_cursor": (
+                    str(latest_origin["id"])
+                    if latest_origin is not None
+                    else None
+                ),
                 "history_event": history_event,
             }
         )

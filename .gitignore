@@ -68,7 +68,10 @@ __pycache__/
 /code/.test/
 /code/tests/
 !/code/tests/
+/code/tests/*
 !/code/tests/test_gpu_lease.py
+!/code/tests/test_task_db_v3.py
+!/code/tests/test_shigure_mask_aabb.py
 ########################################
 # ========== Logs ==========
 ########################################

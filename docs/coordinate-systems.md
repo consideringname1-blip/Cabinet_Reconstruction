@@ -1,7 +1,7 @@
 # 坐标系统与公开边界
 
 更新日期：2026-07-14
-状态：Shigure v2 当前协议
+状态：当前共享坐标契约（适用于 Shigure v3）
 
 坐标轴定义集中在 `code/coordinate_systems.py`，跨 HoloLens、ArUco 与 Shigure 的 pose/point 转换集中在 `code/spatial_transforms.py`。业务 stage 不自行添加轴翻转。
 
@@ -41,9 +41,11 @@ aruco_points_to_hololens(...)
 
 ## Live pose 与历史呈现
 
-每个 `display_object_id` 持久保存 HoloLens capture pose 和 Shigure tracking pose。live snapshot 在当前模型 revision 存在有效 tracking pose 时优先使用它，否则使用 HoloLens pose，并携带 `coordinate_epoch`。
+每个 `display_object_id` 持久保存校准后的 HoloLens capture pose 和最多 5 个 FoundationPose origin。live snapshot 优先使用最新 origin，缺失时使用最新校准 HoloLens pose，并携带 `coordinate_epoch`；Shigure 不再逐帧更新模型 tracking pose。
 
-历史 take-out pose 同样持久保存在 ArUco 坐标，查询时才按当前 startup reference 转成 `hololens_current_local`。历史不是服务端 tracking mode：Unity 可以暂时显示历史 transform，但服务端始终继续接收、计算和保存 live 更新；Unity 的模型状态也继续接收最新 live pose，只是不覆盖正在呈现的历史 transform。
+origin 同样持久保存在 ArUco 坐标，查询时才按当前 startup reference 转成 `hololens_current_local`。历史不是服务端 tracking mode：Unity 可以暂时显示历史 transform，但服务端始终继续接收、计算和保存 live 更新；Unity 的模型状态也继续接收最新 live pose，只是不覆盖正在呈现的历史 transform。
+
+没有 ArUco reference 时，服务器只可发送当前 startup 最新 HoloLens capture 自带的 local pose，`coordinate_epoch=startup-local:<startup>`，且 canonical pose 为 `NULL`。复用自旧任务的 FBX 只提供模型资产，不提供旧启动坐标；没有可证明的同启动 anchor 时不能转换或返回跨启动 origin。历史响应只有在应用瞬间与对象当前非空 `LatestLive.CoordinateEpoch` 完全相等才可改变 Unity transform。
 
 ## Shigure camera 到 ArUco
 
@@ -109,7 +111,7 @@ canonical cache 的 CameraInfo 结构为：
 - `/generate` camera pose 是否为有限数值 `4x4`。
 - Shigure CameraInfo、RGB、depth 尺寸是否一致，bbox-local mask 是否按 bbox 贴回。
 - marker pose 是否使用 OpenCV camera 结构。
-- collider box 是否只来自原始 collider，且保存严格 8 个 ArUco 点。
-- 公开 model、live/history pose、box、skeleton 是否都标记或约定为 `hololens_current_local`。
-- Unity 是否按 `coordinate_epoch` 和 revision 拒绝过期呈现结果，同时保留更新的 live 状态。
+- live spatial box 是否只来自 primary mask-depth AABB，且保存严格 8 个 ArUco 点。
+- 公开 model、live/history pose 和 live box 是否都标记或约定为 `hololens_current_local`；v3 不公开历史照片/骨骼呈现。
+- Unity 是否只在 response epoch 与当前非空 LatestLive epoch 完全相等时应用历史，并按 revision 拒绝过期 live 结果。
 - 业务 stage 是否复用了 `spatial_transforms.py`，没有增加局部轴翻转。

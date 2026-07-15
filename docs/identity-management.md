@@ -1,7 +1,9 @@
 # 物体身份、模型复用与 revision
 
 更新日期：2026-07-14
-状态：Shigure v2 当前协议
+状态：Shigure v2 历史说明（已被 v3 取代）
+
+> 本文保留旧的几何同步、Shigure reference 和一对一 binding 设计用于追溯。当前实现只使用 HoloLens 上传图作为长期身份库，并允许 primary + alias raw ID；见 [`shigure-v3-runtime.md`](shigure-v3-runtime.md)。
 
 系统以持久 `display_object_id` 统一 HoloLens 模型任务、Shigure 生命周期和 Unity 呈现。`task_id` 只表示一次拍摄任务；Shigure raw ID 或 recorder 临时 ID 只在一个 `source_epoch_id` 内有效。
 

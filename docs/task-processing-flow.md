@@ -1,51 +1,13 @@
 # 任务处理流程
 
-更新日期：2026-07-14
-状态：Shigure v2 当前协议
+更新日期：2026-07-15
+状态：Shigure v3 当前流程
 
-本文描述服务器、不可修改的远端 Shigure ROS 数据入口，以及 Unity/HoloLens 的当前职责边界。
+本页只给出端到端流程。身份、origin、空间框、HTTP 字段和迁移的详细权威契约见 [`shigure-v3-runtime.md`](shigure-v3-runtime.md)。
 
-## 核心标识
+## 1. HoloLens 上传与模型任务
 
-- `task_id`：一次 HoloLens 上传任务的 UUID，也是 API 与数据库主键。
-- `task_timestamp`：该任务的 artifact 目录名。
-- `startup_session_id`：一次 Unity/HoloLens 启动的本地坐标会话。
-- `display_object_id`：跨任务持久化的物体身份。
-- `model_revision`：同一 `display_object_id` 下的模型版本。
-- `runtime_session_id`：服务器进程内的一次 Shigure runtime 会话。
-- `source_epoch_id`：一次 recorder/publisher incarnation；Shigure raw ID 只在该 epoch 内有效。
-
-Shigure raw ID 不作为持久身份。服务器或 recorder 重启后必须建立新 source epoch，并重新完成临时 ID 到 `display_object_id` 的绑定。
-
-## Artifact 布局
-
-目录由 `code/artifact_layout.py` 统一生成：
-
-```text
-data/
-  model/<task_timestamp>/
-    task.json
-    worker/
-    result/
-    debug/
-    logs/
-  aruco_processing/<task_timestamp>/
-  shigure_events/<event_uuid>/
-  identity_references/<reference_id>/embedding.json
-  identity_references/views/<sha256>/{scene.png,mask.png}
-  shigure_debug_cache/          # 10 GiB 环形 exact-stamp 诊断缓存
-  shigure_recovery_debug/       # 持久启动恢复报告、scene、mask、crop
-  database/tasks.db
-  worker_sockets/
-  aruco/
-  console_logs/
-```
-
-主程序从内存 socket cache 读取在线帧，绝不从 `shigure_debug_cache` 恢复业务状态。事件图片、mask、crop 和骨骼属于持久事件证据，写入 `shigure_events`。启动恢复的每个等待观察与实际尝试都会把报告、scene、对齐 mask 和 masked crop 持久写入 `shigure_recovery_debug/<runtime_session>/<source_epoch>/`，用于定位校准、输入和 DINO 分配失败；DINO/FP 内部临时候选仍在尝试后删除。只有通过 novelty 判定而被接受的 identity 视图，才按内容摘要复制到 `identity_references/views/<sha256>` 并把持久路径写入数据库。
-
-## Object reconstruction 主链
-
-`task_worker.STAGE_ORDER` 的顺序为：
+HoloLens 上传 object capture 后，服务器按 `task_worker.STAGE_ORDER` 执行：
 
 ```text
 hololens2depth
@@ -62,117 +24,85 @@ model_bounds
 display_identity
 ```
 
-`MODEL_GENERATION_BACKEND` 只能是 `instantmesh` 或 `sam3d_objects`。HoloLens 拍摄用于生成/更新模型、提供更精确的辅助身份视角和 ArUco 当前本地坐标，不再作为 Shigure 开始追踪或存在判定的前置条件。
+`historical_model_match` 只比较 HoloLens capture：先公平选取最多 50 个 `display_object_id`，再为每个物体取最新最多 5 个 capture；单个高频拍摄物体不能耗尽全局扫描窗口。命中时可以复用既有模型或生成新的 model revision；未命中时创建新的持久 `display_object_id`。
 
-DINOv2 命中已有 `display_object_id` 且未强制重建时，可复用其 completed 模型资产；新拍摄仍更新对齐、位姿和身份参考。历史 capture 查询可以向后扫描较大的去重窗口，但实际 DINO 评分只保留最近 5 个不重复物体，每个物体一条最新 capture。HoloLens FoundationPose 请求与 Shigure runtime 请求进入同一个共享优先队列；`FOUNDATIONPOSE_POOL_SIZE=1..4` 是弹性 backend 上限。业务请求只等待首个 backend 可用，其余槽位在后台以非阻塞 GPU lease 尝试加入，显存不足或可选实例启动失败不会阻塞已经可工作的 backend；后续请求会继续尝试扩容。HoloLens 具有更高排队优先级，但不占专用槽，也不抢占已经运行的任务。已启动 backend 由当前 server worker 进程持有到 shutdown。
+`display_identity` 提交模型状态、HoloLens capture 指针和 `HOLOLENS` identity reference。每个物体的活动 reference 上限是 5；同一 `view_hash` 的重放不会刷新其年龄或挤掉真正较新的视图。该步骤不尝试用当前几何直接绑定 Shigure raw ID。没有当前 ArUco 时也会提交 local-only catalog state：canonical pose 保持 `NULL`，模型资产任务与最新本地 pose task 分开保存；之后 ArUco retro-sync 对同一 task 补写恰好一条 canonical pose history，不重复分配模型 revision。旧 local-only capture 的迟到重放按持久 capture 时间 fail-closed，不能倒退最新任务/模型或清空较新的 canonical pose。identity-sync 可以立即完成为“reference 已登记、等待新 Shigure mask”，不会把 HoloLens 上传队列卡在 Shigure 处理上。
 
-## Shigure ingress 与 canonical frame
+## 2. Shigure 输入与本地缓存
 
-`run_shigure_history_recorder.py` 只适配远端现有 ROS topics，不修改 `reconstruction/shigure_core`：
+recorder 适配不可修改的远端 ROS topics，生成 exact-stamp canonical frame，并通过 Unix socket 的内存 ring 提供给 runtime。典型输入包括 RGB、depth、CameraInfo、Segments、object tracking 和稀疏 bring-in/take-out 事件。
 
-- RGB、同步 depth、CameraInfo
-- 稀疏 `/shigure/object_detection`
-- `/shigure/object_tracking`
-- `/Segments`
-- `/shigure/people_detection`
-- 可选 `/shigure/contacted`
+`data/shigure_debug_cache` 是最多 10 GiB 的本地长期诊断环；服务器启动和它的内容不要求连续，业务逻辑也不从该磁盘缓存恢复状态。跨启动状态只来自数据库、模型 artifact、HoloLens identity reference 和持久 origin。
 
-`ShigureCompatibilityAdapter` 按完全相同的 ROS stamp 生成 `CachedShigureFrame` schema v2。事件的 bbox-local mask 必须粘贴回原始全图坐标，禁止 resize 成全图。缺失、显式空列表和无效 mask 是不同状态。
+## 3. mask 触发身份绑定
 
-recorder 的在线 RGB-D/canonical ring 只存在内存并通过 Unix socket 提供。稀疏事件和恢复候选只在存在同 stamp RGB 时附加精确事件 RGB-D，禁止拿邻近 RGB 冒充。debug disk ring 默认开启；把这些 exact-stamp canonical/RGB-D 诊断项写入独立环形目录，最多保留 600 秒、默认容量上限 10 GiB，仅用于复查。
+每个 source epoch 重新建立 raw Shigure ID 绑定：
 
-## 身份与启动恢复
+1. exact RGB-D、CameraInfo、mask 和 camera-to-ArUco 校准就绪；
+2. 已绑定 raw ID 直接继承现有 `display_object_id`；
+3. 未绑定 raw ID 仅在新 mask 出现时，查询最多 50 个 display object；
+4. 每个物体的 DINOv2 分数取最新最多 5 条 HoloLens reference 中的最小距离；
+5. 通过阈值/margin 的新 ID 先成为 alias；旧 primary 仍可见时比较两张当前 mask 对同一 HoloLens bank 的 DINOv2 距离，仅在旧 ID 距离更小时保留旧 primary，否则显示最新的最优新 ID；
+6. 每张 mask 独立线性判定，不做一对一全局 assignment，允许同一物体在当前 epoch 保留多个 raw-ID alias；
+7. Shigure scene/mask 写入诊断，但不进入长期 reference 库。
 
-服务器启动只会建立 runtime session/source epoch 并进入等待；它不会在未校准输入上消耗恢复次数。recorder incarnation 改变、tracking namespace 改变，或旧 raw ID 意外消失后在 `SHIGURE_ID_HANDOFF_GRACE_SECONDS`（默认 60 秒，按服务器接收单调时钟）内出现未见新 ID 时，也会撤销旧 epoch binding、打开新 source epoch，并强制重新做 DINOv2 身份恢复。显式 `take_out` 不计作这种意外交接。恢复顺序为：
+启动恢复中，缺 exact RGB-D、CameraInfo、校准、有效非空 mask 或已解析 raw ID 时会同时写诊断报告和 `STARTUP_RECOVERY/PENDING` job，然后原帧返回，不执行身份或 FoundationPose。只有完整 `explicit_empty` 空 snapshot，或非空 snapshot 中每个候选都得到终态匹配结果，才把启动 job 标为 `COMPLETED`。完整空 snapshot 也会删除已经消失的 primary box；topic `missing` 与 `explicit_empty` 仍严格区分。
 
-1. 等待候选所在 exact stamp 的 `object_tracking=present`。
-2. 继续等待完全相同 stamp 的 RGB-D、非空 CameraInfo、可用的 Shigure-camera 到 ArMarker 校准，以及能按 RGB 尺寸解码且非空的 candidate mask。任一条件缺失时 job 保持 `PENDING`，记录原因与输入图片，但恢复 attempts 不增加。
-3. 校准输入全部就绪后，才从最新完整 `/Segments`/tracking canonical frame 取得候选；身份映射阶段先把 IoU 极高、实为同一连续物体的重复 tracking raw ID 折叠为一个代表，再只让已解析到可信 raw ID 的同一物体候选开始一次实际 DINO 尝试。背景 segment 和尚未解析 tracking 的候选不消耗恢复次数。
-4. 只取最近 5 个已有模型 revision 且有活动 identity reference 的持久 `display_object_id`；不要求它曾保存 HoloLens pose。为每个 candidate 计算到每个 display 的 DINOv2 edge cost。
-5. 在完整 candidate×display 矩阵上做全局一对一分配：先优先覆盖带可信 raw ID 的 candidate，再最大化可绑定数量，最后最小化总代价；不会按 ROS 顺序逐个贪心。最佳与次佳同规模方案的总代价 margin 不足时，相关 candidate 保持 ambiguous。
-6. 有可信 raw ID 时建立 epoch-scoped binding；没有 raw ID 时只记录 provisional 结果，并让恢复 job 保持 `PENDING`。
-7. Shigure 视角与现有参考差异足够大时，保存为新的 `SHIGURE` identity reference；否则不重复记录。
+## 4. 初始化原位
 
-每种等待原因与每次实际尝试的 `report.json` 都包含 input state、canonical diagnostics（含旧/新 raw ID handoff）、候选、分数、assignment margin 和最终原因；对应 `scene.png`、`mask.png`、`object_crop.png` 保留在同一目录。raw ID 只用于当前 epoch；跨 ID 的同一物体基准始终是持久 `display_object_id` 的 DINOv2 reference，而不是复用旧 raw ID。
+服务器启动时即开始等待初始化输入。只有同一物体的绑定、exact RGB-D/mask、CameraInfo、校准与已完成模型 artifact 全部就绪后，才开始一次 FoundationPose；等待不计 attempt。身份可以在慢模型生成前先完成，但 `active_model_task_id` 尚未 `completed` 时只记录等待原因，不会提前消耗 5 次配额。每个物体每个 epoch 最多 5 次真实尝试。
 
-`segments=explicit_empty` 且 `object_tracking=explicit_empty` 的无 candidate frame 是一份完整空 snapshot：runtime 会以 0 match 完成本次启动恢复。任一 topic 仍为 `missing` 时不能用空列表结束恢复；非空 segments 但 tracking 尚未到达、exact RGB-D 尚未到达，或可信 tracking 候选存在 `UNBOUND`、`AMBIGUOUS`、`CONFLICT`、`PROVISIONAL` 时，恢复均保持 `PENDING`。未映射到 tracking 的背景 segment 不参与完成判定。后续不同 source stamp 会按 `SHIGURE_STARTUP_RECOVERY_RETRY_SECONDS` 节流重试；同 epoch 已绑定 candidate 固定保留，不参与重复 DINO 分配。全部可信 tracking candidate 为 `BOUND` 才 `COMPLETED`，达到 `SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS` 后才以 `FAILED` 终止。
+成功的初始化写入持久 origin（`kind=INITIALIZATION`）。每次等待/尝试的报告和输入图保存在：
 
-HoloLens 拍摄提供 `HOLOLENS` reference 作为辅助条件。已有 Shigure reference 时优先使用 Shigure 多视角参考。
-
-SAM3 mask 与 historical DINO 完成后、耗时模型生成开始前，worker 立即建立 HoloLens capture identity、登记 HOLOLENS reference 并排队 HOLOLENS_CAPTURE sync；ModelBounds 尚未生成时使用可信 raw-ID 候选的 DINO fallback。最终 display_identity stage 仍幂等提交模型 revision/ArUco pose。同步以连续 2 帧稳定可信 raw ID 建立 epoch binding；长期 Shigure identity reference 仍须独立严格 5 帧准入。
-
-仅由 HoloLens 新建的对象以 `presence=UNKNOWN` 持久化；completed `model_instance` 可供 Unity 预览，并持续列入 realtime 模型目录，保证重启和新 ArMarker 校准后仍可自动下载及访问历史。该目录成员关系不表示对象成为 `PRESENT`；只有 Shigure 生命周期事件或可信 recovery snapshot（包括上述 sync 成功）能够改变 presence。
-
-## 生命周期事件
-
-Shigure 是 presence/lifecycle 的权威来源。recorder 会把上游 `takeaway`、`take_away`、`takeout` 统一规范为协议动作 `take_out`：
-
-- `bring_in`：允许使用 DINOv2 解析新 binding，并将对象置为 `PRESENT`。
-- `take_out`：只接受当前 source epoch 内已有 binding；不使用 DINO 猜测身份。事件先保存生命周期和证据，同时打开 1 秒 pose 选择窗口；同一物体、mask 三维中心距离不超过 20 cm 的重复 `take_out` 默认取更早帧，存在有效 DINO 距离时取距离更优帧。窗口结束后仅由所选 `take_out` 的 exact RGB-D/mask 触发 FoundationPose，并用验收通过的结果覆盖该历史事件的 fallback pose。随后对象为 `ABSENT`，旧 binding 已以 `take_out_completed` 撤销；同窗内同物体的迟到 take_out 只作为 pose 候选，不创建第二条 lifecycle。
-- `obj_move`：上游消息无法可靠证明实际移动对象。适配器对每个新的 move stamp 只轮换一次 source incarnation，立即发出空 epoch barrier，并丢弃时间不晚于该 barrier 的所有 canonical topic payload。barrier 之后、首个严格更晚的干净 tracking 之前，camera/segments/people 等辅助 topic 可以暂存在 exact-stamp bucket，但禁止 emit canonical frame、禁止触发 Holo sync 重试；解锁时只保留该干净 tracking 同 stamp 的辅助 bucket，其余隔离期 bucket 丢弃，且不进行第二次 incarnation 轮换。污染帧不进入 segment/raw-ID 映射、live box、示例采集或 FoundationPose。
-
-每个稀疏检测项以 `(runtime session, source epoch, sec, nanosec, frame_id, index)` 唯一化。canonical event 与 lifecycle event 持久化后可供复查，临时 raw ID 不跨服务器启动复用。同一 exact stamp 的 people/contact 等 topic 迟到时，adapter 会发出 enriched canonical revision；相同 canonical event 的 replay 不再次推进 presence，也不创建第二条 lifecycle/history 记录。通过验收的 take_out FoundationPose 可以覆盖首次 fallback pose；box 和图片只补空证据，迟到的 exact event skeleton 可以替换首次 emission 从 live state 取得的非空 fallback skeleton。
-
-## 实时位姿、box 与骨骼
-
-实时计算持续进行，不受 Unity 当前展示 live/history 的影响：
-
-- 已绑定且 `PRESENT` 的连续 tracking/mask 仍用于严格 DINO identity-reference 准入，但不再自动提交物体 pose；更新历史/latest 位置的唯一 FoundationPose 触发是 `take_out`。
-- 1 秒窗口内的近邻候选以 mask+depth 反投影后的 ArUco 三维中点计算距离；`take_out` 默认取更早、`bring_in` 默认取更后，DINO 距离更优者可覆盖时间优先。
-- 同窗 `take_out` 与 `bring_in` 的 mask 中点移动小于 20 cm 时判为前景遮挡造成的未移动，不运行 pose 覆盖；FoundationPose 结果仍须通过 bbox IoU 与 depth residual 验收后才写入历史 ArUco pose。
-- 人体使用 Shigure `/people_detection` 点线骨骼，不生成或下发人体 mesh。
-
-空间框只使用 `/shigure/object_tracking` 的 raw collider：
-
-1. 以 Shigure camera/mm 解析 collider 的最小角 `x/y/z` 和三条正 extent。
-2. 构造 camera-space 八角点。
-3. 转到 ArUco 后按轴取 min/max，重建 ArUco 轴对齐包围框，使前后面与竖直 ArUco marker 对齐；原 camera box 相对 ArUco 有旋转时，新框会包住旋转后的 8 点，边长可能增大，并非保留原三边。
-4. 固定顺序保存 8 个 ArUco 点；API 再转换为当前 HoloLens local。
-
-mask、depth、有效像素都不能作为 spatial box 的替代来源。无合法 collider 时返回无 box，不生成降级框。
-
-recorder 在每条 ROS object_tracking callback 中直接读取 collider，并把以 raw_tracking_id 为键的完整快照原子写入 relay 文件；下一条快照缺失即删除。该路径不经过可能执行 DINO/FP 的身份 runtime，不要求有效 bbox，也不查询 binding、display_object_id、presence 或模型 revision。
-
-独立 latest API 提供无数量上限的完整 raw tracking 快照。Unity 从应用启动起固定每 1 秒请求一次，成功响应按 tracking_id 整体替换；ArMarker 上传前返回空，上传完成后轮询不会停止，后续每条 Shigure 更新都会继续反映。
-
-## Unity live 与历史展示
-
-服务器传输模式只有 `live`。`POST /realtime-tracking/mode` 是 live handshake，`GET /realtime-tracking/status` 持续返回最新计算状态。
-
-历史位置是 Unity presentation state，不暂停服务器计算：
-
-- 单击 live 模型：请求该物体最近一次 `take_out` 历史，模型显示历史 pose，并自动显示对应 scene image 与彩色骨骼。
-- 再次单击同一物体：带 `before_cursor` 请求更老事件。
-- 全体历史再现：每个对象独立请求上一条历史。
-- 全体继续追踪：所有模型恢复 `LatestLiveState`，并关闭全部历史图片、骨骼和历史 box。
-
-历史 API 以有效 pose 作为再放置的唯一必需数据；scene image、骨骼和 box 是可选增强，缺失不会阻止模型移动。服务端会跨页跳过缺 pose 或坐标转换失败的行，直到找到下一条可用记录或真正耗尽历史。所有公开 pose、box、骨骼均使用当前 startup 的 `hololens_current_local` 与同一个 `coordinate_epoch`。
-
-Unity 的 history URL 默认从已配置的 realtime status/mode 服务地址推导同源 `/api/v2/`，也允许显式 override。收到新的 live `coordinate_epoch` 时，任何仍显示旧 epoch 历史的模型会自动恢复 `FollowLive` 并关闭对应照片/骨骼，避免跨坐标 epoch 继续显示旧证据。
-
-## 当前 HTTP 入口
-
-- `POST /generate`
-- `POST /check-queue`
-- `GET /task-artifacts/<task_id>/<area>/<filename>`
-- `GET /shigure-event-artifacts/<event_directory>/<filename>`
-- `GET /aruco/latest-reference?startup_session_id=...`
-- `GET /aruco/markers`
-- `POST /aruco/markers/sync`
-- `POST /realtime-tracking/mode`（仅 `mode=live`）
-- `GET /realtime-tracking/status?startup_session_id=...`
-- `GET /api/v2/identity-sync/<sync_job_id>`
-- `GET /api/v2/display-objects/<display_object_id>/history?...`
-
-## 数据库 schema 与一次性迁移
-
-正常启动只接受两种情况：空数据库一次性创建完整 Shigure v2 schema，或已有数据库严格匹配 v2 表、索引和 `schema_metadata`。启动路径不修补、不删除也不兼容旧 schema；发现 legacy/偏差时会 fail closed。
-
-迁移只能显式离线执行：
-
-```bash
-python code/migrate_shigure_v2_data.py          # 只读 dry-run
-python code/migrate_shigure_v2_data.py --apply  # 临时备份后迁移，成功时删除全部 pre-v2/退役数据
+```text
+data/shigure_recovery_debug/<runtime_session>/<source_epoch>/
 ```
 
-`--apply` 会先生成并验证临时 pre-v2 数据库/任务 JSON 备份；只有 schema、行数和迁移结果全部校验成功后，才连同整个退役的 `data/shigure_history_cache`、任务 JSON 中的 `HistoryPlacementRestoration`/SAM3D Body 旧块及其他无法迁移的数据一起删除。迁移失败时临时备份保留供人工恢复，成功后的活动 `data/` 和 DVC 快照不保留 pre-v2 副本。SAM3D Body、旧实时追踪日志等已退役数据不进入新运行时，也没有运行期兼容读取分支。`code/reconstruction/sam3d-body` 子模块仅保留为第三方源码/历史复现参考；它不是当前 stage、socket service、API 或数据库契约的一部分。
+## 5. 生命周期与偶发 FoundationPose
+
+Shigure 生命周期仍决定 `bring_in`/`take_out` 和 presence。FoundationPose 不做逐帧追踪：
+
+- `bring_in` 可以建立或激活 binding，但不持续移动模型；
+- `take_out` 选择同一物体的 exact RGB-D/mask，运行一次 FoundationPose，并把离开前原位写为 `kind=TAKE_OUT`；
+- 时间接近的重复事件使用既有选择窗口；mask-depth 中心移动小于 20 cm 时视为遮挡/未移动；
+- `take_out` 完成后撤销当前 epoch 中该物体的全部 raw-ID alias。
+
+origin 跨启动持久化、按事件 `occurred_at`（`id` 只作稳定 tie-break）排列，相邻 20 cm 内去重，每个物体最多保留时间上真正最新的 5 个；异步 FoundationPose 的旧事件即使更晚完成，也不能冒充 latest 或挤掉较新历史。
+
+canonical event 解析、lifecycle row、presence 与 binding 更新是单一数据库事务，失败全部回滚。source epoch/server runtime 关闭也先在同一事务中终结旧 lifecycle authority：拒绝未决事件，审计不可 replay 的 RESOLVED orphan，再撤销 binding 和关闭 epoch，避免迟到事件跨 epoch 生效。
+
+## 6. live snapshot 与 Unity 呈现
+
+HoloLens 完成 live handshake 后默认每 2 秒读取一次完整 snapshot。每个 display-object item 包含：
+
+- 当前模型 revision 与下载信息；
+- 最新 origin pose，缺失时使用 HoloLens capture pose；
+- `latest_origin_cursor`；
+- primary binding 和 alias 表；
+- primary mask-depth AABB 的 `ready`/`no_box` 状态。
+
+客户端不再运行独立 raw object-tracking box poller。完整 snapshot 中缺失或变为 `no_box` 的框会被删除；新增框直接加入。历史 pose 与 live box 解耦。
+
+点击模型使用 `kind=origin` 查询更早的持久原位并执行已有飞行动画；到最老记录后回绕最新。模型历史再放置不要求照片、骨骼或历史 box，v3 暂不显示这些证据。
+
+无 ArUco 的 live catalog 只提供当前 startup 的 local pose；复用的旧模型资产不授予跨启动坐标。没有同启动 anchor 时 history 返回成功的空事件并飞回 `LatestLive`。客户端仅在响应 epoch 与应用瞬间的非空 `LatestLive.CoordinateEpoch` 完全相等时进入历史呈现，旧 epoch 的迟到响应不会修改 transform 或 cursor。
+
+## 7. 数据库迁移
+
+当前 schema version 是 3。严格 v2 升级先 dry-run，再显式 apply：
+
+```bash
+python code/migrate_shigure_v3_data.py
+python code/migrate_shigure_v3_data.py --apply
+```
+
+迁移前会创建并校验 `tasks.db.pre_shigure_v3` 与 metadata。正常 server 启动只创建空 v3 或验证严格 v3，不自动修改旧库。
+
+已经是 v3、但需要补齐旧 HoloLens 校准 pose history 的数据库，使用另一条显式 one-shot：
+
+```bash
+python code/migrate_shigure_v3_data.py --repair-origin-history
+python code/migrate_shigure_v3_data.py --repair-origin-history --apply
+```
+
+它使用独立且已校验的 `tasks.db.pre_origin_backfill_v1` 备份，不覆盖 v2→v3 的 `.pre_shigure_v3` 备份。修复会合并 HoloLens 历史原位并优先保留原生 v3 FoundationPose origin，随后执行 20 cm 去重和每物体 5 条上限。成功 marker 是 `schema_metadata.detail_json.hololens_origin_backfill_v1`；重复执行返回 `already_repaired`。
