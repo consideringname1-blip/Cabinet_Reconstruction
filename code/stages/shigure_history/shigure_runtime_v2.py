@@ -1692,6 +1692,16 @@ class ShigureRuntimeEngine:
         # and the configured retry limit can never be reached.
         if frame.input_states.get("segments") not in {"present", "explicit_empty"}:
             return
+        # Segments normally arrives a few milliseconds before its aligned
+        # depth frame. The compatibility adapter emits both the early
+        # Segments revision and a later same-stamp revision when depth arrives.
+        # Do not let the incomplete intermediate revision consume a Holo sync
+        # attempt: at 10 Hz it can otherwise exhaust the retry limit before a
+        # single complete RGB-D revision is observed. Explicit-empty frames
+        # still count below because they intentionally prove that no recovery
+        # candidate is currently visible and do not require image evidence.
+        if frame.recovery_candidates and self._sample_exact(frame) is None:
+            return
         with self._lock:
             jobs = list(self._pending_holo_syncs.values())
             for job in jobs:

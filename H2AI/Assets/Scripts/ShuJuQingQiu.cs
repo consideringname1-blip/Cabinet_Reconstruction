@@ -143,6 +143,7 @@ public class ShuJuQingQiu : MonoBehaviour
     private long localModelDisplayGeneration = 0;
     private long historyTrackingRequestGeneration = 0;
     private long acceptedHistoryTrackingModeEpoch = -1;
+    private bool startupArUcoReferenceReady = false;
     public HistoryTrackingMode CurrentHistoryTrackingMode
     {
         get { return historyTrackingMode; }
@@ -221,7 +222,6 @@ public class ShuJuQingQiu : MonoBehaviour
         initialize = this;
         startup_session_id = BuildStartupSessionId();
         StartCoroutine(PlaceStartupCameraMarkerWhenReady());
-        RequestHistoryTrackingMode(false, true);
         realtimeTrackingStatusPollingCoroutine = StartCoroutine(PollRealtimeTrackingStatus());
 
         // Pose sampling is started explicitly by the capture flow.
@@ -1121,6 +1121,11 @@ public class ShuJuQingQiu : MonoBehaviour
             }
             ApplyDebugInfo(taskResponse);
             bool arucoDetected = IsArucoDetected(taskResponse);
+            startupArUcoReferenceReady = arucoDetected;
+            if (startupArUcoReferenceReady)
+            {
+                RequestHistoryTrackingMode(false, true);
+            }
             ShowFrontMessage(arucoDetected ? "aruco_completed" : "aruco_ERR_missing_reference");
             ResumeAsyncTaskQueuePolling();
             return;
@@ -1319,6 +1324,7 @@ public class ShuJuQingQiu : MonoBehaviour
 
         HistoryTrackingMode previousStableMode = ResolvePreviousStableHistoryTrackingMode();
         CancelRealtimeTrackingStatusRequest();
+        acceptedHistoryTrackingModeEpoch = -1;
         historyTrackingRequestGeneration++;
         long requestGeneration = historyTrackingRequestGeneration;
         if (historyTrackingModeRequest != null)
@@ -1378,7 +1384,14 @@ public class ShuJuQingQiu : MonoBehaviour
                 && realtimeTrackingStatusRequest == null
                 && !string.IsNullOrEmpty(startup_session_id))
             {
-                RequestRealtimeTrackingStatus();
+                if (acceptedHistoryTrackingModeEpoch >= 0)
+                {
+                    RequestRealtimeTrackingStatus();
+                }
+                else if (startupArUcoReferenceReady)
+                {
+                    RequestHistoryTrackingMode(false, true);
+                }
             }
             yield return new WaitForSecondsRealtime(
                 Mathf.Max(0.25f, realtimeTrackingStatusPollIntervalSeconds));
@@ -1391,7 +1404,8 @@ public class ShuJuQingQiu : MonoBehaviour
             || !realtimeTrackingStatusDeliveryEnabled
             || historyTrackingModeRequest != null
             || realtimeTrackingStatusRequest != null
-            || string.IsNullOrEmpty(startup_session_id))
+            || string.IsNullOrEmpty(startup_session_id)
+            || acceptedHistoryTrackingModeEpoch < 0)
         {
             return;
         }

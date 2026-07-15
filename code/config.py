@@ -11,7 +11,7 @@ if MODEL_GENERATION_BACKEND not in {"instantmesh", "sam3d_objects"}:
     raise ValueError("MODEL_GENERATION_BACKEND must be 'instantmesh' or 'sam3d_objects'")
 MODEL_SERVICE_PREWARM_ENABLE = os.environ.get("MODEL_SERVICE_PREWARM_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off"}
 SHIGURE_HISTORY_RECORDING_ENABLE = os.environ.get("SHIGURE_HISTORY_RECORDING_ENABLE", "1").strip().lower() not in {"0", "false", "no", "off", ""}
-SHIGURE_DEBUG_CACHE_ENABLE = os.environ.get("SHIGURE_DEBUG_CACHE_ENABLE", "0").strip().lower() in {
+SHIGURE_DEBUG_CACHE_ENABLE = os.environ.get("SHIGURE_DEBUG_CACHE_ENABLE", "1").strip().lower() in {
     "1",
     "true",
     "yes",

@@ -119,7 +119,7 @@ mask 默认不通过 socket 返回；identity/artifact 处理需要时显式设�
 
 ## 可选 debug disk ring
 
-`SHIGURE_DEBUG_CACHE_ENABLE` 默认关闭。开启后 `ShigureDebugDiskRing` 把 RGB-D/canonical 数据写入独立 `data/shigure_debug_cache`，只供问题复查：
+`SHIGURE_DEBUG_CACHE_ENABLE` 默认开启，可通过环境变量显式关闭。开启后 `ShigureDebugDiskRing` 把 RGB-D/canonical 数据写入独立 `data/shigure_debug_cache`，只供问题复查：
 
 - 稀疏事件/恢复候选使用 exact-stamp RGB；没有完全相同 stamp 的 RGB 时只记录不可用诊断，不以邻近 RGB 冒充事件图像；
 - retention 必须大于 0 且不超过 600 秒；
