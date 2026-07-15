@@ -221,7 +221,7 @@ completed task 还包含交付角色和可选同步摘要，例如：
 }
 ```
 
-`POST /realtime-tracking/mode` 的成功响应与 status 使用同一份容量语义：`items` 最多 5 个，`tracking_boxes` 无数量上限且为完整快照。
+`POST /realtime-tracking/mode` 的成功响应与 status 使用相同模型容量语义：`items` 最多 5 个。响应中保留的 tracking box 字段只用于旧客户端兼容，不再是当前 Unity 的 box 数据源。
 
 ## `GET /realtime-tracking/status`
 
@@ -231,10 +231,7 @@ query 必须恰好出现一次：
 startup_session_id=<unity-startup-uuid>
 ```
 
-调用前必须完成当前 startup 的 live 握手。响应把两种容量语义明确拆开：
-
-- `items`：模型与 live pose，仍最多 5 个；不是 box 完整性的依据。
-- `tracking_boxes`：Shigure 实时 3D box 的完整、无数量上限快照。
+调用前必须完成当前 startup 的 live 握手。`items` 是当前模型与 live pose 数据源，仍最多 5 个。下例中的 `tracking_box_*` 字段暂为旧客户端兼容字段；当前 Unity 不读取它们，也不从其 complete/count/revision 推导 raw box 状态。
 
 ```json
 {
@@ -278,17 +275,16 @@ startup_session_id=<unity-startup-uuid>
 }
 ```
 
-删除不发送绑定对象或 no_box 项；tracking_id 在下一条完整 object_tracking 快照中缺席时，立即从 tracking_boxes 消失，Unity 据此删除线框。
+原始 tracking box 使用独立接口：
 
-约束：
+- `GET /api/v2/shigure/object-tracking-boxes/latest?startup_session_id=<uuid>`；它不依赖 realtime handshake、模型状态、历史模式或下载队列。
+- Unity 从应用启动后长期约每 1 秒轮询。每次成功响应都是权威最新快照：同 tracking_id 直接覆盖，新增 ID 立即增加，响应中缺失的旧 ID 立即删除，成功空数组会清空全部线框；网络失败仅保留上一帧等待下次轮询。
+- 服务器只读取 Shigure 最新 object_tracking collider 并转换 Shigure-camera 到当前 HoloLens-local 坐标；不做 freshness、稳定性、平滑、debounce、身份、模型或整批等待校验。单个无法完成坐标转换的条目只能被跳过，不能阻塞其他条目。
+- tracking_id 使用 source_epoch:raw_id，仅用于原始线框显示；Unity 只画 8 点线框，不把它绑定到 RuntimeModelRecord，也不用于 PointObject、identity、pose 或其他操作。
+- 当前 startup 没有 ArMarker reference 时接口成功返回空数组，因为无法安全完成坐标变换。
+- raw Shigure ID 与持久物体身份严格分离。旧 ID 意外消失、随后在配置时间窗内出现新 ID 时，runtime 会另开 source epoch，并以 DINOv2 对现有 display identity 做一对一相似度恢复；这不会改变上述 raw box 的逐 ID 直接显示行为。
 
-- 顶层 `count` 必须等于 `items` 数组长度且最多为 5；`pose_source` 为 `tracking` 或 `hololens`，当前模型 revision 有有效追踪位姿时优先前者。
-- `tracking_boxes` 不得截断或复用最近 5 条限制；`tracking_box_count` 必须等于数组长度，且只有 `tracking_box_snapshot_complete=true` 才允许客户端 reconcile/delete。
-- 每个 box item 的 tracking_id 必须非空且唯一，revision 必须为正；spatial_box 必须是 ready 且包含 8 个有限角点。box 只来自 raw object_tracking collider 与 ArUco 变换，不从 identity、model、mask 或 depth 推测。
-- Unity 必须先完整验证整份 tracking_boxes 再原子应用；完整快照中缺席的旧 tracking_id 删除其独立线框。box 不进入 RuntimeModelRecord，也不依赖 display_object_id、presence 或模型是否已下载。
-- raw tracking ID 的新增、移动更新和缺失删除逐条跟随 Shigure object_tracking 完整快照，不做平滑、稳定窗口或 debounce；source epoch 变化会以新 tracking_id 命名空间替换旧快照。
-- 快照文件随每条 object_tracking 消息刷新；runtime 停止或快照超过 3 秒未刷新时 API 返回完整空 tracking_boxes，避免 HoloLens 保留僵尸框。
-- `items[]` 可附带 `tracking_status`、`tracking_event_uid` 和 canonical `model`；客户端已有相同 `display_object_id + model_revision` 的 FBX 时直接复用缓存。
+原 realtime status 的 `items[]` 继续只承载模型与 live pose；其中可附带 `tracking_status`、`tracking_event_uid` 和 canonical `model`。客户端已有相同 `display_object_id + model_revision` 的 FBX 时直接复用缓存。
 
 ## `GET /api/v2/display-objects/<display_object_id>/history`
 

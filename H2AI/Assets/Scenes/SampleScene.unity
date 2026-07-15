@@ -27724,11 +27724,6 @@ MonoBehaviour:
   targetHand: 1
   waitSeconds: 3
   maxDistanceMeters: 10
-  showRayLine: 1
-  lineMaterial: {fileID: 0}
-  lineWidth: 0.008
-  rayValidColor: {r: 0.1, g: 0.9, b: 1, a: 1}
-  rayInvalidColor: {r: 1, g: 0.15, b: 0.1, a: 1}
 --- !u!114 &1912203441
 MonoBehaviour:
   m_ObjectHideFlags: 0

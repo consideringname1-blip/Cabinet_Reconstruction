@@ -129,6 +129,7 @@ public class ShuJuQingQiu : MonoBehaviour
     private Coroutine modelLoadQueueRetryCoroutine;
     private Coroutine asyncTaskQueuePollingCoroutine;
     private Coroutine realtimeTrackingStatusPollingCoroutine;
+    private Coroutine objectTrackingBoxPollingCoroutine;
     private readonly List<PendingAsyncTask> asyncTaskQueue = new List<PendingAsyncTask>();
     private readonly HashSet<string> runtimeModelDownloadsInFlight = new HashSet<string>(StringComparer.Ordinal);
     private readonly HashSet<HTTPRequest> realtimeTrackingModelDownloadRequests = new HashSet<HTTPRequest>();
@@ -137,6 +138,7 @@ public class ShuJuQingQiu : MonoBehaviour
     private HistoryTrackingMode historyTrackingMode = HistoryTrackingMode.Live;
     private HTTPRequest historyTrackingModeRequest;
     private HTTPRequest realtimeTrackingStatusRequest;
+    private HTTPRequest objectTrackingBoxRequest;
     private bool realtimeTrackingStatusDeliveryEnabled = true;
     private bool automaticModelDeliverySuppressed = false;
     private long realtimeTrackingTransportGeneration = 0;
@@ -223,6 +225,7 @@ public class ShuJuQingQiu : MonoBehaviour
         startup_session_id = BuildStartupSessionId();
         StartCoroutine(PlaceStartupCameraMarkerWhenReady());
         realtimeTrackingStatusPollingCoroutine = StartCoroutine(PollRealtimeTrackingStatus());
+        objectTrackingBoxPollingCoroutine = StartCoroutine(PollLatestObjectTrackingBoxes());
 
         // Pose sampling is started explicitly by the capture flow.
     }
@@ -1386,6 +1389,120 @@ public class ShuJuQingQiu : MonoBehaviour
             : HistoryTrackingMode.Live;
     }
 
+    private IEnumerator PollLatestObjectTrackingBoxes()
+    {
+        while (true)
+        {
+            if (objectTrackingBoxRequest == null
+                && !string.IsNullOrEmpty(startup_session_id))
+            {
+                RequestLatestObjectTrackingBoxes();
+            }
+            yield return new WaitForSecondsRealtime(
+                Mathf.Max(0.25f, realtimeTrackingStatusPollIntervalSeconds));
+        }
+    }
+
+    private void RequestLatestObjectTrackingBoxes()
+    {
+        if (objectTrackingBoxRequest != null
+            || string.IsNullOrEmpty(startup_session_id)
+            || !TryGetServerServiceBaseUri(out Uri serviceBaseUri))
+        {
+            return;
+        }
+        Uri endpoint = new Uri(
+            serviceBaseUri,
+            "api/v2/shigure/object-tracking-boxes/latest"
+                + "?startup_session_id="
+                + Uri.EscapeDataString(startup_session_id));
+        HTTPRequest request = new HTTPRequest(
+            endpoint,
+            HTTPMethods.Get,
+            OnLatestObjectTrackingBoxesFinished);
+        request.ConnectTimeout = TimeSpan.FromSeconds(2);
+        request.Timeout = TimeSpan.FromSeconds(5);
+        request.AddHeader("Accept", "application/json");
+        objectTrackingBoxRequest = request;
+        request.Send();
+    }
+
+    private void OnLatestObjectTrackingBoxesFinished(
+        HTTPRequest request,
+        HTTPResponse response)
+    {
+        if (request != objectTrackingBoxRequest)
+        {
+            return;
+        }
+        objectTrackingBoxRequest = null;
+        if (response == null || !response.IsSuccess)
+        {
+            Debug.LogWarning("[SHIGURE_BOX] latest relay request failed; keep current boxes.");
+            return;
+        }
+
+        JObject root;
+        try
+        {
+            root = JObject.Parse(response.DataAsText);
+        }
+        catch (Exception exc)
+        {
+            Debug.LogWarning("[SHIGURE_BOX] invalid relay JSON: " + exc.Message);
+            return;
+        }
+        if (root["success"] == null
+            || !root["success"].Value<bool>()
+            || ReadString(root, "startup_session_id") != startup_session_id)
+        {
+            return;
+        }
+
+        string coordinateEpoch = ReadString(root, "coordinate_epoch");
+        JArray items = root["tracking_boxes"] as JArray ?? new JArray();
+        Dictionary<string, RuntimeSpatialBoxData> latest =
+            new Dictionary<string, RuntimeSpatialBoxData>(StringComparer.Ordinal);
+        foreach (JToken token in items)
+        {
+            JObject item = token as JObject;
+            string trackingId = ReadString(item, "tracking_id");
+            if (item == null
+                || string.IsNullOrEmpty(trackingId)
+                || !TryParseCurrentSpatialBoxToken(
+                    item["spatial_box"],
+                    out RuntimeSpatialBoxData spatialBox,
+                    out bool noBox,
+                    out long revision)
+                || noBox
+                || spatialBox == null)
+            {
+                continue;
+            }
+            spatialBox.Revision = revision;
+            latest[trackingId] = spatialBox;
+        }
+
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
+        if (manager != null)
+        {
+            manager.ReplaceRawTrackingBoxSnapshot(latest, coordinateEpoch);
+        }
+        Debug.Log(
+            "[SHIGURE_BOX] relayed latest snapshot count="
+            + latest.Count.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private void CancelLatestObjectTrackingBoxRequest()
+    {
+        HTTPRequest request = objectTrackingBoxRequest;
+        objectTrackingBoxRequest = null;
+        if (request != null)
+        {
+            request.Abort();
+        }
+    }
+
     private IEnumerator PollRealtimeTrackingStatus()
     {
         while (true)
@@ -1536,7 +1653,9 @@ public class ShuJuQingQiu : MonoBehaviour
     private void OnDestroy()
     {
         CancelRealtimeTrackingStatusRequest();
+        CancelLatestObjectTrackingBoxRequest();
         realtimeTrackingStatusPollingCoroutine = null;
+        objectTrackingBoxPollingCoroutine = null;
     }
 
     private void OnHistoryTrackingModeFinished(HTTPRequest request, HTTPResponse response)
@@ -1655,33 +1774,16 @@ public class ShuJuQingQiu : MonoBehaviour
 
     private bool TryValidateTrackingSnapshot(
         JObject response,
-        out JArray snapshotItems,
-        out JArray spatialBoxItems)
+        out JArray snapshotItems)
     {
         snapshotItems = response != null
             ? response["items"] as JArray
             : null;
-        spatialBoxItems = response != null
-            ? response["tracking_boxes"] as JArray
-            : null;
         long declaredItemCount = ReadLong(response, "count");
-        long declaredSpatialBoxCount = ReadLong(
-            response,
-            "tracking_box_count");
-        JToken completeToken = response != null
-            ? response["tracking_box_snapshot_complete"]
-            : null;
-        bool spatialBoxSnapshotComplete = completeToken != null
-            && completeToken.Type == JTokenType.Boolean
-            && completeToken.Value<bool>();
         if (snapshotItems == null
             || declaredItemCount < 0
             || declaredItemCount > 5
-            || declaredItemCount != snapshotItems.Count
-            || spatialBoxItems == null
-            || declaredSpatialBoxCount < 0
-            || declaredSpatialBoxCount != spatialBoxItems.Count
-            || !spatialBoxSnapshotComplete)
+            || declaredItemCount != snapshotItems.Count)
         {
             Debug.LogWarning(
                 "[HISTORY_TRACKING] Ignore incomplete tracking snapshot; "
@@ -1737,36 +1839,6 @@ public class ShuJuQingQiu : MonoBehaviour
             }
         }
 
-        HashSet<string> validatedTrackingBoxIds =
-            new HashSet<string>(StringComparer.Ordinal);
-        foreach (JToken token in spatialBoxItems)
-        {
-            JObject item = token as JObject;
-            string trackingId = ReadString(item, "tracking_id");
-            long revision = ReadLong(item, "revision");
-            if (item == null
-                || !HasExactKeys(
-                    item,
-                    "tracking_id",
-                    "revision",
-                    "spatial_box")
-                || string.IsNullOrEmpty(trackingId)
-                || revision <= 0
-                || !validatedTrackingBoxIds.Add(trackingId)
-                || !TryParseCurrentSpatialBoxToken(
-                    item["spatial_box"],
-                    out RuntimeSpatialBoxData ignoredBox,
-                    out bool ignoredNoBox,
-                    out long parsedRevision)
-                || ignoredNoBox
-                || parsedRevision != revision)
-            {
-                Debug.LogWarning(
-                    "[HISTORY_TRACKING] Ignore malformed complete raw tracking-box "
-                    + "snapshot; no pose, box, or model download was changed.");
-                return false;
-            }
-        }
         return true;
     }
 
@@ -1827,8 +1899,7 @@ public class ShuJuQingQiu : MonoBehaviour
         if (string.IsNullOrEmpty(coordinateEpoch)
             || !TryValidateTrackingSnapshot(
                 response,
-                out JArray snapshotItems,
-                out JArray spatialBoxItems))
+                out JArray snapshotItems))
         {
             return false;
         }
@@ -1851,40 +1922,6 @@ public class ShuJuQingQiu : MonoBehaviour
                 + resumedHistoryCount.ToString(CultureInfo.InvariantCulture)
                 + " history presentation(s).");
         }
-
-        HashSet<string> readyTrackingBoxIds =
-            new HashSet<string>(StringComparer.Ordinal);
-        foreach (JToken token in spatialBoxItems)
-        {
-            JObject item = (JObject)token;
-            string trackingId = ReadString(item, "tracking_id");
-            long revision = ReadLong(item, "revision");
-            TryParseCurrentSpatialBoxToken(
-                item["spatial_box"],
-                out RuntimeSpatialBoxData liveSpatialBox,
-                out bool ignoredNoBox,
-                out long ignoredRevision);
-            bool accepted = manager.UpdateRawTrackingBox(
-                trackingId,
-                revision,
-                coordinateEpoch,
-                liveSpatialBox,
-                out string boxRejectionReason);
-            if (!accepted
-                && boxRejectionReason != "tracking_box_revision_duplicate")
-            {
-                Debug.Log(
-                    "[HISTORY_TRACKING] Raw tracking box rejected for "
-                    + trackingId + ": " + boxRejectionReason);
-            }
-            if (manager.HasReadyRawTrackingBox(
-                trackingId,
-                coordinateEpoch))
-            {
-                readyTrackingBoxIds.Add(trackingId);
-            }
-        }
-        manager.ReconcileRawTrackingBoxSnapshot(readyTrackingBoxIds);
 
         foreach (JToken token in snapshotItems)
         {

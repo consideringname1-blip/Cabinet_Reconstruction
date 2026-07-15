@@ -1451,49 +1451,51 @@ def _live_snapshot_items(
 
 
 def _live_tracking_box_items(reference_pose: dict | None) -> list[dict]:
-    # Complete model-independent Shigure tracking-box snapshot.
+    # Best-effort relay of the latest complete Shigure object_tracking snapshot.
+    # No freshness window, stability gate, identity binding, or whole-snapshot
+    # validation is applied here. Per-item parsing only exists to perform the
+    # required ArUco -> current HoloLens-local coordinate conversion.
     if reference_pose is None:
-        # Raw Shigure camera coordinates have no safe HoloLens-local transform
-        # until this startup establishes an ArMarker reference.
         return []
-    path = SHIGURE_TRACKING_BOX_SNAPSHOT_PATH
     try:
-        if not path.is_file() or time.time() - path.stat().st_mtime > 3.0:
-            return []
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception as exc:
-        print(f"[WARN] failed to read raw tracking-box snapshot: {exc}")
+        payload = json.loads(
+            SHIGURE_TRACKING_BOX_SNAPSHOT_PATH.read_text(encoding="utf-8")
+        )
+        raw_boxes = payload.get("boxes") if isinstance(payload, dict) else []
+        if not isinstance(raw_boxes, list):
+            raw_boxes = []
+    except FileNotFoundError:
         return []
-    if (
-        not isinstance(payload, dict)
-        or payload.get("schema_version") != 1
-        or payload.get("snapshot_complete") is not True
-        or not isinstance(payload.get("boxes"), list)
-        or int(payload.get("count") or 0) != len(payload["boxes"])
-    ):
-        raise ValueError("raw tracking-box snapshot is malformed")
+    except Exception as exc:
+        print(f"[WARN] failed to relay latest raw tracking boxes: {exc}")
+        return []
 
     boxes: list[dict] = []
-    seen_tracking_ids: set[str] = set()
-    for item in payload["boxes"]:
+    for index, item in enumerate(raw_boxes):
         if not isinstance(item, dict):
-            raise ValueError("raw tracking-box item must be an object")
-        tracking_id = str(item.get("tracking_id") or "").strip()
-        revision = _strict_json_integer(
-            item.get("revision"), "tracking_box_revision", minimum=1
-        )
-        if not tracking_id or tracking_id in seen_tracking_ids:
-            raise ValueError(
-                "raw tracking-box snapshot has an invalid tracking_id"
+            continue
+        tracking_id = str(
+            item.get("tracking_id")
+            or item.get("raw_tracking_id")
+            or ""
+        ).strip()
+        if not tracking_id:
+            continue
+        try:
+            revision = max(1, int(item.get("revision") or index + 1))
+            spatial_box = _strict_current_box(
+                item.get("corners_aruco"),
+                reference_pose,
+                revision=revision,
             )
-        seen_tracking_ids.add(tracking_id)
-        spatial_box = _strict_current_box(
-            item.get("corners_aruco"),
-            reference_pose,
-            revision=revision,
-        )
+        except Exception as exc:
+            print(
+                "[WARN] skipped unconvertible relayed tracking box "
+                f"{tracking_id}: {exc}"
+            )
+            continue
         if spatial_box is None:
-            raise ValueError("raw tracking-box item has no collider")
+            continue
         boxes.append(
             {
                 "tracking_id": tracking_id,
@@ -1502,6 +1504,42 @@ def _live_tracking_box_items(reference_pose: dict | None) -> list[dict]:
             }
         )
     return boxes
+
+
+@app.route(
+    "/api/v2/shigure/object-tracking-boxes/latest",
+    methods=["GET"],
+    strict_slashes=False,
+)
+def latest_shigure_object_tracking_boxes():
+    startup_session_id = str(
+        request.args.get("startup_session_id") or ""
+    ).strip()
+    if not startup_session_id:
+        return jsonify({"success": False, "error": "startup_session_id is required"}), 400
+
+    reference_row = get_latest_aruco_reference(startup_session_id)
+    reference_pose = (
+        _load_marker_pose_json(reference_row.get("marker_pose_json"))
+        if reference_row is not None
+        else None
+    )
+    coordinate_epoch = (
+        str(reference_row.get("task_id") or reference_row.get("id") or "").strip()
+        if reference_row is not None
+        else f"startup-local:{startup_session_id}"
+    )
+    boxes = _live_tracking_box_items(reference_pose)
+    return jsonify(
+        {
+            "success": True,
+            "startup_session_id": startup_session_id,
+            "coordinate_space": "hololens_current_local",
+            "coordinate_epoch": coordinate_epoch,
+            "tracking_box_count": len(boxes),
+            "tracking_boxes": boxes,
+        }
+    )
 
 
 _LIVE_TRANSPORT_LOCK = threading.RLock()

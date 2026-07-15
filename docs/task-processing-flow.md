@@ -33,14 +33,15 @@ data/
   shigure_events/<event_uuid>/
   identity_references/<reference_id>/embedding.json
   identity_references/views/<sha256>/{scene.png,mask.png}
-  shigure_debug_cache/          # 仅在 debug 开关启用时写诊断帧
+  shigure_debug_cache/          # 10 GiB 环形 exact-stamp 诊断缓存
+  shigure_recovery_debug/       # 持久启动恢复报告、scene、mask、crop
   database/tasks.db
   worker_sockets/
   aruco/
   console_logs/
 ```
 
-主程序从内存 socket cache 读取在线帧，绝不从 `shigure_debug_cache` 恢复业务状态。事件图片、mask、crop 和骨骼属于持久事件证据，写入 `shigure_events`。启动恢复、HoloLens identity sync、稳定视图和 FoundationPose 使用的 candidate scene/mask/crop 先写系统临时目录；一次尝试结束后统一删除。只有通过 novelty 判定而被接受的 identity 视图，才按内容摘要复制到 `identity_references/views/<sha256>` 并把持久路径写入数据库。
+主程序从内存 socket cache 读取在线帧，绝不从 `shigure_debug_cache` 恢复业务状态。事件图片、mask、crop 和骨骼属于持久事件证据，写入 `shigure_events`。启动恢复的每个等待观察与实际尝试都会把报告、scene、对齐 mask 和 masked crop 持久写入 `shigure_recovery_debug/<runtime_session>/<source_epoch>/`，用于定位校准、输入和 DINO 分配失败；DINO/FP 内部临时候选仍在尝试后删除。只有通过 novelty 判定而被接受的 identity 视图，才按内容摘要复制到 `identity_references/views/<sha256>` 并把持久路径写入数据库。
 
 ## Object reconstruction 主链
 
@@ -78,19 +79,21 @@ DINOv2 命中已有 `display_object_id` 且未强制重建时，可复用其 com
 
 `ShigureCompatibilityAdapter` 按完全相同的 ROS stamp 生成 `CachedShigureFrame` schema v2。事件的 bbox-local mask 必须粘贴回原始全图坐标，禁止 resize 成全图。缺失、显式空列表和无效 mask 是不同状态。
 
-recorder 的在线 RGB-D/canonical ring 只存在内存并通过 Unix socket 提供。稀疏事件和恢复候选只在存在同 stamp RGB 时附加精确事件 RGB-D，禁止拿邻近 RGB 冒充。可选 debug disk ring 默认关闭；开启后把这些 exact-stamp canonical/RGB-D 诊断项写入独立环形目录，最多保留 600 秒，仅用于复查。
+recorder 的在线 RGB-D/canonical ring 只存在内存并通过 Unix socket 提供。稀疏事件和恢复候选只在存在同 stamp RGB 时附加精确事件 RGB-D，禁止拿邻近 RGB 冒充。debug disk ring 默认开启；把这些 exact-stamp canonical/RGB-D 诊断项写入独立环形目录，最多保留 600 秒、默认容量上限 10 GiB，仅用于复查。
 
 ## 身份与启动恢复
 
-服务器启动、recorder incarnation 改变，或 adapter 检测到 `/shigure/object_tracking` raw ID 的时间前缀改变时：
+服务器启动只会建立 runtime session/source epoch 并进入等待；它不会在未校准输入上消耗恢复次数。recorder incarnation 改变、tracking namespace 改变，或旧 raw ID 意外消失后在 `SHIGURE_ID_HANDOFF_GRACE_SECONDS`（默认 60 秒，按服务器接收单调时钟）内出现未见新 ID 时，也会撤销旧 epoch binding、打开新 source epoch，并强制重新做 DINOv2 身份恢复。显式 `take_out` 不计作这种意外交接。恢复顺序为：
 
-1. 创建新的 runtime session/source epoch，并撤销旧 raw-ID binding。
-2. 等待候选所在 exact stamp 的 `object_tracking=present` 和 exact RGB-D；输入尚未齐全时将恢复 job 保持为 `PENDING`，不提前执行 DINO。
-3. 从最新完整 `/Segments`/tracking canonical frame 取得当前候选 mask。
+1. 等待候选所在 exact stamp 的 `object_tracking=present`。
+2. 继续等待完全相同 stamp 的 RGB-D、非空 CameraInfo、可用的 Shigure-camera 到 ArMarker 校准，以及能按 RGB 尺寸解码且非空的 candidate mask。任一条件缺失时 job 保持 `PENDING`，记录原因与输入图片，但恢复 attempts 不增加。
+3. 校准输入全部就绪后，才从最新完整 `/Segments`/tracking canonical frame 取得候选并开始一次实际 DINO 尝试。
 4. 只取最近 5 个已有模型 revision 且有活动 identity reference 的持久 `display_object_id`；不要求它曾保存 HoloLens pose。为每个 candidate 计算到每个 display 的 DINOv2 edge cost。
 5. 在完整 candidate×display 矩阵上做全局一对一分配：先优先覆盖带可信 raw ID 的 candidate，再最大化可绑定数量，最后最小化总代价；不会按 ROS 顺序逐个贪心。最佳与次佳同规模方案的总代价 margin 不足时，相关 candidate 保持 ambiguous。
 6. 有可信 raw ID 时建立 epoch-scoped binding；没有 raw ID 时只记录 provisional 结果，并让恢复 job 保持 `PENDING`。
 7. Shigure 视角与现有参考差异足够大时，保存为新的 `SHIGURE` identity reference；否则不重复记录。
+
+每种等待原因与每次实际尝试的 `report.json` 都包含 input state、canonical diagnostics（含旧/新 raw ID handoff）、候选、分数、assignment margin 和最终原因；对应 `scene.png`、`mask.png`、`object_crop.png` 保留在同一目录。raw ID 只用于当前 epoch；跨 ID 的同一物体基准始终是持久 `display_object_id` 的 DINOv2 reference，而不是复用旧 raw ID。
 
 `segments=explicit_empty` 且 `object_tracking=explicit_empty` 的无 candidate frame 是一份完整空 snapshot：runtime 会以 0 match 完成本次启动恢复。任一 topic 仍为 `missing` 时不能用空列表结束恢复；非空 segments 但 tracking 尚未到达、exact RGB-D 尚未到达，或存在 `UNBOUND`、`AMBIGUOUS`、`CONFLICT`、`PROVISIONAL` candidate 时，恢复均保持 `PENDING`。后续不同 source stamp 会按 `SHIGURE_STARTUP_RECOVERY_RETRY_SECONDS` 节流重试；同 epoch 已绑定 candidate 固定保留，不参与重复 DINO 分配。全部 candidate 为 `BOUND` 才 `COMPLETED`，达到 `SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS` 后才以 `FAILED` 终止。
 

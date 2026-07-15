@@ -30,6 +30,7 @@ import numpy as np
 from artifact_layout import (
     IDENTITY_REFERENCE_ROOT,
     SHIGURE_EVENT_ROOT,
+    SHIGURE_RECOVERY_DEBUG_ROOT,
     SHIGURE_TRACKING_BOX_SNAPSHOT_PATH,
 )
 from config import (
@@ -659,6 +660,8 @@ class ShigureRuntimeEngine:
         self._startup_recovery_attempts = 0
         self._startup_recovery_last_source_key = ""
         self._startup_recovery_last_attempt_monotonic = float("-inf")
+        self._startup_recovery_last_report_key = ""
+        self._startup_recovery_last_report_monotonic = float("-inf")
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._lock = threading.RLock()
@@ -704,6 +707,22 @@ class ShigureRuntimeEngine:
                 },
             )
             self.runtime_session_id = str(session["runtime_session_id"])
+            self._startup_recovery_pending = True
+            bootstrap_root = SHIGURE_RECOVERY_DEBUG_ROOT / self.runtime_session_id
+            _write_json(
+                bootstrap_root / "bootstrap.json",
+                {
+                    "schema_version": 1,
+                    "runtime_session_id": self.runtime_session_id,
+                    "started_utc": _utc_now(),
+                    "status": "PENDING",
+                    "reason": "server_started_waiting_for_calibrated_image_and_masks",
+                },
+            )
+            print(
+                "[shigure-v2] startup recovery armed at server start; "
+                f"report={bootstrap_root / 'bootstrap.json'}"
+            )
             self._stop.clear()
             self._thread = threading.Thread(target=self._run, daemon=True, name="shigure-runtime-v2")
             self._thread.start()
@@ -797,6 +816,8 @@ class ShigureRuntimeEngine:
             self._startup_recovery_attempts = 0
             self._startup_recovery_last_source_key = ""
             self._startup_recovery_last_attempt_monotonic = float("-inf")
+            self._startup_recovery_last_report_key = ""
+            self._startup_recovery_last_report_monotonic = float("-inf")
             self._stable.clear()
             self._last_stable_source_key.clear()
             self._last_strict_candidate_snapshot_source_key = ""
@@ -894,6 +915,141 @@ class ShigureRuntimeEngine:
     def _sample_exact(self, frame: CachedShigureFrame) -> CachedRgbdSample | None:
         sample = self.cache.get_sample(frame.source_stamp)
         return sample if sample is not None and sample.stamp == frame.source_stamp else None
+
+    def _recovery_debug_epoch_root(self) -> Path:
+        return (
+            SHIGURE_RECOVERY_DEBUG_ROOT
+            / str(self.runtime_session_id or "runtime_missing")
+            / str(self.source_epoch_id or "source_epoch_pending")
+        )
+
+    @staticmethod
+    def _recovery_candidate_summary(candidate: Mapping[str, Any]) -> dict[str, Any]:
+        return {
+            "candidate_id": candidate.get("candidate_id"),
+            "raw_shigure_object_id": candidate.get("shigure_object_id"),
+            "bbox": _bbox(candidate),
+            "mask_available": bool(candidate.get("mask_b64")),
+        }
+
+    def _write_recovery_input_artifacts(
+        self,
+        root: Path,
+        frame: CachedShigureFrame,
+        sample: CachedRgbdSample | None,
+    ) -> list[dict[str, Any]]:
+        root.mkdir(parents=True, exist_ok=True)
+        if sample is None:
+            return []
+        _write_image(root / "scene.png", sample.rgb_bgr)
+        manifest: list[dict[str, Any]] = []
+        candidates_root = root / "candidates"
+        for index, candidate in enumerate(frame.recovery_candidates):
+            candidate_id = str(candidate.get("candidate_id") or f"candidate_{index}")
+            safe_id = hashlib.sha256(candidate_id.encode("utf-8")).hexdigest()[:12]
+            item_root = candidates_root / f"{index:02d}_{safe_id}"
+            entry = {
+                **self._recovery_candidate_summary(candidate),
+                "directory": str(item_root),
+            }
+            try:
+                mask = _decode_full_mask(
+                    candidate.get("mask_b64"),
+                    sample.rgb_bgr.shape[:2],
+                )
+                item_root.mkdir(parents=True, exist_ok=True)
+                _write_image(item_root / "mask.png", mask.astype(np.uint8) * 255)
+                box = _bbox(candidate) or _mask_bbox(mask)
+                x0, y0, x1, y1 = [int(round(value)) for value in box]
+                x0, y0 = max(0, x0), max(0, y0)
+                x1 = min(sample.rgb_bgr.shape[1], x1)
+                y1 = min(sample.rgb_bgr.shape[0], y1)
+                if x1 > x0 and y1 > y0:
+                    crop = sample.rgb_bgr[y0:y1, x0:x1].copy()
+                    crop[~mask[y0:y1, x0:x1]] = 0
+                    _write_image(item_root / "object_crop.png", crop)
+                entry["mask_file"] = str(item_root / "mask.png")
+                entry["crop_file"] = (
+                    str(item_root / "object_crop.png")
+                    if (item_root / "object_crop.png").is_file()
+                    else None
+                )
+            except Exception as exc:
+                entry["artifact_error"] = f"{exc.__class__.__name__}: {exc}"
+            manifest.append(entry)
+        return manifest
+
+    def _startup_recovery_calibrated_input_reason(
+        self,
+        frame: CachedShigureFrame,
+    ) -> str | None:
+        sample = self._sample_exact(frame)
+        if sample is None:
+            return "waiting_for_exact_rgbd"
+        if not isinstance(sample.camera_info, Mapping) or not sample.camera_info:
+            return "waiting_for_image_camera_info"
+        try:
+            _camera_to_aruco()
+        except Exception:
+            return "waiting_for_shigure_camera_to_armarker_calibration"
+        for candidate in frame.recovery_candidates:
+            try:
+                mask = _decode_full_mask(
+                    candidate.get("mask_b64"),
+                    sample.rgb_bgr.shape[:2],
+                )
+            except Exception:
+                return "waiting_for_image_aligned_candidate_mask"
+            if not np.any(mask):
+                return "waiting_for_nonempty_candidate_mask"
+        return None
+
+    def _persist_recovery_observation(
+        self,
+        frame: CachedShigureFrame,
+        reason: str,
+    ) -> Path | None:
+        report_key = str(reason)
+        now_monotonic = float(frame.received_monotonic)
+        if self._startup_recovery_last_report_key == report_key:
+            return None
+        if (
+            now_monotonic - self._startup_recovery_last_report_monotonic
+            < SHIGURE_STARTUP_RECOVERY_RETRY_SECONDS
+        ):
+            return None
+        self._startup_recovery_last_report_key = report_key
+        self._startup_recovery_last_report_monotonic = now_monotonic
+        root = (
+            self._recovery_debug_epoch_root()
+            / "observations"
+            / f"sequence_{int(frame.sequence):09d}"
+        )
+        artifacts = self._write_recovery_input_artifacts(
+            root,
+            frame,
+            self._sample_exact(frame),
+        )
+        report = {
+            "schema_version": 1,
+            "runtime_session_id": self.runtime_session_id,
+            "source_epoch_id": self.source_epoch_id,
+            "recorded_utc": _utc_now(),
+            "status": "PENDING",
+            "reason": str(reason),
+            "frame_sequence": int(frame.sequence),
+            "source_stamp": frame.source_stamp.to_dict(),
+            "input_states": dict(frame.input_states),
+            "canonical_diagnostics": list(frame.diagnostics),
+            "candidate_count": len(frame.recovery_candidates),
+            "candidates": artifacts,
+        }
+        _write_json(root / "report.json", report)
+        print(
+            "[shigure-v2] startup recovery waiting: "
+            f"reason={reason} report={root / 'report.json'}"
+        )
+        return root
 
     def _artifact_root(self, frame: CachedShigureFrame, token: str) -> Path:
         source_sample_key = sample_key(frame.source_stamp)
@@ -1255,6 +1411,10 @@ class ShigureRuntimeEngine:
             and frame.input_states.get("object_tracking") == "explicit_empty"
         )
         if not frame.recovery_candidates and not complete_empty_snapshot:
+            self._persist_recovery_observation(
+                frame,
+                "waiting_for_nonempty_or_explicit_empty_recovery_snapshot",
+            )
             return False
         job_id = uuid.uuid5(
             uuid.NAMESPACE_URL,
@@ -1265,6 +1425,12 @@ class ShigureRuntimeEngine:
             # Segments is often published before same-stamp tracking. Running
             # DINO now can produce a terminal ambiguous/unbound decision before
             # the only input that supplies the epoch-local raw ID arrives.
+            wait_reason = (
+                "waiting_for_same_stamp_tracking"
+                if tracking_state == "missing"
+                else "segments_nonempty_but_tracking_empty"
+            )
+            wait_root = self._persist_recovery_observation(frame, wait_reason)
             upsert_identity_sync_job(
                 sync_job_id=job_id,
                 kind="STARTUP_RECOVERY",
@@ -1276,15 +1442,25 @@ class ShigureRuntimeEngine:
                     "frame_sequence": frame.sequence,
                     "source_stamp": frame.source_stamp.to_dict(),
                     "matches": [],
-                    "reason": (
-                        "waiting_for_same_stamp_tracking"
-                        if tracking_state == "missing"
-                        else "segments_nonempty_but_tracking_empty"
+                    "reason": wait_reason,
+                    "debug_report_path": (
+                        str(wait_root / "report.json")
+                        if wait_root is not None
+                        else None
                     ),
                 },
             )
             return False
-        if frame.recovery_candidates and self._sample_exact(frame) is None:
+        calibrated_input_reason = (
+            self._startup_recovery_calibrated_input_reason(frame)
+            if frame.recovery_candidates
+            else None
+        )
+        if calibrated_input_reason is not None:
+            wait_root = self._persist_recovery_observation(
+                frame,
+                calibrated_input_reason,
+            )
             upsert_identity_sync_job(
                 sync_job_id=job_id,
                 kind="STARTUP_RECOVERY",
@@ -1292,7 +1468,15 @@ class ShigureRuntimeEngine:
                 runtime_session_id=self.runtime_session_id,
                 source_epoch_id=self.source_epoch_id,
                 candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
-                result={"reason": "waiting_for_exact_rgbd"},
+                result={
+                    "reason": calibrated_input_reason,
+                    "attempts": self._startup_recovery_attempts,
+                    "debug_report_path": (
+                        str(wait_root / "report.json")
+                        if wait_root is not None
+                        else None
+                    ),
+                },
             )
             return False
         if complete_empty_snapshot:
@@ -1330,6 +1514,36 @@ class ShigureRuntimeEngine:
         self._startup_recovery_attempts += 1
         self._startup_recovery_last_source_key = source_key
         self._startup_recovery_last_attempt_monotonic = attempt_monotonic
+        attempt_root = (
+            self._recovery_debug_epoch_root()
+            / f"attempt_{self._startup_recovery_attempts:03d}_sequence_{int(frame.sequence):09d}"
+        )
+        input_artifacts = self._write_recovery_input_artifacts(
+            attempt_root,
+            frame,
+            self._sample_exact(frame),
+        )
+        _write_json(
+            attempt_root / "report.json",
+            {
+                "schema_version": 1,
+                "runtime_session_id": self.runtime_session_id,
+                "source_epoch_id": self.source_epoch_id,
+                "recorded_utc": _utc_now(),
+                "status": "RUNNING",
+                "attempt": self._startup_recovery_attempts,
+                "frame_sequence": int(frame.sequence),
+                "source_stamp": frame.source_stamp.to_dict(),
+                "input_states": dict(frame.input_states),
+                "canonical_diagnostics": list(frame.diagnostics),
+                "candidates": input_artifacts,
+            },
+        )
+        print(
+            "[shigure-v2] startup recovery attempt started: "
+            f"attempt={self._startup_recovery_attempts} "
+            f"report={attempt_root / 'report.json'}"
+        )
 
         upsert_identity_sync_job(
             sync_job_id=job_id,
@@ -1534,8 +1748,34 @@ class ShigureRuntimeEngine:
                     "attempts": self._startup_recovery_attempts,
                     "max_attempts": SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS,
                     "reason": reason,
+                    "debug_report_path": str(attempt_root / "report.json"),
                 },
                 error_message=reason if job_status == "FAILED" else None,
+            )
+            _write_json(
+                attempt_root / "report.json",
+                {
+                    "schema_version": 1,
+                    "runtime_session_id": self.runtime_session_id,
+                    "source_epoch_id": self.source_epoch_id,
+                    "recorded_utc": _utc_now(),
+                    "status": job_status,
+                    "reason": reason,
+                    "attempt": self._startup_recovery_attempts,
+                    "max_attempts": SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS,
+                    "frame_sequence": int(frame.sequence),
+                    "source_stamp": frame.source_stamp.to_dict(),
+                    "input_states": dict(frame.input_states),
+                    "canonical_diagnostics": list(frame.diagnostics),
+                    "assignment": assignment_summary,
+                    "matches": results,
+                    "candidates": input_artifacts,
+                },
+            )
+            print(
+                "[shigure-v2] startup recovery attempt finished: "
+                f"status={job_status} reason={reason} "
+                f"report={attempt_root / 'report.json'}"
             )
             return recovery_complete or attempts_exhausted
         except Exception as exc:
@@ -1556,8 +1796,32 @@ class ShigureRuntimeEngine:
                     "attempts": self._startup_recovery_attempts,
                     "max_attempts": SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS,
                     "reason": failure_reason,
+                    "debug_report_path": str(attempt_root / "report.json"),
                 },
                 error_message=failure_reason if attempts_exhausted else None,
+            )
+            _write_json(
+                attempt_root / "report.json",
+                {
+                    "schema_version": 1,
+                    "runtime_session_id": self.runtime_session_id,
+                    "source_epoch_id": self.source_epoch_id,
+                    "recorded_utc": _utc_now(),
+                    "status": "FAILED" if attempts_exhausted else "PENDING",
+                    "reason": failure_reason,
+                    "attempt": self._startup_recovery_attempts,
+                    "max_attempts": SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS,
+                    "frame_sequence": int(frame.sequence),
+                    "source_stamp": frame.source_stamp.to_dict(),
+                    "input_states": dict(frame.input_states),
+                    "canonical_diagnostics": list(frame.diagnostics),
+                    "partial_matches": results,
+                    "candidates": input_artifacts,
+                },
+            )
+            print(
+                "[shigure-v2] startup recovery attempt exception: "
+                f"reason={failure_reason} report={attempt_root / 'report.json'}"
             )
             return attempts_exhausted
         finally:
@@ -2655,7 +2919,9 @@ class ShigureRuntimeEngine:
             except Exception:
                 camera_to_aruco = None
             if camera_to_aruco is None:
+                self._raw_tracking_boxes.clear()
                 self._last_raw_tracking_stamp = tracking_stamp
+                self._publish_raw_tracking_box_snapshot()
                 return
 
         observed_raw_ids: set[str] = set()

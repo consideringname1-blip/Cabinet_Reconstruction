@@ -850,6 +850,65 @@ public class RuntimeModelManager : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// Replaces the HoloLens raw Shigure overlays with the latest server relay.
+    /// This path intentionally has no revision, identity, stability, or model
+    /// admission gate: present IDs are overwritten and absent IDs are deleted.
+    /// </summary>
+    public void ReplaceRawTrackingBoxSnapshot(
+        IDictionary<string, RuntimeSpatialBoxData> latestBoxes,
+        string coordinateEpoch)
+    {
+        HashSet<string> presentIds =
+            new HashSet<string>(StringComparer.Ordinal);
+        if (latestBoxes != null)
+        {
+            foreach (KeyValuePair<string, RuntimeSpatialBoxData> pair
+                in latestBoxes)
+            {
+                string trackingId = pair.Key ?? "";
+                RuntimeSpatialBoxData spatialBox = pair.Value;
+                if (string.IsNullOrEmpty(trackingId) || spatialBox == null)
+                {
+                    continue;
+                }
+                if (!_rawTrackingBoxes.TryGetValue(
+                        trackingId,
+                        out RuntimeRawTrackingBoxState state)
+                    || state == null)
+                {
+                    state = new RuntimeRawTrackingBoxState
+                    {
+                        TrackingId = trackingId,
+                    };
+                    _rawTrackingBoxes[trackingId] = state;
+                }
+
+                RuntimeSpatialBoxData relayed = spatialBox.Clone();
+                relayed.CoordinateEpoch = coordinateEpoch ?? "";
+                state.Revision = relayed.Revision;
+                state.CoordinateEpoch = relayed.CoordinateEpoch;
+                state.SpatialBox = relayed;
+                presentIds.Add(trackingId);
+                ApplyRawTrackingBoxOverlay(trackingId, relayed);
+            }
+        }
+
+        List<string> removedIds = new List<string>();
+        foreach (string trackingId in _rawTrackingBoxes.Keys)
+        {
+            if (!presentIds.Contains(trackingId))
+            {
+                removedIds.Add(trackingId);
+            }
+        }
+        foreach (string trackingId in removedIds)
+        {
+            _rawTrackingBoxes.Remove(trackingId);
+            DestroyRawTrackingBoxOverlay(trackingId);
+        }
+    }
+
     public bool UpdateRawTrackingBox(
         string trackingId,
         long revision,

@@ -72,6 +72,8 @@ input state 明确区分 `missing`、`explicit_empty`、`present`。adapter 允�
 
 同一 exact stamp 的 enriched revision 保持稳定 event identity。首个 detection/tracking 消息冻结该 stamp 的 event frame identity，并为每条事件分配 `canonical_event_index`；另一侧随后建立唯一映射时，把 detection/tracking alias 合并到首次分配的 index。因此无论哪一侧先到，后到的辅助或 lifecycle topic 都不会改 canonical key。people/contact/图像等迟到后，已有 lifecycle row 只补原先缺失的 pose、box、图片或骨骼证据；不会重复推进 presence 或新建历史行。segments 与 object tracking 同时 `explicit_empty` 且没有 candidate 时，是可完成启动恢复的完整空 snapshot；`missing` 不具有这个语义。非空恢复候选在同 stamp tracking 或 exact RGB-D 尚未到达时保持 `PENDING`，不会先执行 DINO 得出终态。HoloLens identity sync 同样只在 segments、tracking、exact RGB-D 齐全、几何候选通过且 raw ID 可信时消耗重试；目标未入镜或只有不相关候选时保持 `PENDING`；若可信 raw-ID候选已离开原 HoloLens pose 的几何门，则用带距离阈值与第二名间隔的 DINO fallback 重新绑定；服务重启只自动重排最近活动且尚未建立 Shigure binding 的同步，避免旧模型身份计算阻塞 HoloLens HTTP 轮询。可信 raw ID/几何可建立 binding；`SHIGURE_EXAMPLE_MIN_SEGMENT_PROBABILITY` 只控制是否新增 Shigure 身份样例，低概率不会阻断现有对象的 box。
 
+Shigure raw ID 不是持久身份。空 tracking snapshot 继承上一 namespace，因此能准确记录原 ID 消失；若随后在 `SHIGURE_ID_HANDOFF_GRACE_SECONDS`（默认 60 秒，按服务器接收单调时钟）内出现未见新 ID，adapter 会打开新 source incarnation，撤销旧 epoch binding，并要求 runtime 以已有 `display_object_id` reference 重新做 DINOv2 全局一对一匹配。namespace 变化执行相同策略；显式 `take_out` 不作为意外消失。raw box relay 不使用该身份映射，仍精确跟随当前 raw ID 快照。
+
 ## Detection 临时键与 raw ID
 
 既有 `DetectedObject` 没有 Shigure ID。adapter 先为每个条目生成：
@@ -126,6 +128,8 @@ mask 默认不通过 socket 返回；identity/artifact 处理需要时显式设�
 - entry 数量同时受上限约束，且总容量默认不超过 10 GiB（`SHIGURE_DEBUG_CACHE_MAX_BYTES`）；
 - runtime 不能把 debug ring 当作输入或恢复源；
 - 不通过 DVC 保存。
+
+此外，runtime 把启动恢复 bootstrap、每个 PENDING 等待原因和实际 DINO 尝试报告持久写入 `data/shigure_recovery_debug/<runtime_session>/<source_epoch>/`。只有 exact RGB-D、CameraInfo、Shigure-camera 到 ArMarker 校准、图像对齐非空 mask 均就绪后才增加 attempt；报告目录保留 scene、mask、masked crop、candidate scores、assignment margin 与 canonical handoff diagnostics。该目录同样只用于诊断，不作为恢复输入。
 
 ## Marker pose
 

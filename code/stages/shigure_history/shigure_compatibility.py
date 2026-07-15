@@ -12,6 +12,7 @@ import uuid
 import cv2
 import numpy as np
 
+from config import SHIGURE_ID_HANDOFF_GRACE_SECONDS
 from .cache import CachedShigureFrame, RosStamp, sample_key
 
 
@@ -666,6 +667,8 @@ class ShigureCompatibilityAdapter:
         self._tracking_namespace: str | None = None
         self._tracking_seen_ids: set[str] = set()
         self._tracking_active_ids: set[str] = set()
+        self._unexpectedly_missing_tracking_ids: dict[str, float] = {}
+        self._tracking_rotation_detail: dict[str, Any] | None = None
         self._last_tracking_stamp_key = ""
         self._obj_move_quarantine_active = False
         self._obj_move_barrier_stamp: tuple[int, int] | None = None
@@ -676,7 +679,12 @@ class ShigureCompatibilityAdapter:
     def source_incarnation_id(self) -> str:
         return self._source_incarnation_id
 
-    def _rotate_tracking_incarnation(self, namespace: str) -> None:
+    def _rotate_tracking_incarnation(
+        self,
+        namespace: str,
+        *,
+        detail: Mapping[str, Any] | None = None,
+    ) -> None:
         self._source_generation += 1
         self._source_incarnation_id = uuid.uuid5(
             uuid.NAMESPACE_URL,
@@ -687,8 +695,12 @@ class ShigureCompatibilityAdapter:
             ),
         ).hex
         self._tracking_namespace = namespace
+        self._tracking_rotation_detail = (
+            deepcopy(dict(detail)) if detail is not None else None
+        )
         self._tracking_seen_ids.clear()
         self._tracking_active_ids.clear()
+        self._unexpectedly_missing_tracking_ids.clear()
         self._last_tracking_stamp_key = ""
         self._obj_move_quarantine_active = False
         # Never exact-join payloads across an upstream tracking restart.
@@ -799,6 +811,24 @@ class ShigureCompatibilityAdapter:
                     if isinstance(item, Mapping)
                 ]
                 namespace = _tracking_raw_id_namespace(payload)
+                if not tracking_objects and self._tracking_namespace is not None:
+                    # An authoritative empty snapshot has no ID from which to
+                    # recover the namespace. It still means every previously
+                    # active raw ID disappeared in the current namespace.
+                    namespace = self._tracking_namespace
+                tracking_ids = {
+                    str(item.get("object_id") or "").strip()
+                    for item in tracking_objects
+                    if str(item.get("object_id") or "").strip()
+                }
+                take_out_ids = {
+                    str(item.get("object_id") or "").strip()
+                    for item in tracking_objects
+                    if str(item.get("object_id") or "").strip()
+                    and str(item.get("action") or "").lower() == "take_out"
+                }
+                current_active_ids = tracking_ids - take_out_ids
+                observed_monotonic = time.monotonic()
                 if was_quarantined:
                     # The obj_move marker already opened the new epoch.  The
                     # first strictly newer clean tracking snapshot establishes
@@ -808,15 +838,42 @@ class ShigureCompatibilityAdapter:
                     if self._tracking_namespace is None:
                         self._tracking_namespace = namespace
                     elif namespace != self._tracking_namespace:
-                        self._rotate_tracking_incarnation(namespace)
+                        self._rotate_tracking_incarnation(
+                            namespace,
+                            detail={
+                                "code": "TRACKING_NAMESPACE_CHANGED_DINOV2_REQUIRED",
+                                "missing_raw_ids": sorted(self._tracking_active_ids),
+                                "new_raw_ids": sorted(current_active_ids),
+                                "grace_seconds": SHIGURE_ID_HANDOFF_GRACE_SECONDS,
+                                "source_stamp": source_stamp.to_dict(),
+                            },
+                        )
                     else:
-                        reused = any(
-                            (
-                                object_id := str(
-                                    item.get("object_id") or ""
-                                ).strip()
+                        cutoff = observed_monotonic - SHIGURE_ID_HANDOFF_GRACE_SECONDS
+                        self._unexpectedly_missing_tracking_ids = {
+                            object_id: missing_at
+                            for object_id, missing_at in
+                            self._unexpectedly_missing_tracking_ids.items()
+                            if missing_at >= cutoff
+                            and object_id not in current_active_ids
+                        }
+                        unexpectedly_missing = (
+                            self._tracking_active_ids
+                            - current_active_ids
+                            - take_out_ids
+                        )
+                        for object_id in unexpectedly_missing:
+                            self._unexpectedly_missing_tracking_ids.setdefault(
+                                object_id,
+                                observed_monotonic,
                             )
-                            and object_id in self._tracking_seen_ids
+                        new_ids = current_active_ids - self._tracking_seen_ids
+                        handoff_sources = sorted(
+                            self._unexpectedly_missing_tracking_ids
+                        )
+                        id_handoff = bool(new_ids and handoff_sources)
+                        reused = any(
+                            object_id in self._tracking_seen_ids
                             and bool(self._last_tracking_stamp_key)
                             and self._last_tracking_stamp_key != key
                             and (
@@ -825,24 +882,38 @@ class ShigureCompatibilityAdapter:
                                 == "bring_in"
                             )
                             for item in tracking_objects
+                            if (
+                                object_id := str(
+                                    item.get("object_id") or ""
+                                ).strip()
+                            )
                         )
-                        if reused:
+                        if id_handoff:
+                            print(
+                                "[shigure_history] tracking ID handoff candidate; "
+                                f"missing={handoff_sources} new={sorted(new_ids)} "
+                                "opening a new source epoch for DINOv2 verification",
+                                flush=True,
+                            )
+                            self._rotate_tracking_incarnation(
+                                namespace,
+                                detail={
+                                    "code": "TRACKING_ID_HANDOFF_DINOV2_REQUIRED",
+                                    "missing_raw_ids": handoff_sources,
+                                    "new_raw_ids": sorted(new_ids),
+                                    "grace_seconds": SHIGURE_ID_HANDOFF_GRACE_SECONDS,
+                                    "source_stamp": source_stamp.to_dict(),
+                                },
+                            )
+                        elif reused:
                             # The upstream prefix has only second precision.
                             # Reusing an already-retired ID (or re-bringing an
                             # active ID at a new stamp) proves an in-second restart.
                             self._rotate_tracking_incarnation(namespace)
-                current_ids = {
-                    str(item.get("object_id") or "").strip()
-                    for item in tracking_objects
-                    if str(item.get("object_id") or "").strip()
-                }
-                self._tracking_seen_ids.update(current_ids)
-                self._tracking_active_ids = {
-                    str(item.get("object_id") or "").strip()
-                    for item in tracking_objects
-                    if str(item.get("object_id") or "").strip()
-                    and str(item.get("action") or "").lower() != "take_out"
-                }
+                self._tracking_seen_ids.update(tracking_ids)
+                self._tracking_active_ids = current_active_ids
+                for object_id in current_active_ids:
+                    self._unexpectedly_missing_tracking_ids.pop(object_id, None)
                 self._last_tracking_stamp_key = key
             bucket = self._buckets.setdefault(key, _FrameBucket(source_stamp=source_stamp))
             if (
@@ -1021,6 +1092,9 @@ class ShigureCompatibilityAdapter:
                 object_tracking=tracking,
             )
             diagnostics.extend(segment_diagnostics)
+
+        if self._tracking_rotation_detail is not None:
+            diagnostics.append(deepcopy(self._tracking_rotation_detail))
 
         input_states = {
             "camera_info": "present" if "camera_info" in bucket.inputs and bucket.image_shape else "missing",

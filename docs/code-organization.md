@@ -94,10 +94,11 @@ code/stages/shigure_history/
 职责边界：
 
 - recorder 只订阅并适配不可修改的远端 ROS topics，生成 exact-stamp canonical frame，并暴露内存 socket cache。
-- compatibility adapter 处理稀疏 bring-in/take-out/obj-move、tracking、bbox-local mask、RGB-D 和 Shigure 骨骼；临时 raw ID 只在 source epoch 内有效，tracking raw-ID 时间前缀变化会触发新的 incarnation/epoch。
-- runtime 的 identity/模型位姿候选仍最多 5 个；另以无数量上限的 Shigure box registry 维护每 binding 的滤波与 1.5 秒 coasting。它还负责启动恢复、bring-in 绑定、take-out 原子历史、严格示例准入和 DINO 后置 FoundationPose；恢复候选缺 tracking/exact RGB-D/可信 raw ID 时保持 `PENDING`。
+- compatibility adapter 处理稀疏 bring-in/take-out/obj_move、tracking、bbox-local mask、RGB-D 和 Shigure 骨骼；临时 raw ID 只在 source epoch 内有效。tracking namespace 改变，或旧 ID 意外消失后在可配置接收时间窗内出现新 ID，都会打开新 incarnation/epoch 并留下 DINOv2 handoff 诊断；显式 take_out 不触发该判定。
+- runtime 的 identity/模型位姿候选仍最多 5 个；另维护无数量上限、按 raw tracking ID 精确覆盖的最新 collider box snapshot，不绑定 display identity、不滤波、不 coasting。runtime 还负责启动恢复、bring-in 绑定、take-out 原子历史、严格示例准入和 DINO 后置 FoundationPose；恢复候选缺 tracking、exact RGB-D、CameraInfo、Shigure-camera 到 ArMarker 校准或图像对齐非空 mask 时保持 `PENDING`，且不增加实际尝试次数。
 - `spatial_box_v2.py` 只从原始 collider 与 ArUco 校准生成严格 8 点 box，不从 mask/depth 降级。
 - debug disk ring 默认开启；只写 exact-stamp 事件/RGB-D 与 canonical 诊断，最多保留 10 分钟、18,000 条且默认不超过 10 GiB，不参与主程序判定或恢复。
+- `data/shigure_recovery_debug` 独立持久保存每个 runtime/source epoch 的 bootstrap、等待观察、实际尝试报告，以及 scene/mask/crop；它只用于解释恢复为何等待、失败或 ambiguous，不作为后续业务输入。
 - `migrate_shigure_v2_data.py` 是 legacy 数据进入严格 v2 schema 的唯一显式一次性迁移入口；正常启动没有兼容分支，迁移会删除整个退役 `data/shigure_history_cache`。
 - SAM3D Body 已从当前执行路径移除；人体历史证据只使用 Shigure joint 点线骨骼。`code/reconstruction/sam3d-body` 只保留第三方源码/历史复现用途。
 - 本仓库不修改 `code/reconstruction/shigure_core`。

@@ -58,17 +58,16 @@ Unity 启动或重新握手时只发送 `mode=live`。`/realtime-tracking/status
 display identity / model revision
 latest live pose and pose revision
 presence and presence epoch
-model-independent raw tracking_id box revision；每项只包含 ready 八角点，删除由完整快照缺席表达
 optional canonical model metadata
 ```
 
-旧 `mode=history` 服务端分支已删除。每份成功 status 中，`items` 仍只承载最多 5 个模型/live pose；独立的 `tracking_boxes` 是无数量上限的 Shigure box 完整快照，并以 `tracking_box_snapshot_complete=true` 授权客户端 reconcile/delete。Unity 按 `startup_session_id`、`request_generation`、`mode_epoch`、`coordinate_epoch`、model revision 和 pose/box revision 拒绝迟到数据。
+旧 `mode=history` 服务端分支已删除。每份成功 realtime status 的 `items` 仍只承载最多 5 个模型/live pose；Unity 继续按 startup、request/mode/coordinate epoch、model revision 和 pose revision 拒绝迟到模型数据。raw tracking box 不再经过此验证链，而由独立 latest endpoint 长期轮询。
 
 `HistoryPresentationController` 的 URL override 默认为空；此时它从 `ShuJuQingQiu` 已配置的 realtime status/mode URL 提取 scheme、host、port 和服务路径，再派生同源 `/api/v2/`，不写死另一台服务器。
 
 每次 live snapshot 应用前，`RuntimeModelManager` 会比较 `coordinate_epoch`。仍在显示旧 epoch 历史的对象会自动恢复 `FollowLive`、应用最新 live state，并隐藏历史照片/骨骼；历史响应本身若与当前 live epoch 不同则拒绝应用。
 
-ShuJuQingQiu 先验证完整 tracking_boxes 的 count、complete 标记、tracking_id 唯一性和 ready 八角点；任一项损坏时整份 box snapshot 不应用。验证成功后按 tracking_id 原子更新独立线框，完整快照中缺席的旧 tracking_id 删除；历史 box、模型和 identity 状态不受影响。
+ShuJuQingQiu 从应用启动起约每 1 秒请求 `/api/v2/shigure/object-tracking-boxes/latest`，不等待 realtime handshake、模型下载或历史状态。成功响应按 tracking_id 直接 replace：能解析的条目立即新增或覆盖，缺席条目立即删除，成功空数组清空；请求失败时保留上一快照等待下一轮。服务器不做 freshness、稳定、平滑、identity 或整批等待。
 
 ## 单击某个模型
 
@@ -92,7 +91,7 @@ ShuJuQingQiu 先验证完整 tracking_boxes 的 count、complete 标记、tracki
 
 全体进入历史后仍可继续单击某个物体，逐条向更老的 `history_cursor` 翻页。全体继续追踪不会停掉服务端任务；它只切换 Unity transform/evidence 的呈现。
 
-SampleScene 的 HistoryPlacement 按钮明确调用 ShowLatestPlacements，每次为各已加载 display_object_id 重新请求最新 take-out 位置，不复用可能卡住的 toggle 状态。PointObject 使用右手食指射线直接命中当前已加载模型的 world bounds，只为命中的 display_object_id 请求最新/下一条历史位置，不再误触发全局 HistoryPlacement。当前 startup 有 ArMarker 时，服务器用该 startup 最新 reference 转换历史位置；没有 ArMarker 时，只允许使用同一 startup 最近 capture 的 object_aruco ↔ object_hololens_current 相对锚点，并过滤掉该锚点任务创建前的事件，返回与 live 一致的 startup-local coordinate epoch。没有同启动锚点时返回明确错误，不复用跨启动局部坐标。
+SampleScene 的 HistoryPlacement 按钮明确调用 ShowLatestPlacements，每次为各已加载 display_object_id 重新请求最新 take-out 位置，不复用可能卡住的 toggle 状态。PointObject 内部使用右手食指方向命中当前已加载模型的 world bounds，只为命中的 display_object_id 请求最新/下一条历史位置，不再误触发全局 HistoryPlacement；该方向只参与命中计算，不创建 LineRenderer、红线或任何手部射线可视物。当前 startup 有 ArMarker 时，服务器用该 startup 最新 reference 转换历史位置；没有 ArMarker 时，只允许使用同一 startup 最近 capture 的 object_aruco ↔ object_hololens_current 相对锚点，并过滤掉该锚点任务创建前的事件，返回与 live 一致的 startup-local coordinate epoch。没有同启动锚点时返回明确错误，不复用跨启动局部坐标。
 
 ## 照片与骨骼证据
 
@@ -102,7 +101,7 @@ SampleScene 的 HistoryPlacement 按钮明确调用 ShowLatestPlacements，每�
 
 ## Runtime spatial box
 
-live tracking box 完全独立于模型与 display identity：服务器逐条消费 /shigure/object_tracking collider，以 source_epoch:raw_id 作为 tracking_id；每条完整快照立即新增、更新或删除，不做平滑或稳定等待。Unity 仅绘制 8 点线框，不把它绑定到模型，也不用于 identity、pose 或其他操作。无当前启动 ArMarker 时无法安全完成 Shigure-camera 到 HoloLens-local 变换，因此该 box 快照为空。
+live tracking box 完全独立于模型与 display identity：服务器只中继最新 /shigure/object_tracking collider，以 source_epoch:raw_id 作为 tracking_id，并转换到当前 HoloLens local。Unity 每约 1 秒直接用成功响应替换本地线框集合，不做 revision、身份、稳定、平滑或延时验证；Shigure 删除的 ID 消失，新增的 ID 增加，移动的 ID 直接更新。线框不绑定模型，也不用于 PointObject、identity、pose 或其他操作。无当前启动 ArMarker 时无法安全完成坐标变换，因此成功响应为空。
 
 ## 本地容量与隐藏
 
