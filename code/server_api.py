@@ -4,6 +4,7 @@ import ipaddress
 import json
 import logging
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from flask import Flask, jsonify, request, send_from_directory
 from console_output_log import install_console_output_log
 from artifact_layout import (
     SHIGURE_EVENT_ROOT,
+    SHIGURE_TRACKING_BOX_SNAPSHOT_PATH,
     aruco_task_json_path,
     aruco_worker_frame_color,
     aruco_worker_frame_meta,
@@ -44,9 +46,9 @@ from task_db import (
     get_enabled_aruco_markers,
     get_identity_sync_job,
     get_latest_aruco_reference,
+    get_completed_tasks_for_startup,
     get_latest_shigure_canonical_event,
     list_live_display_object_states,
-    list_live_spatial_box_states,
     list_object_lifecycle_history,
     get_task_by_task_id,
     sync_marker_registry_from_reference_folder,
@@ -57,7 +59,11 @@ from task_json import resolve_project_path, save_task_json
 from spatial_transforms import (
     aruco_points_to_hololens,
     aruco_pose_to_hololens_pose,
+    compose_pose_rt,
+    invert_pose_rt,
     minimal_pose_payload,
+    pose_to_rt,
+    rt_to_pose,
 )
 
 
@@ -1252,24 +1258,92 @@ def shigure_event_artifact(event_directory: str, filename: str):
     return send_from_directory(SHIGURE_EVENT_ROOT / safe_event, safe_filename)
 
 
+def _startup_relative_aruco_reference(
+    startup_session_id: str,
+    display_object_id: str | None = None,
+) -> tuple[dict, str, str] | None:
+    # Without a current ArMarker, use only a same-startup capture as the
+    # temporary local anchor. This cannot authorize cross-startup history.
+    for row in get_completed_tasks_for_startup(startup_session_id):
+        task_id = str(row.get("task_id") or "").strip()
+        task_data = get_task(task_id) if task_id else None
+        task = task_data.get("task_json") if task_data else None
+        if not isinstance(task, dict):
+            continue
+        identity = _display_identity_from_task_json(task)
+        if (
+            display_object_id
+            and str(identity.get("display_object_id") or "").strip()
+            != display_object_id
+        ):
+            continue
+        object_aruco = task.get("object_aruco")
+        object_local = task.get("object_hololens_current")
+        if not isinstance(object_aruco, dict) or not isinstance(
+            object_local, dict
+        ):
+            continue
+        try:
+            aruco_position, aruco_rotation, _ = pose_to_rt(
+                object_aruco, "same_startup.object_aruco"
+            )
+            local_position, local_rotation, _ = pose_to_rt(
+                object_local, "same_startup.object_hololens_current"
+            )
+            inverse_rotation, inverse_translation = invert_pose_rt(
+                aruco_rotation, aruco_position
+            )
+            reference_rotation, reference_translation = compose_pose_rt(
+                local_rotation,
+                local_position,
+                inverse_rotation,
+                inverse_translation,
+            )
+            return (
+                rt_to_pose(reference_rotation, reference_translation),
+                task_id,
+                str(row.get("created_at") or ""),
+            )
+        except Exception:
+            continue
+    return None
+
+
+def _utc_datetime(value: object) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def _live_snapshot_items(
     *,
     startup_session_id: str,
-) -> tuple[list[dict], str, dict]:
+) -> tuple[list[dict], str, dict | None]:
     # Model and pose transport intentionally remains bounded at five. Spatial
     # boxes use the separate complete snapshot below and are never truncated.
     states = list_live_display_object_states(
         limit=MAX_REALTIME_MODEL_POSE_ITEMS
     )
     reference_row = get_latest_aruco_reference(startup_session_id)
-    if reference_row is None:
-        raise ValueError("current startup session has no ArUco reference")
-    reference_pose = _load_marker_pose_json(reference_row.get("marker_pose_json"))
-    if reference_pose is None:
+    reference_pose = (
+        _load_marker_pose_json(reference_row.get("marker_pose_json"))
+        if reference_row is not None
+        else None
+    )
+    if reference_row is not None and reference_pose is None:
         raise ValueError("current startup session ArUco reference is invalid")
-    coordinate_epoch = str(
-        reference_row.get("task_id") or reference_row.get("id") or ""
-    ).strip()
+    coordinate_epoch = (
+        str(reference_row.get("task_id") or reference_row.get("id") or "").strip()
+        if reference_row is not None
+        else f"startup-local:{startup_session_id}"
+    )
     if not coordinate_epoch:
         raise ValueError("current coordinate epoch is unavailable")
 
@@ -1281,35 +1355,57 @@ def _live_snapshot_items(
         if not display_object_id or model_revision <= 0:
             continue
 
-        hololens_pose_aruco = _json_column(
-            state.get("latest_hololens_pose_aruco_json"),
-            "latest_hololens_pose_aruco_json",
-            dict,
-        )
-        tracking_pose_aruco = _json_column(
-            state.get("latest_tracking_pose_aruco_json"),
-            "latest_tracking_pose_aruco_json",
-            dict,
-        )
+        active_task_id = str(
+            state.get("active_model_task_id") or ""
+        ).strip()
+        active_task = get_task(active_task_id) if active_task_id else None
         selected_source = "hololens"
-        selected_revision = int(state.get("latest_hololens_pose_revision") or 0)
-        selected_pose_aruco = hololens_pose_aruco
-        if (
-            isinstance(tracking_pose_aruco, dict)
-            and int(state.get("latest_tracking_model_revision") or 0)
-            == model_revision
-        ):
-            selected_source = "tracking"
-            selected_revision = int(
-                state.get("latest_tracking_pose_revision") or 0
-            )
-            selected_pose_aruco = tracking_pose_aruco
-        if selected_pose_aruco is None or selected_revision <= 0:
-            continue
+        selected_revision = int(
+            state.get("latest_hololens_pose_revision") or 0
+        )
         try:
-            selected_pose = _strict_current_pose(
-                selected_pose_aruco, reference_pose
-            )
+            if reference_pose is None:
+                if (
+                    not active_task
+                    or str(active_task.get("startup_session_id") or "")
+                    != startup_session_id
+                ):
+                    continue
+                active_task_json = active_task.get("task_json") or {}
+                selected_pose = minimal_pose_payload(
+                    active_task_json.get("object_hololens_current"),
+                    include_scale=True,
+                )
+                selected_revision = max(1, selected_revision)
+            else:
+                hololens_pose_aruco = _json_column(
+                    state.get("latest_hololens_pose_aruco_json"),
+                    "latest_hololens_pose_aruco_json",
+                    dict,
+                )
+                tracking_pose_aruco = _json_column(
+                    state.get("latest_tracking_pose_aruco_json"),
+                    "latest_tracking_pose_aruco_json",
+                    dict,
+                )
+                selected_pose_aruco = hololens_pose_aruco
+                if (
+                    isinstance(tracking_pose_aruco, dict)
+                    and int(
+                        state.get("latest_tracking_model_revision") or 0
+                    )
+                    == model_revision
+                ):
+                    selected_source = "tracking"
+                    selected_revision = int(
+                        state.get("latest_tracking_pose_revision") or 0
+                    )
+                    selected_pose_aruco = tracking_pose_aruco
+                if selected_pose_aruco is None or selected_revision <= 0:
+                    continue
+                selected_pose = _strict_current_pose(
+                    selected_pose_aruco, reference_pose
+                )
         except Exception as exc:
             print(
                 f"[WARN] skipped invalid live pose for {display_object_id}: {exc}"
@@ -1332,8 +1428,6 @@ def _live_snapshot_items(
             item["tracking_status"] = latest_event.get("resolution_status")
             item["tracking_event_uid"] = latest_event.get("event_uid")
 
-        active_task_id = str(state.get("active_model_task_id") or "").strip()
-        active_task = get_task(active_task_id) if active_task_id else None
         if active_task and str(active_task.get("status") or "") == "completed":
             active_task_json = active_task.get("task_json") or {}
             active_identity = _display_identity_from_task_json(active_task_json)
@@ -1356,56 +1450,54 @@ def _live_snapshot_items(
     return items, coordinate_epoch, reference_pose
 
 
-def _live_spatial_box_items(reference_pose: dict) -> list[dict]:
-    """Build one complete, unbounded Shigure spatial-box snapshot."""
+def _live_tracking_box_items(reference_pose: dict | None) -> list[dict]:
+    # Complete model-independent Shigure tracking-box snapshot.
+    if reference_pose is None:
+        # Raw Shigure camera coordinates have no safe HoloLens-local transform
+        # until this startup establishes an ArMarker reference.
+        return []
+    path = SHIGURE_TRACKING_BOX_SNAPSHOT_PATH
+    try:
+        if not path.is_file() or time.time() - path.stat().st_mtime > 3.0:
+            return []
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        print(f"[WARN] failed to read raw tracking-box snapshot: {exc}")
+        return []
+    if (
+        not isinstance(payload, dict)
+        or payload.get("schema_version") != 1
+        or payload.get("snapshot_complete") is not True
+        or not isinstance(payload.get("boxes"), list)
+        or int(payload.get("count") or 0) != len(payload["boxes"])
+    ):
+        raise ValueError("raw tracking-box snapshot is malformed")
 
     boxes: list[dict] = []
-    seen_display_ids: set[str] = set()
-    for state in list_live_spatial_box_states():
-        display_object_id = str(state.get("display_object_id") or "").strip()
-        if not display_object_id or display_object_id in seen_display_ids:
-            raise ValueError("live spatial-box registry contains an invalid id")
-        seen_display_ids.add(display_object_id)
-        presence = str(state.get("presence") or "UNKNOWN")
-        revision = _live_spatial_revision(
-            state.get("presence_epoch") or 0,
-            state.get("latest_spatial_observation_seq") or 0,
+    seen_tracking_ids: set[str] = set()
+    for item in payload["boxes"]:
+        if not isinstance(item, dict):
+            raise ValueError("raw tracking-box item must be an object")
+        tracking_id = str(item.get("tracking_id") or "").strip()
+        revision = _strict_json_integer(
+            item.get("revision"), "tracking_box_revision", minimum=1
         )
-        corners_aruco = None
-        if presence == "PRESENT":
-            try:
-                corners_aruco = _json_column(
-                    state.get("latest_spatial_box_aruco_json"),
-                    "latest_spatial_box_aruco_json",
-                    list,
-                )
-            except Exception as exc:
-                print(
-                    "[WARN] rejected invalid spatial box for "
-                    f"{display_object_id}: {exc}"
-                )
-        try:
-            spatial_box = _strict_current_box(
-                corners_aruco,
-                reference_pose,
-                revision=revision,
-                emit_no_box=True,
+        if not tracking_id or tracking_id in seen_tracking_ids:
+            raise ValueError(
+                "raw tracking-box snapshot has an invalid tracking_id"
             )
-        except Exception as exc:
-            print(
-                f"[WARN] rejected invalid spatial box for {display_object_id}: {exc}"
-            )
-            spatial_box = _strict_current_box(
-                None,
-                reference_pose,
-                revision=revision,
-                emit_no_box=True,
-            )
+        seen_tracking_ids.add(tracking_id)
+        spatial_box = _strict_current_box(
+            item.get("corners_aruco"),
+            reference_pose,
+            revision=revision,
+        )
+        if spatial_box is None:
+            raise ValueError("raw tracking-box item has no collider")
         boxes.append(
             {
-                "display_object_id": display_object_id,
-                "presence": presence,
-                "presence_epoch": int(state.get("presence_epoch") or 0),
+                "tracking_id": tracking_id,
+                "revision": revision,
                 "spatial_box": spatial_box,
             }
         )
@@ -1446,7 +1538,7 @@ def _live_transport_response(startup_session_id: str, state: dict):
     items, coordinate_epoch, reference_pose = _live_snapshot_items(
         startup_session_id=startup_session_id,
     )
-    spatial_boxes = _live_spatial_box_items(reference_pose)
+    tracking_boxes = _live_tracking_box_items(reference_pose)
     return {
         "success": True,
         "startup_session_id": startup_session_id,
@@ -1456,9 +1548,9 @@ def _live_transport_response(startup_session_id: str, state: dict):
         "coordinate_epoch": coordinate_epoch,
         "count": len(items),
         "items": items,
-        "spatial_box_snapshot_complete": True,
-        "spatial_box_count": len(spatial_boxes),
-        "spatial_boxes": spatial_boxes,
+        "tracking_box_snapshot_complete": True,
+        "tracking_box_count": len(tracking_boxes),
+        "tracking_boxes": tracking_boxes,
     }
 
 
@@ -1556,14 +1648,34 @@ def display_object_history_v2(display_object_id: str):
             )
 
         reference_row = get_latest_aruco_reference(startup_session_id)
-        if reference_row is None:
-            raise ValueError("current startup session has no ArUco reference")
-        reference_pose = _load_marker_pose_json(reference_row.get("marker_pose_json"))
-        if reference_pose is None:
-            raise ValueError("current startup session ArUco reference is invalid")
-        coordinate_epoch = str(
-            reference_row.get("task_id") or reference_row.get("id") or ""
-        ).strip()
+        same_startup_since = None
+        if reference_row is not None:
+            reference_pose = _load_marker_pose_json(
+                reference_row.get("marker_pose_json")
+            )
+            if reference_pose is None:
+                raise ValueError(
+                    "current startup session ArUco reference is invalid"
+                )
+            coordinate_epoch = str(
+                reference_row.get("task_id")
+                or reference_row.get("id")
+                or ""
+            ).strip()
+        else:
+            fallback = _startup_relative_aruco_reference(
+                startup_session_id,
+                str(display_object_id or "").strip(),
+            )
+            if fallback is None:
+                raise ValueError(
+                    "no ArMarker and no same-startup object anchor"
+                )
+            reference_pose, anchor_task_id, anchor_created_at = fallback
+            coordinate_epoch = (
+                f"startup-relative:{startup_session_id}:{anchor_task_id}"
+            )
+            same_startup_since = _utc_datetime(anchor_created_at)
         if not coordinate_epoch:
             raise ValueError("current coordinate epoch is unavailable")
 
@@ -1584,6 +1696,10 @@ def display_object_history_v2(display_object_id: str):
             if not candidates:
                 break
             for event in candidates:
+                if same_startup_since is not None:
+                    event_time = _utc_datetime(event.get("occurred_at"))
+                    if event_time is None or event_time < same_startup_since:
+                        continue
                 try:
                     pose_aruco = _json_column(
                         event.get("pose_aruco_json"),

@@ -535,8 +535,40 @@ def store_request(store: ShigureMemoryStore, request: Mapping[str, Any]) -> dict
         return {"ok": True, "sample": _sample_to_wire(sample, include_rgb=True, include_depth=True) if sample is not None else None}
     if action == "iter_canonical_updates_after":
         include_masks = bool(request.get("include_masks", False))
+        runtime_relevant_masks = bool(request.get("runtime_relevant_masks", False))
         frames = store.iter_canonical_updates_after(int(request.get("sequence") or 0))
-        return {"ok": True, "frames": [_canonical_frame_to_wire(item, include_masks=include_masks) for item in frames]}
+        raw_limit = request.get("limit")
+        if raw_limit is not None:
+            limit = int(raw_limit)
+            if not 1 <= limit <= 256:
+                return {"ok": False, "error": "limit must be in [1, 256]"}
+            frames = frames[:limit]
+        def frame_needs_runtime_masks(item: CachedShigureFrame) -> bool:
+            if item.events:
+                return True
+            return bool(
+                item.recovery_candidates
+                and item.input_states.get("segments") == "present"
+                and item.input_states.get("object_tracking") == "present"
+                and store.get_sample(item.source_stamp) is not None
+            )
+
+        return {
+            "ok": True,
+            "frames": [
+                _canonical_frame_to_wire(
+                    item,
+                    include_masks=(
+                        include_masks
+                        and (
+                            not runtime_relevant_masks
+                            or frame_needs_runtime_masks(item)
+                        )
+                    ),
+                )
+                for item in frames
+            ],
+        }
     if action == "latest_canonical_frame":
         include_masks = bool(request.get("include_masks", False))
         frame = store.latest_canonical_frame()
@@ -618,7 +650,12 @@ class ShigureRgbdCache:
         return _sample_from_wire(sample_payload) if isinstance(sample_payload, Mapping) else None
 
     def iter_canonical_updates_after(
-        self, sequence: int, *, include_masks: bool = False
+        self,
+        sequence: int,
+        *,
+        include_masks: bool = False,
+        limit: int | None = None,
+        runtime_relevant_masks: bool = False,
     ) -> Iterable[CachedShigureFrame]:
         """Poll exact-stamp canonical frame revisions."""
 
@@ -627,6 +664,8 @@ class ShigureRgbdCache:
                 "action": "iter_canonical_updates_after",
                 "sequence": max(0, int(sequence)),
                 "include_masks": bool(include_masks),
+                **({"limit": int(limit)} if limit is not None else {}),
+                "runtime_relevant_masks": bool(runtime_relevant_masks),
             }
         )
         if response is None:

@@ -79,6 +79,7 @@ from task_db import (
     get_ai_model_timings_for_task,
     get_tasks_for_startup_statuses,
     get_task_by_task_id,
+    get_identity_sync_job,
     get_unfinished_tasks,
     get_unsynced_completed_tasks,
     initialize_task_table,
@@ -1061,6 +1062,12 @@ def _run_historical_model_match(json_path: Path, context: StageWorkerContext | N
         cwd=HISTORICAL_MODEL_MATCH_STAGE_RUN.parent,
         env=env,
     )
+    # SAM3 color/mask and the historical DINO decision are already ready here.
+    # Establish the Holo display identity and queue Shigure photo matching
+    # before the potentially long model-generation stage consumes the cache
+    # window. The final display_identity stage remains an idempotent commit
+    # after ArUco/model bounds become available.
+    _run_display_identity(json_path, context)
 
 
 
@@ -1432,15 +1439,58 @@ def _run_display_identity(json_path: Path, context: StageWorkerContext | None = 
             save_task_json(json_path, task_json)
             engine = _shigure_runtime_engine
             if engine is not None:
-                sync = engine.queue_hololens_capture_sync(
-                    display_object_id=display_object_id,
-                    task_id=task_id,
-                    task_json_path=json_path,
+                existing_sync = (
+                    task_json.get("ShigureIdentitySync")
+                    if isinstance(
+                        task_json.get("ShigureIdentitySync"), dict
+                    )
+                    else {}
                 )
-                print(
-                    f"[worker] queued HoloLens/Shigure identity sync: "
-                    f"{task_id} -> {sync.get('status')}"
+                if not existing_sync:
+                    sync_job_id = uuid.uuid5(
+                        uuid.NAMESPACE_URL,
+                        f"shigure-hololens-sync:{task_id}",
+                    ).hex
+                    persisted_sync = get_identity_sync_job(sync_job_id)
+                    raw_result = (
+                        persisted_sync.get("result_json")
+                        if isinstance(persisted_sync, dict)
+                        else None
+                    )
+                    if isinstance(raw_result, str) and raw_result:
+                        try:
+                            decoded_result = json.loads(raw_result)
+                        except json.JSONDecodeError:
+                            decoded_result = None
+                        if isinstance(decoded_result, dict):
+                            existing_sync = decoded_result
+                sync_is_current = (
+                    str(existing_sync.get("task_id") or "") == task_id
+                    and str(existing_sync.get("source_epoch_id") or "")
+                    == str(engine.source_epoch_id or "")
+                    and str(existing_sync.get("status") or "")
+                    in {"PENDING", "RUNNING", "COMPLETED"}
                 )
+                if sync_is_current:
+                    sync = existing_sync
+                    print(
+                        "[worker] retained early HoloLens/Shigure identity "
+                        "sync: {} -> {}".format(
+                            task_id, sync.get("status")
+                        )
+                    )
+                else:
+                    sync = engine.queue_hololens_capture_sync(
+                        display_object_id=display_object_id,
+                        task_id=task_id,
+                        task_json_path=json_path,
+                    )
+                    print(
+                        "[worker] queued HoloLens/Shigure identity sync: "
+                        "{} -> {}".format(
+                            task_id, sync.get("status")
+                        )
+                    )
             else:
                 _record_hololens_sync_failure(
                     json_path,

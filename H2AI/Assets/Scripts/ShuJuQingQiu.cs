@@ -1650,14 +1650,14 @@ public class ShuJuQingQiu : MonoBehaviour
             ? response["items"] as JArray
             : null;
         spatialBoxItems = response != null
-            ? response["spatial_boxes"] as JArray
+            ? response["tracking_boxes"] as JArray
             : null;
         long declaredItemCount = ReadLong(response, "count");
         long declaredSpatialBoxCount = ReadLong(
             response,
-            "spatial_box_count");
+            "tracking_box_count");
         JToken completeToken = response != null
-            ? response["spatial_box_snapshot_complete"]
+            ? response["tracking_box_snapshot_complete"]
             : null;
         bool spatialBoxSnapshotComplete = completeToken != null
             && completeToken.Type == JTokenType.Boolean
@@ -1725,34 +1725,32 @@ public class ShuJuQingQiu : MonoBehaviour
             }
         }
 
-        HashSet<string> validatedSpatialBoxDisplayObjectIds =
+        HashSet<string> validatedTrackingBoxIds =
             new HashSet<string>(StringComparer.Ordinal);
         foreach (JToken token in spatialBoxItems)
         {
             JObject item = token as JObject;
-            string displayObjectId = ReadString(item, "display_object_id");
-            string presence = ReadString(item, "presence");
-            long presenceEpoch = ReadLong(item, "presence_epoch");
+            string trackingId = ReadString(item, "tracking_id");
+            long revision = ReadLong(item, "revision");
             if (item == null
                 || !HasExactKeys(
                     item,
-                    "display_object_id",
-                    "presence",
-                    "presence_epoch",
+                    "tracking_id",
+                    "revision",
                     "spatial_box")
-                || string.IsNullOrEmpty(displayObjectId)
-                || (presence != "PRESENT" && presence != "ABSENT")
-                || presenceEpoch < 0
-                || !validatedSpatialBoxDisplayObjectIds.Add(displayObjectId)
+                || string.IsNullOrEmpty(trackingId)
+                || revision <= 0
+                || !validatedTrackingBoxIds.Add(trackingId)
                 || !TryParseCurrentSpatialBoxToken(
                     item["spatial_box"],
                     out RuntimeSpatialBoxData ignoredBox,
                     out bool ignoredNoBox,
-                    out long ignoredRevision)
-                || (presence == "ABSENT" && !ignoredNoBox))
+                    out long parsedRevision)
+                || ignoredNoBox
+                || parsedRevision != revision)
             {
                 Debug.LogWarning(
-                    "[HISTORY_TRACKING] Ignore malformed complete spatial-box "
+                    "[HISTORY_TRACKING] Ignore malformed complete raw tracking-box "
                     + "snapshot; no pose, box, or model download was changed.");
                 return false;
             }
@@ -1842,46 +1840,39 @@ public class ShuJuQingQiu : MonoBehaviour
                 + " history presentation(s).");
         }
 
-        HashSet<string> readySpatialBoxDisplayObjectIds =
+        HashSet<string> readyTrackingBoxIds =
             new HashSet<string>(StringComparer.Ordinal);
         foreach (JToken token in spatialBoxItems)
         {
             JObject item = (JObject)token;
-            string displayObjectId = ReadString(item, "display_object_id");
+            string trackingId = ReadString(item, "tracking_id");
+            long revision = ReadLong(item, "revision");
             TryParseCurrentSpatialBoxToken(
                 item["spatial_box"],
                 out RuntimeSpatialBoxData liveSpatialBox,
-                out bool liveNoBox,
-                out long liveSpatialBoxRevision);
-            string boxRejectionReason;
-            bool accepted = liveNoBox
-                ? manager.ClearDisplayObjectSpatialBox(
-                    displayObjectId,
-                    liveSpatialBoxRevision,
-                    coordinateEpoch,
-                    out boxRejectionReason)
-                : manager.UpdateDisplayObjectSpatialBox(
-                    displayObjectId,
-                    liveSpatialBoxRevision,
-                    coordinateEpoch,
-                    liveSpatialBox,
-                    out boxRejectionReason);
+                out bool ignoredNoBox,
+                out long ignoredRevision);
+            bool accepted = manager.UpdateRawTrackingBox(
+                trackingId,
+                revision,
+                coordinateEpoch,
+                liveSpatialBox,
+                out string boxRejectionReason);
             if (!accepted
-                && boxRejectionReason != "spatial_box_revision_duplicate")
+                && boxRejectionReason != "tracking_box_revision_duplicate")
             {
                 Debug.Log(
-                    "[HISTORY_TRACKING] Spatial box rejected for "
-                    + displayObjectId + ": " + boxRejectionReason);
+                    "[HISTORY_TRACKING] Raw tracking box rejected for "
+                    + trackingId + ": " + boxRejectionReason);
             }
-            if (manager.HasReadyLiveSpatialBox(
-                displayObjectId,
+            if (manager.HasReadyRawTrackingBox(
+                trackingId,
                 coordinateEpoch))
             {
-                readySpatialBoxDisplayObjectIds.Add(displayObjectId);
+                readyTrackingBoxIds.Add(trackingId);
             }
         }
-        manager.ReconcileLiveSpatialBoxSnapshot(
-            readySpatialBoxDisplayObjectIds);
+        manager.ReconcileRawTrackingBoxSnapshot(readyTrackingBoxIds);
 
         foreach (JToken token in snapshotItems)
         {

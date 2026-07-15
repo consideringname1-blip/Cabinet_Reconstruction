@@ -22,14 +22,19 @@ MAX_PENDING_DEBUG_WRITES = 64
 _SAFE_TOKEN_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
-def validate_debug_cache_limits(*, retention_seconds: float, max_entries: int) -> tuple[float, int]:
+def validate_debug_cache_limits(
+    *, retention_seconds: float, max_entries: int, max_bytes: int
+) -> tuple[float, int, int]:
     retention = float(retention_seconds)
     entry_limit = int(max_entries)
+    byte_limit = int(max_bytes)
     if not 0.0 < retention <= MAX_DEBUG_CACHE_RETENTION_SECONDS:
         raise ValueError("debug cache retention_seconds must be in (0, 600]")
     if entry_limit <= 0:
         raise ValueError("debug cache max_entries must be positive")
-    return retention, entry_limit
+    if byte_limit <= 0:
+        raise ValueError("debug cache max_bytes must be positive")
+    return retention, entry_limit, byte_limit
 
 
 def _safe_token(value: str, *, fallback: str) -> str:
@@ -87,18 +92,21 @@ class ShigureDebugDiskRing:
         enabled: bool,
         retention_seconds: float,
         max_entries: int,
+        max_bytes: int,
         session_id: str,
         clock: Callable[[], float] = time.time,
     ) -> None:
-        retention, entry_limit = validate_debug_cache_limits(
+        retention, entry_limit, byte_limit = validate_debug_cache_limits(
             retention_seconds=retention_seconds,
             max_entries=max_entries,
+            max_bytes=max_bytes,
         )
         self.root = Path(root)
         self.entries_root = self.root / "entries"
         self.enabled = bool(enabled)
         self.retention_seconds = retention
         self.max_entries = entry_limit
+        self.max_bytes = byte_limit
         self.session_id = _safe_token(session_id, fallback="session")
         self._clock = clock
         self._lock = RLock()
@@ -106,6 +114,8 @@ class ShigureDebugDiskRing:
         self._executor: ThreadPoolExecutor | None = None
         self._futures: set[Future[bool]] = set()
         self._closed = False
+        self._entry_sizes: dict[str, int] = {}
+        self._total_bytes = 0
         self.last_error: str | None = None
         self.write_count = 0
         self.dropped_write_count = 0
@@ -120,6 +130,8 @@ class ShigureDebugDiskRing:
                 "root": str(self.root) if self.enabled else None,
                 "retention_seconds": self.retention_seconds,
                 "max_entries": self.max_entries,
+                "max_bytes": self.max_bytes,
+                "total_bytes": self._total_bytes,
                 "session_id": self.session_id,
                 "pending_writes": len(self._futures),
                 "write_count": self.write_count,
@@ -247,6 +259,10 @@ class ShigureDebugDiskRing:
     def _finish_entry(self, entry: Path, *, recorded_at: float) -> None:
         now = float(recorded_at)
         os.utime(entry, (now, now))
+        new_size = self._directory_size(entry)
+        previous_size = self._entry_sizes.get(entry.name, 0)
+        self._entry_sizes[entry.name] = new_size
+        self._total_bytes += new_size - previous_size
         with self._lock:
             self.write_count += 1
         self._prune(now=now)
@@ -256,6 +272,7 @@ class ShigureDebugDiskRing:
         current_time = float(self._clock()) if now is None else float(now)
         cutoff = current_time - self.retention_seconds
         entries: list[tuple[float, str, Path]] = []
+        present_names: set[str] = set()
         for path in self.entries_root.iterdir():
             if not path.is_dir():
                 continue
@@ -264,17 +281,43 @@ class ShigureDebugDiskRing:
             except FileNotFoundError:
                 continue
             entries.append((modified, path.name, path))
+            present_names.add(path.name)
+            if path.name not in self._entry_sizes:
+                size = self._directory_size(path)
+                self._entry_sizes[path.name] = size
+                self._total_bytes += size
+        for missing_name in set(self._entry_sizes) - present_names:
+            self._total_bytes -= self._entry_sizes.pop(missing_name)
         entries.sort(key=lambda item: (item[0], item[1]))
 
         retained: list[tuple[float, str, Path]] = []
         for modified, name, path in entries:
             if modified < cutoff:
-                shutil.rmtree(path, ignore_errors=True)
+                self._remove_entry(name, path)
             else:
                 retained.append((modified, name, path))
-        excess = max(0, len(retained) - self.max_entries)
-        for _modified, _name, path in retained[:excess]:
-            shutil.rmtree(path, ignore_errors=True)
+        while retained and (
+            len(retained) > self.max_entries or self._total_bytes > self.max_bytes
+        ):
+            _modified, name, path = retained.pop(0)
+            self._remove_entry(name, path)
+
+    @staticmethod
+    def _directory_size(path: Path) -> int:
+        total = 0
+        for child in path.rglob("*"):
+            if not child.is_file():
+                continue
+            try:
+                total += int(child.stat().st_size)
+            except FileNotFoundError:
+                continue
+        return total
+
+    def _remove_entry(self, name: str, path: Path) -> None:
+        size = self._entry_sizes.pop(name, 0)
+        shutil.rmtree(path, ignore_errors=True)
+        self._total_bytes = max(0, self._total_bytes - size)
 
 
 __all__ = ["MAX_DEBUG_CACHE_RETENTION_SECONDS", "ShigureDebugDiskRing", "validate_debug_cache_limits"]

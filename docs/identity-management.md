@@ -17,7 +17,7 @@
 
 HoloLens 拍摄始终可更新模型、精确 capture pose 和 identity reference，但不决定物体 presence、bring-in 或 take-out。它的历史模型复用虽然最多向后扫描 500 条数据库记录来跳过重复对象，实际只对最近 5 个不重复 `display_object_id` 各取一条最新 capture 做 DINO；500 不是候选上限。
 
-完成 capture 后，服务器建立 `HOLOLENS_CAPTURE` identity sync job。它在当前 canonical 全图候选中先比较 HoloLens/ArUco capture box 与 Shigure collider 经 ArUco AABB 重建后得到的中心和 extent；没有候选通过宽松几何门时不运行 DINO，多个候选通过时才只在门内用宽松 DINOv2 阈值判别。只有连续 5 个不同 tracking stamp 通过严格 bbox/mask/面积/置信度门，并由 segment/tracking 双向互为唯一最佳、两侧 IoU margin 均至少 0.1 的映射得出可信 raw ID，recovery candidate 才能成功。成功时可建立当前 epoch binding、激活 presence；只有该 Shigure 图像另外通过严格 DINO anchor 距离与次优 margin，才登记为 Shigure identity reference。授权来源记录为 `shigure_recovery_snapshot`，不是 HoloLens capture 本身。
+完成 capture 后，服务器建立 `HOLOLENS_CAPTURE` identity sync job。它在当前 canonical 全图候选中先比较 HoloLens/ArUco capture box 与 Shigure collider 经 ArUco AABB 重建后得到的中心和 extent；单个可信候选通过宽松几何门时直接使用 collider 几何；多个候选通过时在门内用宽松 DINOv2 判别；若可信 tracking raw-ID 候选已偏离原 capture 几何位置，则启用带距离阈值和次优间隔的 DINO fallback。用于快速建立 object-tracking binding 的 recovery candidate 必须连续 2 个不同 tracking stamp 保持可信 raw ID 与严格 bbox/mask 一致；首次完成候选判别后，第二帧复用同一可信 tracking raw ID，避免重复计算整组 DINO。segment/tracking 仍须双向互为唯一最佳，且两侧 IoU margin 均至少 0.1。成功时可建立当前 epoch binding、激活 presence；快速两帧同步本身不登记长期 Shigure identity reference，后续独立稳定视图收集仍须连续 5 帧并通过严格 DINO anchor 距离与次优 margin。授权来源记录为 `shigure_recovery_snapshot`，不是 HoloLens capture 本身。
 
 仅由 HoloLens 新建的对象保持 `presence=UNKNOWN`。completed 模型可以交付给 Unity 作 capture preview，但不会仅因上传成功就出现在 Shigure 权威 live 清单中；`PRESENT/ABSENT` 只能来自 Shigure bring-in/take-out 或可信 recovery snapshot。
 

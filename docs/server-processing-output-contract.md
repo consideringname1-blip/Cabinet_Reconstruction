@@ -215,13 +215,13 @@ completed task 还包含交付角色和可选同步摘要，例如：
   "coordinate_epoch": "aruco-task-uuid",
   "count": 0,
   "items": [],
-  "spatial_box_snapshot_complete": true,
-  "spatial_box_count": 0,
-  "spatial_boxes": []
+  "tracking_box_snapshot_complete": true,
+  "tracking_box_count": 0,
+  "tracking_boxes": []
 }
 ```
 
-`POST /realtime-tracking/mode` 的成功响应与 status 使用同一份容量语义：`items` 最多 5 个，`spatial_boxes` 无数量上限且为完整快照。
+`POST /realtime-tracking/mode` 的成功响应与 status 使用同一份容量语义：`items` 最多 5 个，`tracking_boxes` 无数量上限且为完整快照。
 
 ## `GET /realtime-tracking/status`
 
@@ -234,7 +234,7 @@ startup_session_id=<unity-startup-uuid>
 调用前必须完成当前 startup 的 live 握手。响应把两种容量语义明确拆开：
 
 - `items`：模型与 live pose，仍最多 5 个；不是 box 完整性的依据。
-- `spatial_boxes`：Shigure 实时 3D box 的完整、无数量上限快照。
+- `tracking_boxes`：Shigure 实时 3D box 的完整、无数量上限快照。
 
 ```json
 {
@@ -261,13 +261,12 @@ startup_session_id=<unity-startup-uuid>
       "presence_epoch": 7
     }
   ],
-  "spatial_box_snapshot_complete": true,
-  "spatial_box_count": 1,
-  "spatial_boxes": [
+  "tracking_box_snapshot_complete": true,
+  "tracking_box_count": 1,
+  "tracking_boxes": [
     {
-      "display_object_id": "display-object-uuid",
-      "presence": "PRESENT",
-      "presence_epoch": 7,
+      "tracking_id": "source-epoch:raw-tracking-id",
+      "revision": 812,
       "spatial_box": {
         "status": "ready",
         "coordinate_space": "hololens_current_local",
@@ -279,29 +278,16 @@ startup_session_id=<unity-startup-uuid>
 }
 ```
 
-明确清框项为：
-
-```json
-{
-  "display_object_id": "display-object-uuid",
-  "presence": "ABSENT",
-  "presence_epoch": 8,
-  "spatial_box": {
-    "status": "no_box",
-    "coordinate_space": "hololens_current_local",
-    "revision": 34359738376
-  }
-}
-```
+删除不发送绑定对象或 no_box 项；约 1 秒确认缺失后，tracking_id 从下一份完整 tracking_boxes 快照中消失，Unity 据此删除线框。
 
 约束：
 
 - 顶层 `count` 必须等于 `items` 数组长度且最多为 5；`pose_source` 为 `tracking` 或 `hololens`，当前模型 revision 有有效追踪位姿时优先前者。
-- `spatial_boxes` 不得截断或复用最近 5 条限制；`spatial_box_count` 必须等于数组长度，且只有 `spatial_box_snapshot_complete=true` 才允许客户端 reconcile/delete。
-- 每个 box item 的 `display_object_id` 必须非空且唯一。`status=ready` 时必须包含 8 个有限角点；`status=no_box` 时只包含 `status`、`coordinate_space` 和 `revision`。box 只来自 raw collider 与 ArUco 变换，不从 mask 或 depth 推测。
-- Unity 必须先完整验证整份 `spatial_boxes`，再原子应用。`ready` 更新，`no_box` 清除；完整快照中缺席的旧 display ID 删除其 `LatestLive` box/线框。每个 coordinate epoch 的 box revision 水位在清除后仍保留；小于或等于水位的迟到 `ready` 一律拒绝，不能以同 revision 复活已删除框。历史 box、历史照片/骨骼和模型不因该删除受影响。
-- take-out 增加 `presence_epoch` 并立即输出 `no_box`，不走缺帧 grace；拿走前 box 仍保存在 lifecycle history。
-- raw collider 单帧无效或完整 tracking snapshot 单帧缺席时，服务端继续下发最后可信 `ready`。连续明确缺失达到 `SHIGURE_SPATIAL_BOX_MISSING_GRACE_SECONDS=1.5` 后才提交并下发 `no_box`。Unity 不再叠加第二个计时器；1 秒轮询下视觉清除通常发生在服务端判定后的下一次 poll。
+- `tracking_boxes` 不得截断或复用最近 5 条限制；`tracking_box_count` 必须等于数组长度，且只有 `tracking_box_snapshot_complete=true` 才允许客户端 reconcile/delete。
+- 每个 box item 的 tracking_id 必须非空且唯一，revision 必须为正；spatial_box 必须是 ready 且包含 8 个有限角点。box 只来自 raw object_tracking collider 与 ArUco 变换，不从 identity、model、mask 或 depth 推测。
+- Unity 必须先完整验证整份 tracking_boxes 再原子应用；完整快照中缺席的旧 tracking_id 删除其独立线框。box 不进入 RuntimeModelRecord，也不依赖 display_object_id、presence 或模型是否已下载。
+- raw tracking ID 的新增、移动更新和缺失删除均由约 1 秒窗口中值稳定后发布；source epoch 变化会以新 tracking_id 命名空间替换旧快照。
+- 快照文件每个稳定窗口刷新；runtime 停止或快照超过 3 秒未刷新时 API 返回完整空 tracking_boxes，避免 HoloLens 保留僵尸框。
 - `items[]` 可附带 `tracking_status`、`tracking_event_uid` 和 canonical `model`；客户端已有相同 `display_object_id + model_revision` 的 FBX 时直接复用缓存。
 
 ## `GET /api/v2/display-objects/<display_object_id>/history`

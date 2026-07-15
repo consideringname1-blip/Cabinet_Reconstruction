@@ -686,6 +686,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         default=settings.SHIGURE_DEBUG_CACHE_RETENTION_SECONDS,
     )
     parser.add_argument("--debug-cache-max-entries", type=int, default=settings.SHIGURE_DEBUG_CACHE_MAX_ENTRIES)
+    parser.add_argument("--debug-cache-max-bytes", type=int, default=settings.SHIGURE_DEBUG_CACHE_MAX_BYTES)
     return parser
 
 
@@ -694,6 +695,7 @@ def main() -> int:
     validate_debug_cache_limits(
         retention_seconds=args.debug_cache_retention_seconds,
         max_entries=args.debug_cache_max_entries,
+        max_bytes=args.debug_cache_max_bytes,
     )
     rclpy, Node, QoSProfile, ReliabilityPolicy, get_message = import_ros_modules()
     rclpy.init(args=None)
@@ -743,6 +745,7 @@ def main() -> int:
         enabled=args.debug_cache_enable,
         retention_seconds=args.debug_cache_retention_seconds,
         max_entries=args.debug_cache_max_entries,
+        max_bytes=args.debug_cache_max_bytes,
         session_id=adapter.source_incarnation_id,
     )
     socket_server = ShigureHistorySocketServer(args.socket_server, store)

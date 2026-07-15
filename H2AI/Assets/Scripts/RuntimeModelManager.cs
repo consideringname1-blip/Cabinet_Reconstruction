@@ -139,6 +139,14 @@ public class RuntimeObjectPresentationState
     public RuntimeSpatialBoxData HistorySpatialBox;
 }
 
+public class RuntimeRawTrackingBoxState
+{
+    public string TrackingId = "";
+    public long Revision = -1;
+    public string CoordinateEpoch = "";
+    public RuntimeSpatialBoxData SpatialBox;
+}
+
 public class RuntimeModelInstance
 {
     public string ModelKey = "";
@@ -186,6 +194,10 @@ public class RuntimeModelManager : MonoBehaviour
     private readonly Dictionary<string, RuntimeObjectPresentationState> _objectPresentationStates =
         new Dictionary<string, RuntimeObjectPresentationState>(StringComparer.Ordinal);
     private readonly Dictionary<string, GameObject> _spatialBoxOverlays =
+        new Dictionary<string, GameObject>(StringComparer.Ordinal);
+    private readonly Dictionary<string, RuntimeRawTrackingBoxState> _rawTrackingBoxes =
+        new Dictionary<string, RuntimeRawTrackingBoxState>(StringComparer.Ordinal);
+    private readonly Dictionary<string, GameObject> _rawTrackingBoxOverlays =
         new Dictionary<string, GameObject>(StringComparer.Ordinal);
     private readonly Dictionary<string, Coroutine> _poseTransitions =
         new Dictionary<string, Coroutine>(StringComparer.Ordinal);
@@ -838,6 +850,123 @@ public class RuntimeModelManager : MonoBehaviour
         }
     }
 
+    public bool UpdateRawTrackingBox(
+        string trackingId,
+        long revision,
+        string coordinateEpoch,
+        RuntimeSpatialBoxData spatialBox,
+        out string rejectionReason)
+    {
+        rejectionReason = "";
+        if (string.IsNullOrEmpty(trackingId))
+        {
+            rejectionReason = "tracking_id_missing";
+            return false;
+        }
+        if (revision <= 0)
+        {
+            rejectionReason = "tracking_box_revision_missing";
+            return false;
+        }
+        if (string.IsNullOrEmpty(coordinateEpoch))
+        {
+            rejectionReason = "coordinate_epoch_missing";
+            return false;
+        }
+        if (spatialBox == null
+            || !spatialBox.IsReady
+            || !spatialBox.HasFiniteCorners
+            || spatialBox.CoordinateSpace != "hololens_current_local")
+        {
+            rejectionReason = "tracking_box_invalid";
+            return false;
+        }
+
+        if (!_rawTrackingBoxes.TryGetValue(
+                trackingId, out RuntimeRawTrackingBoxState state)
+            || state == null)
+        {
+            state = new RuntimeRawTrackingBoxState
+            {
+                TrackingId = trackingId,
+            };
+            _rawTrackingBoxes[trackingId] = state;
+        }
+        bool coordinateAdvanced = !string.Equals(
+            state.CoordinateEpoch,
+            coordinateEpoch,
+            StringComparison.Ordinal);
+        if (!coordinateAdvanced && state.Revision > revision)
+        {
+            rejectionReason = "tracking_box_revision_stale";
+            return false;
+        }
+        if (!coordinateAdvanced && state.Revision == revision)
+        {
+            rejectionReason = "tracking_box_revision_duplicate";
+            return false;
+        }
+
+        RuntimeSpatialBoxData accepted = spatialBox.Clone();
+        accepted.Revision = revision;
+        accepted.CoordinateEpoch = coordinateEpoch;
+        state.Revision = revision;
+        state.CoordinateEpoch = coordinateEpoch;
+        state.SpatialBox = accepted;
+        ApplyRawTrackingBoxOverlay(trackingId, accepted);
+        return true;
+    }
+
+    public bool HasReadyRawTrackingBox(
+        string trackingId,
+        string coordinateEpoch)
+    {
+        return !string.IsNullOrEmpty(trackingId)
+            && !string.IsNullOrEmpty(coordinateEpoch)
+            && _rawTrackingBoxes.TryGetValue(
+                trackingId, out RuntimeRawTrackingBoxState state)
+            && state != null
+            && string.Equals(
+                state.CoordinateEpoch,
+                coordinateEpoch,
+                StringComparison.Ordinal)
+            && state.SpatialBox != null
+            && state.SpatialBox.IsReady
+            && state.SpatialBox.HasFiniteCorners
+            && state.SpatialBox.CoordinateSpace
+                == "hololens_current_local";
+    }
+
+    public void ReconcileRawTrackingBoxSnapshot(
+        ISet<string> readyTrackingIds)
+    {
+        foreach (RuntimeRawTrackingBoxState state in _rawTrackingBoxes.Values)
+        {
+            if (state == null || string.IsNullOrEmpty(state.TrackingId))
+            {
+                continue;
+            }
+            bool visible = readyTrackingIds != null
+                && readyTrackingIds.Contains(state.TrackingId)
+                && state.SpatialBox != null
+                && state.SpatialBox.IsReady
+                && state.SpatialBox.HasFiniteCorners
+                && state.SpatialBox.CoordinateSpace
+                    == "hololens_current_local";
+            if (visible)
+            {
+                ApplyRawTrackingBoxOverlay(
+                    state.TrackingId,
+                    state.SpatialBox);
+            }
+            else
+            {
+                state.SpatialBox = null;
+                DestroyRawTrackingBoxOverlay(state.TrackingId);
+            }
+        }
+    }
+
     public bool EnterHistoryPresentation(
         string displayObjectId,
         string eventUid,
@@ -1259,6 +1388,55 @@ public class RuntimeModelManager : MonoBehaviour
             HololensPosition = pose.HololensPosition,
             HololensRotation = pose.HololensRotation,
         };
+    }
+
+    private void ApplyRawTrackingBoxOverlay(
+        string trackingId,
+        RuntimeSpatialBoxData spatialBox)
+    {
+        if (string.IsNullOrEmpty(trackingId))
+        {
+            return;
+        }
+        if (spatialBox == null
+            || !spatialBox.IsReady
+            || !spatialBox.HasFiniteCorners
+            || spatialBox.CoordinateSpace != "hololens_current_local")
+        {
+            DestroyRawTrackingBoxOverlay(trackingId);
+            return;
+        }
+        if (!_rawTrackingBoxOverlays.TryGetValue(
+                trackingId, out GameObject overlay)
+            || overlay == null)
+        {
+            overlay = new GameObject("ShigureRawTrackingBox_" + trackingId);
+            _rawTrackingBoxOverlays[trackingId] = overlay;
+        }
+        RuntimeSpatialBoxDisplay display =
+            overlay.GetComponent<RuntimeSpatialBoxDisplay>();
+        if (display == null)
+        {
+            display = overlay.AddComponent<RuntimeSpatialBoxDisplay>();
+        }
+        display.Configure(spatialBox.Clone(), "");
+        overlay.SetActive(true);
+    }
+
+    private void DestroyRawTrackingBoxOverlay(string trackingId)
+    {
+        if (string.IsNullOrEmpty(trackingId)
+            || !_rawTrackingBoxOverlays.TryGetValue(
+                trackingId, out GameObject overlay))
+        {
+            return;
+        }
+        if (overlay != null)
+        {
+            overlay.SetActive(false);
+            Destroy(overlay);
+        }
+        _rawTrackingBoxOverlays.Remove(trackingId);
     }
 
     private void ApplySpatialBoxOverlay(

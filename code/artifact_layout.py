@@ -30,6 +30,7 @@ if not CONSOLE_OUTPUT_LOG_ROOT.is_absolute():
 SHIGURE_HISTORY_SOCKET_PATH = WORKER_SOCKET_ROOT / "shigure_history.sock"
 SHIGURE_EVENT_ROOT = DATA_ROOT / "shigure_events"
 SHIGURE_DEBUG_CACHE_ROOT = DATA_ROOT / "shigure_debug_cache"
+SHIGURE_TRACKING_BOX_SNAPSHOT_PATH = DATA_ROOT / "aruco" / "runtime" / "shigure_tracking_boxes.json"
 IDENTITY_REFERENCE_ROOT = DATA_ROOT / "identity_references"
 ARUCO_DATA_ROOT = DATA_ROOT / "aruco"
 ARUCO_REFERENCE_ROOT = ARUCO_DATA_ROOT / "reference"

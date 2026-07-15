@@ -27,7 +27,11 @@ import uuid
 import cv2
 import numpy as np
 
-from artifact_layout import IDENTITY_REFERENCE_ROOT, SHIGURE_EVENT_ROOT
+from artifact_layout import (
+    IDENTITY_REFERENCE_ROOT,
+    SHIGURE_EVENT_ROOT,
+    SHIGURE_TRACKING_BOX_SNAPSHOT_PATH,
+)
 from config import (
     FOUNDATIONPOSE_POOL_SIZE,
     REALTIME_TRACKING_EVENT_POLL_SEC,
@@ -44,6 +48,7 @@ from config import (
     SHIGURE_HOLO_SYNC_DINO_DISTANCE_THRESHOLD,
     SHIGURE_HOLO_SYNC_DINO_MARGIN,
     SHIGURE_HOLO_SYNC_MAX_RECOVERY_ATTEMPTS,
+    SHIGURE_HOLO_SYNC_STABLE_MASK_FRAMES,
     SHIGURE_HOLO_SYNC_SIZE_LOG_TOLERANCE,
     SHIGURE_IDENTITY_HOLOLENS_DISTANCE_PENALTY,
     SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
@@ -61,6 +66,7 @@ from config import (
     SHIGURE_SPATIAL_BOX_MISSING_GRACE_SECONDS,
     SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS,
     SHIGURE_STARTUP_RECOVERY_RETRY_SECONDS,
+    SHIGURE_TRACKING_BOX_STABILITY_SECONDS,
 )
 from coordinate_systems import (
     FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY,
@@ -590,13 +596,25 @@ class SpatialBoxObservationState:
 
 
 @dataclass
+class RawTrackingBoxState:
+    raw_id: str
+    samples: deque[tuple[np.ndarray, np.ndarray]] = field(
+        default_factory=lambda: deque(maxlen=128)
+    )
+    window_started_monotonic: float | None = None
+    missing_since_monotonic: float | None = None
+    published_corners_aruco: list[list[float]] | None = None
+    published_revision: int = 0
+
+
+@dataclass
 class PendingHoloSync:
     job_id: str
     display_object_id: str
     task_id: str
     task_json_path: Path
-    target_center_aruco: np.ndarray
-    target_size_aruco: np.ndarray
+    target_center_aruco: np.ndarray | None
+    target_size_aruco: np.ndarray | None
     source_generation: int = 0
     attempts: int = 0
     running: bool = False
@@ -611,10 +629,12 @@ class PendingHoloSync:
         ]
     ] = field(
         default_factory=lambda: deque(
-            maxlen=SHIGURE_EXAMPLE_STABLE_MASK_FRAMES
+            maxlen=SHIGURE_HOLO_SYNC_STABLE_MASK_FRAMES
         )
     )
     stable_count: int = 0
+    identity_method: str = ""
+    identity_dino_detail: dict[str, Any] = field(default_factory=dict)
     last_attempt_source_key: str = ""
     last_stable_source_key: str = ""
     last_reason: str = "waiting_for_recovery_frame"
@@ -666,6 +686,8 @@ class ShigureRuntimeEngine:
         self._view_inflight: set[str] = set()
         self._view_windows: dict[str, dict[str, Any]] = {}
         self._spatial_boxes: dict[str, SpatialBoxObservationState] = {}
+        self._raw_tracking_boxes: dict[str, RawTrackingBoxState] = {}
+        self._last_raw_tracking_stamp: tuple[int, int] | None = None
         self._last_geometry_stamp: tuple[int, int] | None = None
         self._runtime_obj_move_quarantine_active = False
         self._runtime_obj_move_barrier_stamp: tuple[int, int] | None = None
@@ -711,6 +733,9 @@ class ShigureRuntimeEngine:
                 )
             except Exception as exc:
                 print(f"[shigure-v2] failed to terminate pending Holo sync: {exc}")
+        with self._lock:
+            self._raw_tracking_boxes.clear()
+            self._publish_raw_tracking_box_snapshot()
         self._pose_executor.shutdown(wait=False, cancel_futures=True)
         runtime = self.runtime_session_id
         self._identity_executor.shutdown(wait=False, cancel_futures=True)
@@ -732,7 +757,9 @@ class ShigureRuntimeEngine:
     def process_once(self) -> int:
         latest = self.cache.latest_canonical_frame(include_masks=True)
         if latest is None:
-            self._expire_pending_spatial_boxes(time.monotonic())
+            now_monotonic = time.monotonic()
+            self._expire_pending_spatial_boxes(now_monotonic)
+            self._expire_raw_tracking_boxes(now_monotonic)
             return 0
         if latest.source_incarnation_id != self.source_incarnation_id:
             self._open_incarnation(
@@ -740,12 +767,22 @@ class ShigureRuntimeEngine:
                 reset_sequence=int(latest.sequence) <= int(self.last_sequence),
             )
         processed = 0
-        frames = list(self.cache.iter_canonical_updates_after(self.last_sequence, include_masks=True))
+        # Bound each mask-bearing socket response so a backlog accumulated
+        # during DINO/FP work cannot monopolize the server GIL and starve HTTP.
+        frames = list(
+            self.cache.iter_canonical_updates_after(
+                self.last_sequence,
+                include_masks=True,
+                limit=16,
+                runtime_relevant_masks=True,
+            )
+        )
         for frame in frames:
             # A same-process adapter rotation leaves old frames in the bounded
             # cache. Only the latest incarnation is authoritative; reopening
             # old epochs here would oscillate bindings.
             if frame.source_incarnation_id != self.source_incarnation_id:
+                self.last_sequence = max(self.last_sequence, int(frame.sequence))
                 continue
             self._process_frame(frame)
             self.last_sequence = max(self.last_sequence, int(frame.sequence))
@@ -754,7 +791,9 @@ class ShigureRuntimeEngine:
             self._process_frame(latest)
             self.last_sequence = int(latest.sequence)
             processed = 1
-        self._expire_pending_spatial_boxes(time.monotonic())
+        now_monotonic = time.monotonic()
+        self._expire_pending_spatial_boxes(now_monotonic)
+        self._expire_raw_tracking_boxes(now_monotonic)
         return processed
 
     def _reset_epoch_local_runtime_state(self, *, holo_reason: str) -> None:
@@ -772,6 +811,8 @@ class ShigureRuntimeEngine:
             self._view_windows.clear()
             self._view_inflight.clear()
             self._spatial_boxes.clear()
+            self._raw_tracking_boxes.clear()
+            self._last_raw_tracking_stamp = None
             self._last_geometry_stamp = None
             self._runtime_obj_move_quarantine_active = False
             self._runtime_obj_move_barrier_stamp = None
@@ -787,6 +828,7 @@ class ShigureRuntimeEngine:
                 job.last_attempt_source_key = ""
                 job.last_stable_source_key = ""
                 job.last_reason = str(holo_reason)
+        self._publish_raw_tracking_box_snapshot()
         for job in pending_jobs:
             self._record_holo_sync_status(
                 job,
@@ -810,6 +852,12 @@ class ShigureRuntimeEngine:
         self._reset_epoch_local_runtime_state(
             holo_reason="source_epoch_changed_waiting_for_stable_recovery_frame"
         )
+        resumed_syncs = self.resume_unbound_hololens_capture_syncs()
+        if resumed_syncs:
+            print(
+                "[shigure-v2] resumed Holo identity syncs after source epoch "
+                f"change: count={resumed_syncs} source_epoch_id={self.source_epoch_id}"
+            )
         recovery = self.cache.latest_recovery_frame(include_masks=True)
         if recovery is not None and recovery.source_incarnation_id == incarnation_id:
             self._maybe_startup_recovery(recovery)
@@ -1599,22 +1647,39 @@ class ShigureRuntimeEngine:
             )
             return payload
 
-        bounds = task.get("ModelBounds") if isinstance(task.get("ModelBounds"), Mapping) else {}
-        try:
-            minimum = np.asarray(bounds["aabb_min_aruco"], dtype=np.float64).reshape(3)
-            maximum = np.asarray(bounds["aabb_max_aruco"], dtype=np.float64).reshape(3)
-        except (KeyError, TypeError, ValueError):
-            return fail_validation("hololens_model_bounds_unavailable")
-        size = maximum - minimum
-        if not np.isfinite(minimum).all() or not np.isfinite(maximum).all() or np.any(size <= 0.0):
-            return fail_validation("hololens_model_bounds_invalid")
+        bounds = (
+            task.get("ModelBounds")
+            if isinstance(task.get("ModelBounds"), Mapping)
+            else None
+        )
+        target_center = None
+        target_size = None
+        if bounds is not None:
+            try:
+                minimum = np.asarray(
+                    bounds["aabb_min_aruco"], dtype=np.float64
+                ).reshape(3)
+                maximum = np.asarray(
+                    bounds["aabb_max_aruco"], dtype=np.float64
+                ).reshape(3)
+            except (KeyError, TypeError, ValueError):
+                return fail_validation("hololens_model_bounds_invalid")
+            size = maximum - minimum
+            if (
+                not np.isfinite(minimum).all()
+                or not np.isfinite(maximum).all()
+                or np.any(size <= 0.0)
+            ):
+                return fail_validation("hololens_model_bounds_invalid")
+            target_center = (minimum + maximum) * 0.5
+            target_size = size
         job = PendingHoloSync(
             job_id=job_id,
             display_object_id=str(display_object_id),
             task_id=str(task_id),
             task_json_path=path,
-            target_center_aruco=(minimum + maximum) * 0.5,
-            target_size_aruco=size,
+            target_center_aruco=target_center,
+            target_size_aruco=target_size,
             source_generation=self._source_generation,
         )
         old: PendingHoloSync | None
@@ -1635,6 +1700,41 @@ class ShigureRuntimeEngine:
             terminal=False,
         )
 
+    def resume_unbound_hololens_capture_syncs(self) -> int:
+        """Requeue latest active model syncs that have no Shigure binding."""
+
+        resumed = 0
+        # Resume only the most recently updated active model. Older unbound
+        # models are not evidence that they are still present, and replaying
+        # all of them can monopolize identity work and starve HTTP polling.
+        for state in list_display_object_states(limit=1):
+            if str(state.get("active_shigure_binding_id") or "").strip():
+                continue
+            display_object_id = str(state.get("display_object_id") or "").strip()
+            task_id = str(state.get("active_model_task_id") or "").strip()
+            if not display_object_id or not task_id:
+                continue
+            try:
+                task_record = get_task_by_task_id(task_id)
+                if not task_record or str(task_record.get("status") or "") != "completed":
+                    continue
+                task_json_path = resolve_task_json_path_from_record(task_record)
+                # A COMPLETED sync belongs to its source epoch. Once a new
+                # epoch revokes that binding, the same active model must be
+                # matched again against the new raw-ID namespace.
+                self.queue_hololens_capture_sync(
+                    display_object_id=display_object_id,
+                    task_id=task_id,
+                    task_json_path=task_json_path,
+                )
+                resumed += 1
+            except Exception as exc:
+                print(
+                    "[shigure-v2] failed to resume Holo identity sync: "
+                    f"task={task_id} display={display_object_id} error={exc}"
+                )
+        return resumed
+
     def _record_holo_sync_status(
         self,
         job: PendingHoloSync,
@@ -1651,6 +1751,7 @@ class ShigureRuntimeEngine:
             "task_id": job.task_id,
             "reason": str(reason),
             "attempts": int(job.attempts),
+            "source_epoch_id": self.source_epoch_id,
             "updated_utc": _utc_now(),
         }
         if result:
@@ -1687,20 +1788,18 @@ class ShigureRuntimeEngine:
         return payload
 
     def _schedule_hololens_syncs(self, frame: CachedShigureFrame) -> None:
-        # Explicit-empty Segments frames are attempts too. Otherwise a live
-        # stream with no current objects leaves every Holo sync PENDING forever
-        # and the configured retry limit can never be reached.
-        if frame.input_states.get("segments") not in {"present", "explicit_empty"}:
+        # Holo identity matching can only make a decision from a complete,
+        # non-empty recovery snapshot. Segments/tracking/RGB-D arrive as
+        # separate same-stamp revisions; missing or explicit-empty revisions
+        # are waiting states and must not exhaust the retry budget before the
+        # enriched revision arrives (or before the target enters the view).
+        if frame.input_states.get("segments") != "present":
             return
-        # Segments normally arrives a few milliseconds before its aligned
-        # depth frame. The compatibility adapter emits both the early
-        # Segments revision and a later same-stamp revision when depth arrives.
-        # Do not let the incomplete intermediate revision consume a Holo sync
-        # attempt: at 10 Hz it can otherwise exhaust the retry limit before a
-        # single complete RGB-D revision is observed. Explicit-empty frames
-        # still count below because they intentionally prove that no recovery
-        # candidate is currently visible and do not require image evidence.
-        if frame.recovery_candidates and self._sample_exact(frame) is None:
+        if frame.input_states.get("object_tracking") != "present":
+            return
+        if not frame.recovery_candidates:
+            return
+        if self._sample_exact(frame) is None:
             return
         with self._lock:
             jobs = list(self._pending_holo_syncs.values())
@@ -1789,6 +1888,8 @@ class ShigureRuntimeEngine:
                 job.stable_mask = None
                 job.stable_history.clear()
                 job.stable_count = 0
+                job.identity_method = ""
+                job.identity_dino_detail.clear()
                 job.last_stable_source_key = source_key
         self._pending_or_fail_holo_sync(
             job,
@@ -1803,12 +1904,8 @@ class ShigureRuntimeEngine:
         source_generation: int,
     ) -> None:
         source_key = sample_key(frame.source_stamp)
-        with self._lock:
-            if not self._holo_sync_attempt_current(job, source_generation):
-                return
-            if job.last_attempt_source_key != source_key:
-                job.attempts += 1
-                job.last_attempt_source_key = source_key
+        if not self._holo_sync_attempt_current(job, source_generation):
+            return
         if not frame.recovery_candidates:
             self._reject_hololens_sync_frame(
                 job,
@@ -1837,33 +1934,118 @@ class ShigureRuntimeEngine:
             )
             return
 
-        entries: list[dict[str, Any]] = []
+        # Collider geometry is cheap and does not need image artifacts. Gate
+        # first so unrelated Segments masks are never decoded/written merely
+        # to be rejected by ArUco position and size.
+        plausible_geometry: list[dict[str, Any]] = []
+        trusted_dino_fallback: list[dict[str, Any]] = []
         for candidate in frame.recovery_candidates:
+            tracking = (
+                candidate.get("tracking")
+                if isinstance(candidate.get("tracking"), Mapping)
+                else {}
+            )
+            geometry: dict[str, Any] | None = None
             try:
-                artifacts = self._candidate_artifacts(frame, candidate, sample)
+                box = build_spatial_box_v2(
+                    tracking.get("collider"), camera_to_aruco, np.eye(4)
+                )
+                if (
+                    job.target_center_aruco is None
+                    or job.target_size_aruco is None
+                ):
+                    raise NoBoxError(
+                        "HoloLens model bounds are not ready; use DINO"
+                    )
+                corners = np.asarray(box["corners_aruco_m"], dtype=np.float64)
+                minimum, maximum = corners.min(axis=0), corners.max(axis=0)
+                center, size = (minimum + maximum) * 0.5, maximum - minimum
+                center_distance = float(
+                    np.linalg.norm(center - job.target_center_aruco)
+                )
+                size_log_error = float(
+                    np.max(np.abs(np.log(size / job.target_size_aruco)))
+                )
+                geometry = {
+                    "center_distance_m": center_distance,
+                    "size_log_error": size_log_error,
+                    "plausible": (
+                        center_distance <= SHIGURE_HOLO_SYNC_CENTER_DISTANCE_M
+                        and size_log_error <= SHIGURE_HOLO_SYNC_SIZE_LOG_TOLERANCE
+                    ),
+                }
+            except Exception:
+                pass
+            item = {
+                "candidate": candidate,
+                "geometry": geometry,
+                "spatial_box_corners_aruco": (
+                    corners.astype(float).tolist()
+                    if geometry is not None
+                    else None
+                ),
+            }
+            raw_id = str(candidate.get("shigure_object_id") or "").strip()
+            trusted_mapping = bool(
+                raw_id
+                and str(candidate.get("tracking_match_status") or "").upper()
+                == "RESOLVED"
+                and str(candidate.get("tracking_mapping_method") or "")
+                == "SEGMENT_TRACKING_UNIQUE_IOU"
+                and str(tracking.get("action") or "").strip().lower()
+                in {"stay", "bring_in"}
+            )
+            if trusted_mapping:
+                trusted_dino_fallback.append(item)
+                if geometry is not None and geometry["plausible"]:
+                    plausible_geometry.append(item)
+
+        force_dino_fallback = not plausible_geometry
+        reuse_prior_identity = False
+        candidate_pool = (
+            plausible_geometry
+            if plausible_geometry
+            else trusted_dino_fallback
+        )
+        if job.stable_raw_id and job.identity_method:
+            prior = next(
+                (
+                    item
+                    for item in trusted_dino_fallback
+                    if str(
+                        item["candidate"].get("shigure_object_id") or ""
+                    ).strip()
+                    == job.stable_raw_id
+                ),
+                None,
+            )
+            if prior is not None:
+                # The first complete frame already made the expensive identity
+                # decision. Confirm the same trusted tracking ID and strict
+                # mask stability without embedding every scene candidate again.
+                candidate_pool = [prior]
+                reuse_prior_identity = True
+        if not candidate_pool:
+            self._reject_hololens_sync_frame(
+                job,
+                "no_trusted_candidate_for_geometry_or_dinov2",
+                source_generation,
+                source_key,
+            )
+            return
+
+        plausible: list[dict[str, Any]] = []
+        for item in candidate_pool:
+            try:
+                artifacts = self._candidate_artifacts(
+                    frame, item["candidate"], sample
+                )
                 if artifacts.temporary_root is not None:
                     job.temporary_roots.append(artifacts.temporary_root)
             except Exception:
                 continue
-            geometry: dict[str, Any] | None = None
-            tracking = candidate.get("tracking") if isinstance(candidate.get("tracking"), Mapping) else {}
-            try:
-                box = build_spatial_box_v2(tracking.get("collider"), camera_to_aruco, np.eye(4))
-                corners = np.asarray(box["corners_aruco_m"], dtype=np.float64)
-                minimum, maximum = corners.min(axis=0), corners.max(axis=0)
-                center, size = (minimum + maximum) * 0.5, maximum - minimum
-                center_distance = float(np.linalg.norm(center - job.target_center_aruco))
-                size_log_error = float(np.max(np.abs(np.log(size / job.target_size_aruco))))
-                geometry = {
-                    "center_distance_m": center_distance,
-                    "size_log_error": size_log_error,
-                    "plausible": center_distance <= SHIGURE_HOLO_SYNC_CENTER_DISTANCE_M
-                    and size_log_error <= SHIGURE_HOLO_SYNC_SIZE_LOG_TOLERANCE,
-                }
-            except Exception:
-                geometry = None
-            entries.append({"candidate": candidate, "artifacts": artifacts, "geometry": geometry})
-        if not entries:
+            plausible.append({**item, "artifacts": artifacts})
+        if not plausible:
             self._reject_hololens_sync_frame(
                 job,
                 "no_usable_recovery_candidates",
@@ -1872,20 +2054,15 @@ class ShigureRuntimeEngine:
             )
             return
 
-        plausible = [item for item in entries if item["geometry"] and item["geometry"]["plausible"]]
         selected: dict[str, Any] | None = None
         method = ""
         dino_detail: dict[str, Any] = {}
-        if not plausible:
-            self._reject_hololens_sync_frame(
-                job,
-                "no_candidate_within_aruco_geometry_gate",
-                source_generation,
-                source_key,
-            )
-            return
 
-        if len(plausible) == 1:
+        if reuse_prior_identity:
+            selected = plausible[0]
+            method = job.identity_method
+            dino_detail = dict(job.identity_dino_detail)
+        elif len(plausible) == 1 and not force_dino_fallback:
             selected = plausible[0]
             method = "ARUCO_COLLIDER_GEOMETRY"
         else:
@@ -1951,8 +2128,6 @@ class ShigureRuntimeEngine:
             == "SEGMENT_TRACKING_UNIQUE_IOU"
             and str(tracking.get("action") or "").strip().lower()
             in {"stay", "bring_in"}
-            and segment_probability
-            >= SHIGURE_EXAMPLE_MIN_SEGMENT_PROBABILITY
         )
         if not raw_id_is_trusted:
             self._reject_hololens_sync_frame(
@@ -1962,6 +2137,15 @@ class ShigureRuntimeEngine:
                 source_key,
             )
             return
+        # Only a plausible candidate with a trusted epoch-local raw ID is an
+        # identity attempt. Empty views, unrelated scene objects, and partial
+        # segment/tracking mappings must wait without exhausting the budget.
+        with self._lock:
+            if not self._holo_sync_attempt_current(job, source_generation):
+                return
+            if job.last_attempt_source_key != source_key:
+                job.attempts += 1
+                job.last_attempt_source_key = source_key
         candidate_bbox = _bbox(candidate)
         candidate_mask = selected["artifacts"].mask_array
         stable = False
@@ -1999,6 +2183,8 @@ class ShigureRuntimeEngine:
                 else:
                     job.stable_history.append(current)
             job.stable_raw_id = raw_id
+            job.identity_method = method
+            job.identity_dino_detail = dict(dino_detail)
             job.stable_bbox = candidate_bbox
             job.stable_mask = (
                 candidate_mask.copy()
@@ -2009,7 +2195,7 @@ class ShigureRuntimeEngine:
             job.stable_count = len(job.stable_history)
             stable = (
                 job.stable_count
-                >= SHIGURE_EXAMPLE_STABLE_MASK_FRAMES
+                >= SHIGURE_HOLO_SYNC_STABLE_MASK_FRAMES
             )
         if not stable:
             self._pending_or_fail_holo_sync(
@@ -2019,10 +2205,17 @@ class ShigureRuntimeEngine:
             )
             return
 
+        # Fast Holo sync only authorizes the epoch-local binding. Long-term
+        # Shigure identity examples retain the stricter five-frame admission
+        # window and are collected independently after the box is live.
+        example_window_complete = (
+            SHIGURE_HOLO_SYNC_STABLE_MASK_FRAMES
+            >= SHIGURE_EXAMPLE_STABLE_MASK_FRAMES
+        )
         embedded = selected.get("embedded")
-        if embedded is None:
+        if example_window_complete and embedded is None:
             embedded = self._embed_artifacts(selected["artifacts"])
-        if embedded is None:
+        if example_window_complete and embedded is None:
             self._reject_hololens_sync_frame(
                 job,
                 "selected_candidate_embedding_unavailable",
@@ -2107,27 +2300,49 @@ class ShigureRuntimeEngine:
         )
         if presence_activated:
             activate_recovered_shigure_binding(str(binding["binding_id"]))
-        example_admission = self._verify_shigure_view_admission(
-            job.display_object_id, embedded[0]
-        )
-        reference = self._register_view(
-            display_object_id=job.display_object_id,
-            artifacts=selected["artifacts"],
-            embedding=embedded[0],
-            embedding_response=embedded[1],
-            source_event_uid=None,
-            quality={
-                "role": "hololens_capture_sync",
-                "method": method,
-                "lifecycle_authority": "shigure_recovery_snapshot",
-                "stable_mask_frames": SHIGURE_EXAMPLE_STABLE_MASK_FRAMES,
-                **dino_detail,
-            },
-            source_epoch_id=str(self.source_epoch_id),
-            binding_id=str(binding["binding_id"]),
-            raw_shigure_object_id=raw_id,
-            admission=example_admission,
-        )
+
+        if not example_window_complete:
+            example_admission = {
+                "admission_status": "REJECTED",
+                "admission_reason": "strict_stable_view_window_incomplete",
+                "admission_stable_frames": SHIGURE_HOLO_SYNC_STABLE_MASK_FRAMES,
+                "admission_required_frames": SHIGURE_EXAMPLE_STABLE_MASK_FRAMES,
+            }
+            reference = None
+        elif segment_probability < SHIGURE_EXAMPLE_MIN_SEGMENT_PROBABILITY:
+            example_admission = {
+                "admission_status": "REJECTED",
+                "admission_reason": "segment_probability_threshold",
+                "admission_probability": segment_probability,
+                "admission_probability_threshold": (
+                    SHIGURE_EXAMPLE_MIN_SEGMENT_PROBABILITY
+                ),
+            }
+            reference = None
+        else:
+            assert embedded is not None
+            example_admission = self._verify_shigure_view_admission(
+                job.display_object_id, embedded[0]
+            )
+            reference = self._register_view(
+                display_object_id=job.display_object_id,
+                artifacts=selected["artifacts"],
+                embedding=embedded[0],
+                embedding_response=embedded[1],
+                source_event_uid=None,
+                quality={
+                    "role": "hololens_capture_sync",
+                    "method": method,
+                    "lifecycle_authority": "shigure_recovery_snapshot",
+                    "stable_mask_frames": SHIGURE_HOLO_SYNC_STABLE_MASK_FRAMES,
+                    "segment_probability": segment_probability,
+                    **dino_detail,
+                },
+                source_epoch_id=str(self.source_epoch_id),
+                binding_id=str(binding["binding_id"]),
+                raw_shigure_object_id=raw_id,
+                admission=example_admission,
+            )
         print(
             "[shigure-v2] Holo sync strict Shigure example admission: "
             f"display_object_id={job.display_object_id} "
@@ -2164,6 +2379,7 @@ class ShigureRuntimeEngine:
         )
 
     def _process_frame(self, frame: CachedShigureFrame) -> None:
+        self._update_raw_tracking_boxes(frame)
         frame_stamp = (
             int(frame.source_stamp.sec),
             int(frame.source_stamp.nanosec),
@@ -2379,6 +2595,151 @@ class ShigureRuntimeEngine:
                         self._last_view_sequence.pop(raw_id, None)
         except Exception as exc:
             print(f"[shigure-v2] lifecycle event rejected: {exc}")
+
+    def _publish_raw_tracking_box_snapshot(self) -> None:
+        boxes = []
+        source_epoch_id = str(self.source_epoch_id or "")
+        for raw_id, state in sorted(self._raw_tracking_boxes.items()):
+            if (
+                state.published_corners_aruco is None
+                or state.published_revision <= 0
+            ):
+                continue
+            boxes.append(
+                {
+                    "tracking_id": f"{source_epoch_id}:{raw_id}",
+                    "raw_tracking_id": raw_id,
+                    "revision": int(state.published_revision),
+                    "corners_aruco": state.published_corners_aruco,
+                }
+            )
+        payload = {
+            "schema_version": 1,
+            "source_epoch_id": source_epoch_id,
+            "generated_utc": _utc_now(),
+            "snapshot_complete": True,
+            "count": len(boxes),
+            "boxes": boxes,
+        }
+        try:
+            _write_json(SHIGURE_TRACKING_BOX_SNAPSHOT_PATH, payload)
+        except Exception as exc:
+            print(f"[shigure-v2] failed to publish raw tracking boxes: {exc}")
+
+    def _expire_raw_tracking_boxes(self, now_monotonic: float) -> None:
+        removed = False
+        for raw_id, state in tuple(self._raw_tracking_boxes.items()):
+            if (
+                state.missing_since_monotonic is None
+                or float(now_monotonic) - state.missing_since_monotonic
+                < SHIGURE_TRACKING_BOX_STABILITY_SECONDS
+            ):
+                continue
+            self._raw_tracking_boxes.pop(raw_id, None)
+            removed = removed or state.published_corners_aruco is not None
+        if removed:
+            self._publish_raw_tracking_box_snapshot()
+
+    def _update_raw_tracking_boxes(
+        self, frame: CachedShigureFrame
+    ) -> None:
+        if not self.source_epoch_id:
+            return
+        tracking_state = str(
+            frame.input_states.get("object_tracking") or "missing"
+        )
+        if tracking_state not in {"present", "explicit_empty"}:
+            return
+        tracking_stamp = (
+            int(frame.source_stamp.sec),
+            int(frame.source_stamp.nanosec),
+        )
+        if (
+            self._last_raw_tracking_stamp is not None
+            and tracking_stamp <= self._last_raw_tracking_stamp
+        ):
+            return
+
+        now_monotonic = time.monotonic()
+        try:
+            camera_to_aruco = np.asarray(
+                _camera_to_aruco()[0], dtype=np.float64
+            )
+        except Exception:
+            camera_to_aruco = None
+
+        if camera_to_aruco is None and tracking_state == "present":
+            # A transform outage is not evidence that every tracked object
+            # disappeared. Keep the last complete snapshot until calibration
+            # returns or the heartbeat stale guard expires.
+            self._last_raw_tracking_stamp = tracking_stamp
+            return
+
+        observed_raw_ids: set[str] = set()
+        snapshot_changed = False
+        if camera_to_aruco is not None:
+            for tracked in frame.tracked_objects:
+                if not isinstance(tracked, Mapping):
+                    continue
+                raw_id = str(tracked.get("object_id") or "").strip()
+                action = str(
+                    tracked.get("action") or ""
+                ).strip().lower()
+                if not raw_id or action == "take_out":
+                    continue
+                try:
+                    raw_box = build_spatial_box_v2(
+                        tracked.get("collider"),
+                        camera_to_aruco,
+                        np.eye(4),
+                    )
+                    center, extent = _box_center_extent(
+                        raw_box["corners_aruco_m"]
+                    )
+                except Exception:
+                    continue
+
+                observed_raw_ids.add(raw_id)
+                state = self._raw_tracking_boxes.get(raw_id)
+                if state is None:
+                    state = RawTrackingBoxState(raw_id=raw_id)
+                    self._raw_tracking_boxes[raw_id] = state
+                state.missing_since_monotonic = None
+                state.samples.append((center, extent))
+                if state.window_started_monotonic is None:
+                    state.window_started_monotonic = now_monotonic
+                if (
+                    now_monotonic - state.window_started_monotonic
+                    < SHIGURE_TRACKING_BOX_STABILITY_SECONDS
+                ):
+                    continue
+
+                centers = np.stack(
+                    [sample[0] for sample in state.samples], axis=0
+                )
+                extents = np.stack(
+                    [sample[1] for sample in state.samples], axis=0
+                )
+                published = _corners_from_center_extent(
+                    np.median(centers, axis=0),
+                    np.median(extents, axis=0),
+                )
+                state.published_corners_aruco = published
+                state.published_revision = int(frame.sequence)
+                state.samples.clear()
+                state.window_started_monotonic = now_monotonic
+                snapshot_changed = True
+
+        for raw_id, state in tuple(self._raw_tracking_boxes.items()):
+            if raw_id in observed_raw_ids:
+                continue
+            if state.missing_since_monotonic is None:
+                state.missing_since_monotonic = now_monotonic
+
+        self._last_raw_tracking_stamp = tracking_stamp
+        if snapshot_changed:
+            self._publish_raw_tracking_box_snapshot()
+        self._expire_raw_tracking_boxes(now_monotonic)
 
     def _spatial_box_state(
         self,

@@ -96,7 +96,7 @@ recorder 的在线 RGB-D/canonical ring 只存在内存并通过 Unix socket 提
 
 HoloLens 拍摄提供 `HOLOLENS` reference 作为辅助条件。已有 Shigure reference 时优先使用 Shigure 多视角参考。
 
-HoloLens 模型任务完成后还会建立 `HOLOLENS_CAPTURE` identity sync job：先比较 HoloLens capture box 与 Shigure collider 经 ArUco AABB 重建后得到的中心和 extent；没有候选通过宽松几何门时保持失败/重试，多个候选通过时才只在门内以较宽阈值使用 DINOv2 判别。只有连续稳定、带可信 raw ID 的 Shigure recovery candidate 才能成功；它可以建立当前 epoch binding、激活 `PRESENT` 并登记 Shigure identity reference。这里的 lifecycle authority 明确是 `shigure_recovery_snapshot`，HoloLens 只提供待核对的目标 identity/model，不单独授权 presence，也不制造 `bring_in` 或 `take_out`。
+SAM3 mask 与 historical DINO 完成后、耗时模型生成开始前，worker 立即建立 HoloLens capture identity、登记 HOLOLENS reference 并排队 HOLOLENS_CAPTURE sync；ModelBounds 尚未生成时使用可信 raw-ID 候选的 DINO fallback。最终 display_identity stage 仍幂等提交模型 revision/ArUco pose。同步以连续 2 帧稳定可信 raw ID 建立 epoch binding；长期 Shigure identity reference 仍须独立严格 5 帧准入。
 
 仅由 HoloLens 新建的对象以 `presence=UNKNOWN` 持久化；completed `model_instance` 可供 Unity 预览，但不因此进入 Shigure live 清单或成为 `PRESENT`。只有 Shigure 生命周期事件或可信 recovery snapshot（包括上述 sync 成功）能够改变该状态。
 
@@ -128,9 +128,9 @@ Shigure 是 presence/lifecycle 的权威来源：
 
 mask、depth、有效像素都不能作为 spatial box 的替代来源。无合法 collider 时返回无 box，不生成降级框。
 
-服务端按 binding 维护 box 状态：有效 collider 需连续 2 帧获取，center/extent 经过 5 帧中值、EMA 和 8 mm/5 mm 死区；单帧 collider 无效或完整 tracking snapshot 缺席进入 `COASTING`，继续保留最后可信 box。连续明确缺失满 1.5 秒才写 `no_box`；topic `missing` 或辅助消息重放不作为负观测。take-out 立即清 live box，不走 grace，历史仍保存拿走前框。
+服务端另行按 source_epoch:raw_tracking_id 维护模型无关 box：直接读取 object_tracking collider，每约 1 秒窗口取 center/extent 中值并发布完整快照；缺失约 1 秒后删除。此显示链路不查询 binding、display_object_id、presence 或模型 revision。
 
-live API 把 box 从最多 5 个模型/pose `items` 中拆出：`spatial_boxes` 是无数量上限、带 complete 标记的完整快照。合法八点为 `status=ready`；宽限期结束、ABSENT 或无框为 `status=no_box`。Unity 只有在整份 box snapshot 校验成功后才 reconcile；`no_box` 或完整快照缺席会删除 `LatestLive` 框，但不删除历史框、照片、骨骼或模型。
+live API 以 tracking_boxes 提供无数量上限的完整 raw tracking 快照；每项含 tracking_id、revision 和 ready 八角点。Unity 按 tracking_id 独立绘制，完整快照缺席即删除，不影响历史框、照片、骨骼或模型。
 
 ## Unity live 与历史展示
 

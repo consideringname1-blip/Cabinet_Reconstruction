@@ -68,9 +68,9 @@ people[]
 input_states / diagnostics
 ```
 
-input state 明确区分 `missing`、`explicit_empty`、`present`。adapter 允许 frame 在迟到 topic 到达后生成更高 sequence 的修订；runtime 只按 sequence 消费新版本。canonical event 的 `frame_id` 由该 stamp 首个 detection/tracking 消息冻结；若两者都不存在，recovery-only frame 才按 segments、camera/RGB-D、people/contact 取得展示 ID。迟到 topic 因此不会改变已持久 event key。
+input state 明确区分 `missing`、`explicit_empty`、`present`。adapter 允许 frame 在迟到 topic 到达后生成更高 sequence 的修订；runtime 只按 sequence 消费新版本，并以小批次读取更新；只有生命周期事件帧或 segments、tracking、exact RGB-D 齐全的非空候选帧携带 mask，避免 DINO/FP 阻塞期间的图像积压占满 HTTP 服务。canonical event 的 `frame_id` 由该 stamp 首个 detection/tracking 消息冻结；若两者都不存在，recovery-only frame 才按 segments、camera/RGB-D、people/contact 取得展示 ID。迟到 topic 因此不会改变已持久 event key。
 
-同一 exact stamp 的 enriched revision 保持稳定 event identity。首个 detection/tracking 消息冻结该 stamp 的 event frame identity，并为每条事件分配 `canonical_event_index`；另一侧随后建立唯一映射时，把 detection/tracking alias 合并到首次分配的 index。因此无论哪一侧先到，后到的辅助或 lifecycle topic 都不会改 canonical key。people/contact/图像等迟到后，已有 lifecycle row 只补原先缺失的 pose、box、图片或骨骼证据；不会重复推进 presence 或新建历史行。segments 与 object tracking 同时 `explicit_empty` 且没有 candidate 时，是可完成启动恢复的完整空 snapshot；`missing` 不具有这个语义。非空恢复候选在同 stamp tracking 或 exact RGB-D 尚未到达时保持 `PENDING`，不会先执行 DINO 得出终态。
+同一 exact stamp 的 enriched revision 保持稳定 event identity。首个 detection/tracking 消息冻结该 stamp 的 event frame identity，并为每条事件分配 `canonical_event_index`；另一侧随后建立唯一映射时，把 detection/tracking alias 合并到首次分配的 index。因此无论哪一侧先到，后到的辅助或 lifecycle topic 都不会改 canonical key。people/contact/图像等迟到后，已有 lifecycle row 只补原先缺失的 pose、box、图片或骨骼证据；不会重复推进 presence 或新建历史行。segments 与 object tracking 同时 `explicit_empty` 且没有 candidate 时，是可完成启动恢复的完整空 snapshot；`missing` 不具有这个语义。非空恢复候选在同 stamp tracking 或 exact RGB-D 尚未到达时保持 `PENDING`，不会先执行 DINO 得出终态。HoloLens identity sync 同样只在 segments、tracking、exact RGB-D 齐全、几何候选通过且 raw ID 可信时消耗重试；目标未入镜或只有不相关候选时保持 `PENDING`；若可信 raw-ID候选已离开原 HoloLens pose 的几何门，则用带距离阈值与第二名间隔的 DINO fallback 重新绑定；服务重启只自动重排最近活动且尚未建立 Shigure binding 的同步，避免旧模型身份计算阻塞 HoloLens HTTP 轮询。可信 raw ID/几何可建立 binding；`SHIGURE_EXAMPLE_MIN_SEGMENT_PROBABILITY` 只控制是否新增 Shigure 身份样例，低概率不会阻断现有对象的 box。
 
 ## Detection 临时键与 raw ID
 
@@ -123,7 +123,7 @@ mask 默认不通过 socket 返回；identity/artifact 处理需要时显式设�
 
 - 稀疏事件/恢复候选使用 exact-stamp RGB；没有完全相同 stamp 的 RGB 时只记录不可用诊断，不以邻近 RGB 冒充事件图像；
 - retention 必须大于 0 且不超过 600 秒；
-- entry 数量同时受上限约束；
+- entry 数量同时受上限约束，且总容量默认不超过 10 GiB（`SHIGURE_DEBUG_CACHE_MAX_BYTES`）；
 - runtime 不能把 debug ring 当作输入或恢复源；
 - 不通过 DVC 保存。
 
