@@ -94,15 +94,22 @@ public class HistoryPresentationController : MonoBehaviour
     public void ToggleAllPresentations()
     {
         RuntimeModelManager manager = RuntimeModelManager.Instance;
+        if (manager != null
+            && (manager.IsAnyDisplayObjectInHistory()
+                || globalReplayRequested))
+        {
+            ResumeAllPresentations(true);
+            return;
+        }
+        ShowLatestPlacements();
+    }
+
+    public void ShowLatestPlacements()
+    {
+        RuntimeModelManager manager = RuntimeModelManager.Instance;
         if (manager == null)
         {
             ShowFrontMessage("history_presentation_manager_missing");
-            return;
-        }
-
-        if (manager.IsAnyDisplayObjectInHistory() || globalReplayRequested)
-        {
-            ResumeAllPresentations(true);
             return;
         }
 
@@ -354,7 +361,8 @@ public class HistoryPresentationController : MonoBehaviour
             || !TryParsePose(
                 poseObject,
                 out RuntimeModelPoseData historyPose)
-            || !ObjectEvidenceDisplay.ValidateHistoryEvidence(evidence))
+            || (evidence != null
+                && !ObjectEvidenceDisplay.ValidateHistoryEvidence(evidence)))
         {
             ShowFrontMessage("history_presentation_ERR_invalid_response");
             return false;
@@ -415,18 +423,21 @@ public class HistoryPresentationController : MonoBehaviour
             return false;
         }
 
-        ObjectEvidenceDisplay evidenceDisplay =
-            ObjectEvidenceDisplay.Instance;
-        if (evidenceDisplay == null
-            || !evidenceDisplay.ShowHistoryEvidence(
-                displayObjectId,
-                eventUid,
-                evidence,
-                coordinateEpoch))
+        if (evidence != null)
         {
-            manager.ResumeLivePresentation(displayObjectId);
-            ShowFrontMessage("history_presentation_ERR_evidence");
-            return false;
+            ObjectEvidenceDisplay evidenceDisplay =
+                ObjectEvidenceDisplay.Instance;
+            if (evidenceDisplay == null
+                || !evidenceDisplay.ShowHistoryEvidence(
+                    displayObjectId,
+                    eventUid,
+                    evidence,
+                    coordinateEpoch))
+            {
+                Debug.LogWarning(
+                    "[HistoryPresentation] Optional evidence could not be displayed; "
+                    + "historical model placement remains active.");
+            }
         }
 
         ShowFrontMessage("history_presentation_history");

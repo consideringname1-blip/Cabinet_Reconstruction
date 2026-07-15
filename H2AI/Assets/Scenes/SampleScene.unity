@@ -3914,9 +3914,9 @@ MonoBehaviour:
   OnClick:
     m_PersistentCalls:
       m_Calls:
-      - m_Target: {fileID: 1912203437}
-        m_TargetAssemblyTypeName: ShuJuQingQiu, Assembly-CSharp
-        m_MethodName: ToggleHistoryTrackingMode
+      - m_Target: {fileID: 1912203440}
+        m_TargetAssemblyTypeName: SpatialHistoryPointerQuery, Assembly-CSharp
+        m_MethodName: TriggerSpatialHistoryQuery
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}
@@ -4765,6 +4765,7 @@ GameObject:
   - component: {fileID: 1912203437}
   - component: {fileID: 1912203438}
   - component: {fileID: 1912203439}
+  - component: {fileID: 1912203440}
   - component: {fileID: 1912203441}
   m_Layer: 0
   m_Name: Scripts
@@ -10580,7 +10581,7 @@ MonoBehaviour:
       m_Calls:
       - m_Target: {fileID: 1912203437}
         m_TargetAssemblyTypeName: ShuJuQingQiu, Assembly-CSharp
-        m_MethodName: ToggleHistoryTrackingMode
+        m_MethodName: ShowLatestHistoryPlacements
         m_Mode: 1
         m_Arguments:
           m_ObjectArgument: {fileID: 0}
@@ -27708,6 +27709,26 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   text: {fileID: 801018185}
+--- !u!114 &1912203440
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 223974226}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 3344d814404510d4bb637b99df53e3c7, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  targetHand: 1
+  waitSeconds: 3
+  maxDistanceMeters: 10
+  showRayLine: 1
+  lineMaterial: {fileID: 0}
+  lineWidth: 0.008
+  rayValidColor: {r: 0.1, g: 0.9, b: 1, a: 1}
+  rayInvalidColor: {r: 1, g: 0.15, b: 0.1, a: 1}
 --- !u!114 &1912203441
 MonoBehaviour:
   m_ObjectHideFlags: 0

@@ -128,7 +128,7 @@ Shigure 是 presence/lifecycle 的权威来源：
 
 mask、depth、有效像素都不能作为 spatial box 的替代来源。无合法 collider 时返回无 box，不生成降级框。
 
-服务端另行按 source_epoch:raw_tracking_id 维护模型无关 box：直接读取 object_tracking collider，每约 1 秒窗口取 center/extent 中值并发布完整快照；缺失约 1 秒后删除。此显示链路不查询 binding、display_object_id、presence 或模型 revision。
+服务端另行按 source_epoch:raw_tracking_id 维护模型无关 box：直接读取每条 object_tracking collider 并立即发布完整快照；下一条快照缺失即删除，不做平滑或稳定等待。此显示链路不查询 binding、display_object_id、presence 或模型 revision。
 
 live API 以 tracking_boxes 提供无数量上限的完整 raw tracking 快照；每项含 tracking_id、revision 和 ready 八角点。Unity 按 tracking_id 独立绘制，完整快照缺席即删除，不影响历史框、照片、骨骼或模型。
 
@@ -143,7 +143,7 @@ live API 以 tracking_boxes 提供无数量上限的完整 raw tracking 快照�
 - 全体历史再现：每个对象独立请求上一条历史。
 - 全体继续追踪：所有模型恢复 `LatestLiveState`，并关闭全部历史图片、骨骼和历史 box。
 
-历史 API 只返回具备有效 pose、scene image 和骨骼的持久事件；服务端会跨页跳过损坏或证据不完整的数据库行，直到找到下一条可用记录或真正耗尽历史。所有公开 pose、box、骨骼均使用当前 startup 的 `hololens_current_local` 与同一个 `coordinate_epoch`。
+历史 API 以有效 pose 作为再放置的唯一必需数据；scene image、骨骼和 box 是可选增强，缺失不会阻止模型移动。服务端会跨页跳过缺 pose 或坐标转换失败的行，直到找到下一条可用记录或真正耗尽历史。所有公开 pose、box、骨骼均使用当前 startup 的 `hololens_current_local` 与同一个 `coordinate_epoch`。
 
 Unity 的 history URL 默认从已配置的 realtime status/mode 服务地址推导同源 `/api/v2/`，也允许显式 override。收到新的 live `coordinate_epoch` 时，任何仍显示旧 epoch 历史的模型会自动恢复 `FollowLive` 并关闭对应照片/骨骼，避免跨坐标 epoch 继续显示旧证据。
 

@@ -66,7 +66,6 @@ from config import (
     SHIGURE_SPATIAL_BOX_MISSING_GRACE_SECONDS,
     SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS,
     SHIGURE_STARTUP_RECOVERY_RETRY_SECONDS,
-    SHIGURE_TRACKING_BOX_STABILITY_SECONDS,
 )
 from coordinate_systems import (
     FBX_RUNTIME_TRANSFORM_COMPENSATION_TO_UNITY,
@@ -598,11 +597,6 @@ class SpatialBoxObservationState:
 @dataclass
 class RawTrackingBoxState:
     raw_id: str
-    samples: deque[tuple[np.ndarray, np.ndarray]] = field(
-        default_factory=lambda: deque(maxlen=128)
-    )
-    window_started_monotonic: float | None = None
-    missing_since_monotonic: float | None = None
     published_corners_aruco: list[list[float]] | None = None
     published_revision: int = 0
 
@@ -2627,18 +2621,10 @@ class ShigureRuntimeEngine:
             print(f"[shigure-v2] failed to publish raw tracking boxes: {exc}")
 
     def _expire_raw_tracking_boxes(self, now_monotonic: float) -> None:
-        removed = False
-        for raw_id, state in tuple(self._raw_tracking_boxes.items()):
-            if (
-                state.missing_since_monotonic is None
-                or float(now_monotonic) - state.missing_since_monotonic
-                < SHIGURE_TRACKING_BOX_STABILITY_SECONDS
-            ):
-                continue
-            self._raw_tracking_boxes.pop(raw_id, None)
-            removed = removed or state.published_corners_aruco is not None
-        if removed:
-            self._publish_raw_tracking_box_snapshot()
+        # Raw Shigure tracking boxes are complete snapshots. Deletion is
+        # driven immediately by the next tracking message, never by a
+        # stability timer.
+        return
 
     def _update_raw_tracking_boxes(
         self, frame: CachedShigureFrame
@@ -2660,23 +2646,19 @@ class ShigureRuntimeEngine:
         ):
             return
 
-        now_monotonic = time.monotonic()
-        try:
-            camera_to_aruco = np.asarray(
-                _camera_to_aruco()[0], dtype=np.float64
-            )
-        except Exception:
-            camera_to_aruco = None
-
-        if camera_to_aruco is None and tracking_state == "present":
-            # A transform outage is not evidence that every tracked object
-            # disappeared. Keep the last complete snapshot until calibration
-            # returns or the heartbeat stale guard expires.
-            self._last_raw_tracking_stamp = tracking_stamp
-            return
+        camera_to_aruco = None
+        if tracking_state == "present":
+            try:
+                camera_to_aruco = np.asarray(
+                    _camera_to_aruco()[0], dtype=np.float64
+                )
+            except Exception:
+                camera_to_aruco = None
+            if camera_to_aruco is None:
+                self._last_raw_tracking_stamp = tracking_stamp
+                return
 
         observed_raw_ids: set[str] = set()
-        snapshot_changed = False
         if camera_to_aruco is not None:
             for tracked in frame.tracked_objects:
                 if not isinstance(tracked, Mapping):
@@ -2693,9 +2675,11 @@ class ShigureRuntimeEngine:
                         camera_to_aruco,
                         np.eye(4),
                     )
-                    center, extent = _box_center_extent(
-                        raw_box["corners_aruco_m"]
+                    corners = np.asarray(
+                        raw_box["corners_aruco_m"], dtype=np.float64
                     )
+                    if corners.shape != (8, 3) or not np.isfinite(corners).all():
+                        continue
                 except Exception:
                     continue
 
@@ -2704,42 +2688,17 @@ class ShigureRuntimeEngine:
                 if state is None:
                     state = RawTrackingBoxState(raw_id=raw_id)
                     self._raw_tracking_boxes[raw_id] = state
-                state.missing_since_monotonic = None
-                state.samples.append((center, extent))
-                if state.window_started_monotonic is None:
-                    state.window_started_monotonic = now_monotonic
-                if (
-                    now_monotonic - state.window_started_monotonic
-                    < SHIGURE_TRACKING_BOX_STABILITY_SECONDS
-                ):
-                    continue
-
-                centers = np.stack(
-                    [sample[0] for sample in state.samples], axis=0
-                )
-                extents = np.stack(
-                    [sample[1] for sample in state.samples], axis=0
-                )
-                published = _corners_from_center_extent(
-                    np.median(centers, axis=0),
-                    np.median(extents, axis=0),
-                )
-                state.published_corners_aruco = published
+                state.published_corners_aruco = corners.tolist()
                 state.published_revision = int(frame.sequence)
-                state.samples.clear()
-                state.window_started_monotonic = now_monotonic
-                snapshot_changed = True
 
-        for raw_id, state in tuple(self._raw_tracking_boxes.items()):
-            if raw_id in observed_raw_ids:
-                continue
-            if state.missing_since_monotonic is None:
-                state.missing_since_monotonic = now_monotonic
+        for raw_id in tuple(self._raw_tracking_boxes):
+            if raw_id not in observed_raw_ids:
+                self._raw_tracking_boxes.pop(raw_id, None)
 
         self._last_raw_tracking_stamp = tracking_stamp
-        if snapshot_changed:
-            self._publish_raw_tracking_box_snapshot()
-        self._expire_raw_tracking_boxes(now_monotonic)
+        # Publish every complete upstream tracking snapshot. This intentionally
+        # mirrors Shigure without temporal smoothing, debounce, or model binding.
+        self._publish_raw_tracking_box_snapshot()
 
     def _spatial_box_state(
         self,

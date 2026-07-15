@@ -278,7 +278,7 @@ startup_session_id=<unity-startup-uuid>
 }
 ```
 
-删除不发送绑定对象或 no_box 项；约 1 秒确认缺失后，tracking_id 从下一份完整 tracking_boxes 快照中消失，Unity 据此删除线框。
+删除不发送绑定对象或 no_box 项；tracking_id 在下一条完整 object_tracking 快照中缺席时，立即从 tracking_boxes 消失，Unity 据此删除线框。
 
 约束：
 
@@ -286,8 +286,8 @@ startup_session_id=<unity-startup-uuid>
 - `tracking_boxes` 不得截断或复用最近 5 条限制；`tracking_box_count` 必须等于数组长度，且只有 `tracking_box_snapshot_complete=true` 才允许客户端 reconcile/delete。
 - 每个 box item 的 tracking_id 必须非空且唯一，revision 必须为正；spatial_box 必须是 ready 且包含 8 个有限角点。box 只来自 raw object_tracking collider 与 ArUco 变换，不从 identity、model、mask 或 depth 推测。
 - Unity 必须先完整验证整份 tracking_boxes 再原子应用；完整快照中缺席的旧 tracking_id 删除其独立线框。box 不进入 RuntimeModelRecord，也不依赖 display_object_id、presence 或模型是否已下载。
-- raw tracking ID 的新增、移动更新和缺失删除均由约 1 秒窗口中值稳定后发布；source epoch 变化会以新 tracking_id 命名空间替换旧快照。
-- 快照文件每个稳定窗口刷新；runtime 停止或快照超过 3 秒未刷新时 API 返回完整空 tracking_boxes，避免 HoloLens 保留僵尸框。
+- raw tracking ID 的新增、移动更新和缺失删除逐条跟随 Shigure object_tracking 完整快照，不做平滑、稳定窗口或 debounce；source epoch 变化会以新 tracking_id 命名空间替换旧快照。
+- 快照文件随每条 object_tracking 消息刷新；runtime 停止或快照超过 3 秒未刷新时 API 返回完整空 tracking_boxes，避免 HoloLens 保留僵尸框。
 - `items[]` 可附带 `tracking_status`、`tracking_event_uid` 和 canonical `model`；客户端已有相同 `display_object_id + model_revision` 的 FBX 时直接复用缓存。
 
 ## `GET /api/v2/display-objects/<display_object_id>/history`
@@ -330,8 +330,8 @@ before_cursor=<正整数，可选>
 }
 ```
 
-服务端会以 100 行为内部页继续扫描，跳过缺 pose、scene image、有效骨骼或坐标转换失败的行；这些坏行不会形成客户端永远越不过的分页墙。`history_cursor` 始终取实际返回的有效 lifecycle row，下一次 `before_cursor` 从它继续向更老记录查找。
+服务端会以 100 行为内部页继续扫描，只跳过缺 pose 或坐标转换失败的行；scene image、骨骼和 spatial box 都是可选增强，缺失时 `evidence` 或 `spatial_box` 为 `null`，不能阻止历史模型再放置。`history_cursor` 始终取实际返回的有效 lifecycle row，下一次 `before_cursor` 从它继续向更老记录查找。
 
-真正耗尽后 `history_event` 才为 `null`。照片和 Shigure 点线骨骼随历史位置一同自动显示；协议不包含人体 mesh 或独立 body revision。
+真正耗尽后 `history_event` 才为 `null`。证据存在时照片和 Shigure 点线骨骼随历史位置显示；证据缺失时只做模型再放置。协议不包含人体 mesh 或独立 body revision。
 
 注意：历史事件自身的 `spatial_box` 仍可为 `null`；live 的显式 `status=no_box` 语义不改变已持久化历史证据。

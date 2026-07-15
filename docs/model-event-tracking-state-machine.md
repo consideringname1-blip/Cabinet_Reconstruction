@@ -92,17 +92,17 @@ ShuJuQingQiu 先验证完整 tracking_boxes 的 count、complete 标记、tracki
 
 全体进入历史后仍可继续单击某个物体，逐条向更老的 `history_cursor` 翻页。全体继续追踪不会停掉服务端任务；它只切换 Unity transform/evidence 的呈现。
 
-SampleScene 的 PointObject 按钮直接调用 ToggleAllPresentations。当前 startup 有 ArMarker 时，服务器用该 startup 最新 reference 把每个不重复 display_object_id 的最新完整位置转换到当前 HoloLens local；没有 ArMarker 时，只允许使用同一 startup 最近 capture 的 object_aruco ↔ object_hololens_current 相对锚点，并过滤掉该锚点任务创建前的事件。没有同启动锚点时返回明确错误，不复用跨启动局部坐标。
+SampleScene 的 HistoryPlacement 按钮明确调用 ShowLatestPlacements，每次为各已加载 display_object_id 重新请求最新 take-out 位置，不复用可能卡住的 toggle 状态。PointObject 使用右手食指射线直接命中当前已加载模型的 world bounds，只为命中的 display_object_id 请求最新/下一条历史位置，不再误触发全局 HistoryPlacement。当前 startup 有 ArMarker 时，服务器用该 startup 最新 reference 转换历史位置；没有 ArMarker 时，只允许使用同一 startup 最近 capture 的 object_aruco ↔ object_hololens_current 相对锚点，并过滤掉该锚点任务创建前的事件，返回与 live 一致的 startup-local coordinate epoch。没有同启动锚点时返回明确错误，不复用跨启动局部坐标。
 
 ## 照片与骨骼证据
 
-历史 evidence 必须恰好包含 `scene_image_url` 和 `skeleton`。骨骼是 joint 点与按名称连接的线段，并以颜色区分骨段；不加载人体网格。证据以 `display_object_id + event_uid` 绑定，必须与正在显示的历史 pose 属于同一生命周期事件。
+历史再放置只要求有效 pose；`evidence`、spatial box、scene image 和 skeleton 均可选。证据存在时必须恰好包含 `scene_image_url` 和 `skeleton`，并以 `display_object_id + event_uid` 绑定；缺失或显示失败不会撤销已应用的历史 pose。骨骼使用 joint 点线，不加载人体网格。
 
 `ObjectEvidenceDisplay` 在历史成功应用后自动显示两者；恢复单物体或全体 live 时隐藏对应证据。证据不参与模型 identity、scale、pose 或 revision 计算。
 
 ## Runtime spatial box
 
-live tracking box 完全独立于模型与 display identity：服务器直接消费 /shigure/object_tracking collider，以 source_epoch:raw_id 作为 tracking_id；约 1 秒窗口取中值后新增或更新，明确缺失约 1 秒后从完整快照删除。Unity 仅绘制 8 点线框，不把它绑定到模型，也不用于 identity、pose 或其他操作。无当前启动 ArMarker 时无法安全完成 Shigure-camera 到 HoloLens-local 变换，因此该 box 快照为空。
+live tracking box 完全独立于模型与 display identity：服务器逐条消费 /shigure/object_tracking collider，以 source_epoch:raw_id 作为 tracking_id；每条完整快照立即新增、更新或删除，不做平滑或稳定等待。Unity 仅绘制 8 点线框，不把它绑定到模型，也不用于 identity、pose 或其他操作。无当前启动 ArMarker 时无法安全完成 Shigure-camera 到 HoloLens-local 变换，因此该 box 快照为空。
 
 ## 本地容量与隐藏
 

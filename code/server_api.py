@@ -1671,10 +1671,11 @@ def display_object_history_v2(display_object_id: str):
                 raise ValueError(
                     "no ArMarker and no same-startup object anchor"
                 )
-            reference_pose, anchor_task_id, anchor_created_at = fallback
-            coordinate_epoch = (
-                f"startup-relative:{startup_session_id}:{anchor_task_id}"
-            )
+            reference_pose, _anchor_task_id, anchor_created_at = fallback
+            # The derived reference maps canonical ArUco poses into this
+            # startup's existing HoloLens-local frame. Match the live transport
+            # epoch so Unity can safely apply the same-startup history pose.
+            coordinate_epoch = f"startup-local:{startup_session_id}"
             same_startup_since = _utc_datetime(anchor_created_at)
         if not coordinate_epoch:
             raise ValueError("current coordinate epoch is unavailable")
@@ -1711,16 +1712,20 @@ def display_object_history_v2(display_object_id: str):
                         "skeleton_json",
                         dict,
                     )
-                    if pose_aruco is None or skeleton_aruco is None:
+                    if pose_aruco is None:
                         continue
                     scene_image_url = _event_artifact_url(
                         host,
                         event.get("scene_image_path"),
                     )
-                    if scene_image_url is None:
-                        continue
                     pose = _strict_current_pose(pose_aruco, reference_pose)
-                    skeleton = _strict_current_skeleton(skeleton_aruco, reference_pose)
+                    skeleton = (
+                        _strict_current_skeleton(
+                            skeleton_aruco, reference_pose
+                        )
+                        if skeleton_aruco is not None
+                        else None
+                    )
                     corners_aruco = _json_column(
                         event.get("spatial_box_corners_aruco_json"),
                         "spatial_box_corners_aruco_json",
@@ -1737,18 +1742,21 @@ def display_object_history_v2(display_object_id: str):
                         f"{event.get('lifecycle_event_uid')}: {exc}"
                     )
                     continue
-                if skeleton is None:
-                    continue
+                evidence = (
+                    {
+                        "scene_image_url": scene_image_url,
+                        "skeleton": skeleton,
+                    }
+                    if scene_image_url is not None and skeleton is not None
+                    else None
+                )
                 history_event = {
                     "display_object_id": str(event["display_object_id"]),
                     "event_uid": str(event["lifecycle_event_uid"]),
                     "history_cursor": str(event["id"]),
                     "pose": pose,
                     "spatial_box": spatial_box,
-                    "evidence": {
-                        "scene_image_url": scene_image_url,
-                        "skeleton": skeleton,
-                    },
+                    "evidence": evidence,
                 }
                 break
             if history_event is not None or len(candidates) < page_size:

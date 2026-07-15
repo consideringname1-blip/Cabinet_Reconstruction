@@ -1299,6 +1299,18 @@ public class ShuJuQingQiu : MonoBehaviour
         controller.ToggleAllPresentations();
     }
 
+    public void ShowLatestHistoryPlacements()
+    {
+        HistoryPresentationController controller =
+            HistoryPresentationController.Instance;
+        if (controller == null)
+        {
+            ShowFrontMessage("history_presentation_controller_missing");
+            return;
+        }
+        controller.ShowLatestPlacements();
+    }
+
     private void RequestHistoryTrackingMode(bool historyModeEnabled, bool isAutomaticRehandshake)
     {
         if (historyModeEnabled)
