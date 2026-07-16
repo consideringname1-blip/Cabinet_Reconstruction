@@ -161,8 +161,7 @@ public class HistoryPresentationController : MonoBehaviour
         string displayObjectId,
         string beforeCursor,
         long batchGeneration,
-        bool wasGlobalRequest,
-        bool wrapToLatest = false)
+        bool wasGlobalRequest)
     {
         string startupSessionId = ShuJuQingQiu.initialize != null
             ? ShuJuQingQiu.initialize.startup_session_id
@@ -210,7 +209,6 @@ public class HistoryPresentationController : MonoBehaviour
             ObjectGeneration = objectGeneration,
             GlobalGeneration = batchGeneration,
             WasGlobalRequest = wasGlobalRequest,
-            WrapToLatest = wrapToLatest,
         };
         HTTPRequest request = new HTTPRequest(
             requestUri,
@@ -341,17 +339,9 @@ public class HistoryPresentationController : MonoBehaviour
         JToken eventToken = root["history_event"];
         if (eventToken == null || eventToken.Type == JTokenType.Null)
         {
-            if (!string.IsNullOrEmpty(context.BeforeCursor)
-                && !context.WrapToLatest)
-            {
-                RequestHistory(
-                    context.DisplayObjectId,
-                    "",
-                    context.GlobalGeneration,
-                    context.WasGlobalRequest,
-                    true);
-                return false;
-            }
+            // Reaching the oldest cursor returns to the latest original/live
+            // pose. Re-requesting the newest history row can return the row
+            // already on screen and makes repeated clicks appear frozen.
             return TryApplyLatestLiveFallback(
                 context,
                 root,
@@ -368,10 +358,12 @@ public class HistoryPresentationController : MonoBehaviour
             ReadString(historyEvent, "display_object_id");
         string eventUid = ReadString(historyEvent, "event_uid");
         string historyCursor = ReadString(historyEvent, "history_cursor");
+        string displayTimeJst = ReadString(historyEvent, "display_time_jst");
         JObject poseObject = historyEvent["pose"] as JObject;
         if (displayObjectId != context.DisplayObjectId
             || string.IsNullOrEmpty(eventUid)
             || string.IsNullOrEmpty(historyCursor)
+            || string.IsNullOrEmpty(displayTimeJst)
             || (!string.IsNullOrEmpty(context.BeforeCursor)
                 && historyCursor == context.BeforeCursor)
             || !TryParsePose(
@@ -399,6 +391,7 @@ public class HistoryPresentationController : MonoBehaviour
                 historyCursor,
                 coordinateEpoch,
                 historyPose,
+                displayTimeJst,
                 out string rejectionReason))
         {
             Debug.LogWarning(
@@ -419,6 +412,8 @@ public class HistoryPresentationController : MonoBehaviour
             + displayObjectId
             + " coordinate_epoch="
             + coordinateEpoch
+            + " display_time_jst="
+            + displayTimeJst
             + " position="
             + historyPose.HololensPosition.ToString("F4"));
         return true;
@@ -683,6 +678,5 @@ public class HistoryPresentationController : MonoBehaviour
         public long ObjectGeneration;
         public long GlobalGeneration;
         public bool WasGlobalRequest;
-        public bool WrapToLatest;
     }
 }

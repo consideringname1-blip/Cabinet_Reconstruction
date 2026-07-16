@@ -70,6 +70,12 @@ OBJECT_TRACKING_TOPIC = os.environ.get("SHIGURE_HISTORY_OBJECT_TRACKING_TOPIC", 
 OBJECT_TRACKING_TYPE = os.environ.get("SHIGURE_HISTORY_OBJECT_TRACKING_TYPE", "shigure_core_msgs/msg/TrackedObjectList")
 SEGMENTS_TOPIC = os.environ.get("SHIGURE_HISTORY_SEGMENTS_TOPIC", "/Segments")
 SEGMENTS_TYPE = os.environ.get("SHIGURE_HISTORY_SEGMENTS_TYPE", "bboxes_ex_msgs/msg/Segments")
+ACTIVE_OBJECTS_TOPIC = os.environ.get(
+    "SHIGURE_HISTORY_ACTIVE_OBJECTS_TOPIC", "/tracking/active_objects"
+)
+ACTIVE_OBJECTS_TYPE = os.environ.get(
+    "SHIGURE_HISTORY_ACTIVE_OBJECTS_TYPE", "std_msgs/msg/String"
+)
 PEOPLE_TOPIC = os.environ.get("SHIGURE_HISTORY_PEOPLE_TOPIC", "/shigure/people_detection")
 PEOPLE_TYPE = os.environ.get("SHIGURE_HISTORY_PEOPLE_TYPE", "shigure_core_msgs/msg/PoseKeyPointsList")
 CONTACTED_TOPIC = os.environ.get("SHIGURE_HISTORY_CONTACTED_TOPIC", "/shigure/contacted")
@@ -82,6 +88,9 @@ TOPIC_SPECS: dict[str, tuple[str, str]] = {
     "object_detection": (OBJECT_DETECTION_TOPIC, OBJECT_DETECTION_TYPE),
     "object_tracking": (OBJECT_TRACKING_TOPIC, OBJECT_TRACKING_TYPE),
     "segments": (SEGMENTS_TOPIC, SEGMENTS_TYPE),
+    # Updated SAM2 publishes its authoritative full-frame PNG masks here.
+    # Keep /Segments above for older Shigure deployments.
+    "active_objects": (ACTIVE_OBJECTS_TOPIC, ACTIVE_OBJECTS_TYPE),
     "people": (PEOPLE_TOPIC, PEOPLE_TYPE),
     "contacted": (CONTACTED_TOPIC, CONTACTED_TYPE),
 }

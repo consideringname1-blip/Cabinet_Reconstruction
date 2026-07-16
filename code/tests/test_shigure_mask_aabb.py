@@ -34,6 +34,10 @@ from stages.shigure_history.cache import (
     CachedShigureFrame,
     RosStamp,
 )
+from stages.shigure_history.shigure_compatibility import (
+    ShigureCompatibilityAdapter,
+    parse_segments_candidates,
+)
 from stages.shigure_history.shigure_runtime_v2 import (
     EventArtifacts,
     LifecyclePoseCandidate,
@@ -43,6 +47,81 @@ from stages.shigure_history.shigure_runtime_v2 import (
 
 
 class ShigureMaskAabbTest(unittest.TestCase):
+    def test_active_objects_png_mask_resolves_direct_numeric_id(self) -> None:
+        mask = np.zeros((12, 16), dtype=np.uint8)
+        mask[3:9, 4:11] = 255
+        ok, encoded = cv2.imencode(".png", mask)
+        self.assertTrue(ok)
+        candidates, diagnostics = parse_segments_candidates(
+            source_stamp=RosStamp(1, 2),
+            image_shape=mask.shape,
+            segments_payload={
+                "segments": [
+                    {
+                        "object_id": "502",
+                        "bbox_xyxy": [4, 3, 11, 9],
+                        "mask_b64": base64.b64encode(encoded).decode("ascii"),
+                        "mask_source": "tracking_active_objects_png",
+                    }
+                ]
+            },
+            object_tracking={
+                "objects": [
+                    {
+                        "object_id": "502",
+                        "action": "stay",
+                        "bbox_xyxy": [4, 3, 11, 9],
+                    }
+                ]
+            },
+        )
+        self.assertEqual(diagnostics, [])
+        self.assertEqual(len(candidates), 1)
+        self.assertEqual(candidates[0]["shigure_object_id"], "502")
+        self.assertEqual(
+            candidates[0]["tracking_mapping_method"],
+            "ACTIVE_OBJECTS_DIRECT_ID",
+        )
+        self.assertEqual(candidates[0]["mask_pixels"], 42)
+
+    def test_same_namespace_id_handoff_preserves_source_epoch(self) -> None:
+        adapter = ShigureCompatibilityAdapter(
+            lambda _frame: None,
+            source_incarnation_id="incarnation-1",
+        )
+
+        def tracking_payload(raw_id: str) -> dict:
+            return {
+                "object_count": 1,
+                "objects": [
+                    {
+                        "object_id": raw_id,
+                        "action": "stay",
+                    }
+                ],
+            }
+
+        adapter.ingest(
+            "object_tracking",
+            RosStamp(1, 0),
+            tracking_payload("20260716123846_1"),
+        )
+        adapter.ingest(
+            "object_tracking",
+            RosStamp(2, 0),
+            tracking_payload("20260716123846_3"),
+        )
+
+        self.assertEqual(adapter.source_incarnation_id, "incarnation-1")
+        self.assertEqual(
+            adapter._tracking_seen_ids,
+            {"20260716123846_1", "20260716123846_3"},
+        )
+        self.assertEqual(
+            adapter._tracking_rotation_detail["code"],
+            "TRACKING_ID_HANDOFF_DINOV2_REQUIRED",
+        )
+
     @staticmethod
     def _lifecycle_candidate(
         action: str,

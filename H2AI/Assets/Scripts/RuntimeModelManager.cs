@@ -136,6 +136,7 @@ public class RuntimeObjectPresentationState
     public RuntimePresentationMode Mode = RuntimePresentationMode.FollowLive;
     public string HistoryEventUid = "";
     public string HistoryCursor = "";
+    public string HistoryDisplayTimeJst = "";
     public string DisplayedCoordinateEpoch = "";
     public RuntimeModelPoseData DisplayedPose = new RuntimeModelPoseData();
 }
@@ -190,6 +191,8 @@ public class RuntimeModelManager : MonoBehaviour
     private readonly Dictionary<string, RuntimeObjectPresentationState> _objectPresentationStates =
         new Dictionary<string, RuntimeObjectPresentationState>(StringComparer.Ordinal);
     private readonly Dictionary<string, GameObject> _spatialBoxOverlays =
+        new Dictionary<string, GameObject>(StringComparer.Ordinal);
+    private readonly Dictionary<string, GameObject> _historyTimeLabels =
         new Dictionary<string, GameObject>(StringComparer.Ordinal);
     private readonly Dictionary<string, Coroutine> _poseTransitions =
         new Dictionary<string, Coroutine>(StringComparer.Ordinal);
@@ -448,6 +451,12 @@ public class RuntimeModelManager : MonoBehaviour
         rootGameObject.SetActive(replacementWasVisible);
 
         RemoveSupersededRecordsAfterSuccessfulStage(record);
+        if (presentationState.Mode == RuntimePresentationMode.History)
+        {
+            ShowHistoryTimeLabel(
+                presentationState,
+                record.RootGameObject);
+        }
         while (CountDisplayObjectBundles() > MaxVisibleModels)
         {
             if (!RemoveOldestDisplayObjectBundle())
@@ -866,12 +875,14 @@ public class RuntimeModelManager : MonoBehaviour
         string historyCursor,
         string coordinateEpoch,
         RuntimeModelPoseData pose,
+        string displayTimeJst,
         out string rejectionReason)
     {
         rejectionReason = "";
         if (string.IsNullOrEmpty(displayObjectId)
             || string.IsNullOrEmpty(eventUid)
-            || string.IsNullOrEmpty(historyCursor))
+            || string.IsNullOrEmpty(historyCursor)
+            || string.IsNullOrEmpty(displayTimeJst))
         {
             rejectionReason = "history_identity_missing";
             return false;
@@ -906,6 +917,7 @@ public class RuntimeModelManager : MonoBehaviour
         state.Mode = RuntimePresentationMode.History;
         state.HistoryEventUid = eventUid;
         state.HistoryCursor = historyCursor;
+        state.HistoryDisplayTimeJst = displayTimeJst;
         state.DisplayedCoordinateEpoch = coordinateEpoch;
         state.DisplayedPose = ClonePose(pose);
 
@@ -914,6 +926,7 @@ public class RuntimeModelManager : MonoBehaviour
         {
             record.Pose = ClonePose(pose);
             ApplyResolvedPose(record, true);
+            ShowHistoryTimeLabel(state, record.RootGameObject);
         }
         return true;
     }
@@ -967,6 +980,8 @@ public class RuntimeModelManager : MonoBehaviour
         state.Mode = RuntimePresentationMode.FollowLive;
         state.HistoryEventUid = "";
         state.HistoryCursor = "";
+        state.HistoryDisplayTimeJst = "";
+        DestroyHistoryTimeLabel(displayObjectId);
         state.DisplayedCoordinateEpoch = state.LatestLive.CoordinateEpoch;
         state.DisplayedPose = ClonePose(state.LatestLive.Pose);
         record.Pose = ClonePose(state.LatestLive.Pose);
@@ -1045,6 +1060,8 @@ public class RuntimeModelManager : MonoBehaviour
         state.Mode = RuntimePresentationMode.FollowLive;
         state.HistoryEventUid = "";
         state.HistoryCursor = "";
+        state.HistoryDisplayTimeJst = "";
+        DestroyHistoryTimeLabel(displayObjectId);
         if (state.LatestLive.HasPose)
         {
             state.DisplayedPose = ClonePose(state.LatestLive.Pose);
@@ -1178,6 +1195,13 @@ public class RuntimeModelManager : MonoBehaviour
                 overlay.SetActive(false);
             }
         }
+        foreach (GameObject label in _historyTimeLabels.Values)
+        {
+            if (label != null)
+            {
+                label.SetActive(false);
+            }
+        }
         return hiddenCount;
     }
 
@@ -1205,6 +1229,19 @@ public class RuntimeModelManager : MonoBehaviour
                         : null;
                 ApplySpatialBoxOverlay(state, selectedBox);
             }
+        }
+        foreach (KeyValuePair<string, GameObject> item in _historyTimeLabels)
+        {
+            if (item.Value == null)
+            {
+                continue;
+            }
+            bool show = _objectPresentationStates.TryGetValue(
+                item.Key,
+                out RuntimeObjectPresentationState state)
+                && state != null
+                && state.Mode == RuntimePresentationMode.History;
+            item.Value.SetActive(show);
         }
         return shownCount;
     }
@@ -1340,6 +1377,53 @@ public class RuntimeModelManager : MonoBehaviour
             HololensPosition = pose.HololensPosition,
             HololensRotation = pose.HololensRotation,
         };
+    }
+
+    private void ShowHistoryTimeLabel(
+        RuntimeObjectPresentationState state,
+        GameObject modelRoot)
+    {
+        if (state == null
+            || string.IsNullOrEmpty(state.DisplayObjectId)
+            || string.IsNullOrEmpty(state.HistoryDisplayTimeJst)
+            || modelRoot == null)
+        {
+            return;
+        }
+        if (!_historyTimeLabels.TryGetValue(
+                state.DisplayObjectId,
+                out GameObject labelRoot)
+            || labelRoot == null)
+        {
+            labelRoot = new GameObject(
+                "RuntimeHistoryTime_" + state.DisplayObjectId);
+            _historyTimeLabels[state.DisplayObjectId] = labelRoot;
+        }
+        RuntimeHistoryTimeLabel label =
+            labelRoot.GetComponent<RuntimeHistoryTimeLabel>();
+        if (label == null)
+        {
+            label = labelRoot.AddComponent<RuntimeHistoryTimeLabel>();
+        }
+        label.Configure(modelRoot, state.HistoryDisplayTimeJst);
+        labelRoot.SetActive(_runtimeModelsVisible);
+    }
+
+    private void DestroyHistoryTimeLabel(string displayObjectId)
+    {
+        if (string.IsNullOrEmpty(displayObjectId)
+            || !_historyTimeLabels.TryGetValue(
+                displayObjectId,
+                out GameObject labelRoot))
+        {
+            return;
+        }
+        if (labelRoot != null)
+        {
+            labelRoot.SetActive(false);
+            Destroy(labelRoot);
+        }
+        _historyTimeLabels.Remove(displayObjectId);
     }
 
     private void ApplySpatialBoxOverlay(
@@ -1592,6 +1676,7 @@ public class RuntimeModelManager : MonoBehaviour
             }
 
             DestroySpatialBoxOverlay(record.DisplayObjectId);
+            DestroyHistoryTimeLabel(record.DisplayObjectId);
             _objectPresentationStates.Remove(record.DisplayObjectId);
             ObjectEvidenceDisplay evidenceDisplay =
                 FindObjectOfType<ObjectEvidenceDisplay>();

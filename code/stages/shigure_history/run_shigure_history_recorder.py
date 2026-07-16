@@ -18,6 +18,7 @@ import time
 from array import array
 from collections import deque
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -193,7 +194,24 @@ def stamp_from_message(msg: Any | None) -> RosStamp | None:
     header = getattr(msg, "header", None) if msg is not None else None
     stamp = getattr(header, "stamp", None)
     if stamp is None:
-        return None
+        raw = getattr(msg, "data", None) if msg is not None else None
+        if not isinstance(raw, str):
+            return None
+        try:
+            payload = json.loads(raw)
+            value = str(payload.get("timestamp") or "").strip()
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            seconds = float(parsed.timestamp())
+            sec = int(seconds)
+            nanosec = int(round((seconds - sec) * 1_000_000_000))
+            if nanosec >= 1_000_000_000:
+                sec += 1
+                nanosec -= 1_000_000_000
+            return RosStamp(sec=sec, nanosec=nanosec)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
     sec = int(getattr(stamp, "sec", 0))
     nanosec = int(getattr(stamp, "nanosec", 0))
     if sec == 0 and nanosec == 0:
@@ -400,6 +418,80 @@ def segments_payload(sample: TopicSample) -> dict[str, Any]:
             }
         )
     return {"segments": segments, "segment_count": len(segments)}
+
+
+def active_objects_payload(
+    sample: TopicSample,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Convert an updated SAM2 snapshot to canonical mask/tracking inputs."""
+
+    raw = getattr(sample.message, "data", None)
+    if not isinstance(raw, str):
+        raise ValueError("active_objects data must be a JSON string")
+    payload = json.loads(raw)
+    if str(payload.get("event") or "") != "active_objects":
+        raise ValueError("active_objects JSON has an unexpected event")
+    width = int(payload.get("frame_w") or 0)
+    height = int(payload.get("frame_h") or 0)
+    if width <= 0 or height <= 0:
+        raise ValueError("active_objects JSON has an invalid frame size")
+
+    segments: list[dict[str, Any]] = []
+    tracked: list[dict[str, Any]] = []
+    for index, item in enumerate(payload.get("objects") or []):
+        if not isinstance(item, dict):
+            continue
+        object_id = str(item.get("object_id") or "").strip()
+        bbox = item.get("bbox")
+        mask_b64 = str(item.get("mask_b64") or "").strip()
+        if (
+            not object_id
+            or not isinstance(bbox, list)
+            or len(bbox) != 4
+            or not mask_b64
+        ):
+            continue
+        try:
+            x0, y0, x1, y1 = (float(value) for value in bbox)
+        except (TypeError, ValueError):
+            continue
+        if (
+            not np.isfinite([x0, y0, x1, y1]).all()
+            or x1 <= x0
+            or y1 <= y0
+        ):
+            continue
+        normalized_box = [x0, y0, x1, y1]
+        segments.append(
+            {
+                "index": int(index),
+                "object_id": object_id,
+                "class_id": "",
+                "probability": 1.0,
+                "bbox_xyxy": normalized_box,
+                "mask_b64": mask_b64,
+                "mask_format": "png",
+                "mask_size_wh": [width, height],
+                "mask_source": "tracking_active_objects_png",
+            }
+        )
+        tracked.append(
+            {
+                "index": int(index),
+                "object_id": object_id,
+                "action": "stay",
+                "bbox_xyxy": normalized_box,
+                "collider": None,
+            }
+        )
+    return (
+        {
+            "segments": segments,
+            "segment_count": len(segments),
+            "image_size_wh": [width, height],
+        },
+        {"objects": tracked, "object_count": len(tracked)},
+    )
 
 
 def _point_payload(point: Any | None) -> dict[str, float] | None:
@@ -787,6 +879,38 @@ def main() -> int:
 
             def callback(msg: Any, topic_key: str = key) -> None:
                 sample = states[topic_key].append(msg)
+                if topic_key == "active_objects" and sample.stamp is not None:
+                    try:
+                        rgb_sample = states["rgb"].nearest(
+                            sample.stamp,
+                            max_delta_seconds=args.rgb_depth_max_delta_seconds,
+                        )
+                        if rgb_sample is None or rgb_sample.stamp is None:
+                            return
+                        segments, tracking = active_objects_payload(sample)
+                        rgb_header = getattr(rgb_sample.message, "header", None)
+                        frame_id = (
+                            str(getattr(rgb_header, "frame_id", "") or "")
+                            if rgb_header is not None
+                            else ""
+                        )
+                        adapter.ingest(
+                            "segments", rgb_sample.stamp, segments,
+                            frame_id=frame_id,
+                        )
+                        # Keep numeric SAM2 IDs out of the legacy lifecycle
+                        # namespace while exposing them to mask recovery.
+                        adapter.ingest(
+                            "recovery_tracking", rgb_sample.stamp, tracking,
+                            frame_id=frame_id,
+                        )
+                    except Exception as exc:
+                        print(
+                            "[shigure_history] active_objects adapter rejected "
+                            f"snapshot: {exc}",
+                            flush=True,
+                        )
+                    return
                 if topic_key in settings.CANONICAL_TOPIC_KEYS and sample.stamp is not None:
                     try:
                         header = getattr(msg, "header", None)

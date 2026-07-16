@@ -5,7 +5,7 @@ import json
 import logging
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import cv2
@@ -1325,6 +1325,23 @@ def _utc_datetime(value: object) -> datetime | None:
     return parsed.astimezone(timezone.utc)
 
 
+JAPAN_STANDARD_TIME = timezone(timedelta(hours=9), name="JST")
+
+
+def _history_time_payload(value: object) -> dict[str, str] | None:
+    occurred_at_utc = _utc_datetime(value)
+    if occurred_at_utc is None:
+        return None
+    occurred_at_jst = occurred_at_utc.astimezone(JAPAN_STANDARD_TIME)
+    return {
+        "occurred_at_utc": occurred_at_utc.isoformat(),
+        "occurred_at_jst": occurred_at_jst.isoformat(),
+        "display_time_jst": occurred_at_jst.strftime(
+            "%Y/%m/%d %H:%M:%S JST"
+        ),
+    }
+
+
 def _live_snapshot_items(
     *,
     startup_session_id: str,
@@ -1845,12 +1862,16 @@ def display_object_history_v2(display_object_id: str):
                         f"{event.get('origin_uid')}: {exc}"
                     )
                     continue
+                history_time = _history_time_payload(event.get("occurred_at"))
+                if history_time is None:
+                    continue
                 history_event = {
                     "display_object_id": str(event["display_object_id"]),
                     "event_uid": str(event["origin_uid"]),
                     "history_cursor": str(event["id"]),
                     "origin_kind": str(event["kind"]),
                     "pose": pose,
+                    **history_time,
                 }
                 break
             if history_event is not None or len(candidates) < page_size:

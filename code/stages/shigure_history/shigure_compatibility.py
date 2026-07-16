@@ -512,9 +512,33 @@ def parse_segments_candidates(
             diagnostics.append({"code": "SEGMENT_BBOX_INVALID", "segment_index": index})
             continue
         mask = np.zeros((height, width), dtype=np.uint8)
+        encoded_mask = str(item.get("mask_b64") or "").strip()
         y_vertices = list(item.get("x_masks") or [])
         x_vertices = list(item.get("y_masks") or [])
-        if len(x_vertices) >= 3 and len(x_vertices) == len(y_vertices):
+        if encoded_mask:
+            try:
+                decoded = base64.b64decode(encoded_mask, validate=True)
+                image = cv2.imdecode(
+                    np.frombuffer(decoded, dtype=np.uint8),
+                    cv2.IMREAD_GRAYSCALE,
+                )
+                if image is None or image.shape != (height, width):
+                    raise ValueError(
+                        f"mask shape {None if image is None else image.shape} "
+                        f"does not match {(height, width)}"
+                    )
+                mask = image
+                mask_source = str(item.get("mask_source") or "direct_png")
+            except Exception as exc:
+                diagnostics.append(
+                    {
+                        "code": "SEGMENT_MASK_PNG_INVALID",
+                        "segment_index": index,
+                        "error": str(exc),
+                    }
+                )
+                continue
+        elif len(x_vertices) >= 3 and len(x_vertices) == len(y_vertices):
             try:
                 polygon = np.asarray(
                     [[int(x), int(y)] for x, y in zip(x_vertices, y_vertices)],
@@ -554,9 +578,17 @@ def parse_segments_candidates(
                 "shigure_object_id": None,
                 "tracking": None,
                 "tracking_candidates": [],
+                "source_object_id": (
+                    str(item.get("object_id") or "").strip() or None
+                ),
             }
         )
 
+    direct_source_ids = {
+        str(candidate.get("source_object_id") or "").strip()
+        for candidate in candidates
+        if str(candidate.get("source_object_id") or "").strip()
+    }
     raw_tracking_items = [
         item
         for item in ((object_tracking or {}).get("objects") or [])
@@ -566,6 +598,13 @@ def parse_segments_candidates(
     ]
     tracking_items: list[Mapping[str, Any]] = []
     for tracked in raw_tracking_items:
+        tracked_id = str(tracked.get("object_id") or "").strip()
+        if tracked_id in direct_source_ids:
+            # active_objects already supplies a mask and its owning ID. Do not
+            # collapse legitimate overlapping aliases using the legacy bbox
+            # duplicate heuristic.
+            tracking_items.append(tracked)
+            continue
         tracked_bbox = _bbox_xyxy(tracked)
         duplicate_index = None
         duplicate_iou = 0.0
@@ -605,13 +644,37 @@ def parse_segments_candidates(
                 "bbox_iou": duplicate_iou,
             }
         )
+    directly_resolved_ids: set[str] = set()
+    tracking_by_id = {
+        str(item.get("object_id") or "").strip(): item
+        for item in tracking_items
+        if str(item.get("object_id") or "").strip()
+    }
+    for candidate in candidates:
+        object_id = str(candidate.pop("source_object_id", "") or "").strip()
+        tracked = tracking_by_id.get(object_id)
+        if tracked is None:
+            continue
+        candidate["tracking_match_status"] = RESOLVED
+        candidate["shigure_object_id"] = object_id
+        candidate["tracking_mapping_method"] = "ACTIVE_OBJECTS_DIRECT_ID"
+        candidate["tracking"] = deepcopy(dict(tracked))
+        directly_resolved_ids.add(object_id)
+
     score_matrix: dict[tuple[int, int], float] = {}
     for candidate_index, candidate in enumerate(candidates):
+        if candidate.get("tracking_match_status") == RESOLVED:
+            continue
         candidate_bbox = _bbox_xyxy(candidate)
         if candidate_bbox is None:
             continue
         rows: list[dict[str, Any]] = []
         for tracking_index, tracked in enumerate(tracking_items):
+            if (
+                str(tracked.get("object_id") or "").strip()
+                in directly_resolved_ids
+            ):
+                continue
             tracked_bbox = _bbox_xyxy(tracked)
             if tracked_bbox is None:
                 continue
@@ -630,6 +693,8 @@ def parse_segments_candidates(
     # raw-ID association only when the same pair is the unique best choice in
     # both directions and both sides clear the ambiguity margin.
     for candidate_index, candidate in enumerate(candidates):
+        if candidate.get("tracking_match_status") == RESOLVED:
+            continue
         candidate_ranked = sorted(
             (
                 (score_matrix.get((candidate_index, tracking_index), 0.0), tracking_index)
@@ -930,44 +995,55 @@ class ShigureCompatibilityAdapter:
                             )
                         )
                         if id_handoff:
+                            detail = {
+                                "code": "TRACKING_ID_HANDOFF_DINOV2_REQUIRED",
+                                "missing_raw_ids": handoff_sources,
+                                "new_raw_ids": sorted(new_ids),
+                                "grace_seconds": SHIGURE_ID_HANDOFF_GRACE_SECONDS,
+                                "source_stamp": source_stamp.to_dict(),
+                            }
+                            self._tracking_rotation_detail = detail
                             print(
                                 "[shigure_history] tracking ID handoff candidate; "
                                 f"missing={handoff_sources} new={sorted(new_ids)} "
-                                "opening a new source epoch for DINOv2 verification",
+                                "keeping the source epoch for DINOv2 alias verification",
                                 flush=True,
                             )
-                            self._rotate_tracking_incarnation(
-                                namespace,
-                                detail={
-                                    "code": "TRACKING_ID_HANDOFF_DINOV2_REQUIRED",
-                                    "missing_raw_ids": handoff_sources,
-                                    "new_raw_ids": sorted(new_ids),
-                                    "grace_seconds": SHIGURE_ID_HANDOFF_GRACE_SECONDS,
-                                    "source_stamp": source_stamp.to_dict(),
-                                },
-                            )
                         elif reused:
-                            # The upstream prefix has only second precision.
-                            # Reusing an already-retired ID (or re-bringing an
-                            # active ID at a new stamp) proves an in-second restart.
+                            # Same raw-ID reuse cannot be represented as an
+                            # alias and must still fail closed into a new epoch.
                             self._rotate_tracking_incarnation(namespace)
                 self._tracking_seen_ids.update(tracking_ids)
                 self._tracking_active_ids = current_active_ids
                 for object_id in current_active_ids:
                     self._unexpectedly_missing_tracking_ids.pop(object_id, None)
                 self._last_tracking_stamp_key = key
+            storage_topic_key = (
+                "object_tracking"
+                if topic_key == "recovery_tracking"
+                else topic_key
+            )
             bucket = self._buckets.setdefault(key, _FrameBucket(source_stamp=source_stamp))
             if (
-                topic_key in {"object_detection", "object_tracking"}
+                storage_topic_key in {"object_detection", "object_tracking"}
                 and frame_id
                 and not bucket.event_frame_id
             ):
                 bucket.event_frame_id = str(frame_id)
             if frame_id:
-                bucket.frame_ids[str(topic_key)] = str(frame_id)
+                bucket.frame_ids[str(storage_topic_key)] = str(frame_id)
             normalized = deepcopy(dict(payload))
-            bucket.inputs[str(topic_key)] = normalized
-            if topic_key == "camera_info":
+            bucket.inputs[str(storage_topic_key)] = normalized
+            if storage_topic_key == "segments":
+                try:
+                    image_width, image_height = (
+                        int(value) for value in normalized["image_size_wh"]
+                    )
+                    if image_width > 0 and image_height > 0:
+                        bucket.image_shape = (image_height, image_width)
+                except (KeyError, TypeError, ValueError):
+                    pass
+            if storage_topic_key == "camera_info":
                 try:
                     width = int(normalized["width"])
                     height = int(normalized["height"])
