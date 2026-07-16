@@ -18,6 +18,8 @@ from subprocess_stream import parse_gpu_lease_usage_pid_line, stream_command
 
 from config import (
     DINO_IDENTITY_WORKER_IDLE_TIMEOUT_SEC,
+    FOUNDATIONPOSE_ESTIMATOR_CACHE_SIZE,
+    FOUNDATIONPOSE_GPU_IDS,
     FOUNDATIONPOSE_POOL_SIZE,
     FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
     GPU_LEASE_WAIT_TIMEOUT_SEC,
@@ -25,6 +27,7 @@ from config import (
     INSTANTMESH_WORKER_IDLE_TIMEOUT_SEC,
     INSTANTMESH_GPU_IDS,
     MODEL_GENERATION_BACKEND,
+    SHIGURE_FOUNDATIONPOSE_REQUEST_TIMEOUT_SECONDS,
     SHIGURE_HISTORY_RECORDING_ENABLE,
     SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
     SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
@@ -622,7 +625,13 @@ _foundationpose_services = tuple(
         socket_name=f"foundationpose-{worker_index}.sock",
         idle_timeout_sec=FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC,
         echo_output=False,
+        env_overrides={
+            "FOUNDATIONPOSE_ESTIMATOR_CACHE_SIZE": str(
+                FOUNDATIONPOSE_ESTIMATOR_CACHE_SIZE
+            ),
+        },
         gpu_service="foundationpose",
+        gpu_allowed_ids=FOUNDATIONPOSE_GPU_IDS or None,
     )
     for worker_index in range(FOUNDATIONPOSE_POOL_SIZE)
 )
@@ -673,6 +682,11 @@ def _expand_foundationpose_pool(
                 reason=reason,
                 gpu_wait=False,
                 gpu_timeout=0.0,
+            )
+            service.request(
+                {"action": "prewarm"},
+                task_id=task_id,
+                stage_name=stage_name,
             )
         except GpuUnavailableError as exc:
             print(
@@ -767,7 +781,7 @@ def _request_realtime_foundationpose(payload: dict[str, Any], display_object_id:
     return request_foundationpose_dispatcher(
         _foundationpose_dispatcher.socket_path,
         request_payload,
-        timeout=3600.0,
+        timeout=SHIGURE_FOUNDATIONPOSE_REQUEST_TIMEOUT_SECONDS,
     )
 
 
@@ -1832,6 +1846,12 @@ def start_worker() -> threading.Thread:
         print(f"[worker] optional Shigure recorder unavailable: {exc}")
     _start_shigure_runtime_engine()
     _foundationpose_dispatcher.start()
+    if MODEL_SERVICE_PREWARM_ENABLE:
+        _schedule_foundationpose_pool_expansion(
+            stage_name="server_start",
+            reason="server_start_shigure_low_latency",
+            task_id=None,
+        )
     if _worker_thread is not None and _worker_thread.is_alive():
         return _worker_thread
 

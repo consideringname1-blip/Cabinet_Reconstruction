@@ -66,9 +66,17 @@ data/shigure_recovery_debug/<runtime_session_id>/<source_epoch_id>/
 其他 `take_out` 默认进入 3 秒确认期，期间不改变 presence、binding 或 origin：
 
 1. runtime 从每个 `display_object_id` 的有界内存观测环向前回查最多 3 秒，默认以 5 Hz 留样；同一 exact frame 的多个物体共享 RGB-D，只分别保留自己的 mask。每个候选必须使用自身同一 stamp 的 RGB、depth、CameraInfo 和 mask；不能把事件时刻的 mask 套到更早 RGB 上。
-2. 至少需要两张事件前观测才能建立完整度/深度基线。候选 mask 必须相对近期面积完整、不触碰画面边界、具有足够有效深度、没有显著人员框重叠，并且相对近期深度分布没有新增近端污染。最多对最近 5 个几何合格候选做 HoloLens-only DINOv2 身份确认，选择离事件最近的合格帧。
+2. 至少需要两张事件前观测才能建立完整度/深度基线。候选 mask 必须相对近期面积完整、不触碰画面边界、具有足够有效深度、没有显著人员框重叠，并且相对近期深度分布没有新增近端污染。最多对最近 5 个几何合格候选做 HoloLens-only DINOv2 身份确认，选择离事件最近的合格帧。启动恢复只处理已由 tracking 唯一继承 raw ID 的 segment；Segments 中未对应 Shigure tracking box 的普通前景区域只记录诊断，不参与身份计算，也不阻塞恢复完成。
 3. 确认期内在原 mask 核心区域比较事件前后的 depth。连续至少 2 帧显露更远背景才确认真实移除；连续至少 2 帧仍保持原深度则判为未移动/重叠物体；深度显著变近表示人员或手部前景遮挡，保持歧义并失败关闭。
 4. 可信 `bring_in` 在 1 秒内出现在至少 20 cm 外，且 DINOv2 身份一致时，也可以直接确认真实移动。
+
+FoundationPose 低延迟策略：
+
+- 服务器启动时后台预热 worker；默认使用 GPU 3、4，避开 InstantMesh 默认使用的 GPU 0–2。
+- 同一 mesh、scale 和旋转网格策略的 estimator 在每个 worker 内做 LRU 复用，默认最多缓存 5 个物体，避免重复加载 mesh 和构造旋转候选。
+- Shigure 初始化和 take-out 默认从 5 次 refinement 降为 2 次；可通过 `SHIGURE_FOUNDATIONPOSE_ITERATIONS` 在 1–5 间调整。
+- 单次实时请求默认最多等待 180 秒，超时后留下失败报告并允许有界重试，不再无反馈挂起一小时。
+- 启动恢复只有在初始 FoundationPose 成功后才标记完成；连续 5 次失败则明确标记为失败，而不是假完成。
 5. 缺清晰历史帧、DINOv2 不可用、证据互相冲突或只有单帧变化时均不运行 FoundationPose，不撤销 alias，不新增历史位置。
 
 确认成功后，FoundationPose 使用选中的历史清晰帧，但 origin 的 `occurred_at` 仍使用原 `take_out` 事件时间。每个候选事件会在 `lifecycle_takeout/<event_uid>/report.json` 记录候选质量、逐帧深度比例、选择/拒绝原因，并保存事件帧、选中 source、最新 post 的 RGB/depth/mask/crop。该目录仍只用于诊断，不作为业务恢复输入。

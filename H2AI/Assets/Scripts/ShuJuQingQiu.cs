@@ -495,6 +495,8 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         string url = "http://10.40.1.122:7355/generate";
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnRequestFinished);
+        request.ConnectTimeout = TimeSpan.FromSeconds(5);
+        request.Timeout = TimeSpan.FromSeconds(60);
         request.Tag = new GenerateRequestContext
         {
             purpose = TASK_PURPOSE_ARUCO_REFERENCE,
@@ -551,6 +553,8 @@ public class ShuJuQingQiu : MonoBehaviour
     {
         string url = "http://10.40.1.122:7355/generate";
         var request = new HTTPRequest(new Uri(url), HTTPMethods.Post, OnRequestFinished);
+        request.ConnectTimeout = TimeSpan.FromSeconds(5);
+        request.Timeout = TimeSpan.FromSeconds(60);
         request.Tag = new GenerateRequestContext
         {
             purpose = purpose,

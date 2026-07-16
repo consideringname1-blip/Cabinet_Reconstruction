@@ -92,6 +92,10 @@ class ShigureMaskAabbTest(unittest.TestCase):
         engine._last_stable_source_key = {}
         engine._last_view_sequence = {}
         engine._pose_executor = Mock()
+        engine._initial_pose_attempts = {}
+        engine._initial_pose_inflight = set()
+        engine._initial_pose_completed = set()
+        engine._initial_pose_failed = set()
         return engine
 
     @staticmethod
@@ -894,6 +898,106 @@ class ShigureMaskAabbTest(unittest.TestCase):
         schedule.assert_not_called()
         self.assertEqual(upsert.call_args.kwargs["status"], "PENDING")
         self.assertEqual(upsert.call_args.kwargs["result"]["reason"], reason)
+
+    def test_startup_mixed_segments_processes_only_resolved_subset(
+        self,
+    ) -> None:
+        engine = self._lifecycle_engine()
+        engine._startup_recovery_pending = True
+        engine.cache = Mock()
+        engine.cache.get_sample.return_value = self._startup_sample()
+        frame = self._startup_frame(
+            candidates=[
+                {
+                    "candidate_id": "ordinary-untracked-segment",
+                    "shigure_object_id": "",
+                    "tracking_match_status": "UNRESOLVED",
+                    # Unresolved masks are diagnostics only.
+                    "mask_b64": "not-an-image",
+                    "bbox_xyxy": [0, 0, 2, 2],
+                },
+                {
+                    "candidate_id": "tracked-segment",
+                    "shigure_object_id": "raw-1",
+                    "tracking_match_status": "RESOLVED",
+                    "mask_b64": self._startup_mask_b64(),
+                    "bbox_xyxy": [0, 0, 4, 4],
+                },
+            ]
+        )
+        binding = {
+            "binding_id": "binding-1",
+            "display_object_id": "display-1",
+            "raw_shigure_object_id": "raw-1",
+            "valid_from": "2026-07-15T00:00:00+00:00",
+            "confidence": 0.9,
+        }
+        state = {
+            "active_shigure_binding_id": "binding-1",
+            "active_model_revision": 1,
+            "presence": "PRESENT",
+        }
+
+        with (
+            patch(
+                "stages.shigure_history.shigure_runtime_v2."
+                "_camera_to_aruco",
+                return_value=Mock(),
+            ),
+            patch.object(engine, "_recent_display_ids", return_value=[]),
+            patch.object(
+                engine,
+                "_write_recovery_input_artifacts",
+                return_value=[],
+            ),
+            patch.object(engine, "_remember_trusted_mask_observation"),
+            patch.object(
+                engine, "_commit_primary_mask_box", return_value=True
+            ),
+            patch.object(
+                engine,
+                "_schedule_initial_pose",
+                side_effect=lambda **_kwargs: (
+                    engine._initial_pose_completed.add("display-1") or True
+                ),
+            ) as schedule,
+            patch(
+                "stages.shigure_history.shigure_runtime_v2."
+                "get_active_shigure_binding",
+                return_value=binding,
+            ),
+            patch(
+                "stages.shigure_history.shigure_runtime_v2."
+                "get_display_object_state",
+                return_value=state,
+            ),
+            patch(
+                "stages.shigure_history.shigure_runtime_v2."
+                "list_active_shigure_bindings",
+                return_value=[binding],
+            ),
+            patch(
+                "stages.shigure_history.shigure_runtime_v2._write_json"
+            ),
+            patch(
+                "stages.shigure_history.shigure_runtime_v2."
+                "upsert_identity_sync_job"
+            ) as upsert,
+        ):
+            engine._reconcile_mask_bindings(frame)
+
+        self.assertFalse(engine._startup_recovery_pending)
+        schedule.assert_called_once()
+        self.assertEqual(upsert.call_args.kwargs["status"], "COMPLETED")
+        report = upsert.call_args.kwargs["result"]
+        self.assertEqual(report["candidate_count"], 2)
+        self.assertEqual(report["resolved_candidate_count"], 1)
+        self.assertEqual(report["ignored_unresolved_candidate_count"], 1)
+        result_ids = {
+            row.get("candidate_id") for row in report["results"]
+        }
+        self.assertIn("tracked-segment", result_ids)
+        self.assertNotIn("ordinary-untracked-segment", result_ids)
 
     def test_startup_missing_camera_to_aruco_stays_pending(self) -> None:
         engine = self._lifecycle_engine()

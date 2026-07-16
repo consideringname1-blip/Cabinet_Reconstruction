@@ -6,6 +6,7 @@ import os
 import socket
 import sys
 import traceback
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -161,6 +162,10 @@ class FoundationPoseAlignmentRunner:
         self.scorer = self.ScorePredictor()
         self.refiner = self.PoseRefinePredictor()
         self.glctx = self.dr.RasterizeCudaContext()
+        self.estimator_cache_size = max(
+            1, int(os.environ.get("FOUNDATIONPOSE_ESTIMATOR_CACHE_SIZE", "5"))
+        )
+        self._estimator_cache: OrderedDict[tuple[Any, ...], Any] = OrderedDict()
 
     def _build_estimator(
         self,
@@ -170,6 +175,21 @@ class FoundationPoseAlignmentRunner:
         *,
         build_rotation_grid: bool = True,
     ):
+        mesh_path = mesh_file.resolve()
+        stat = mesh_path.stat()
+        cache_key = (
+            str(mesh_path),
+            int(stat.st_mtime_ns),
+            int(stat.st_size),
+            float(model_scale),
+            bool(build_rotation_grid),
+        )
+        cached = self._estimator_cache.get(cache_key)
+        if cached is not None:
+            cached.debug_dir = debug_dir
+            self._estimator_cache.move_to_end(cache_key)
+            return cached
+
         mesh = trimesh.load(mesh_file)
         mesh.apply_scale(float(model_scale))
         mesh.vertices = np.asarray(mesh.vertices, dtype=np.float32)
@@ -187,18 +207,30 @@ class FoundationPoseAlignmentRunner:
             "glctx": self.glctx,
         }
         if build_rotation_grid:
-            return self.FoundationPose(**kwargs)
+            estimator = self.FoundationPose(**kwargs)
+        else:
+            original_make_rotation_grid = self.FoundationPose.make_rotation_grid
 
-        original_make_rotation_grid = self.FoundationPose.make_rotation_grid
+            def _skip_rotation_grid(instance, *args, **kwargs):
+                instance.rot_grid = self.torch.empty(
+                    (0, 4, 4),
+                    dtype=self.torch.float,
+                    device="cuda",
+                )
 
-        def _skip_rotation_grid(instance, *args, **kwargs):
-            instance.rot_grid = self.torch.empty((0, 4, 4), dtype=self.torch.float, device="cuda")
+            self.FoundationPose.make_rotation_grid = _skip_rotation_grid
+            try:
+                estimator = self.FoundationPose(**kwargs)
+            finally:
+                self.FoundationPose.make_rotation_grid = (
+                    original_make_rotation_grid
+                )
 
-        self.FoundationPose.make_rotation_grid = _skip_rotation_grid
-        try:
-            return self.FoundationPose(**kwargs)
-        finally:
-            self.FoundationPose.make_rotation_grid = original_make_rotation_grid
+        self._estimator_cache[cache_key] = estimator
+        self._estimator_cache.move_to_end(cache_key)
+        while len(self._estimator_cache) > self.estimator_cache_size:
+            self._estimator_cache.popitem(last=False)
+        return estimator
 
     def _reset_refiner_state(self) -> None:
         if hasattr(self.refiner, "last_trans_update"):
@@ -419,6 +451,16 @@ def run_socket_server(socket_path: Path) -> None:
                         print("[FoundationPose worker] loading models", flush=True)
                         runner = FoundationPoseAlignmentRunner()
                         print("[FoundationPose worker] models ready", flush=True)
+                    if request.get("action") == "prewarm":
+                        _send_socket_json(
+                            conn,
+                            {
+                                "ok": True,
+                                "prewarmed": True,
+                                "torch_device_name": runner.torch_device_name,
+                            },
+                        )
+                        continue
                     payload = runner.run_alignment(request)
                     _send_socket_json(conn, {"ok": True, "result": payload})
                 except Exception as exc:

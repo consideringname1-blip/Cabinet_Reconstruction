@@ -125,7 +125,19 @@ SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS = int(
     os.environ.get("SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS", "10")
 )
 SHIGURE_STARTUP_RECOVERY_RETRY_SECONDS = float(
-    os.environ.get("SHIGURE_STARTUP_RECOVERY_RETRY_SECONDS", "1.0")
+    os.environ.get("SHIGURE_STARTUP_RECOVERY_RETRY_SECONDS", "3.0")
+)
+SHIGURE_RECOVERY_DEBUG_MAX_CANDIDATE_ARTIFACTS = int(
+    os.environ.get("SHIGURE_RECOVERY_DEBUG_MAX_CANDIDATE_ARTIFACTS", "5")
+)
+SHIGURE_FOUNDATIONPOSE_ITERATIONS = int(
+    os.environ.get("SHIGURE_FOUNDATIONPOSE_ITERATIONS", "2")
+)
+SHIGURE_FOUNDATIONPOSE_REQUEST_TIMEOUT_SECONDS = float(
+    os.environ.get(
+        "SHIGURE_FOUNDATIONPOSE_REQUEST_TIMEOUT_SECONDS",
+        "180.0",
+    )
 )
 SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS = float(
     os.environ.get("SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS", "1.0")
@@ -200,6 +212,9 @@ if (
 if (
     SHIGURE_STARTUP_RECOVERY_MAX_ATTEMPTS < 1
     or SHIGURE_STARTUP_RECOVERY_RETRY_SECONDS < 0.0
+    or not 1 <= SHIGURE_RECOVERY_DEBUG_MAX_CANDIDATE_ARTIFACTS <= 20
+    or not 1 <= SHIGURE_FOUNDATIONPOSE_ITERATIONS <= 5
+    or not 5.0 <= SHIGURE_FOUNDATIONPOSE_REQUEST_TIMEOUT_SECONDS <= 3600.0
     or not 0.0 < SHIGURE_ID_HANDOFF_GRACE_SECONDS <= 600.0
     or SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS <= 0.0
     or SHIGURE_LIFECYCLE_NO_MOVE_DISTANCE_M <= 0.0
@@ -270,6 +285,20 @@ FOUNDATIONPOSE_WORKER_IDLE_TIMEOUT_SEC = int(
 FOUNDATIONPOSE_POOL_SIZE = int(os.environ.get("FOUNDATIONPOSE_POOL_SIZE", "2"))
 if not 1 <= FOUNDATIONPOSE_POOL_SIZE <= 4:
     raise ValueError("FOUNDATIONPOSE_POOL_SIZE must be between 1 and 4")
+
+_foundationpose_gpu_ids = []
+for gpu_id in os.environ.get("FOUNDATIONPOSE_GPU_IDS", "3,4").split(","):
+    gpu_id = gpu_id.strip()
+    if gpu_id and gpu_id not in _foundationpose_gpu_ids:
+        _foundationpose_gpu_ids.append(gpu_id)
+FOUNDATIONPOSE_GPU_IDS = tuple(_foundationpose_gpu_ids)
+FOUNDATIONPOSE_ESTIMATOR_CACHE_SIZE = int(
+    os.environ.get("FOUNDATIONPOSE_ESTIMATOR_CACHE_SIZE", "5")
+)
+if not 1 <= FOUNDATIONPOSE_ESTIMATOR_CACHE_SIZE <= 20:
+    raise ValueError(
+        "FOUNDATIONPOSE_ESTIMATOR_CACHE_SIZE must be between 1 and 20"
+    )
 
 # GPU placement is fail-closed. A launch waits for an atomic expected-memory
 # lease instead of falling back to a GPU that cannot fit the configured peak.

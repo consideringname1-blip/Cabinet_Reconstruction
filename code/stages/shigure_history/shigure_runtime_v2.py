@@ -62,6 +62,8 @@ from config import (
     SHIGURE_LIFECYCLE_MIN_VALID_DEPTH_RATIO,
     SHIGURE_LIFECYCLE_NO_MOVE_DISTANCE_M,
     SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS,
+    SHIGURE_FOUNDATIONPOSE_ITERATIONS,
+    SHIGURE_RECOVERY_DEBUG_MAX_CANDIDATE_ARTIFACTS,
     SHIGURE_IDENTITY_HOLOLENS_DISTANCE_PENALTY,
     SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
     SHIGURE_IDENTITY_MAX_HOLOLENS_REFERENCES,
@@ -658,6 +660,7 @@ class ShigureRuntimeEngine:
         self._initial_pose_attempts: dict[str, int] = {}
         self._initial_pose_inflight: set[str] = set()
         self._initial_pose_completed: set[str] = set()
+        self._initial_pose_failed: set[str] = set()
 
     def start(self) -> None:
         with self._lock:
@@ -820,6 +823,7 @@ class ShigureRuntimeEngine:
             self._initial_pose_attempts.clear()
             self._initial_pose_inflight.clear()
             self._initial_pose_completed.clear()
+            self._initial_pose_failed.clear()
             pending_jobs = list(self._pending_holo_syncs.values())
             for job in pending_jobs:
                 job.source_generation = self._source_generation
@@ -929,6 +933,45 @@ class ShigureRuntimeEngine:
             "mask_available": bool(candidate.get("mask_b64")),
         }
 
+    @staticmethod
+    def _recovery_artifact_candidate_indexes(
+        frame: CachedShigureFrame,
+    ) -> set[int]:
+        """Rank and retain only the most useful candidate image artifacts."""
+
+        def rank(
+            item: tuple[int, Mapping[str, Any]],
+        ) -> tuple[int, float, int]:
+            index, candidate = item
+            resolved = int(
+                bool(str(candidate.get("shigure_object_id") or "").strip())
+                and str(
+                    candidate.get("tracking_match_status") or ""
+                ).upper()
+                == "RESOLVED"
+            )
+            best_iou = max(
+                (
+                    float(row.get("bbox_iou") or 0.0)
+                    for row in candidate.get("tracking_candidates") or []
+                    if isinstance(row, Mapping)
+                ),
+                default=0.0,
+            )
+            return resolved, best_iou, -index
+
+        ranked = sorted(
+            enumerate(frame.recovery_candidates),
+            key=rank,
+            reverse=True,
+        )
+        return {
+            index
+            for index, _candidate in ranked[
+                :SHIGURE_RECOVERY_DEBUG_MAX_CANDIDATE_ARTIFACTS
+            ]
+        }
+
     def _write_recovery_input_artifacts(
         self,
         root: Path,
@@ -941,7 +984,10 @@ class ShigureRuntimeEngine:
         _write_image(root / "scene.png", sample.rgb_bgr)
         manifest: list[dict[str, Any]] = []
         candidates_root = root / "candidates"
+        artifact_indexes = self._recovery_artifact_candidate_indexes(frame)
         for index, candidate in enumerate(frame.recovery_candidates):
+            if index not in artifact_indexes:
+                continue
             candidate_id = str(candidate.get("candidate_id") or f"candidate_{index}")
             safe_id = hashlib.sha256(candidate_id.encode("utf-8")).hexdigest()[:12]
             item_root = candidates_root / f"{index:02d}_{safe_id}"
@@ -990,6 +1036,12 @@ class ShigureRuntimeEngine:
         except Exception:
             return "waiting_for_shigure_camera_to_armarker_calibration"
         for candidate in frame.recovery_candidates:
+            raw_id = str(candidate.get("shigure_object_id") or "").strip()
+            match_status = str(
+                candidate.get("tracking_match_status") or ""
+            ).upper()
+            if not raw_id or match_status != "RESOLVED":
+                continue
             try:
                 mask = _decode_full_mask(
                     candidate.get("mask_b64"),
@@ -1000,6 +1052,25 @@ class ShigureRuntimeEngine:
             if not np.any(mask):
                 return "waiting_for_nonempty_candidate_mask"
         return None
+
+    @staticmethod
+    def _startup_resolved_candidate_indexes(
+        frame: CachedShigureFrame,
+    ) -> set[int]:
+        """Return tracked segment candidates that are safe to reconcile.
+
+        Segments contains every foreground region, while object_tracking only
+        contains Shigure-managed objects. An unmatched segment is therefore
+        normal input, not an incomplete tracked-object snapshot.
+        """
+
+        return {
+            index
+            for index, candidate in enumerate(frame.recovery_candidates)
+            if str(candidate.get("shigure_object_id") or "").strip()
+            and str(candidate.get("tracking_match_status") or "").upper()
+            == "RESOLVED"
+        }
 
     @staticmethod
     def _startup_recovery_complete_empty(
@@ -1026,26 +1097,23 @@ class ShigureRuntimeEngine:
             return "waiting_for_present_object_tracking_snapshot"
         if not frame.recovery_candidates:
             return "waiting_for_explicit_empty_or_resolved_candidates"
+        resolved_candidate_indexes = (
+            self._startup_resolved_candidate_indexes(frame)
+        )
+        if not resolved_candidate_indexes:
+            first_candidate_id = str(
+                frame.recovery_candidates[0].get("candidate_id")
+                or "candidate_0"
+            )
+            return (
+                "waiting_for_resolved_candidate_raw_id:"
+                f"{first_candidate_id}"
+            )
         calibrated_reason = self._startup_recovery_calibrated_input_reason(
             frame
         )
         if calibrated_reason is not None:
             return calibrated_reason
-        for index, candidate in enumerate(frame.recovery_candidates):
-            raw_id = str(
-                candidate.get("shigure_object_id") or ""
-            ).strip()
-            match_status = str(
-                candidate.get("tracking_match_status") or ""
-            ).upper()
-            if not raw_id or match_status != "RESOLVED":
-                candidate_id = str(
-                    candidate.get("candidate_id") or f"candidate_{index}"
-                )
-                return (
-                    "waiting_for_resolved_candidate_raw_id:"
-                    f"{candidate_id}"
-                )
         return None
 
     def _record_startup_recovery_pending(
@@ -1124,6 +1192,11 @@ class ShigureRuntimeEngine:
             "input_states": dict(frame.input_states),
             "canonical_diagnostics": list(frame.diagnostics),
             "candidate_count": len(frame.recovery_candidates),
+            "artifact_candidate_count": len(artifacts),
+            "candidate_summaries": [
+                self._recovery_candidate_summary(candidate)
+                for candidate in frame.recovery_candidates
+            ],
             "candidates": artifacts,
         }
         _write_json(root / "report.json", report)
@@ -1746,6 +1819,7 @@ class ShigureRuntimeEngine:
             if (
                 display_object_id in self._initial_pose_completed
                 or display_object_id in self._initial_pose_inflight
+                or display_object_id in self._initial_pose_failed
             ):
                 return False
             attempt = self._initial_pose_attempts.get(display_object_id, 0) + 1
@@ -1852,6 +1926,7 @@ class ShigureRuntimeEngine:
             )
             with self._lock:
                 self._initial_pose_completed.add(display_object_id)
+                self._initial_pose_failed.discard(display_object_id)
             _write_json(
                 report_path,
                 {
@@ -1900,6 +1975,9 @@ class ShigureRuntimeEngine:
                     "depth_path": str(report_root / "depth.png"),
                 },
             )
+            if attempt >= 5 and source_generation == self._source_generation:
+                with self._lock:
+                    self._initial_pose_failed.add(display_object_id)
             print(
                 "[shigure-v2] initialization FoundationPose failed "
                 f"display={display_object_id} attempt={attempt} "
@@ -1926,6 +2004,9 @@ class ShigureRuntimeEngine:
         display_ids = self._recent_display_ids()
         results: list[dict[str, Any]] = []
         terminal_candidate_indexes: set[int] = set()
+        resolved_candidate_indexes = (
+            self._startup_resolved_candidate_indexes(frame)
+        )
         observed_primary_bindings: set[str] = set()
         observations_by_display: dict[
             str, dict[str, dict[str, Any]]
@@ -2250,23 +2331,43 @@ class ShigureRuntimeEngine:
                     spatial_box_observed=True,
                 )
 
-        all_candidates_terminal = (
-            len(terminal_candidate_indexes)
-            == len(frame.recovery_candidates)
+        all_resolved_candidates_terminal = bool(
+            resolved_candidate_indexes
+        ) and resolved_candidate_indexes.issubset(
+            terminal_candidate_indexes
         )
         startup_recovery_complete = complete_snapshot and (
-            startup_complete_empty or all_candidates_terminal
+            startup_complete_empty or all_resolved_candidates_terminal
+        )
+        expected_initial_pose_ids = set(observations_by_display)
+        with self._lock:
+            completed_initial_pose_ids = (
+                expected_initial_pose_ids & self._initial_pose_completed
+            )
+            failed_initial_pose_ids = (
+                expected_initial_pose_ids & self._initial_pose_failed
+            )
+        initial_pose_terminal = expected_initial_pose_ids.issubset(
+            completed_initial_pose_ids | failed_initial_pose_ids
+        )
+        startup_recovery_terminal = (
+            startup_recovery_complete and initial_pose_terminal
         )
         if (
             self._startup_recovery_pending
             and complete_snapshot
-            and not startup_recovery_complete
+            and not startup_recovery_terminal
         ):
+            pending_reason = (
+                "waiting_for_initial_foundationpose"
+                if startup_recovery_complete
+                else "waiting_for_terminal_candidate_results"
+            )
             self._record_startup_recovery_pending(
-                frame, "waiting_for_terminal_candidate_results"
+                frame, pending_reason
             )
         should_report = attempted_identity or (
-            self._startup_recovery_pending and startup_recovery_complete
+            self._startup_recovery_pending and startup_recovery_terminal
         )
         if should_report:
             root = (
@@ -2279,7 +2380,11 @@ class ShigureRuntimeEngine:
             )
             report = {
                 "schema_version": 1,
-                "status": "COMPLETED",
+                "status": (
+                    "FAILED"
+                    if failed_initial_pose_ids
+                    else "COMPLETED"
+                ),
                 "runtime_session_id": self.runtime_session_id,
                 "source_epoch_id": self.source_epoch_id,
                 "frame_sequence": int(frame.sequence),
@@ -2293,13 +2398,26 @@ class ShigureRuntimeEngine:
                     "query_masks_persisted_as_references": False,
                 },
                 "candidate_count": len(frame.recovery_candidates),
+                "resolved_candidate_count": len(
+                    resolved_candidate_indexes
+                ),
+                "ignored_unresolved_candidate_count": (
+                    len(frame.recovery_candidates)
+                    - len(resolved_candidate_indexes)
+                ),
+                "initial_pose_completed_display_ids": sorted(
+                    completed_initial_pose_ids
+                ),
+                "initial_pose_failed_display_ids": sorted(
+                    failed_initial_pose_ids
+                ),
                 "results": results,
                 "candidates": input_artifacts,
             }
             _write_json(root / "report.json", report)
             if (
                 self._startup_recovery_pending
-                and startup_recovery_complete
+                and startup_recovery_terminal
             ):
                 job_id = uuid.uuid5(
                     uuid.NAMESPACE_URL,
@@ -2311,7 +2429,11 @@ class ShigureRuntimeEngine:
                 upsert_identity_sync_job(
                     sync_job_id=job_id,
                     kind="STARTUP_RECOVERY",
-                    status="COMPLETED",
+                    status=(
+                        "FAILED"
+                        if failed_initial_pose_ids
+                        else "COMPLETED"
+                    ),
                     runtime_session_id=self.runtime_session_id,
                     source_epoch_id=self.source_epoch_id,
                     candidate_limit=SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
@@ -4574,7 +4696,7 @@ class ShigureRuntimeEngine:
                 "mask_file": snapshot["mask_file"],
                 "k": snapshot["k"],
                 "model_scale": scale,
-                "iteration": 5,
+                "iteration": SHIGURE_FOUNDATIONPOSE_ITERATIONS,
             },
             display_object_id,
         )
