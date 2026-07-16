@@ -1,6 +1,6 @@
 # 任务处理流程
 
-更新日期：2026-07-15
+更新日期：2026-07-16
 状态：Shigure v3 当前流程
 
 本页只给出端到端流程。身份、origin、空间框、HTTP 字段和迁移的详细权威契约见 [`shigure-v3-runtime.md`](shigure-v3-runtime.md)。
@@ -63,8 +63,10 @@ data/shigure_recovery_debug/<runtime_session>/<source_epoch>/
 Shigure 生命周期仍决定 `bring_in`/`take_out` 和 presence。FoundationPose 不做逐帧追踪：
 
 - `bring_in` 可以建立或激活 binding，但不持续移动模型；
-- `take_out` 选择同一物体的 exact RGB-D/mask，运行一次 FoundationPose，并把离开前原位写为 `kind=TAKE_OUT`；
-- 时间接近的重复事件使用既有选择窗口；mask-depth 中心移动小于 20 cm 时视为遮挡/未移动；
+- `take_out` 先保持未决，事件选择仍为 1 秒窗口，真实移动确认期默认 3 秒；
+- runtime 向前回查最多 3 秒的同物体可信观测，逐候选使用同一 stamp 的 RGB-D/CameraInfo/mask，并以完整度、深度、人员重叠和 DINOv2 选择最近清晰帧；
+- 20 cm 内快速回归、原位深度连续保持、前景深度变近或证据不足都失败关闭；只有连续背景显露或身份一致且移动至少 20 cm 的 `bring_in` 才提交 `take_out`；
+- 确认后用回查清晰帧运行一次 FoundationPose，并把离开前原位写为 `kind=TAKE_OUT`；
 - `take_out` 完成后撤销当前 epoch 中该物体的全部 raw-ID alias。
 
 origin 跨启动持久化、按事件 `occurred_at`（`id` 只作稳定 tie-break）排列，相邻 20 cm 内去重，每个物体最多保留时间上真正最新的 5 个；异步 FoundationPose 的旧事件即使更晚完成，也不能冒充 latest 或挤掉较新历史。

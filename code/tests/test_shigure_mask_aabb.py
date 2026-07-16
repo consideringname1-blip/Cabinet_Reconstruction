@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import base64
+from collections import deque
+from dataclasses import replace
 import json
 from pathlib import Path
 import sys
+import tempfile
 import threading
 import unittest
 from unittest.mock import Mock, patch
@@ -85,10 +88,56 @@ class ShigureMaskAabbTest(unittest.TestCase):
         engine._view_windows = {}
         engine._spatial_boxes = {}
         engine._stable = {}
+        engine._trusted_mask_observations = {}
         engine._last_stable_source_key = {}
         engine._last_view_sequence = {}
         engine._pose_executor = Mock()
         return engine
+
+    @staticmethod
+    def _visibility_observation(
+        *,
+        sequence: int,
+        stamp_seconds: float,
+        mask_slice: tuple[slice, slice] = (slice(2, 14), slice(2, 14)),
+        depth_mm: int = 1000,
+        identity_distance: float | None = 0.10,
+    ):
+        depth = np.full((16, 16), depth_mm, dtype=np.uint16)
+        sample = CachedRgbdSample(
+            stamp=RosStamp(
+                int(stamp_seconds),
+                int(round((stamp_seconds % 1.0) * 1_000_000_000)),
+            ),
+            rgb_bgr=np.zeros((16, 16, 3), dtype=np.uint8),
+            depth=depth,
+            camera_info={
+                "k": [100.0, 0.0, 7.5, 0.0, 100.0, 7.5, 0.0, 0.0, 1.0],
+                "width": 16,
+                "height": 16,
+            },
+        )
+        mask = np.zeros((16, 16), dtype=bool)
+        mask[mask_slice] = True
+        return ShigureRuntimeEngine._build_trusted_mask_observation(
+            display_object_id="display-1",
+            binding_id="binding-old",
+            raw_id="raw-old",
+            sequence=sequence,
+            stamp_seconds=stamp_seconds,
+            sample=sample,
+            mask=mask,
+            identity_distance=identity_distance,
+        )
+
+    @staticmethod
+    def _post_depth_sample(stamp_seconds: float, depth_mm: int):
+        observation = ShigureMaskAabbTest._visibility_observation(
+            sequence=99,
+            stamp_seconds=stamp_seconds,
+            depth_mm=depth_mm,
+        )
+        return observation.artifacts.sample
 
     @staticmethod
     def _startup_mask_b64() -> str:
@@ -294,6 +343,21 @@ class ShigureMaskAabbTest(unittest.TestCase):
                 "commit_pending_bring_in_lifecycle_event",
                 side_effect=commit_bring_in,
             ) as bring_in_transaction,
+            patch.object(
+                engine,
+                "_confirm_take_out_movement",
+                return_value=Mock(
+                    status="REAL_MOVE",
+                    reason="TEST_CONFIRMED",
+                    source=Mock(
+                        artifacts=take_out.artifacts,
+                        identity_distance=0.10,
+                        summary=Mock(return_value={}),
+                    ),
+                    detail={},
+                    report_path=None,
+                ),
+            ),
         ):
             engine._run_lifecycle_pose_window(
                 "display-1", [early_bring_in, take_out, bring_in]
@@ -342,6 +406,331 @@ class ShigureMaskAabbTest(unittest.TestCase):
                 take_out, over_one_second
             )
         )
+
+    def test_takeout_source_uses_latest_complete_pre_event_frame(self) -> None:
+        engine = self._lifecycle_engine()
+        complete_old = self._visibility_observation(
+            sequence=4, stamp_seconds=8.0
+        )
+        complete_latest = self._visibility_observation(
+            sequence=5, stamp_seconds=8.5
+        )
+        partial_near_event = self._visibility_observation(
+            sequence=6,
+            stamp_seconds=9.5,
+            mask_slice=(slice(5, 11), slice(5, 11)),
+        )
+        engine._trusted_mask_observations["display-1"] = deque(
+            [complete_old, complete_latest, partial_near_event]
+        )
+        take_out = replace(
+            self._lifecycle_candidate(
+                "take_out", stamp_seconds=10.0, center_x=0.0
+            ),
+            sequence=10,
+        )
+
+        selected, reports = engine._select_clear_take_out_source(take_out)
+
+        self.assertIsNotNone(selected)
+        self.assertEqual(selected.sequence, complete_latest.sequence)
+        self.assertIs(
+            selected.artifacts.sample, complete_latest.artifacts.sample
+        )
+        partial_report = next(
+            row for row in reports if row["sequence"] == 6
+        )
+        self.assertIn(
+            "mask_incomplete_vs_prewindow",
+            partial_report["rejection_reasons"],
+        )
+
+    def test_depth_change_distinguishes_removal_occlusion_and_overlap(self) -> None:
+        source = self._visibility_observation(
+            sequence=5, stamp_seconds=9.0, depth_mm=1000
+        )
+        revealed = ShigureRuntimeEngine._depth_change_evidence(
+            source, self._post_depth_sample(10.5, 1200)
+        )
+        occluded = ShigureRuntimeEngine._depth_change_evidence(
+            source, self._post_depth_sample(10.6, 800)
+        )
+        overlapping_object = ShigureRuntimeEngine._depth_change_evidence(
+            source, self._post_depth_sample(10.7, 1010)
+        )
+
+        self.assertGreater(revealed["background_reveal_ratio"], 0.99)
+        self.assertGreater(occluded["foreground_occlusion_ratio"], 0.99)
+        self.assertGreater(overlapping_object["unchanged_ratio"], 0.99)
+
+    def test_takeout_confirmation_requires_repeated_background_reveal(self) -> None:
+        engine = self._lifecycle_engine()
+        source = self._visibility_observation(
+            sequence=5, stamp_seconds=9.0
+        )
+        engine._trusted_mask_observations["display-1"] = deque(
+            [
+                replace(source, sequence=4, stamp_seconds=8.5),
+                source,
+            ]
+        )
+        take_out = replace(
+            self._lifecycle_candidate(
+                "take_out", stamp_seconds=10.0, center_x=0.0
+            ),
+            sequence=10,
+        )
+        post_samples = [
+            (11, 10.5, self._post_depth_sample(10.5, 1200)),
+            (12, 11.0, self._post_depth_sample(11.0, 1200)),
+        ]
+
+        with patch.object(
+            engine,
+            "_persist_lifecycle_confirmation_report",
+            return_value=None,
+        ):
+            confirmation = engine._confirm_take_out_movement(
+                take_out,
+                None,
+                None,
+                post_samples=post_samples,
+                post_observations=(),
+            )
+
+        self.assertEqual(confirmation.status, "REAL_MOVE")
+        self.assertEqual(
+            confirmation.reason, "BACKGROUND_REVEALED_AFTER_TAKE_OUT"
+        )
+        self.assertIs(
+            confirmation.source.artifacts.sample, source.artifacts.sample
+        )
+
+    def test_takeout_confirmation_suppresses_person_and_overlap_false_positive(self) -> None:
+        engine = self._lifecycle_engine()
+        source = self._visibility_observation(
+            sequence=5, stamp_seconds=9.0
+        )
+        engine._trusted_mask_observations["display-1"] = deque(
+            [
+                replace(source, sequence=4, stamp_seconds=8.5),
+                source,
+            ]
+        )
+        take_out = replace(
+            self._lifecycle_candidate(
+                "take_out", stamp_seconds=10.0, center_x=0.0
+            ),
+            sequence=10,
+        )
+
+        with patch.object(
+            engine,
+            "_persist_lifecycle_confirmation_report",
+            return_value=None,
+        ):
+            overlap = engine._confirm_take_out_movement(
+                take_out,
+                None,
+                None,
+                post_samples=[
+                    (11, 10.5, self._post_depth_sample(10.5, 1010)),
+                    (12, 11.0, self._post_depth_sample(11.0, 1010)),
+                ],
+                post_observations=(),
+            )
+            foreground = engine._confirm_take_out_movement(
+                take_out,
+                None,
+                None,
+                post_samples=[
+                    (11, 10.5, self._post_depth_sample(10.5, 800)),
+                    (12, 11.0, self._post_depth_sample(11.0, 800)),
+                ],
+                post_observations=(),
+            )
+
+        self.assertEqual(overlap.status, "NO_MOVE")
+        self.assertEqual(
+            overlap.reason, "OBJECT_DEPTH_REMAINED_AT_ORIGINAL_POSITION"
+        )
+        self.assertEqual(foreground.status, "AMBIGUOUS")
+        self.assertEqual(
+            foreground.reason, "FOREGROUND_OCCLUSION_NOT_REAL_MOVEMENT"
+        )
+
+    def test_takeout_without_clear_identity_source_fails_closed(self) -> None:
+        engine = self._lifecycle_engine()
+        take_out = replace(
+            self._lifecycle_candidate(
+                "take_out", stamp_seconds=10.0, center_x=0.0
+            ),
+            sequence=10,
+        )
+        with patch.object(
+            engine,
+            "_persist_lifecycle_confirmation_report",
+            return_value=None,
+        ):
+            confirmation = engine._confirm_take_out_movement(
+                take_out,
+                None,
+                None,
+                post_samples=(),
+                post_observations=(),
+            )
+        self.assertEqual(confirmation.status, "AMBIGUOUS")
+        self.assertEqual(
+            confirmation.reason,
+            "NO_CLEAR_IDENTITY_MATCHED_PRE_TAKEOUT_FRAME",
+        )
+
+    def test_ambiguous_takeout_never_commits_lifecycle_or_pose(self) -> None:
+        engine = self._lifecycle_engine()
+        take_out = self._lifecycle_candidate(
+            "take_out", stamp_seconds=10.0, center_x=0.0
+        )
+        old_binding = {
+            "binding_id": "binding-old",
+            "display_object_id": "display-1",
+            "raw_shigure_object_id": "raw-old",
+        }
+        with (
+            patch.object(engine, "_reject_lifecycle_candidates") as reject,
+            patch.object(
+                engine,
+                "_confirm_take_out_movement",
+                return_value=Mock(
+                    status="AMBIGUOUS",
+                    reason="FOREGROUND_OCCLUSION_NOT_REAL_MOVEMENT",
+                    source=None,
+                    detail={"foreground_frame_count": 2},
+                    report_path=Path("/tmp/report.json"),
+                ),
+            ),
+            patch(
+                "stages.shigure_history.shigure_runtime_v2."
+                "get_active_shigure_binding",
+                return_value=old_binding,
+            ),
+            patch(
+                "stages.shigure_history.shigure_runtime_v2."
+                "commit_pending_take_out_lifecycle_event"
+            ) as commit_take_out,
+            patch(
+                "stages.shigure_history.shigure_runtime_v2."
+                "commit_pending_bring_in_lifecycle_event"
+            ) as commit_bring_in,
+            patch(
+                "stages.shigure_history.shigure_runtime_v2."
+                "apply_object_lifecycle_event"
+            ) as apply_lifecycle,
+            patch(
+                "stages.shigure_history.shigure_runtime_v2."
+                "add_display_object_origin"
+            ) as add_origin,
+        ):
+            engine._run_lifecycle_pose_window("display-1", [take_out])
+
+        commit_take_out.assert_not_called()
+        commit_bring_in.assert_not_called()
+        apply_lifecycle.assert_not_called()
+        add_origin.assert_not_called()
+        engine._pose_executor.submit.assert_not_called()
+        self.assertIn(
+            "FOREGROUND_OCCLUSION_NOT_REAL_MOVEMENT",
+            [call.kwargs.get("reason") for call in reject.call_args_list],
+        )
+
+    def test_trusted_history_is_bounded_5hz_and_shares_rgbd(self) -> None:
+        engine = self._lifecycle_engine()
+        binding = {
+            "binding_id": "binding-old",
+            "display_object_id": "display-1",
+            "raw_shigure_object_id": "raw-old",
+        }
+        first_sample = None
+        for index in range(11):
+            stamp_seconds = 100.0 + index * 0.1
+            template = self._visibility_observation(
+                sequence=index + 1,
+                stamp_seconds=stamp_seconds,
+            )
+            sample = template.artifacts.sample
+            if first_sample is None:
+                first_sample = sample
+            frame = Mock(
+                sequence=index + 1,
+                source_stamp=sample.stamp,
+                people=[],
+            )
+            engine._remember_trusted_mask_observation(
+                binding=binding,
+                frame=frame,
+                sample=sample,
+                mask=template.artifacts.mask_array,
+                identity_distance=0.10,
+            )
+
+        history = engine._trusted_mask_observations["display-1"]
+        self.assertEqual(history.maxlen, 22)
+        self.assertGreaterEqual(len(history), 4)
+        self.assertLessEqual(len(history), 6)
+        self.assertIs(history[0].artifacts.sample, first_sample)
+        self.assertTrue(
+            all(
+                observation.artifacts.mask_array is not None
+                for observation in history
+            )
+        )
+
+    def test_takeout_confirmation_report_writes_rgb_depth_mask_and_crop(self) -> None:
+        engine = self._lifecycle_engine()
+        source = self._visibility_observation(
+            sequence=5, stamp_seconds=9.0
+        )
+        take_out = replace(
+            self._lifecycle_candidate(
+                "take_out", stamp_seconds=10.0, center_x=0.0
+            ),
+            sequence=10,
+            artifacts=source.artifacts,
+        )
+        post_sample = self._post_depth_sample(10.5, 1200)
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch.object(
+                engine,
+                "_recovery_debug_epoch_root",
+                return_value=root,
+            ):
+                report_path = engine._persist_lifecycle_confirmation_report(
+                    take_out=take_out,
+                    source=source,
+                    post_samples=[(11, 10.5, post_sample)],
+                    detail={"test": True},
+                    status="REAL_MOVE",
+                    reason="BACKGROUND_REVEALED_AFTER_TAKE_OUT",
+                )
+
+            self.assertIsNotNone(report_path)
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "REAL_MOVE")
+            event_root = report_path.parent
+            for name in (
+                "event_scene.png",
+                "event_depth.png",
+                "event_mask.png",
+                "event_object_crop.png",
+                "selected_source_scene.png",
+                "selected_source_depth.png",
+                "selected_source_mask.png",
+                "selected_source_object_crop.png",
+                "latest_post_scene.png",
+                "latest_post_depth.png",
+            ):
+                self.assertTrue((event_root / name).is_file(), name)
 
     def test_primary_mask_observation_wins_when_still_visible(self) -> None:
         observations = {

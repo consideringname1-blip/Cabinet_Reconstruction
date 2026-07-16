@@ -1,6 +1,6 @@
 # Shigure v3 运行时协议
 
-更新日期：2026-07-15
+更新日期：2026-07-16
 状态：当前权威协议
 
 本文是 Shigure 身份绑定、初始化、历史原位、空间框和 HoloLens 呈现的当前说明。其他仍标为“Shigure v2 历史说明”的文档仅用于解释旧实现；与本文冲突时以本文和代码为准。
@@ -59,9 +59,19 @@ data/shigure_recovery_debug/<runtime_session_id>/<source_epoch_id>/
 持续 tracking/mask 不更新模型 pose。v3 只有两种 origin：
 
 - `INITIALIZATION`：本次 epoch 首次可信绑定后，用同一物体的 exact RGB-D/mask 初始化模型原位；
-- `TAKE_OUT`：`take_out` 触发后，从生命周期选择窗口中选定同一物体的候选，再用其 exact RGB-D/mask 计算离开前原位。
+- `TAKE_OUT`：`take_out` 先作为候选事件；只有确认物体真实离开后，才用事件前回查到的清晰帧计算离开前原位。
 
-近时刻重复事件沿用默认 1 秒生命周期选择窗口：`take_out` 偏向更早候选，`bring_in` 偏向更后候选，DINOv2 更优者可以覆盖时间优先。相邻 `take_out`/`bring_in` 的 mask-depth 三维中心移动小于 20 cm 时视为前景遮挡或未移动，不提交新的移动结果。
+近时刻重复事件仍使用默认 1 秒选择窗口：`take_out` 偏向更早候选，`bring_in` 偏向更后候选，DINOv2 更优者可以覆盖时间优先。相邻 `take_out`/`bring_in` 的 mask-depth 三维中心移动小于 20 cm 时直接视为未移动，不提交结果。
+
+其他 `take_out` 默认进入 3 秒确认期，期间不改变 presence、binding 或 origin：
+
+1. runtime 从每个 `display_object_id` 的有界内存观测环向前回查最多 3 秒，默认以 5 Hz 留样；同一 exact frame 的多个物体共享 RGB-D，只分别保留自己的 mask。每个候选必须使用自身同一 stamp 的 RGB、depth、CameraInfo 和 mask；不能把事件时刻的 mask 套到更早 RGB 上。
+2. 至少需要两张事件前观测才能建立完整度/深度基线。候选 mask 必须相对近期面积完整、不触碰画面边界、具有足够有效深度、没有显著人员框重叠，并且相对近期深度分布没有新增近端污染。最多对最近 5 个几何合格候选做 HoloLens-only DINOv2 身份确认，选择离事件最近的合格帧。
+3. 确认期内在原 mask 核心区域比较事件前后的 depth。连续至少 2 帧显露更远背景才确认真实移除；连续至少 2 帧仍保持原深度则判为未移动/重叠物体；深度显著变近表示人员或手部前景遮挡，保持歧义并失败关闭。
+4. 可信 `bring_in` 在 1 秒内出现在至少 20 cm 外，且 DINOv2 身份一致时，也可以直接确认真实移动。
+5. 缺清晰历史帧、DINOv2 不可用、证据互相冲突或只有单帧变化时均不运行 FoundationPose，不撤销 alias，不新增历史位置。
+
+确认成功后，FoundationPose 使用选中的历史清晰帧，但 origin 的 `occurred_at` 仍使用原 `take_out` 事件时间。每个候选事件会在 `lifecycle_takeout/<event_uid>/report.json` 记录候选质量、逐帧深度比例、选择/拒绝原因，并保存事件帧、选中 source、最新 post 的 RGB/depth/mask/crop。该目录仍只用于诊断，不作为业务恢复输入。
 
 canonical event 的解析、lifecycle row、presence 和 binding 变更在同一个数据库事务内提交；任一约束失败时整笔回滚，不能留下“event 已 RESOLVED、lifecycle/binding 未提交”的半状态。服务器重启、runtime 关闭或 source epoch 轮换时，也会在关闭旧 epoch 的同一事务中先终结 lifecycle authority：未决事件改为 `REJECTED`，已经 RESOLVED 但没有 lifecycle row 的异常记录保留审计并标为不可安全 replay，然后才撤销旧 binding、清 live 几何并关闭 epoch。
 

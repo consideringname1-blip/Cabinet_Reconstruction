@@ -50,6 +50,16 @@ from config import (
     SHIGURE_HOLO_SYNC_MAX_RECOVERY_ATTEMPTS,
     SHIGURE_HOLO_SYNC_STABLE_MASK_FRAMES,
     SHIGURE_HOLO_SYNC_SIZE_LOG_TOLERANCE,
+    SHIGURE_LIFECYCLE_CONFIRMATION_SECONDS,
+    SHIGURE_LIFECYCLE_DEPTH_CHANGE_M,
+    SHIGURE_LIFECYCLE_LOOKBACK_SECONDS,
+    SHIGURE_LIFECYCLE_OBSERVATION_HZ,
+    SHIGURE_LIFECYCLE_MAX_FOREGROUND_OCCLUSION_RATIO,
+    SHIGURE_LIFECYCLE_MAX_PERSON_OVERLAP_RATIO,
+    SHIGURE_LIFECYCLE_MIN_BACKGROUND_REVEAL_RATIO,
+    SHIGURE_LIFECYCLE_MIN_POST_EVIDENCE_FRAMES,
+    SHIGURE_LIFECYCLE_MIN_SOURCE_AREA_RATIO,
+    SHIGURE_LIFECYCLE_MIN_VALID_DEPTH_RATIO,
     SHIGURE_LIFECYCLE_NO_MOVE_DISTANCE_M,
     SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS,
     SHIGURE_IDENTITY_HOLOLENS_DISTANCE_PENALTY,
@@ -481,6 +491,48 @@ class LifecyclePoseCandidate:
     occurred_at: str
 
 
+@dataclass(frozen=True)
+class TrustedMaskObservation:
+    display_object_id: str
+    binding_id: str
+    raw_id: str
+    sequence: int
+    stamp_seconds: float
+    artifacts: EventArtifacts
+    mask_area: int
+    valid_depth_ratio: float
+    touches_image_edge: bool
+    foreground_outlier_ratio: float
+    person_overlap_ratio: float
+    identity_distance: float | None = None
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "display_object_id": self.display_object_id,
+            "binding_id": self.binding_id,
+            "raw_shigure_object_id": self.raw_id,
+            "sequence": int(self.sequence),
+            "stamp_seconds": float(self.stamp_seconds),
+            "mask_area": int(self.mask_area),
+            "valid_depth_ratio": float(self.valid_depth_ratio),
+            "touches_image_edge": bool(self.touches_image_edge),
+            "foreground_outlier_ratio": float(
+                self.foreground_outlier_ratio
+            ),
+            "person_overlap_ratio": float(self.person_overlap_ratio),
+            "identity_distance": self.identity_distance,
+        }
+
+
+@dataclass(frozen=True)
+class LifecycleMovementConfirmation:
+    status: str
+    reason: str
+    source: TrustedMaskObservation | None
+    detail: dict[str, Any]
+    report_path: Path | None = None
+
+
 def _cleanup_event_artifacts(artifacts: EventArtifacts | None) -> None:
     if artifacts is None or artifacts.temporary_root is None:
         return
@@ -593,6 +645,9 @@ class ShigureRuntimeEngine:
         self._view_windows: dict[str, dict[str, Any]] = {}
         self._spatial_boxes: dict[str, SpatialBoxObservationState] = {}
         self._lifecycle_pose_windows: dict[str, dict[str, Any]] = {}
+        self._trusted_mask_observations: dict[
+            str, deque[TrustedMaskObservation]
+        ] = {}
         self._last_geometry_stamp: tuple[int, int] | None = None
         self._runtime_obj_move_quarantine_active = False
         self._runtime_obj_move_barrier_stamp: tuple[int, int] | None = None
@@ -615,6 +670,12 @@ class ShigureRuntimeEngine:
                     "identity_candidate_limit": SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
                     "spatial_box_missing_grace_seconds": (
                         SHIGURE_SPATIAL_BOX_MISSING_GRACE_SECONDS
+                    ),
+                    "lifecycle_confirmation_seconds": (
+                        SHIGURE_LIFECYCLE_CONFIRMATION_SECONDS
+                    ),
+                    "lifecycle_lookback_seconds": (
+                        SHIGURE_LIFECYCLE_LOOKBACK_SECONDS
                     ),
                 },
             )
@@ -750,6 +811,7 @@ class ShigureRuntimeEngine:
             self._view_inflight.clear()
             self._spatial_boxes.clear()
             self._lifecycle_pose_windows.clear()
+            self._trusted_mask_observations.clear()
             self._last_geometry_stamp = None
             self._runtime_obj_move_quarantine_active = False
             self._runtime_obj_move_barrier_stamp = None
@@ -2102,6 +2164,19 @@ class ShigureRuntimeEngine:
                     )
                     continue
 
+            try:
+                self._remember_trusted_mask_observation(
+                    binding=binding,
+                    frame=frame,
+                    sample=sample,
+                    mask=np.asarray(selected["mask"], dtype=bool),
+                    identity_distance=selected.get("identity_distance"),
+                )
+            except Exception as exc:
+                print(
+                    "[shigure-v2] trusted mask history unavailable "
+                    f"display={display_object_id} raw={raw_id}: {exc}"
+                )
             box_handled = False
             try:
                 box_handled = self._commit_primary_mask_box(
@@ -3114,6 +3189,8 @@ class ShigureRuntimeEngine:
                 return
             self._runtime_obj_move_quarantine_active = False
 
+        self._observe_lifecycle_confirmation_frame(frame)
+
         lifecycle_in_frame = any(
             str(event.get("action") or "").strip().lower()
             in {"take_out", "bring_in"}
@@ -3178,6 +3255,267 @@ class ShigureRuntimeEngine:
         if not np.isfinite(center).all() or abs(float(center[3])) < 1.0e-9:
             return None
         return center[:3] / center[3]
+
+    @staticmethod
+    def _mask_bbox_from_array(
+        mask: np.ndarray,
+    ) -> tuple[float, float, float, float] | None:
+        ys, xs = np.nonzero(np.asarray(mask, dtype=bool))
+        if xs.size == 0:
+            return None
+        return (
+            float(xs.min()),
+            float(ys.min()),
+            float(xs.max() + 1),
+            float(ys.max() + 1),
+        )
+
+    @staticmethod
+    def _object_overlap_ratio(
+        object_box: Sequence[float] | None,
+        other_box: Sequence[float] | None,
+    ) -> float:
+        if object_box is None or other_box is None:
+            return 0.0
+        ox0, oy0, ox1, oy1 = (float(value) for value in object_box)
+        px0, py0, px1, py1 = (float(value) for value in other_box)
+        object_area = max(0.0, ox1 - ox0) * max(0.0, oy1 - oy0)
+        if object_area <= 0.0:
+            return 0.0
+        intersection = max(0.0, min(ox1, px1) - max(ox0, px0)) * max(
+            0.0, min(oy1, py1) - max(oy0, py0)
+        )
+        return min(1.0, intersection / object_area)
+
+    @classmethod
+    def _build_trusted_mask_observation(
+        cls,
+        *,
+        display_object_id: str,
+        binding_id: str,
+        raw_id: str,
+        sequence: int,
+        stamp_seconds: float,
+        sample: CachedRgbdSample,
+        mask: np.ndarray,
+        people: Sequence[Mapping[str, Any]] = (),
+        identity_distance: float | None = None,
+    ) -> TrustedMaskObservation:
+        copied_mask = np.asarray(mask, dtype=bool).copy()
+        if copied_mask.shape != sample.depth.shape:
+            raise ValueError("trusted mask shape does not match RGB-D")
+        mask_area = int(np.count_nonzero(copied_mask))
+        if mask_area < 32:
+            raise ValueError("trusted mask has fewer than 32 pixels")
+        depth = np.asarray(sample.depth)
+        valid = copied_mask & np.isfinite(depth) & (depth > 0)
+        valid_depth_ratio = float(np.count_nonzero(valid)) / float(mask_area)
+        foreground_outlier_ratio = 1.0
+        if np.any(valid):
+            values = depth[valid].astype(np.float64) / 1000.0
+            median = float(np.median(values))
+            foreground_outlier_ratio = float(
+                np.mean(values < median - SHIGURE_LIFECYCLE_DEPTH_CHANGE_M)
+            )
+        height, width = copied_mask.shape
+        mask_box = cls._mask_bbox_from_array(copied_mask)
+        touches_image_edge = bool(
+            mask_box is None
+            or mask_box[0] <= 1.0
+            or mask_box[1] <= 1.0
+            or mask_box[2] >= float(width - 1)
+            or mask_box[3] >= float(height - 1)
+        )
+        person_overlap_ratio = 0.0
+        for person in people:
+            person_box = _bbox(person.get("bounding_box"))
+            person_overlap_ratio = max(
+                person_overlap_ratio,
+                cls._object_overlap_ratio(mask_box, person_box),
+            )
+        # CachedRgbdSample is treated as immutable. One exact frame is shared
+        # across objects; only the object-specific mask needs a private copy.
+        artifacts = EventArtifacts(None, None, None, sample, copied_mask)
+        return TrustedMaskObservation(
+            display_object_id=str(display_object_id),
+            binding_id=str(binding_id),
+            raw_id=str(raw_id),
+            sequence=int(sequence),
+            stamp_seconds=float(stamp_seconds),
+            artifacts=artifacts,
+            mask_area=mask_area,
+            valid_depth_ratio=valid_depth_ratio,
+            touches_image_edge=touches_image_edge,
+            foreground_outlier_ratio=foreground_outlier_ratio,
+            person_overlap_ratio=person_overlap_ratio,
+            identity_distance=(
+                float(identity_distance)
+                if identity_distance is not None
+                else None
+            ),
+        )
+
+    def _remember_trusted_mask_observation(
+        self,
+        *,
+        binding: Mapping[str, Any],
+        frame: CachedShigureFrame,
+        sample: CachedRgbdSample,
+        mask: np.ndarray,
+        identity_distance: float | None,
+    ) -> TrustedMaskObservation:
+        display_object_id = str(binding["display_object_id"])
+        observation = self._build_trusted_mask_observation(
+            display_object_id=display_object_id,
+            binding_id=str(binding["binding_id"]),
+            raw_id=str(binding["raw_shigure_object_id"]),
+            sequence=int(frame.sequence),
+            stamp_seconds=frame.source_stamp.seconds,
+            sample=sample,
+            mask=mask,
+            people=frame.people,
+            identity_distance=identity_distance,
+        )
+        with self._lock:
+            history_capacity = max(
+                4,
+                int(
+                    np.ceil(
+                        (SHIGURE_LIFECYCLE_LOOKBACK_SECONDS + 1.0)
+                        * SHIGURE_LIFECYCLE_OBSERVATION_HZ
+                    )
+                )
+                + 2,
+            )
+            history = self._trusted_mask_observations.setdefault(
+                display_object_id, deque(maxlen=history_capacity)
+            )
+            if history and history[-1].sequence == observation.sequence:
+                history[-1] = observation
+            elif history and (
+                observation.stamp_seconds <= history[-1].stamp_seconds
+                or observation.stamp_seconds - history[-1].stamp_seconds
+                < 1.0 / SHIGURE_LIFECYCLE_OBSERVATION_HZ
+            ):
+                return observation
+            else:
+                history.append(observation)
+            cutoff = (
+                observation.stamp_seconds
+                - SHIGURE_LIFECYCLE_LOOKBACK_SECONDS
+                - 1.0
+            )
+            while history and history[0].stamp_seconds < cutoff:
+                history.popleft()
+        return observation
+
+    @staticmethod
+    def _depth_change_evidence(
+        reference: TrustedMaskObservation,
+        post_sample: CachedRgbdSample,
+    ) -> dict[str, Any]:
+        reference_sample = reference.artifacts.sample
+        mask = reference.artifacts.mask_array
+        if reference_sample is None or mask is None:
+            return {"usable": False, "reason": "reference_rgbd_or_mask_missing"}
+        reference_depth = np.asarray(reference_sample.depth)
+        post_depth = np.asarray(post_sample.depth)
+        mask = np.asarray(mask, dtype=bool)
+        if reference_depth.shape != post_depth.shape or mask.shape != post_depth.shape:
+            return {"usable": False, "reason": "rgbd_shape_changed"}
+        core = cv2.erode(mask.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0
+        if np.count_nonzero(core) < 32:
+            core = mask
+        valid = (
+            core
+            & np.isfinite(reference_depth)
+            & np.isfinite(post_depth)
+            & (reference_depth > 0)
+            & (post_depth > 0)
+        )
+        valid_count = int(np.count_nonzero(valid))
+        core_count = int(np.count_nonzero(core))
+        if valid_count < 32 or core_count <= 0:
+            return {
+                "usable": False,
+                "reason": "insufficient_paired_depth",
+                "valid_depth_ratio": (
+                    float(valid_count) / float(core_count)
+                    if core_count > 0
+                    else 0.0
+                ),
+            }
+        delta_m = (
+            post_depth[valid].astype(np.float64)
+            - reference_depth[valid].astype(np.float64)
+        ) / 1000.0
+        threshold = SHIGURE_LIFECYCLE_DEPTH_CHANGE_M
+        return {
+            "usable": True,
+            "valid_depth_ratio": float(valid_count) / float(core_count),
+            "background_reveal_ratio": float(np.mean(delta_m >= threshold)),
+            "foreground_occlusion_ratio": float(np.mean(delta_m <= -threshold)),
+            "unchanged_ratio": float(np.mean(np.abs(delta_m) < threshold)),
+            "median_depth_delta_m": float(np.median(delta_m)),
+        }
+
+    def _observe_lifecycle_confirmation_frame(
+        self, frame: CachedShigureFrame
+    ) -> None:
+        with self._lock:
+            pending_display_ids = set(self._lifecycle_pose_windows)
+        if not pending_display_ids:
+            return
+        sample = self._sample_exact(frame)
+        if sample is None:
+            return
+        stamp_seconds = frame.source_stamp.seconds
+        with self._lock:
+            for display_object_id in pending_display_ids:
+                window = self._lifecycle_pose_windows.get(display_object_id)
+                if window is not None:
+                    window["post_samples"].append(
+                        (int(frame.sequence), stamp_seconds, sample)
+                    )
+        for candidate in frame.recovery_candidates:
+            raw_id = str(candidate.get("shigure_object_id") or "").strip()
+            if (
+                not raw_id
+                or str(candidate.get("tracking_match_status") or "").upper()
+                != "RESOLVED"
+            ):
+                continue
+            binding = get_active_shigure_binding(
+                source_epoch_id=str(self.source_epoch_id or ""),
+                raw_shigure_object_id=raw_id,
+            )
+            if (
+                binding is None
+                or str(binding["display_object_id"]) not in pending_display_ids
+            ):
+                continue
+            try:
+                mask = _decode_full_mask(
+                    candidate.get("mask_b64"), sample.rgb_bgr.shape[:2]
+                )
+                observation = self._build_trusted_mask_observation(
+                    display_object_id=str(binding["display_object_id"]),
+                    binding_id=str(binding["binding_id"]),
+                    raw_id=raw_id,
+                    sequence=int(frame.sequence),
+                    stamp_seconds=stamp_seconds,
+                    sample=sample,
+                    mask=mask,
+                    people=frame.people,
+                )
+            except Exception:
+                continue
+            with self._lock:
+                window = self._lifecycle_pose_windows.get(
+                    observation.display_object_id
+                )
+                if window is not None:
+                    window["post_observations"].append(observation)
 
     def _event_identity_distance(
         self, display_object_id: str, artifacts: EventArtifacts
@@ -3264,7 +3602,12 @@ class ShigureRuntimeEngine:
         with self._lock:
             window = self._lifecycle_pose_windows.setdefault(
                 str(display_object_id),
-                {"opened": now, "candidates": []},
+                {
+                    "opened": now,
+                    "candidates": [],
+                    "post_samples": deque(maxlen=96),
+                    "post_observations": deque(maxlen=96),
+                },
             )
             existing_index = next(
                 (
@@ -3365,24 +3708,46 @@ class ShigureRuntimeEngine:
         return temporal
 
     def _flush_lifecycle_pose_windows(self, now_monotonic: float) -> None:
-        ready: list[tuple[str, list[LifecyclePoseCandidate]]] = []
+        ready: list[
+            tuple[
+                str,
+                list[LifecyclePoseCandidate],
+                list[tuple[int, float, CachedRgbdSample]],
+                list[TrustedMaskObservation],
+            ]
+        ] = []
         with self._lock:
             for display_object_id, window in tuple(
                 self._lifecycle_pose_windows.items()
             ):
                 if (
                     float(now_monotonic) - float(window["opened"])
-                    < SHIGURE_LIFECYCLE_SELECTION_WINDOW_SECONDS
+                    < SHIGURE_LIFECYCLE_CONFIRMATION_SECONDS
                 ):
                     continue
                 ready.append(
-                    (display_object_id, list(window["candidates"]))
+                    (
+                        display_object_id,
+                        list(window["candidates"]),
+                        list(window["post_samples"]),
+                        list(window["post_observations"]),
+                    )
                 )
                 self._lifecycle_pose_windows.pop(display_object_id, None)
-        for display_object_id, candidates in ready:
+        for (
+            display_object_id,
+            candidates,
+            post_samples,
+            post_observations,
+        ) in ready:
             # Identity/presence decisions must not wait behind a long-running
             # FoundationPose job.  Only the pose estimation itself is queued.
-            self._run_lifecycle_pose_window(display_object_id, candidates)
+            self._run_lifecycle_pose_window(
+                display_object_id,
+                candidates,
+                post_samples=post_samples,
+                post_observations=post_observations,
+            )
 
     def _has_pending_take_out(self, display_object_id: str) -> bool:
         with self._lock:
@@ -3452,10 +3817,374 @@ class ShigureRuntimeEngine:
             )
         )
 
+    def _select_clear_take_out_source(
+        self, take_out: LifecyclePoseCandidate
+    ) -> tuple[TrustedMaskObservation | None, list[dict[str, Any]]]:
+        with self._lock:
+            history = list(
+                self._trusted_mask_observations.get(
+                    take_out.display_object_id, ()
+                )
+            )
+        eligible = [
+            observation
+            for observation in history
+            if observation.sequence <= take_out.sequence
+            and take_out.stamp_seconds - SHIGURE_LIFECYCLE_LOOKBACK_SECONDS
+            <= observation.stamp_seconds
+            <= take_out.stamp_seconds
+        ]
+        if len(eligible) < 2:
+            return None, [
+                {
+                    **observation.summary(),
+                    "geometry_qualified": False,
+                    "identity_qualified": False,
+                    "rejection_reasons": [
+                        "insufficient_prewindow_history"
+                    ],
+                }
+                for observation in eligible
+            ]
+        reference_area = float(
+            np.percentile(
+                np.asarray(
+                    [observation.mask_area for observation in eligible],
+                    dtype=np.float64,
+                ),
+                75.0,
+            )
+        )
+        foreground_baseline = float(
+            np.median(
+                [item.foreground_outlier_ratio for item in eligible]
+            )
+        )
+        reports: list[dict[str, Any]] = []
+        qualified: list[TrustedMaskObservation] = []
+        for observation in eligible:
+            area_ratio = (
+                float(observation.mask_area) / reference_area
+                if reference_area > 0.0
+                else 0.0
+            )
+            reasons: list[str] = []
+            if area_ratio < SHIGURE_LIFECYCLE_MIN_SOURCE_AREA_RATIO:
+                reasons.append("mask_incomplete_vs_prewindow")
+            if (
+                observation.valid_depth_ratio
+                < SHIGURE_LIFECYCLE_MIN_VALID_DEPTH_RATIO
+            ):
+                reasons.append("insufficient_valid_depth")
+            if observation.touches_image_edge:
+                reasons.append("mask_touches_image_edge")
+            foreground_outlier_excess = max(
+                0.0,
+                observation.foreground_outlier_ratio - foreground_baseline,
+            )
+            if (
+                foreground_outlier_excess
+                > SHIGURE_LIFECYCLE_MAX_FOREGROUND_OCCLUSION_RATIO
+            ):
+                reasons.append("foreground_depth_contamination")
+            if (
+                observation.person_overlap_ratio
+                > SHIGURE_LIFECYCLE_MAX_PERSON_OVERLAP_RATIO
+            ):
+                reasons.append("person_overlaps_object_mask")
+            report = {
+                **observation.summary(),
+                "area_ratio_vs_prewindow_p75": area_ratio,
+                "foreground_outlier_baseline": foreground_baseline,
+                "foreground_outlier_excess": foreground_outlier_excess,
+                "geometry_qualified": not reasons,
+                "rejection_reasons": reasons,
+            }
+            reports.append(report)
+            if not reasons:
+                qualified.append(observation)
+
+        report_by_sequence = {
+            int(row["sequence"]): row for row in reports
+        }
+        # The closest clear frame wins. DINO is checked only on event-time
+        # candidates, avoiding continuous embedding work during normal use.
+        for observation in sorted(
+            qualified,
+            key=lambda item: (item.stamp_seconds, item.sequence),
+            reverse=True,
+        )[:5]:
+            distance = observation.identity_distance
+            if distance is None:
+                distance = self._event_identity_distance(
+                    take_out.display_object_id, observation.artifacts
+                )
+            report = report_by_sequence[observation.sequence]
+            report["identity_distance"] = distance
+            if distance is None:
+                report["identity_qualified"] = False
+                report["rejection_reasons"].append(
+                    "dinov2_identity_unavailable"
+                )
+                continue
+            if distance > SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD:
+                report["identity_qualified"] = False
+                report["rejection_reasons"].append(
+                    "dinov2_identity_distance_above_threshold"
+                )
+                continue
+            report["identity_qualified"] = True
+            return replace(
+                observation, identity_distance=float(distance)
+            ), reports
+        return None, reports
+
+    @staticmethod
+    def _write_lifecycle_artifacts(
+        root: Path, prefix: str, artifacts: EventArtifacts
+    ) -> dict[str, str]:
+        sample = artifacts.sample
+        mask = artifacts.mask_array
+        if sample is None:
+            return {}
+        written: dict[str, str] = {}
+        scene_path = root / f"{prefix}_scene.png"
+        depth_path = root / f"{prefix}_depth.png"
+        _write_image(scene_path, np.asarray(sample.rgb_bgr))
+        _write_image(depth_path, np.asarray(sample.depth))
+        written["scene"] = str(scene_path)
+        written["depth"] = str(depth_path)
+        if mask is not None:
+            mask = np.asarray(mask, dtype=bool)
+            mask_path = root / f"{prefix}_mask.png"
+            _write_image(mask_path, mask.astype(np.uint8) * 255)
+            written["mask"] = str(mask_path)
+            box = ShigureRuntimeEngine._mask_bbox_from_array(mask)
+            if box is not None:
+                x0, y0, x1, y1 = (int(value) for value in box)
+                crop = np.asarray(sample.rgb_bgr)[y0:y1, x0:x1].copy()
+                local_mask = mask[y0:y1, x0:x1]
+                crop[~local_mask] = 0
+                crop_path = root / f"{prefix}_object_crop.png"
+                _write_image(crop_path, crop)
+                written["crop"] = str(crop_path)
+        return written
+
+    def _persist_lifecycle_confirmation_report(
+        self,
+        *,
+        take_out: LifecyclePoseCandidate,
+        source: TrustedMaskObservation | None,
+        post_samples: Sequence[tuple[int, float, CachedRgbdSample]],
+        detail: Mapping[str, Any],
+        status: str,
+        reason: str,
+    ) -> Path | None:
+        try:
+            root = (
+                self._recovery_debug_epoch_root()
+                / "lifecycle_takeout"
+                / _safe_token(take_out.canonical_event_uid, "event")
+            )
+            artifacts: dict[str, Any] = {
+                "event": self._write_lifecycle_artifacts(
+                    root, "event", take_out.artifacts
+                )
+            }
+            if source is not None:
+                artifacts["selected_source"] = (
+                    self._write_lifecycle_artifacts(
+                        root, "selected_source", source.artifacts
+                    )
+                )
+            usable_post = [
+                item
+                for item in post_samples
+                if item[1] > take_out.stamp_seconds
+            ]
+            if usable_post:
+                sequence, stamp_seconds, sample = usable_post[-1]
+                artifacts["latest_post"] = {
+                    **self._write_lifecycle_artifacts(
+                        root,
+                        "latest_post",
+                        EventArtifacts(None, None, None, sample, None),
+                    ),
+                    "sequence": int(sequence),
+                    "stamp_seconds": float(stamp_seconds),
+                }
+            report_path = root / "report.json"
+            _write_json(
+                report_path,
+                {
+                    "schema_version": 1,
+                    "runtime_session_id": self.runtime_session_id,
+                    "source_epoch_id": self.source_epoch_id,
+                    "recorded_utc": _utc_now(),
+                    "canonical_event_uid": take_out.canonical_event_uid,
+                    "display_object_id": take_out.display_object_id,
+                    "raw_shigure_object_id": take_out.raw_id,
+                    "take_out_sequence": int(take_out.sequence),
+                    "take_out_stamp_seconds": float(
+                        take_out.stamp_seconds
+                    ),
+                    "status": str(status),
+                    "reason": str(reason),
+                    "policy": {
+                        "confirmation_seconds": (
+                            SHIGURE_LIFECYCLE_CONFIRMATION_SECONDS
+                        ),
+                        "lookback_seconds": (
+                            SHIGURE_LIFECYCLE_LOOKBACK_SECONDS
+                        ),
+                        "no_move_distance_m": (
+                            SHIGURE_LIFECYCLE_NO_MOVE_DISTANCE_M
+                        ),
+                        "depth_change_m": (
+                            SHIGURE_LIFECYCLE_DEPTH_CHANGE_M
+                        ),
+                    },
+                    "detail": dict(detail),
+                    "artifacts": artifacts,
+                },
+            )
+            return report_path
+        except Exception as exc:
+            print(
+                "[shigure-v2] lifecycle confirmation report failed "
+                f"event={take_out.canonical_event_uid}: {exc}"
+            )
+            return None
+
+    def _confirm_take_out_movement(
+        self,
+        take_out: LifecyclePoseCandidate,
+        bring_in: LifecyclePoseCandidate | None,
+        movement_distance: float | None,
+        *,
+        post_samples: Sequence[tuple[int, float, CachedRgbdSample]],
+        post_observations: Sequence[TrustedMaskObservation],
+    ) -> LifecycleMovementConfirmation:
+        source, source_reports = self._select_clear_take_out_source(
+            take_out
+        )
+        depth_evidence: list[dict[str, Any]] = []
+        if source is not None:
+            seen_stamps: set[float] = set()
+            for sequence, stamp_seconds, sample in sorted(
+                post_samples, key=lambda item: (item[1], item[0])
+            ):
+                if (
+                    stamp_seconds <= take_out.stamp_seconds
+                    or stamp_seconds
+                    > take_out.stamp_seconds
+                    + SHIGURE_LIFECYCLE_CONFIRMATION_SECONDS
+                    or stamp_seconds in seen_stamps
+                ):
+                    continue
+                seen_stamps.add(stamp_seconds)
+                depth_evidence.append(
+                    {
+                        "sequence": int(sequence),
+                        "stamp_seconds": float(stamp_seconds),
+                        **self._depth_change_evidence(source, sample),
+                    }
+                )
+
+        usable_depth = [
+            row
+            for row in depth_evidence
+            if row.get("usable")
+            and float(row.get("valid_depth_ratio") or 0.0)
+            >= SHIGURE_LIFECYCLE_MIN_VALID_DEPTH_RATIO
+        ]
+        reveal_frames = [
+            row
+            for row in usable_depth
+            if float(row.get("background_reveal_ratio") or 0.0)
+            >= SHIGURE_LIFECYCLE_MIN_BACKGROUND_REVEAL_RATIO
+            and float(row.get("foreground_occlusion_ratio") or 0.0)
+            <= SHIGURE_LIFECYCLE_MAX_FOREGROUND_OCCLUSION_RATIO
+        ]
+        foreground_frames = [
+            row
+            for row in usable_depth
+            if float(row.get("foreground_occlusion_ratio") or 0.0)
+            > SHIGURE_LIFECYCLE_MAX_FOREGROUND_OCCLUSION_RATIO
+        ]
+        unchanged_frames = [
+            row
+            for row in usable_depth
+            if float(row.get("background_reveal_ratio") or 0.0)
+            < SHIGURE_LIFECYCLE_MIN_BACKGROUND_REVEAL_RATIO
+            and float(row.get("foreground_occlusion_ratio") or 0.0)
+            <= SHIGURE_LIFECYCLE_MAX_FOREGROUND_OCCLUSION_RATIO
+            and abs(float(row.get("median_depth_delta_m") or 0.0))
+            < SHIGURE_LIFECYCLE_DEPTH_CHANGE_M
+        ]
+        detail: dict[str, Any] = {
+            "movement_distance_m": movement_distance,
+            "source_candidates": source_reports,
+            "selected_source": source.summary() if source else None,
+            "post_depth_evidence": depth_evidence,
+            "post_mask_observations": [
+                observation.summary()
+                for observation in post_observations
+                if observation.stamp_seconds > take_out.stamp_seconds
+            ],
+            "reveal_frame_count": len(reveal_frames),
+            "foreground_frame_count": len(foreground_frames),
+            "unchanged_frame_count": len(unchanged_frames),
+        }
+
+        status = "AMBIGUOUS"
+        reason = "INSUFFICIENT_TRUE_MOVEMENT_EVIDENCE"
+        if source is None:
+            reason = "NO_CLEAR_IDENTITY_MATCHED_PRE_TAKEOUT_FRAME"
+        elif (
+            bring_in is not None
+            and movement_distance is not None
+            and movement_distance >= SHIGURE_LIFECYCLE_NO_MOVE_DISTANCE_M
+            and bring_in.dino_distance is not None
+            and bring_in.dino_distance
+            <= SHIGURE_IDENTITY_MATCH_DISTANCE_THRESHOLD
+        ):
+            status = "REAL_MOVE"
+            reason = "DINOV2_MATCHED_BRING_IN_MOVED_AT_LEAST_20CM"
+        elif len(unchanged_frames) >= SHIGURE_LIFECYCLE_MIN_POST_EVIDENCE_FRAMES:
+            status = "NO_MOVE"
+            reason = "OBJECT_DEPTH_REMAINED_AT_ORIGINAL_POSITION"
+        elif len(reveal_frames) >= SHIGURE_LIFECYCLE_MIN_POST_EVIDENCE_FRAMES:
+            status = "REAL_MOVE"
+            reason = "BACKGROUND_REVEALED_AFTER_TAKE_OUT"
+        elif foreground_frames:
+            reason = "FOREGROUND_OCCLUSION_NOT_REAL_MOVEMENT"
+
+        report_path = self._persist_lifecycle_confirmation_report(
+            take_out=take_out,
+            source=source,
+            post_samples=post_samples,
+            detail=detail,
+            status=status,
+            reason=reason,
+        )
+        return LifecycleMovementConfirmation(
+            status=status,
+            reason=reason,
+            source=source,
+            detail=detail,
+            report_path=report_path,
+        )
+
     def _run_lifecycle_pose_window(
         self,
         display_object_id: str,
         candidates: Sequence[LifecyclePoseCandidate],
+        *,
+        post_samples: Sequence[
+            tuple[int, float, CachedRgbdSample]
+        ] = (),
+        post_observations: Sequence[TrustedMaskObservation] = (),
     ) -> None:
         take_out = self._choose_lifecycle_candidate(candidates, "take_out")
         if take_out is None:
@@ -3503,6 +4232,19 @@ class ShigureRuntimeEngine:
                 f"occlusion/no-move display={display_object_id} "
                 f"mask_move_m={movement_distance:.6f}"
             )
+            fast_detail = {
+                "movement_distance_m": movement_distance,
+                "selected_take_out_event_uid": take_out.canonical_event_uid,
+                "selected_bring_in_event_uid": bring_in.canonical_event_uid,
+            }
+            report_path = self._persist_lifecycle_confirmation_report(
+                take_out=take_out,
+                source=None,
+                post_samples=post_samples,
+                detail=fast_detail,
+                status="NO_MOVE",
+                reason="NO_MOVE_MASK_CENTER_LT_20CM",
+            )
             self._reject_lifecycle_candidates(
                 candidates,
                 reason="NO_MOVE_MASK_CENTER_LT_20CM",
@@ -3514,6 +4256,11 @@ class ShigureRuntimeEngine:
                     "selected_bring_in_event_uid": (
                         bring_in.canonical_event_uid
                         if bring_in is not None
+                        else None
+                    ),
+                    "confirmation_report_path": (
+                        str(report_path)
+                        if report_path is not None
                         else None
                     ),
                 },
@@ -3561,6 +4308,40 @@ class ShigureRuntimeEngine:
             )
             return
 
+        confirmation = self._confirm_take_out_movement(
+            take_out,
+            bring_in,
+            movement_distance,
+            post_samples=post_samples,
+            post_observations=post_observations,
+        )
+        print(
+            "[shigure-v2] take_out movement confirmation "
+            f"display={display_object_id} status={confirmation.status} "
+            f"reason={confirmation.reason} "
+            f"report={confirmation.report_path}"
+        )
+        if confirmation.status != "REAL_MOVE" or confirmation.source is None:
+            self._reject_lifecycle_candidates(
+                [take_out] + ([bring_in] if bring_in is not None else []),
+                reason=confirmation.reason,
+                detail={
+                    **confirmation.detail,
+                    "confirmation_status": confirmation.status,
+                    "confirmation_report_path": (
+                        str(confirmation.report_path)
+                        if confirmation.report_path is not None
+                        else None
+                    ),
+                },
+            )
+            return
+        take_out = replace(
+            take_out,
+            artifacts=confirmation.source.artifacts,
+            dino_distance=confirmation.source.identity_distance,
+        )
+
         aliases = [
             binding
             for binding in list_active_shigure_bindings(
@@ -3578,6 +4359,16 @@ class ShigureRuntimeEngine:
             "bring_in_dino_distance": (
                 bring_in.dino_distance if bring_in is not None else None
             ),
+            "movement_confirmation": {
+                "status": confirmation.status,
+                "reason": confirmation.reason,
+                "report_path": (
+                    str(confirmation.report_path)
+                    if confirmation.report_path is not None
+                    else None
+                ),
+                "selected_source": confirmation.source.summary(),
+            },
         }
         try:
             committed_take_out = commit_pending_take_out_lifecycle_event(
