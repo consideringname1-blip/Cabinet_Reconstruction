@@ -1,0 +1,400 @@
+import json
+from pathlib import Path
+
+import cv2
+import numpy as np
+import trimesh
+
+import estimate_prismatic_rgbd_synthesis as est
+
+
+ROOT = Path("/workspace_whz")
+CAPTURE = "20260622_081031_636398Z"
+OUT = ROOT / "data/output/geometric_joint_estimate_sam3door_sam3d_fitted/rgbd_rectified_panel_proxy"
+SURFACE_DIR = ROOT / "data/output/geometric_joint_estimate_sam3door_sam3d_fitted/rgbd_mask_surface_groundtruth"
+JOINT_JSON = ROOT / "data/output/geometric_joint_estimate_sam3door_sam3d_fitted/rgbd_synthesis_axis_estimate/selected_axis1d_joint.json"
+COLOR_PATH = ROOT / f"data/upload/larm_captures/{CAPTURE}/color.png"
+META_PATH = ROOT / f"data/upload/{CAPTURE}_meta.json"
+MASKS = {
+    "base": ROOT / "data/output/geometric_joint_estimate_sam3door/base_mask.png",
+    "drawer": ROOT / "data/output/geometric_joint_estimate_sam3door/door_mask.png",
+}
+SURFACES = {
+    "base": SURFACE_DIR / "base_rgbd_mask_surface.glb",
+    "drawer": SURFACE_DIR / "drawer_rgbd_mask_surface.glb",
+}
+RNG = np.random.default_rng(20260711)
+
+
+def read_json(path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_mesh(path):
+    loaded = trimesh.load(path, force="scene", process=False)
+    if isinstance(loaded, trimesh.Trimesh):
+        return loaded.copy()
+    return trimesh.util.concatenate([g.copy() for g in loaded.geometry.values()])
+
+
+def unit(v):
+    v = np.asarray(v, dtype=np.float64).reshape(3)
+    return v / max(float(np.linalg.norm(v)), 1e-12)
+
+
+def unproject_pixel(uv, z, k):
+    return np.array(
+        [
+            (float(uv[0]) - k[0, 2]) * z / k[0, 0],
+            (float(uv[1]) - k[1, 2]) * z / k[1, 1],
+            z,
+        ],
+        dtype=np.float64,
+    )
+
+
+def project_one(p, k):
+    p = np.asarray(p, dtype=np.float64)
+    return np.array([k[0, 0] * p[0] / p[2] + k[0, 2], k[1, 1] * p[1] / p[2] + k[1, 2]], dtype=np.float64)
+
+
+def project(points, k):
+    points = np.asarray(points, dtype=np.float64)
+    uv = np.full((len(points), 2), np.nan, dtype=np.float64)
+    keep = points[:, 2] > 1e-5
+    p = points[keep]
+    uv[keep, 0] = k[0, 0] * p[:, 0] / p[:, 2] + k[0, 2]
+    uv[keep, 1] = k[1, 1] * p[:, 1] / p[:, 2] + k[1, 2]
+    return uv, keep
+
+
+def mask_rect_axes(mask_path):
+    mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE)
+    if mask is None:
+        raise FileNotFoundError(mask_path)
+    ys, xs = np.where(mask > 127)
+    pix = np.column_stack([xs, ys]).astype(np.float64)
+    center = pix.mean(axis=0)
+    cov = np.cov((pix - center).T)
+    vals, vecs = np.linalg.eigh(cov)
+    order = np.argsort(vals)[::-1]
+    a = vecs[:, order[0]]
+    b = vecs[:, order[1]]
+    if abs(a[0]) >= abs(a[1]):
+        horizontal, vertical = a, b
+    else:
+        horizontal, vertical = b, a
+    if horizontal[0] < 0:
+        horizontal = -horizontal
+    if vertical[1] < 0:
+        vertical = -vertical
+    return {
+        "center_px": center,
+        "horizontal_px_dir": unit(np.array([horizontal[0], horizontal[1], 0.0]))[:2],
+        "vertical_px_dir": unit(np.array([vertical[0], vertical[1], 0.0]))[:2],
+        "pixel_eigenvalues": vals[order].tolist(),
+    }
+
+
+def tangent_from_image_direction(point, direction_px, normal, k, step_px=24.0):
+    uv0 = project_one(point, k)
+    z = float(point[2])
+    p1 = unproject_pixel(uv0 + np.asarray(direction_px, dtype=np.float64) * step_px, z, k)
+    d = p1 - point
+    n = unit(normal)
+    d = d - n * float(d @ n)
+    return unit(d)
+
+
+def rectified_frame(drawer_points, axis, k):
+    rect = mask_rect_axes(MASKS["drawer"])
+    center = np.median(drawer_points, axis=0)
+    n = unit(axis)
+    v = tangent_from_image_direction(center, rect["vertical_px_dir"], n, k)
+    # Keep v visually downward in the image.
+    uv0 = project_one(center, k)
+    uvv = project_one(center + v * 0.08, k) - uv0
+    if float(uvv @ rect["vertical_px_dir"]) < 0:
+        v = -v
+    u = unit(np.cross(v, n))
+    frame = np.column_stack([u, v, n])
+    if np.linalg.det(frame) < 0:
+        u = -u
+        frame = np.column_stack([u, v, n])
+    return (u, v, n), rect
+
+
+def coords(points, axes):
+    u, v, n = axes
+    points = np.asarray(points, dtype=np.float64)
+    return np.column_stack([points @ u, points @ v, points @ n])
+
+
+def world_from_box_coords(vertices, axes):
+    u, v, n = axes
+    c = np.asarray(vertices, dtype=np.float64)
+    return c[:, [0]] * u.reshape(1, 3) + c[:, [1]] * v.reshape(1, 3) + c[:, [2]] * n.reshape(1, 3)
+
+
+def make_box(umin, umax, vmin, vmax, qmin, qmax, axes, rgba):
+    if umax <= umin or vmax <= vmin or qmax <= qmin:
+        return None
+    local = np.array(
+        [
+            [umin, vmin, qmin],
+            [umax, vmin, qmin],
+            [umax, vmax, qmin],
+            [umin, vmax, qmin],
+            [umin, vmin, qmax],
+            [umax, vmin, qmax],
+            [umax, vmax, qmax],
+            [umin, vmax, qmax],
+        ],
+        dtype=np.float64,
+    )
+    faces = np.array(
+        [
+            [0, 1, 2],
+            [0, 2, 3],
+            [4, 6, 5],
+            [4, 7, 6],
+            [0, 4, 5],
+            [0, 5, 1],
+            [1, 5, 6],
+            [1, 6, 2],
+            [2, 6, 7],
+            [2, 7, 3],
+            [3, 7, 4],
+            [3, 4, 0],
+        ],
+        dtype=np.int64,
+    )
+    mesh = trimesh.Trimesh(vertices=world_from_box_coords(local, axes), faces=faces, process=False)
+    mesh.visual.vertex_colors = np.tile(np.asarray(rgba, dtype=np.uint8), (8, 1))
+    return mesh
+
+
+def combine(meshes):
+    meshes = [m for m in meshes if m is not None and len(m.vertices)]
+    return trimesh.util.concatenate(meshes)
+
+
+def extent(vals, lo=2, hi=98, pad=0.0):
+    a, b = np.percentile(vals, [lo, hi])
+    return float(a - pad), float(b + pad)
+
+
+def draw_overlay_qpos1(color, k, samples, path):
+    img = color.copy()
+    colors = {"base": (60, 220, 80), "drawer": (40, 70, 245), "drawer_closed": (30, 150, 255)}
+    for name, points in samples.items():
+        pts = np.asarray(points, dtype=np.float64)
+        if len(pts) > 70000:
+            pts = pts[RNG.choice(len(pts), size=70000, replace=False)]
+        uv, keep = project(pts, k)
+        h, w = img.shape[:2]
+        inb = keep & (uv[:, 0] >= 0) & (uv[:, 0] < w) & (uv[:, 1] >= 0) & (uv[:, 1] < h)
+        pix = np.round(uv[inb]).astype(np.int32)
+        for x, y in pix:
+            cv2.circle(img, (int(x), int(y)), 1, colors.get(name, (255, 255, 255)), -1)
+    for name, mask_path in MASKS.items():
+        mask = cv2.imread(str(mask_path), cv2.IMREAD_GRAYSCALE) > 127
+        contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(img, contours, -1, colors.get(name, (255, 255, 255)), 2)
+    cv2.imwrite(str(path), img)
+
+
+def draw_overlay_closed_view(view, base_points_q1, drawer_closed_points_q1, path):
+    img = view["color"].copy()
+    contours, _ = cv2.findContours((view["mask"].astype(np.uint8) * 255), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(img, contours, -1, (255, 255, 255), 2)
+    for name, pts_q1, color in [
+        ("base", base_points_q1, (70, 220, 70)),
+        ("drawer_closed", drawer_closed_points_q1, (40, 70, 245)),
+    ]:
+        pts = pts_q1
+        if len(pts) > 70000:
+            pts = pts[RNG.choice(len(pts), size=70000, replace=False)]
+        pts_view = est.transform_points(pts, view["qpos1_to_view"])
+        uv, _ = est.project(pts_view, view["k"])
+        h, w = img.shape[:2]
+        inb = (uv[:, 0] >= 0) & (uv[:, 0] < w) & (uv[:, 1] >= 0) & (uv[:, 1] < h)
+        pix = np.round(uv[inb]).astype(np.int32)
+        for x, y in pix:
+            cv2.circle(img, (int(x), int(y)), 1, color, -1)
+    cv2.imwrite(str(path), img)
+
+
+def write_urdf(path, axis, displacement):
+    axis = unit(axis)
+    text = f"""<?xml version="1.0"?>
+<robot name="cabinet_drawer_rgbd_rectified_panel_proxy">
+  <link name="base_link">
+    <visual name="base_visual"><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="base.glb" scale="1 1 1"/></geometry></visual>
+  </link>
+  <link name="drawer_link">
+    <visual name="drawer_visual"><origin xyz="0 0 0" rpy="0 0 0"/><geometry><mesh filename="drawer_closed_link.glb" scale="1 1 1"/></geometry></visual>
+  </link>
+  <joint name="drawer_slide" type="prismatic">
+    <parent link="base_link"/>
+    <child link="drawer_link"/>
+    <origin xyz="0 0 0" rpy="0 0 0"/>
+    <axis xyz="{axis[0]:.10f} {axis[1]:.10f} {axis[2]:.10f}"/>
+    <limit lower="0" upper="{float(displacement):.10g}" effort="1" velocity="0.25"/>
+  </joint>
+</robot>
+"""
+    path.write_text(text, encoding="utf-8")
+
+
+def export_scene(path, items):
+    scene = trimesh.Scene()
+    for name, mesh in items:
+        scene.add_geometry(mesh, geom_name=name, node_name=name)
+    scene.export(path)
+
+
+def main():
+    OUT.mkdir(parents=True, exist_ok=True)
+    joint_doc = read_json(JOINT_JSON)
+    joint = joint_doc.get("joint", joint_doc)
+    axis = unit(joint["axis_camera_closed_to_open"])
+    displacement = float(joint["displacement_m"])
+    open_to_closed = np.asarray(joint["translation_open_to_closed_camera_m"], dtype=np.float64)
+    k = np.asarray(read_json(META_PATH)["PVCamera"]["k"], dtype=np.float64)
+    color = cv2.imread(str(COLOR_PATH), cv2.IMREAD_COLOR)
+    if color is None:
+        raise FileNotFoundError(COLOR_PATH)
+
+    base_surface = load_mesh(SURFACES["base"])
+    drawer_surface = load_mesh(SURFACES["drawer"])
+    base_points = np.asarray(base_surface.vertices, dtype=np.float64)
+    drawer_points = np.asarray(drawer_surface.vertices, dtype=np.float64)
+    axes, rect = rectified_frame(drawer_points, axis, k)
+    base_c = coords(base_points, axes)
+    drawer_c = coords(drawer_points, axes)
+
+    du0, du1 = extent(drawer_c[:, 0], 2, 98, pad=0.010)
+    dv0, dv1 = extent(drawer_c[:, 1], 2, 98, pad=0.010)
+    q_front = float(np.percentile(drawer_c[:, 2], 96))
+    panel_thickness = 0.035
+    dq0, dq1 = q_front - panel_thickness, q_front
+    drawer_open = make_box(du0, du1, dv0, dv1, dq0, dq1, axes, [235, 85, 70, 235])
+    drawer_closed = drawer_open.copy()
+    drawer_closed.vertices = np.asarray(drawer_closed.vertices, dtype=np.float64) + open_to_closed.reshape(1, 3)
+
+    closed_drawer_c = coords(np.asarray(drawer_closed.vertices), axes)
+    all_u = np.r_[base_c[:, 0], closed_drawer_c[:, 0]]
+    all_v = np.r_[base_c[:, 1], closed_drawer_c[:, 1]]
+    ou0, ou1 = extent(all_u, 1, 99, pad=0.028)
+    ov0, ov1 = extent(all_v, 1, 99, pad=0.028)
+    iu0, iu1 = float(closed_drawer_c[:, 0].min() - 0.018), float(closed_drawer_c[:, 0].max() + 0.018)
+    iv0, iv1 = float(closed_drawer_c[:, 1].min() - 0.018), float(closed_drawer_c[:, 1].max() + 0.018)
+    base_front_q = float(closed_drawer_c[:, 2].max())
+    bq0_obs, _ = extent(base_c[:, 2], 4, 96, pad=0.006)
+    bq1 = base_front_q + 0.012
+    bq0 = min(bq0_obs, bq1 - max(0.18, 0.72 * displacement))
+    base_boxes = [
+        make_box(ou0, iu0, ov0, ov1, bq0, bq1, axes, [230, 230, 225, 220]),
+        make_box(iu1, ou1, ov0, ov1, bq0, bq1, axes, [230, 230, 225, 220]),
+        make_box(iu0, iu1, ov0, iv0, bq0, bq1, axes, [230, 230, 225, 220]),
+        make_box(iu0, iu1, iv1, ov1, bq0, bq1, axes, [230, 230, 225, 220]),
+    ]
+    base_proxy = combine(base_boxes)
+
+    base_path = OUT / "base.glb"
+    drawer_open_path = OUT / "drawer_open_reference.glb"
+    drawer_closed_path = OUT / "drawer_closed_link.glb"
+    base_proxy.export(base_path)
+    drawer_open.export(drawer_open_path)
+    drawer_closed.export(drawer_closed_path)
+    export_scene(OUT / "cabinet_drawer_rgbd_rectified_open.glb", [("base", base_proxy), ("drawer_open", drawer_open)])
+    export_scene(OUT / "cabinet_drawer_rgbd_rectified_closed.glb", [("base", base_proxy), ("drawer_closed", drawer_closed)])
+    export_scene(
+        OUT / "cabinet_drawer_rgbd_rectified_open_closed_overlay.glb",
+        [("base", base_proxy), ("drawer_open", drawer_open), ("drawer_closed", drawer_closed)],
+    )
+    write_urdf(OUT / "cabinet_drawer_rgbd_rectified.urdf", axis, displacement)
+
+    base_sample, _ = trimesh.sample.sample_surface(base_proxy, 70000)
+    drawer_open_sample, _ = trimesh.sample.sample_surface(drawer_open, 35000)
+    drawer_closed_sample, _ = trimesh.sample.sample_surface(drawer_closed, 35000)
+    draw_overlay_qpos1(
+        color,
+        k,
+        {"base": base_sample, "drawer": drawer_open_sample},
+        OUT / "qpos1_rectified_open_overlay.png",
+    )
+    draw_overlay_qpos1(
+        color,
+        k,
+        {"base": base_sample, "drawer": drawer_open_sample, "drawer_closed": drawer_closed_sample},
+        OUT / "qpos1_rectified_open_closed_overlay.png",
+    )
+    closed_views = est.load_closed_views()
+    draw_overlay_closed_view(
+        closed_views[0],
+        base_sample,
+        drawer_closed_sample,
+        OUT / "qpos0_rectified_closed_overlay.png",
+    )
+
+    report = {
+        "method": "RGB-D rectified panel proxy. The prismatic axis is fixed. In-plane u/v are derived from the qpos1 drawer mask 2D rectangle and lifted into the plane orthogonal to the axis, instead of using 3D drawer-surface PCA. Drawer is modeled as a thin front panel to avoid over-extruding depth.",
+        "status": "diagnostic_cage_baseline_not_sam3d_shape_completion",
+        "frame": "qpos1 OpenCV/PV camera frame",
+        "joint": {
+            "axis_camera_closed_to_open": axis.tolist(),
+            "displacement_m": displacement,
+            "translation_open_to_closed_camera_m": open_to_closed.tolist(),
+            "source_json": str(JOINT_JSON),
+        },
+        "rectified_frame": {
+            "u": axes[0].tolist(),
+            "v": axes[1].tolist(),
+            "normal_axis": axes[2].tolist(),
+            "determinant": float(np.linalg.det(np.column_stack(axes))),
+            "mask_center_px": rect["center_px"].tolist(),
+            "mask_horizontal_px_dir": rect["horizontal_px_dir"].tolist(),
+            "mask_vertical_px_dir": rect["vertical_px_dir"].tolist(),
+            "pixel_eigenvalues": rect["pixel_eigenvalues"],
+        },
+        "panel": {
+            "thickness_m": panel_thickness,
+            "drawer_open_uvq": {"u": [du0, du1], "v": [dv0, dv1], "q": [dq0, dq1], "front_q": q_front},
+            "base_outer_uvq": {"u": [ou0, ou1], "v": [ov0, ov1], "q": [bq0, bq1]},
+            "base_inner_opening_uv": {"u": [iu0, iu1], "v": [iv0, iv1]},
+        },
+        "outputs": {
+            "base_glb": str(base_path),
+            "drawer_open_reference_glb": str(drawer_open_path),
+            "drawer_closed_link_glb": str(drawer_closed_path),
+            "open_glb": str(OUT / "cabinet_drawer_rgbd_rectified_open.glb"),
+            "closed_glb": str(OUT / "cabinet_drawer_rgbd_rectified_closed.glb"),
+            "open_closed_overlay_glb": str(OUT / "cabinet_drawer_rgbd_rectified_open_closed_overlay.glb"),
+            "urdf": str(OUT / "cabinet_drawer_rgbd_rectified.urdf"),
+            "qpos1_open_overlay": str(OUT / "qpos1_rectified_open_overlay.png"),
+            "qpos1_open_closed_overlay": str(OUT / "qpos1_rectified_open_closed_overlay.png"),
+            "qpos0_closed_overlay": str(OUT / "qpos0_rectified_closed_overlay.png"),
+        },
+    }
+    report_path = OUT / "rgbd_rectified_panel_proxy_report.json"
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(
+        json.dumps(
+            {
+                "report": str(report_path),
+                "qpos1_open_overlay": report["outputs"]["qpos1_open_overlay"],
+                "qpos0_closed_overlay": report["outputs"]["qpos0_closed_overlay"],
+                "open_glb": report["outputs"]["open_glb"],
+                "urdf": report["outputs"]["urdf"],
+                "frame_det": report["rectified_frame"]["determinant"],
+                "panel_thickness_m": panel_thickness,
+            },
+            indent=2,
+        )
+    )
+
+
+if __name__ == "__main__":
+    main()

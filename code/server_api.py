@@ -19,6 +19,7 @@ from artifact_layout import (
     aruco_task_json_path,
     aruco_worker_frame_color,
     aruco_worker_frame_meta,
+    aruco_worker_dir,
     ensure_aruco_task_dirs,
     ensure_artifact_roots,
     ensure_model_task_dirs,
@@ -33,9 +34,10 @@ from artifact_layout import (
 
 install_console_output_log()
 
-from depth_camera_config import get_depth_sensor_limits, normalize_depth_sensor_name
-from config import MAX_REALTIME_MODEL_POSE_ITEMS
+from depth_camera_config import DEPTH_SENSOR_AHAT, get_depth_sensor_limits, normalize_depth_sensor_name
+from config import LARM_CAPTURE_ONLY_MODE, MAX_REALTIME_MODEL_POSE_ITEMS
 from task_worker import (
+    PURPOSE_LARM_INPUT,
     STAGE_ORDER,
     activate_uploaded_task,
     get_task,
@@ -249,11 +251,14 @@ def _normalize_pv_frame(frame: dict, index: int, *, aruco_reference: bool) -> di
 
 def _normalize_device(payload: dict, *, purpose: str) -> dict:
     expected_keys = {"startup_session_id"}
+    optional_keys: set[str] = set()
     if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
         expected_keys.add("ip")
+    elif purpose == PURPOSE_LARM_INPUT:
+        optional_keys.update({"ip", "type", "time", "pose"})
     actual_keys = set(payload)
     missing = sorted(expected_keys - actual_keys)
-    unexpected = sorted(actual_keys - expected_keys)
+    unexpected = sorted(actual_keys - expected_keys - optional_keys)
     if missing:
         raise ValueError(f"deviceJ is missing required fields: {', '.join(missing)}")
     if unexpected:
@@ -262,27 +267,113 @@ def _normalize_device(payload: dict, *, purpose: str) -> dict:
     if not isinstance(startup_session_id, str) or not startup_session_id.strip():
         raise ValueError("deviceJ.startup_session_id must be a non-empty string")
     normalized = {"startup_session_id": startup_session_id.strip()}
-    if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
+    if "ip" in payload:
         ip_text = payload["ip"]
         if not isinstance(ip_text, str) or not ip_text.strip():
-            raise ValueError("deviceJ.ip must be a non-empty IPv4 address")
-        try:
-            ip_value = ipaddress.ip_address(ip_text.strip())
-        except ValueError as exc:
-            raise ValueError("deviceJ.ip must be a valid IPv4 address") from exc
-        if ip_value.version != 4:
-            raise ValueError("deviceJ.ip must be a valid IPv4 address")
-        normalized["ip"] = str(ip_value)
+            if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
+                raise ValueError("deviceJ.ip must be a non-empty IPv4 address")
+        else:
+            try:
+                ip_value = ipaddress.ip_address(ip_text.strip())
+            except ValueError as exc:
+                raise ValueError("deviceJ.ip must be a valid IPv4 address") from exc
+            if ip_value.version != 4:
+                raise ValueError("deviceJ.ip must be a valid IPv4 address")
+            normalized["ip"] = str(ip_value)
+    for key in ("type", "time", "pose"):
+        if key in payload:
+            normalized[key] = payload.get(key)
     return normalized
-
 
 def _normalize_purpose(value) -> str:
     purpose = str(value or "").strip()
     if not purpose:
         raise ValueError("purpose is required")
-    if purpose not in {PURPOSE_OBJECT_RECONSTRUCTION, PURPOSE_ARUCO_REFERENCE}:
+    if purpose not in {PURPOSE_OBJECT_RECONSTRUCTION, PURPOSE_ARUCO_REFERENCE, PURPOSE_LARM_INPUT}:
         raise ValueError(f"Unsupported purpose: {purpose}")
     return purpose
+
+def _frame_has_larm_state(frame: dict) -> bool:
+    for key in (
+        "qpos",
+        "joint_position",
+        "jointPosition",
+        "articulation_state",
+        "articulationState",
+    ):
+        value = frame.get(key)
+        if value is not None and str(value).strip() != "":
+            return True
+    return False
+
+
+def _assign_default_larm_qpos_groups(frames: list[dict], split_index: int | None = None) -> dict:
+    if any(_frame_has_larm_state(frame) for frame in frames):
+        return {"mode": "explicit"}
+
+    frame_count = len(frames)
+    if split_index is None:
+        if frame_count % 2 != 0:
+            raise ValueError(
+                "LARM upload has no qpos labels and an odd number of frames; pass larm_state0_count or upload an even count"
+            )
+        split_index = frame_count // 2
+
+    if split_index < 3 or frame_count - split_index < 3:
+        raise ValueError(
+            "LARM upload without qpos requires at least 3 frames before and after larm_state0_count"
+        )
+
+    for index, frame in enumerate(frames):
+        frame["qpos"] = 0.0 if index < split_index else 1.0
+
+    return {
+        "mode": "auto_order_split",
+        "state0_qpos": 0.0,
+        "state1_qpos": 1.0,
+        "state0_frame_count": split_index,
+        "state1_frame_count": frame_count - split_index,
+    }
+
+
+def _normalize_larm_pv_frame(frame: dict, index: int, qpos_values: list | None) -> dict:
+    if not isinstance(frame, dict):
+        raise ValueError(f"PVCameraFramesJ[{index}] must be a JSON object")
+    field_name = f"PVCameraFramesJ[{index}]"
+    expected = {"width", "height", "k", "pose", "time"}
+    missing = sorted(expected - set(frame))
+    if missing:
+        raise ValueError(f"{field_name} is missing required fields: {', '.join(missing)}")
+    frame_time = frame["time"]
+    if not isinstance(frame_time, str) or not frame_time.strip():
+        raise ValueError(f"{field_name}.time must be a non-empty string")
+    normalized = {
+        "frame_index": int(frame.get("index", index)),
+        "width": _strict_json_integer(frame["width"], f"{field_name}.width", minimum=1),
+        "height": _strict_json_integer(frame["height"], f"{field_name}.height", minimum=1),
+        "k": _strict_numeric_matrix(frame["k"], f"{field_name}.k", (3, 3)),
+        "pose": _strict_numeric_matrix(frame["pose"], f"{field_name}.pose", (4, 4)),
+        "time": frame_time.strip(),
+    }
+    optional_passthrough = (
+        "device_pose",
+        "device_rotation",
+        "joint_position",
+        "jointPosition",
+        "articulation_state",
+        "articulationState",
+        "larm_transform_matrix",
+        "transform_matrix",
+    )
+    for key in optional_passthrough:
+        if key in frame:
+            normalized[key] = frame.get(key)
+    if "qpos" in frame:
+        normalized["qpos"] = frame.get("qpos")
+    elif qpos_values and index < len(qpos_values):
+        normalized["qpos"] = qpos_values[index]
+    return normalized
+
 
 
 def _task_startup_session_id(task_data: dict | None = None, task_json: dict | None = None) -> str | None:
@@ -534,6 +625,21 @@ def _sanitize_depth_png(depth_png_bytes: bytes, sensor_name: str) -> tuple[bytes
     return encoded_png.tobytes(), stats
 
 
+def _build_larm_input_task_response(task_data: dict) -> dict:
+    task_json = task_data.get("task_json") or {}
+    larm_input = task_json.get("LARMInput") or {}
+    return {
+        "status": task_data["status"],
+        "task_id": task_data.get("task_id"),
+        "purpose": task_json.get("purpose"),
+        "terminal": True,
+        "stage_runs": task_data.get("stage_runs") or [],
+        "timing_events": task_data.get("timing_events") or [],
+        "ai_model_timings": task_data.get("ai_model_timings") or [],
+        "larm_input": larm_input,
+    }
+
+
 def _build_completed_task_response(
     task_data: dict,
     *,
@@ -712,6 +818,18 @@ def generate_model():
                 raise ValueError(f"{field_name} must be a JSON object")
             return obj
 
+        def _parse_optional_json_field(field_name: str) -> dict | None:
+            raw = request.form.get(field_name, type=str)
+            if not raw:
+                return None
+            try:
+                obj = json.loads(raw)
+            except Exception as exc:
+                raise ValueError(f"{field_name} is not valid JSON: {exc}")
+            if not isinstance(obj, dict):
+                raise ValueError(f"{field_name} must be a JSON object")
+            return obj
+
         def _parse_optional_json_array_field(field_name: str) -> list | None:
             raw = request.form.get(field_name, type=str)
             if not raw:
@@ -733,7 +851,13 @@ def generate_model():
                 raise ValueError(f"uploaded file {field_name} is empty")
             return data
 
-        purpose = _normalize_purpose(request.form.get("purpose"))
+        client_purpose = _normalize_purpose(request.form.get("purpose"))
+        purpose = client_purpose
+        forced_larm_capture = False
+        if LARM_CAPTURE_ONLY_MODE and client_purpose == PURPOSE_OBJECT_RECONSTRUCTION:
+            purpose = PURPOSE_LARM_INPUT
+            forced_larm_capture = True
+
         if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
             _require_exact_multipart_keys(
                 {
@@ -746,16 +870,27 @@ def generate_model():
                 },
                 {"pv_image", "depth_image"},
             )
+        elif purpose == PURPOSE_ARUCO_REFERENCE:
+            pv_frames_probe = _parse_optional_json_array_field("PVCameraFramesJ")
+            if not pv_frames_probe:
+                raise ValueError("PVCameraFramesJ must contain at least one frame")
+            _require_exact_multipart_keys(
+                {"purpose", "deviceJ", "PVCameraFramesJ"},
+                {f"pv_image_{index}" for index in range(len(pv_frames_probe))},
+            )
+        else:
+            if request.args:
+                raise ValueError("query parameters are not supported")
+
         devj = _normalize_device(_parse_json_field("deviceJ"), purpose=purpose)
         startup_session_id = devj["startup_session_id"]
+        force_new_3d_model = False
+        larm_grouping = None
+        frame_upload_fields: list[str] = []
 
         if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
-            if "force_new_3d_model" not in request.form or not str(
-                request.form.get("force_new_3d_model") or ""
-            ).strip():
-                raise ValueError("force_new_3d_model is required for object_reconstruction")
             if "PVCameraFramesJ" in request.form:
-                raise ValueError("PVCameraFramesJ is only valid for aruco_reference")
+                raise ValueError("PVCameraFramesJ is only valid for aruco_reference or larm_input")
             force_new_3d_model = _parse_binary_flag(
                 request.form["force_new_3d_model"],
                 "force_new_3d_model",
@@ -767,11 +902,12 @@ def generate_model():
                     aruco_reference=False,
                 )
             ]
-        else:
+            frame_upload_fields = ["pv_image"]
+        elif purpose == PURPOSE_ARUCO_REFERENCE:
             if "force_new_3d_model" in request.form:
                 raise ValueError("force_new_3d_model is only valid for object_reconstruction")
             if "PVCameraJ" in request.form:
-                raise ValueError("PVCameraJ is only valid for object_reconstruction")
+                raise ValueError("PVCameraJ is only valid for object_reconstruction or larm_input")
             pv_frames_input = _parse_optional_json_array_field("PVCameraFramesJ")
             if not pv_frames_input:
                 raise ValueError("PVCameraFramesJ must contain at least one frame")
@@ -779,15 +915,34 @@ def generate_model():
                 _normalize_pv_frame(frame, index, aruco_reference=True)
                 for index, frame in enumerate(pv_frames_input)
             ]
-            _require_exact_multipart_keys(
-                {"purpose", "deviceJ", "PVCameraFramesJ"},
-                {f"pv_image_{index}" for index in range(len(normalized_pv_frames))},
-            )
+            frame_upload_fields = [f"pv_image_{index}" for index in range(len(normalized_pv_frames))]
+        else:
+            qpos_values = _parse_optional_json_array_field("QPosJ")
+            pv_frames_input = _parse_optional_json_array_field("PVCameraFramesJ")
+            if pv_frames_input is None:
+                pv_frames_input = [_parse_json_field("PVCameraJ")]
+            if not pv_frames_input:
+                raise ValueError("PVCameraFramesJ must contain at least one LARM input frame")
+            normalized_pv_frames = [
+                _normalize_larm_pv_frame(frame, index, qpos_values)
+                for index, frame in enumerate(pv_frames_input)
+            ]
+            if len(normalized_pv_frames) == 1 and "pv_image" in request.files:
+                frame_upload_fields = ["pv_image"]
+            else:
+                frame_upload_fields = [f"pv_image_{index}" for index in range(len(normalized_pv_frames))]
+            if len(normalized_pv_frames) > 1:
+                raw_split_index = request.form.get("larm_state0_count") or request.form.get("larm_split_index")
+                split_index = int(raw_split_index) if raw_split_index else None
+                larm_grouping = _assign_default_larm_qpos_groups(normalized_pv_frames, split_index)
 
         dj = None
         sbj = None
         top_left = None
         bottom_right = None
+        requested_sensor = DEPTH_SENSOR_AHAT
+        depth_upload_field = None
+
         if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
             dj = _parse_json_field("DepthCameraJ")
             sbj = _parse_json_field("SelectionBoxJ")
@@ -799,6 +954,7 @@ def generate_model():
                 "pose": _strict_numeric_matrix(dj["pose"], "DepthCameraJ.pose", (4, 4)),
                 "sensor": requested_sensor,
             }
+            depth_upload_field = "depth_image"
 
             if set(sbj) != {"top_left", "bottom_right"}:
                 raise ValueError("SelectionBoxJ must contain exactly top_left and bottom_right")
@@ -808,45 +964,62 @@ def generate_model():
                 raise ValueError("SelectionBoxJ coordinates must be in [0, 1]")
             if bottom_right[0] <= top_left[0] or bottom_right[1] <= top_left[1]:
                 raise ValueError("SelectionBoxJ.bottom_right must be below and right of top_left")
+        elif purpose == PURPOSE_LARM_INPUT:
+            if "depth_image" in request.files:
+                depth_upload_field = "depth_image"
+            elif "depth_image_0" in request.files:
+                depth_upload_field = "depth_image_0"
+            if depth_upload_field:
+                dj = _parse_optional_json_field("DepthCameraJ") or {}
+                requested_sensor = normalize_depth_sensor_name(dj.get("sensor") or DEPTH_SENSOR_AHAT)
+                if "pose" in dj:
+                    dj["pose"] = _strict_numeric_matrix(dj["pose"], "DepthCameraJ.pose", (4, 4))
 
         now_utc = datetime.now(timezone.utc)
         server_received_utc = now_utc.isoformat().replace("+00:00", "Z")
         base = make_timestamp(now_utc)
         reserved_task_id = None
 
-        if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
-            task_record = reserve_uploading_task(
-                task_timestamp=base,
-                startup_session_id=startup_session_id,
-            )
-            reserved_task_id = str(task_record["task_id"])
-            ensure_model_task_dirs(base)
-            meta_path = model_task_json_path(base)
-        else:
+        if purpose == PURPOSE_ARUCO_REFERENCE:
             meta_path = aruco_task_json_path(base)
             task_record = reserve_uploading_task(
                 task_timestamp=base,
                 startup_session_id=startup_session_id,
                 json_path=meta_path,
             )
-            reserved_task_id = str(task_record["task_id"])
             ensure_aruco_task_dirs(base)
+        else:
+            task_record = reserve_uploading_task(
+                task_timestamp=base,
+                startup_session_id=startup_session_id,
+            )
+            ensure_model_task_dirs(base)
+            meta_path = model_task_json_path(base)
+        reserved_task_id = str(task_record["task_id"])
 
         color_path = None
         for index, frame in enumerate(normalized_pv_frames):
-            field_name = "pv_image" if purpose == PURPOSE_OBJECT_RECONSTRUCTION else f"pv_image_{index}"
+            field_name = frame_upload_fields[index]
             pv_png_bytes = _read_upload_file(field_name)
             if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
                 frame_color_path = model_worker_file(base, "input.color")
                 frame["artifact_root"] = "model_worker"
-            else:
+                frame["name"] = str(frame_color_path.name)
+            elif purpose == PURPOSE_LARM_INPUT:
                 frame_timestamp = _frame_artifact_timestamp(base, index, frame)
+                frame_color_path = aruco_worker_frame_color(base, frame_timestamp)
                 frame["artifact_root"] = "aruco_worker"
                 frame["task_timestamp"] = base
                 frame["artifact_timestamp"] = frame_timestamp
+                frame["name"] = str(frame_color_path.resolve())
+            else:
+                frame_timestamp = _frame_artifact_timestamp(base, index, frame)
                 frame_color_path = aruco_worker_frame_color(base, frame_timestamp)
+                frame["artifact_root"] = "aruco_worker"
+                frame["task_timestamp"] = base
+                frame["artifact_timestamp"] = frame_timestamp
+                frame["name"] = str(frame_color_path.name)
             _write_atomic_bytes(frame_color_path, pv_png_bytes)
-            frame["name"] = str(frame_color_path.name)
             frame["upload_field"] = field_name
             frame["png_bytes"] = int(len(pv_png_bytes))
             if purpose == PURPOSE_ARUCO_REFERENCE:
@@ -858,41 +1031,66 @@ def generate_model():
 
         depth_path = None
         depth_stats = None
-        if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
-            depth_png_bytes = _read_upload_file("depth_image")
+        if depth_upload_field:
+            depth_png_bytes = _read_upload_file(depth_upload_field)
             depth_png_bytes, depth_stats = _sanitize_depth_png(depth_png_bytes, requested_sensor)
-            depth_path = model_worker_file(base, "input.depth")
+            if purpose == PURPOSE_LARM_INPUT:
+                depth_path = aruco_worker_dir(base) / "depth.png"
+            else:
+                depth_path = model_worker_file(base, "input.depth")
             _write_atomic_bytes(depth_path, depth_png_bytes)
 
+        first_frame = normalized_pv_frames[0]
         out_json = {
             "server_received_utc": server_received_utc,
             "task_name": base,
             "task_timestamp": base,
             "task_id": reserved_task_id,
             "purpose": purpose,
+            "client_purpose": client_purpose,
+            "forced_larm_capture": forced_larm_capture,
             "device": devj,
-        }
-        if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
-            first_frame = normalized_pv_frames[0]
-            out_json["PVCamera"] = {
-                "name": str(color_path.name),
+            "PVCamera": {
+                "name": str(color_path.name) if purpose == PURPOSE_OBJECT_RECONSTRUCTION else str(color_path.resolve()),
                 "width": first_frame["width"],
                 "height": first_frame["height"],
                 "k": first_frame["k"],
                 "pose": first_frame["pose"],
                 "time": first_frame["time"],
-            }
+            },
+        }
+        if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
             out_json["force_new_3d_model"] = bool(force_new_3d_model)
             out_json["DepthCamera"] = {
-                "name": str(depth_path.name) if depth_path else None,
+                "name": str(depth_path.name),
                 "pose": dj.get("pose") if dj else None,
                 "sensor": requested_sensor,
                 "stats": depth_stats,
+                "upload_field": depth_upload_field,
             }
             out_json["SelectionBox"] = {
                 "top_left": top_left,
                 "bottom_right": bottom_right,
             }
+        elif purpose == PURPOSE_LARM_INPUT:
+            out_json["PVCameraFrames"] = normalized_pv_frames
+            out_json["LARM"] = {
+                "joint_type": request.form.get("joint_type", "revolute"),
+                "object_id": request.form.get("object_id", ""),
+                "joint_index": request.form.get("joint_index", ""),
+                "joint_name": request.form.get("joint_name", ""),
+                "grouping": larm_grouping or {},
+                "capture_only_mode": bool(forced_larm_capture),
+                "client_purpose": client_purpose,
+            }
+            if depth_path is not None:
+                out_json["DepthCamera"] = {
+                    "name": str(depth_path.resolve()),
+                    "pose": dj.get("pose") if dj else None,
+                    "sensor": requested_sensor,
+                    "stats": depth_stats,
+                    "upload_field": depth_upload_field,
+                }
         else:
             out_json["PVCameraFrames"] = normalized_pv_frames
 
@@ -964,7 +1162,9 @@ def check_task_queue():
             status = task_data["status"]
             task_json = task_data.get("task_json") or {}
             purpose = task_json.get("purpose")
-            if status == "completed":
+            if status == "larm_ready" or (status == "completed" and purpose == PURPOSE_LARM_INPUT):
+                response = _build_larm_input_task_response(task_data)
+            elif status == "completed":
                 response = _build_completed_task_response(
                     task_data,
                     startup_session_id=client_startup_session_id,

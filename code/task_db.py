@@ -79,9 +79,10 @@ ALLOWED_STATUSES = (
     "display_identity",
     "completed",
     "aruco_completed",
+    "larm_ready",
     "failed",
 )
-TERMINAL_STATUSES = ("completed", "aruco_completed", "failed", "upload_failed")
+TERMINAL_STATUSES = ("completed", "aruco_completed", "larm_ready", "failed", "upload_failed")
 _TASK_TABLE_COLUMNS = (
     "id",
     "task_id",
@@ -2961,7 +2962,7 @@ def update_task_status(
             "started_at = CASE WHEN started_at IS NULL THEN CURRENT_TIMESTAMP ELSE started_at END"
         )
 
-    if status in {"completed", "aruco_completed"}:
+    if status in {"completed", "aruco_completed", "larm_ready"}:
         set_parts.append("completed_at = CURRENT_TIMESTAMP")
     else:
         set_parts.append("completed_at = NULL")

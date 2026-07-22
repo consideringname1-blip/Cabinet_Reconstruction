@@ -1,6 +1,7 @@
 import atexit
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -13,6 +14,8 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, Mapping, Optional
+
+import numpy as np
 
 from subprocess_stream import parse_gpu_lease_usage_pid_line, stream_command
 
@@ -32,7 +35,7 @@ from config import (
     SHIGURE_IDENTITY_MAX_DISPLAY_OBJECTS,
     SAM3MASK_WORKER_IDLE_TIMEOUT_SEC,
 )
-from artifact_layout import SHIGURE_HISTORY_SOCKET_PATH, WORKER_SOCKET_ROOT
+from artifact_layout import SHIGURE_HISTORY_SOCKET_PATH, TASK_DATA_ROOT, WORKER_SOCKET_ROOT
 from path_config import (
     ARUCO_DETECT_STAGE_PY,
     ARUCO_DETECT_STAGE_RUN,
@@ -97,6 +100,7 @@ from task_db import (
 from task_json import (
     ensure_task_id_in_json,
     load_task_json,
+    normalize_path_for_storage,
     resolve_task_json_path_from_record,
     save_task_json,
 )
@@ -135,6 +139,7 @@ STAGE_ORDER = [
 ]
 PURPOSE_OBJECT_RECONSTRUCTION = "object_reconstruction"
 PURPOSE_ARUCO_REFERENCE = "aruco_reference"
+PURPOSE_LARM_INPUT = "larm_input"
 
 
 @dataclass(frozen=True)
@@ -847,6 +852,9 @@ def _enqueue_task_no_lock(
         return
 
     stage_order = _resolve_stage_order(task_json or {})
+    if not stage_order:
+        update_task_status(task_id, "larm_ready")
+        return
     current_status = str(status or "pending")
     stage_name = stage_order[0] if current_status == "pending" else current_status
     if stage_name in stage_order:
@@ -892,6 +900,9 @@ def _restore_unfinished_tasks() -> None:
                 "failed",
                 f"invalid persisted task contract: {exc}",
             )
+            continue
+        if purpose == PURPOSE_LARM_INPUT:
+            update_task_status(task_id, "larm_ready")
             continue
         with _task_lock:
             _enqueue_task_no_lock(
@@ -1538,6 +1549,282 @@ def _run_display_identity(json_path: Path, context: StageWorkerContext | None = 
 
 
 
+def _format_larm_qpos(value: Any) -> tuple[str, float]:
+    if value is None or str(value).strip() == "":
+        raise ValueError("LARM frame is missing qpos/articulation state")
+    qpos = float(value)
+    return f"{qpos:.2f}", qpos
+
+
+def _extract_larm_qpos(frame: dict) -> tuple[str, float]:
+    for key in (
+        "qpos",
+        "joint_position",
+        "jointPosition",
+        "articulation_state",
+        "articulationState",
+        "state",
+        "open_amount",
+        "openAmount",
+    ):
+        if key in frame:
+            return _format_larm_qpos(frame.get(key))
+    raise ValueError("LARM PVCameraFrames entries must include qpos/articulation state")
+
+
+def _matrix4(value: Any, label: str) -> np.ndarray:
+    matrix = np.asarray(value, dtype=np.float64)
+    if matrix.shape != (4, 4):
+        raise ValueError(f"{label} must be a 4x4 matrix")
+    return matrix
+
+
+def _intrinsics_3x3(value: Any) -> list[list[float]]:
+    arr = np.asarray(value, dtype=np.float64)
+    if arr.shape == (3, 3):
+        matrix = arr
+    elif arr.shape == (4,):
+        fx, fy, cx, cy = [float(v) for v in arr]
+        matrix = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
+    else:
+        raise ValueError("LARM input requires camera intrinsics as 3x3 matrix or [fx, fy, cx, cy]")
+    return [[float(v) for v in row] for row in matrix.tolist()]
+
+
+def _larm_transform_from_frame(frame: dict) -> list[list[float]]:
+    for key in ("larm_transform_matrix", "transform_matrix"):
+        value = frame.get(key)
+        if value is not None:
+            return _matrix4(value, f"PVCameraFrames.{key}").tolist()
+
+    pose = frame.get("pose")
+    if pose is None:
+        raise ValueError("LARM frame is missing pose/transform_matrix")
+
+    from unity_coordinate_utils import convert_hololens_pv_pose_matrix_to_unity_pose_components
+
+    translation, rotation_unity, _quat_xyzw = convert_hololens_pv_pose_matrix_to_unity_pose_components(
+        _matrix4(pose, "PVCameraFrames.pose")
+    )
+    translation = np.asarray(translation, dtype=np.float64).reshape(3)
+
+    camera_to_larm = np.diag([1.0, -1.0, -1.0]).astype(np.float64)
+    transform = np.eye(4, dtype=np.float64)
+    transform[:3, :3] = rotation_unity @ camera_to_larm
+    transform[:3, 3] = translation
+    return [[float(v) for v in row] for row in transform.tolist()]
+
+
+def _resolve_uploaded_frame_path(task_json_path: Path, frame: dict) -> Path:
+    name = str(frame.get("name") or frame.get("image_path") or "").strip()
+    if not name:
+        raise ValueError("LARM frame is missing uploaded image name")
+
+    candidates = []
+    raw_path = Path(name)
+    if raw_path.is_absolute():
+        candidates.append(raw_path)
+    else:
+        candidates.append(task_json_path.parent / raw_path)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    raise FileNotFoundError(f"LARM uploaded image not found: {name}")
+
+
+def _resolve_uploaded_depth_path(task_json_path: Path, data: dict) -> Path | None:
+    depth_info = data.get("DepthCamera") if isinstance(data.get("DepthCamera"), dict) else {}
+    name = str(
+        depth_info.get("name")
+        or depth_info.get("depth_path")
+        or depth_info.get("image_path")
+        or ""
+    ).strip()
+    if not name:
+        return None
+
+    candidates = []
+    raw_path = Path(name)
+    if raw_path.is_absolute():
+        candidates.append(raw_path)
+    else:
+        candidates.append(task_json_path.parent / raw_path)
+
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    raise FileNotFoundError(f"LARM uploaded depth image not found: {name}")
+
+
+def _frame_has_larm_state(frame: dict) -> bool:
+    for key in (
+        "qpos",
+        "joint_position",
+        "jointPosition",
+        "articulation_state",
+        "articulationState",
+        "state",
+        "open_amount",
+        "openAmount",
+    ):
+        value = frame.get(key)
+        if value is not None and str(value).strip() != "":
+            return True
+    return False
+
+
+def _optional_larm_qpos(frame: dict) -> tuple[str | None, float | None]:
+    if not _frame_has_larm_state(frame):
+        return None, None
+    return _extract_larm_qpos(frame)
+
+
+def _prepare_larm_capture(data: dict, task_json_path: Path) -> dict:
+    frames = data.get("PVCameraFrames") or []
+    if len(frames) != 1 or not isinstance(frames[0], dict):
+        raise ValueError("LARM single capture requires exactly one PV camera frame")
+
+    frame = frames[0]
+    larm_config = data.get("LARM") if isinstance(data.get("LARM"), dict) else {}
+    task_name = str(data.get("task_name") or task_json_path.stem).strip() or task_json_path.stem
+    capture_root = TASK_DATA_ROOT / "larm_captures" / task_name
+    capture_root.mkdir(parents=True, exist_ok=True)
+
+    qpos_token, qpos_float = _optional_larm_qpos(frame)
+    source_path = _resolve_uploaded_frame_path(task_json_path, frame)
+    image_path = capture_root / "color.png"
+    shutil.copy2(source_path, image_path)
+
+    source_depth_path = _resolve_uploaded_depth_path(task_json_path, data)
+    depth_path = None
+    if source_depth_path is not None:
+        depth_path = capture_root / "depth.png"
+        shutil.copy2(source_depth_path, depth_path)
+
+    capture_metadata = {
+        "task_id": data.get("task_id"),
+        "task_name": task_name,
+        "server_received_utc": data.get("server_received_utc"),
+        "intrinsics": _intrinsics_3x3(frame.get("k")),
+        "transform_matrix": _larm_transform_from_frame(frame),
+        "image_path": str(image_path.resolve()),
+        "qpos": qpos_float,
+        "qpos_token": qpos_token,
+        "joint_type": str(larm_config.get("joint_type") or "revolute"),
+        "source_image": normalize_path_for_storage(source_path),
+    }
+    if depth_path is not None and source_depth_path is not None:
+        depth_camera = dict(data.get("DepthCamera") or {})
+        depth_camera["name"] = depth_path.name
+        capture_metadata["depth_path"] = str(depth_path.resolve())
+        capture_metadata["source_depth"] = normalize_path_for_storage(source_depth_path)
+        capture_metadata["depth_camera"] = depth_camera
+
+    for key in ("object_id", "joint_index", "joint_name"):
+        if larm_config.get(key) not in (None, ""):
+            capture_metadata[key] = larm_config.get(key)
+
+    capture_json_path = capture_root / "capture.json"
+    save_task_json(capture_json_path, capture_metadata)
+
+    data["LARMInput"] = {
+        "status": "capture_ready",
+        "root": normalize_path_for_storage(capture_root),
+        "capture_json": normalize_path_for_storage(capture_json_path),
+        "image_path": normalize_path_for_storage(image_path),
+        "qpos": qpos_float,
+        "qpos_token": qpos_token,
+    }
+    if depth_path is not None:
+        data["LARMInput"]["depth_path"] = normalize_path_for_storage(depth_path)
+    return data
+
+
+def _prepare_larm_input(data: dict, task_json_path: Path) -> dict:
+    frames = data.get("PVCameraFrames") or []
+    if not isinstance(frames, list) or not frames:
+        raise ValueError("LARM upload requires PVCameraFrames")
+    if len(frames) == 1:
+        return _prepare_larm_capture(data, task_json_path)
+
+    larm_config = data.get("LARM") if isinstance(data.get("LARM"), dict) else {}
+    task_name = str(data.get("task_name") or task_json_path.stem).strip() or task_json_path.stem
+    larm_root = TASK_DATA_ROOT / "larm" / task_name
+    images_root = larm_root / "images"
+    images_root.mkdir(parents=True, exist_ok=True)
+
+    intrinsics = None
+    inputs: dict[str, dict[str, dict[str, Any]]] = {}
+    qpos_image_counts: dict[str, int] = {}
+    copied_images: list[dict[str, Any]] = []
+
+    for frame in frames:
+        if not isinstance(frame, dict):
+            raise ValueError("LARM PVCameraFrames entries must be JSON objects")
+        qpos_token, qpos_float = _extract_larm_qpos(frame)
+        if intrinsics is None:
+            intrinsics = _intrinsics_3x3(frame.get("k"))
+
+        source_path = _resolve_uploaded_frame_path(task_json_path, frame)
+        image_index = qpos_image_counts.get(qpos_token, 0)
+        qpos_image_counts[qpos_token] = image_index + 1
+        image_name = f"color_{qpos_token}_in_{image_index:03d}.png"
+        dest_path = images_root / image_name
+        shutil.copy2(source_path, dest_path)
+
+        frame_key = f"input_frame_{image_index}"
+        inputs.setdefault(qpos_token, {})[frame_key] = {
+            "transform_matrix": _larm_transform_from_frame(frame),
+            "image_path": str(dest_path.resolve()),
+            "qpos": qpos_float,
+        }
+        copied_images.append(
+            {
+                "source": normalize_path_for_storage(source_path),
+                "path": normalize_path_for_storage(dest_path),
+                "qpos": qpos_float,
+                "frame_key": frame_key,
+            }
+        )
+
+    if intrinsics is None:
+        raise ValueError("LARM upload requires camera intrinsics")
+    if len(inputs) < 2:
+        raise ValueError("LARM input requires at least two distinct qpos groups")
+    for qpos_token, qpos_frames in inputs.items():
+        if len(qpos_frames) < 3:
+            raise ValueError(f"LARM qpos={qpos_token} has {len(qpos_frames)} frames; at least 3 are required")
+
+    larm_metadata = {
+        "intrinsics": intrinsics,
+        "joint_type": str(larm_config.get("joint_type") or "revolute"),
+        "inputs": inputs,
+        "source_task_id": data.get("task_id"),
+        "source_task_name": task_name,
+    }
+    for key in ("object_id", "joint_index", "joint_name"):
+        if larm_config.get(key) not in (None, ""):
+            larm_metadata[key] = larm_config.get(key)
+
+    metadata_path = larm_root / f"{task_name}_larm_input.json"
+    save_task_json(metadata_path, larm_metadata)
+
+    datalist_path = larm_root / "data.txt"
+    datalist_path.write_text(str(metadata_path.resolve()) + "\n", encoding="utf-8")
+
+    data["LARMInput"] = {
+        "status": "ready",
+        "root": normalize_path_for_storage(larm_root),
+        "metadata_json": normalize_path_for_storage(metadata_path),
+        "datalist_path": normalize_path_for_storage(datalist_path),
+        "image_count": len(copied_images),
+        "qpos_values": sorted(inputs.keys(), key=lambda token: float(token)),
+        "images": copied_images,
+    }
+    return data
+
+
 STAGE_RUNNERS = {
     "hololens2depth": _run_hololens2depth,
     "aruco_detect": _run_aruco_detect,
@@ -1557,7 +1844,7 @@ STAGE_RUNNERS = {
 
 def _resolve_task_purpose(task_json: dict) -> str:
     purpose = str(task_json.get("purpose") or "").strip()
-    if purpose not in {PURPOSE_OBJECT_RECONSTRUCTION, PURPOSE_ARUCO_REFERENCE}:
+    if purpose not in {PURPOSE_OBJECT_RECONSTRUCTION, PURPOSE_ARUCO_REFERENCE, PURPOSE_LARM_INPUT}:
         raise ValueError(f"unsupported task purpose: {purpose!r}")
     return purpose
 
@@ -1566,6 +1853,8 @@ def _resolve_stage_order(task_json: dict) -> list[str]:
     purpose = _resolve_task_purpose(task_json)
     if purpose == PURPOSE_ARUCO_REFERENCE:
         return ["aruco_detect"]
+    if purpose == PURPOSE_LARM_INPUT:
+        return []
     if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
         return STAGE_ORDER
     raise ValueError(f"unsupported task purpose: {purpose!r}")
@@ -1604,6 +1893,9 @@ def _process_stage_task(task_id: str, expected_stage: str, context: StageWorkerC
     stage_order = _resolve_stage_order(task_json)
 
     current_status = str(task_record["status"])
+    if not stage_order:
+        update_task_status(task_id, "larm_ready")
+        return
     if current_status == "pending":
         current_status = stage_order[0]
         update_task_status(task_id, current_status)
@@ -1909,12 +2201,19 @@ def activate_uploaded_task(task_id: str, *, task_json: dict | None = None, front
     task_record = get_task_by_task_id(task_id)
     if task_record is None:
         raise ValueError(f"Task not found in database: {task_id}")
-    task_json = task_json or load_task_json(resolve_task_json_path_from_record(task_record))
+    task_json_path = resolve_task_json_path_from_record(task_record)
+    task_json = task_json or load_task_json(task_json_path)
+    purpose = _resolve_task_purpose(task_json)
+    if purpose == PURPOSE_LARM_INPUT:
+        task_json = _prepare_larm_input(task_json, task_json_path)
+        save_task_json(task_json_path, task_json)
+        update_task_status(task_id, "larm_ready")
+        return
     update_task_status(task_id, "pending")
-    if _resolve_task_purpose(task_json) == PURPOSE_OBJECT_RECONSTRUCTION:
+    if purpose == PURPOSE_OBJECT_RECONSTRUCTION:
         _prewarm_model_pipeline_services("new 3D model task")
     with _task_lock:
-        _enqueue_task_no_lock(task_id, _resolve_task_purpose(task_json), front=front, task_json=task_json)
+        _enqueue_task_no_lock(task_id, purpose, front=front, task_json=task_json)
 
 
 def get_task(task_id: str) -> Optional[Dict[str, Any]]:
@@ -1933,6 +2232,7 @@ def get_task(task_id: str) -> Optional[Dict[str, Any]]:
     task_record["stage_runs"] = get_task_stage_runs(task_id)
     task_record["timing_events"] = get_task_timing_events(task_id)
     task_record["ai_model_timings"] = get_ai_model_timings_for_task(task_id)
+    task_record["larm_input"] = task_json.get("LARMInput") or {}
     return task_record
 
 
