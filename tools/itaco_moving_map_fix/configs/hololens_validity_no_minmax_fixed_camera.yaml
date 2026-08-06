@@ -1,0 +1,32 @@
+experiment:
+  name: 2026-07-30-002840_proposal_moving_map_fix_fixed_hololens
+  output_root: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_trial_001
+inputs:
+  itaco_dir: /workspace_whz/code/reconstruction/video2articulation
+  view_dir: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/official/view
+  preprocess_dir: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/official/preprocess
+  prediction_dir: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/official/prediction
+  existing_official_result: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/official/prediction/refinement/monst3r/chamfer/0/prismatic
+optimization:
+  joint_type: prismatic
+  loss: chamfer
+  steps: 400
+  learning_rate: 0.005
+  seed: 0
+  device: cuda:0
+  camera_mode: fixed_hololens
+moving_map:
+  static_threshold: 0.30
+  moving_threshold: 0.70
+  logit_epsilon: 0.0001
+  overlap_aggregation: mean
+valid_support:
+  depth_min_m: 0.2
+  depth_max_m: 4.0
+  depth_erosion_radius_pixels: 3
+  rgb_close_radius_pixels: 3
+  rgb_erosion_radius_pixels: 3
+  rgb_min_contour_area_pixels: 100.0
+visualization:
+  configured_frames: [0, 18, 36]
+  include_automatic_worst_offsupport_frame: true

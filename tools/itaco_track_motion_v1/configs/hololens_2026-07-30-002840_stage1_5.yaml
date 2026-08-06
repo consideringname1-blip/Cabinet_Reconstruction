@@ -1,0 +1,94 @@
+schema_version: "1.5"
+stage1_output_dir: /workspace_whz/data/output/itaco_track_motion_stage1/2026-07-30-002840_trial_006
+stage1_config_path: /workspace_whz/data/output/itaco_track_motion_stage1/2026-07-30-002840_trial_006/config_resolved.yaml
+
+runtime:
+  random_seed: 0
+  opencv_num_threads: 1
+
+hand_quality:
+  detector_manifest_path: /workspace_whz/data/output/itaco_track_motion_stage1_5/hand_redetection_max1/manifest.json
+  image_boundary_band_px: 5
+  max_neighbor_area_change_ratio: 2.0
+  max_rgb_footprint_coverage: 0.45
+  min_neighbor_iou: 0.12
+  max_centroid_motion_fraction: 0.16
+  max_boundary_contact_ratio: 0.35
+  low_detector_confidence: 0.30
+  large_area_with_low_confidence: 0.20
+
+hand_correction:
+  redetection_mask_dir: /workspace_whz/data/output/itaco_track_motion_stage1_5/hand_redetection_max1/mask
+  trusted_detector_confidence: 0.30
+  max_keyframe_distance: 5
+  uncertain_dilation_px: 4
+  mask_close_iterations: 1
+  pyr_scale: 0.5
+  levels: 3
+  winsize: 21
+  iterations: 4
+  poly_n: 5
+  poly_sigma: 1.2
+
+gap_association:
+  max_gap_frames: 3
+  max_static_3d_error_m: 0.035
+  max_moving_3d_error_m: 0.035
+  max_static_reprojection_error_px: 6.0
+  max_moving_reprojection_error_px: 6.0
+  min_appearance_similarity: -0.10
+  max_depth_difference_m: 0.10
+  depth_consistency_scale_m: 0.04
+  proposal_soft_bonus: 0.04
+  min_association_confidence: 0.08
+
+  appearance_patch_radius_px: 2
+  missing_normal_factor: 0.75
+depth_quality:
+  source_depth_index_path: /workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth.txt
+  neighborhood_radius_px: 2
+  boundary_full_quality_px: 8.0
+  gradient_scale_m_per_px: 0.08
+  reprojection_depth_scale_m: 0.12
+  time_delta_scale_seconds: 0.50
+  timestamp_scale_seconds: 1.0e-7
+
+  quality_weights:
+    boundary: 1.0
+    gradient: 1.0
+    neighborhood: 1.0
+    incidence: 0.75
+    reprojection: 1.0
+    time_delta: 0.5
+    occlusion: 1.0
+manual_evaluation:
+  annotation_path: /workspace_whz/tools/itaco_track_motion_v1/annotations/hololens_2026-07-30-002840_manual_track_evaluation.json
+  max_match_distance_px: 6.0
+  min_accuracy_for_stage2: 0.90
+
+observability:
+  random_seed: 0
+  image_grid_rows: 4
+  image_grid_cols: 4
+  bootstrap_samples: 30
+  bootstrap_observation_fraction: 0.75
+  min_track_bootstrap_stability: 0.80
+  min_bootstrap_stable_fraction: 0.80
+  min_static_tracks: 12
+  min_moving_tracks: 12
+  min_frame_coverage: 0.40
+  min_image_grid_coverage: 0.25
+  min_covariance_eigenvalue_ratio: 0.002
+  min_information_rank: 6
+  max_information_condition_number: 1.0e6
+
+provenance:
+  hand_redetection_command: >-
+    /workspace_whz/envs/video_articulation/bin/python
+    /workspace_whz/tools/run_grounded_sam2_image_sequence.py
+    --repo-dir /workspace_whz/code/reconstruction/video2articulation/Grounded-SAM-2
+    --image-dir /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/inputs/interaction_forward_177_213/jpg
+    --output-dir /workspace_whz/data/output/itaco_track_motion_stage1_5/hand_redetection_max1
+    --text-prompt "hand and arm" --box-threshold 0.25 --text-threshold 0.25 --max-detections 1
+  classifier_policy: exact stage-1 resolved classification mapping, hashed before and after
+  active_brightness_policy: native measured signal recorded as unavailable for unambiguous current-PV registration

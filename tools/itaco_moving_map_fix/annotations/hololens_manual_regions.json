@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "purpose": "independent evaluation only; never loaded by optimization",
+  "source": "manually reviewed points inherited from the preserved Stage 1.5 evaluation file",
+  "frame_mapping": {
+    "processing_index_0_source_frame": 177,
+    "processing_order": "forward consecutive source frames 177 through 213"
+  },
+  "annotations": [
+    {"original_frame_id": 177, "pixel_uv": [192, 96], "expected_label": "moving", "object_description": "drawer front panel", "annotation_confidence": 0.9},
+    {"original_frame_id": 189, "pixel_uv": [211, 96], "expected_label": "moving", "object_description": "drawer front panel", "annotation_confidence": 0.9},
+    {"original_frame_id": 195, "pixel_uv": [220, 104], "expected_label": "moving", "object_description": "drawer front panel", "annotation_confidence": 0.9},
+    {"original_frame_id": 207, "pixel_uv": [219, 104], "expected_label": "moving", "object_description": "drawer front panel", "annotation_confidence": 0.9},
+    {"original_frame_id": 195, "pixel_uv": [50, 132], "expected_label": "static", "object_description": "floor/background surface", "annotation_confidence": 0.7},
+    {"original_frame_id": 207, "pixel_uv": [54, 132], "expected_label": "static", "object_description": "floor/background surface", "annotation_confidence": 0.7},
+    {"original_frame_id": 177, "pixel_uv": [88, 82], "expected_label": "static", "object_description": "left cabinet side panel", "annotation_confidence": 0.95},
+    {"original_frame_id": 195, "pixel_uv": [91, 83], "expected_label": "static", "object_description": "left cabinet side panel", "annotation_confidence": 0.95},
+    {"original_frame_id": 177, "pixel_uv": [260, 79], "expected_label": "invalid", "object_description": "operator hand", "annotation_confidence": 0.95},
+    {"original_frame_id": 195, "pixel_uv": [270, 69], "expected_label": "invalid", "object_description": "operator hand", "annotation_confidence": 0.95}
+  ]
+}

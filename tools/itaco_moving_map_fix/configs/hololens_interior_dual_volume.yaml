@@ -1,0 +1,49 @@
+inputs:
+  raw_root: /workspace_whz/data/upload/2026-07-30-002840
+  output_dir: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/dual_volume_fusion
+  closed_manifest: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/inputs/closed_forward_005_165/sequence_manifest.json
+  interaction_manifest: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/inputs/interaction_forward_177_213/sequence_manifest.json
+  open_manifest: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/inputs/open_forward_220_360/sequence_manifest.json
+  axis_path: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/joint_axis_opening_world.npy
+  q_path: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/q_interaction_monotonic_m.npy
+  moving_labels_path: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/gate_no_minmax/moving_map_labels.npz
+  interaction_depth_dir: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/official/preprocess/prompt_depth_video
+  interaction_pose_path: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/official/preprocess/gt_cam2world_all.npy
+  corrected_hand_dir: /workspace_whz/data/output/itaco_track_motion_stage1_5/2026-07-30-002840_trial_001/hand_masks_corrected
+  closed_cabinet_mask_dir: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/closed_cabinet_mask/mask
+sampling:
+  closed_stride: 5
+  interaction_stride: 1
+  open_stride: 5
+  visual_frames_per_phase: 3
+thresholds:
+  pose_equality_tolerance: 1.0e-10
+  minimum_seed_points: 100
+  front_cross_quantiles: [0.01, 0.99]
+  front_cross_margin_m: 0.05
+  drawer_depth_m: 0.50
+  drawer_front_margin_m: 0.07
+  template_min_q_fraction: 0.15
+  template_consistency_voxel_size_m: 0.020
+  template_consistency_min_frames: 4
+  template_consistency_min_q_span_fraction: 0.35
+  minimum_template_points_per_frame: 100
+  minimum_template_points_total: 1000
+  template_voxel_size_m: 0.005
+  cabinet_lower_quantile: 0.005
+  template_bounds_quantiles: [0.005, 0.995]
+  template_bounds_margin_m: [0.025, 0.020, 0.020]
+  cabinet_upper_quantile: 0.995
+  cabinet_margin_m: [0.10, 0.08, 0.08]
+  minimum_cabinet_points_per_frame: 100
+  minimum_cabinet_bound_frames: 10
+  cabinet_cross_margin_ratio: 0.35
+  drawer_growth_distance_m: 0.020
+  exact_seed_growth_distance_m: 0.040
+  drawer_unknown_distance_m: 0.045
+  voxel_size_m: 0.006
+  normal_radius_m: 0.040
+  outlier_nb_neighbors: 40
+  outlier_std_ratio: 1.5
+  rgb_close_radius_pixels: 3
+  rgb_erosion_radius_pixels: 3

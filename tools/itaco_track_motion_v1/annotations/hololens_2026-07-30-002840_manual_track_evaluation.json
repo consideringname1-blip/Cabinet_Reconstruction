@@ -1,0 +1,197 @@
+{
+  "schema_version": "1.0",
+  "dataset": "2026-07-30-002840",
+  "purpose": "evaluation_only_not_loaded_before_algorithm_outputs",
+  "coordinate_convention": "pixel_uv in source PV pinhole RGB",
+  "annotations": [
+    {
+      "original_frame_id": 177,
+      "pixel_uv": [88, 82],
+      "expected_label": "static",
+      "object_description": "left cabinet side panel",
+      "visibility": "visible",
+      "annotation_confidence": 0.95,
+      "notes": "well inside the broad planar cabinet side"
+    },
+    {
+      "original_frame_id": 183,
+      "pixel_uv": [92, 83],
+      "expected_label": "static",
+      "object_description": "left cabinet side panel",
+      "visibility": "visible",
+      "annotation_confidence": 0.95,
+      "notes": "repeat static surface at a later state"
+    },
+    {
+      "original_frame_id": 195,
+      "pixel_uv": [91, 83],
+      "expected_label": "static",
+      "object_description": "left cabinet side panel",
+      "visibility": "visible",
+      "annotation_confidence": 0.95,
+      "notes": "away from depth silhouette"
+    },
+    {
+      "original_frame_id": 207,
+      "pixel_uv": [91, 82],
+      "expected_label": "static",
+      "object_description": "left cabinet side panel",
+      "visibility": "visible",
+      "annotation_confidence": 0.95,
+      "notes": "static support in late interaction"
+    },
+    {
+      "original_frame_id": 177,
+      "pixel_uv": [176, 28],
+      "expected_label": "static",
+      "object_description": "cabinet top plane",
+      "visibility": "visible",
+      "annotation_confidence": 0.9,
+      "notes": "inside top surface, not at edge"
+    },
+    {
+      "original_frame_id": 201,
+      "pixel_uv": [177, 28],
+      "expected_label": "static",
+      "object_description": "cabinet top plane",
+      "visibility": "visible",
+      "annotation_confidence": 0.9,
+      "notes": "static plane with a different viewing state"
+    },
+    {
+      "original_frame_id": 195,
+      "pixel_uv": [50, 132],
+      "expected_label": "static",
+      "object_description": "floor/background surface",
+      "visibility": "partially_valid_rgb_footprint",
+      "annotation_confidence": 0.7,
+      "notes": "included to audit the previously reported floor leakage"
+    },
+    {
+      "original_frame_id": 207,
+      "pixel_uv": [54, 132],
+      "expected_label": "static",
+      "object_description": "floor/background surface",
+      "visibility": "partially_valid_rgb_footprint",
+      "annotation_confidence": 0.7,
+      "notes": "evaluation may be unmatched when RGB footprint is invalid"
+    },
+    {
+      "original_frame_id": 177,
+      "pixel_uv": [192, 96],
+      "expected_label": "moving",
+      "object_description": "drawer front panel",
+      "visibility": "visible",
+      "annotation_confidence": 0.9,
+      "notes": "interior point on drawer front"
+    },
+    {
+      "original_frame_id": 189,
+      "pixel_uv": [211, 96],
+      "expected_label": "moving",
+      "object_description": "drawer front panel",
+      "visibility": "visible",
+      "annotation_confidence": 0.9,
+      "notes": "drawer has moved outward"
+    },
+    {
+      "original_frame_id": 195,
+      "pixel_uv": [220, 104],
+      "expected_label": "moving",
+      "object_description": "drawer front panel",
+      "visibility": "visible",
+      "annotation_confidence": 0.9,
+      "notes": "late moving-state support"
+    },
+    {
+      "original_frame_id": 207,
+      "pixel_uv": [219, 104],
+      "expected_label": "moving",
+      "object_description": "drawer front panel",
+      "visibility": "visible",
+      "annotation_confidence": 0.9,
+      "notes": "front face away from hand"
+    },
+    {
+      "original_frame_id": 195,
+      "pixel_uv": [165, 77],
+      "expected_label": "moving",
+      "object_description": "newly revealed drawer side panel",
+      "visibility": "partly_visible",
+      "annotation_confidence": 0.7,
+      "notes": "tests late-emerging moving support"
+    },
+    {
+      "original_frame_id": 207,
+      "pixel_uv": [169, 75],
+      "expected_label": "moving",
+      "object_description": "newly revealed drawer side panel",
+      "visibility": "partly_visible",
+      "annotation_confidence": 0.7,
+      "notes": "late-emerging side surface"
+    },
+    {
+      "original_frame_id": 177,
+      "pixel_uv": [260, 79],
+      "expected_label": "excluded_hand_or_occlusion",
+      "object_description": "operator hand",
+      "visibility": "visible_occluder",
+      "annotation_confidence": 0.95,
+      "notes": "must not match any track"
+    },
+    {
+      "original_frame_id": 195,
+      "pixel_uv": [270, 69],
+      "expected_label": "excluded_hand_or_occlusion",
+      "object_description": "operator hand",
+      "visibility": "visible_occluder",
+      "annotation_confidence": 0.95,
+      "notes": "must not match any track"
+    },
+    {
+      "original_frame_id": 207,
+      "pixel_uv": [275, 67],
+      "expected_label": "excluded_hand_or_occlusion",
+      "object_description": "operator hand",
+      "visibility": "visible_occluder",
+      "annotation_confidence": 0.95,
+      "notes": "must not match any track"
+    },
+    {
+      "original_frame_id": 201,
+      "pixel_uv": [154, 92],
+      "expected_label": "unknown",
+      "object_description": "cluttered interior and occlusion boundary",
+      "visibility": "ambiguous",
+      "annotation_confidence": 0.6,
+      "notes": "intentionally uncertain evaluation point"
+    },
+    {
+      "original_frame_id": 177,
+      "pixel_uv": [126, 53],
+      "expected_label": "static",
+      "object_description": "cabinet top/front fixed edge",
+      "visibility": "visible",
+      "annotation_confidence": 0.85,
+      "notes": "manual review point added to audit false-moving leakage on fixed cabinet"
+    },
+    {
+      "original_frame_id": 180,
+      "pixel_uv": [228, 64],
+      "expected_label": "excluded_hand_or_occlusion",
+      "object_description": "hand-contact and depth-edge region",
+      "visibility": "occlusion_boundary",
+      "annotation_confidence": 0.8,
+      "notes": "must not become moving evidence"
+    },
+    {
+      "original_frame_id": 195,
+      "pixel_uv": [168, 85],
+      "expected_label": "moving",
+      "object_description": "revealed drawer side structure",
+      "visibility": "visible",
+      "annotation_confidence": 0.8,
+      "notes": "manual review point for late-emerging moving support"
+    }
+  ]
+}
