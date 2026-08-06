@@ -40,9 +40,7 @@
     "/opt/miniconda/envs/sam3",
     "/opt/miniconda/envs/sam3d-objects-cu118",
     "/opt/miniconda/envs/sam_3d_body",
-    "/opt/miniconda/envs/server",
-    "/workspace_whz/envs/sampart3d",
-    "/workspace_whz/envs/sigma"
+    "/opt/miniconda/envs/server"
   ],
   "python_version": "3.13.13.final.0",
   "requests_version": "2.33.1",
@@ -201,24 +199,6 @@
       "name": "server",
       "created": "2026-05-14T09:16:43.866231+00:00",
       "last_modified": "2026-05-14T09:16:43.865493+00:00",
-      "active": false,
-      "base": false,
-      "frozen": false,
-      "writable": true
-    },
-    "/workspace_whz/envs/sampart3d": {
-      "name": "",
-      "created": "2026-05-27T16:03:46.429014+00:00",
-      "last_modified": "2026-05-27T16:03:46.425643+00:00",
-      "active": false,
-      "base": false,
-      "frozen": false,
-      "writable": true
-    },
-    "/workspace_whz/envs/sigma": {
-      "name": "",
-      "created": "2026-06-10T14:05:40.619914+00:00",
-      "last_modified": "2026-06-10T14:10:43.447222+00:00",
       "active": false,
       "base": false,
       "frozen": false,

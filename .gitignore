@@ -41,8 +41,7 @@ __pycache__/
 /models/
 /code/LARM/
 /code/OPD/
-/code/SAMPart3D/
-/code/SIGMA/
+/code/reconstruction/video2articulation/
 
 ########################################
 # ========== Data ==========

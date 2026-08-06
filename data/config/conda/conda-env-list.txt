@@ -13,6 +13,4 @@ sam3                     /opt/miniconda/envs/sam3
 sam3d-objects-cu118      /opt/miniconda/envs/sam3d-objects-cu118
 sam_3d_body              /opt/miniconda/envs/sam_3d_body
 server                   /opt/miniconda/envs/server
-                         /workspace_whz/envs/sampart3d
-                         /workspace_whz/envs/sigma
 
