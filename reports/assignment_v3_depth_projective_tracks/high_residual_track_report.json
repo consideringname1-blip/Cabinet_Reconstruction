@@ -1,0 +1,76 @@
+{
+  "fixed_inputs": [
+    "T_world_camera",
+    "prismatic axis",
+    "q_t"
+  ],
+  "tracks": 882,
+  "observations": 2413,
+  "association_attempts": 12360,
+  "accepted_attempts": 1531,
+  "rejected_attempts": 10829,
+  "high_residual_track_count": 27,
+  "high_residual_observation_count": 126,
+  "association_model_counts": {
+    "static": 371,
+    "drawer": 242,
+    "ambiguous": 918
+  },
+  "rejection_reasons": {
+    "depth_residual_too_large": 1266,
+    "forward_backward_inconsistent": 4125,
+    "invalid_target_depth_or_mask": 3803,
+    "low_loftr_confidence": 451,
+    "occluded_under_both_models": 402,
+    "projective_cost_too_large": 752,
+    "reverse_association_too_far": 30
+  },
+  "accepted_static_projective_error_px": {
+    "p10": 0.6324868428773691,
+    "p50": 1.7601314151955163,
+    "p90": 4.561663302999412,
+    "max": 24.897630435518483
+  },
+  "accepted_drawer_projective_error_px": {
+    "p10": 0.5590921772053564,
+    "p50": 1.68486894497742,
+    "p90": 4.680199247742112,
+    "max": 10.831420487155071
+  },
+  "accepted_static_depth_residual_m": {
+    "p10": 0.003643210497772831,
+    "p50": 0.019214523070099077,
+    "p90": 0.056417028212631504,
+    "max": 0.17483519890592003
+  },
+  "accepted_drawer_depth_residual_m": {
+    "p10": 0.003448551042504633,
+    "p50": 0.02138115903155935,
+    "p90": 0.06690117921193428,
+    "max": 0.13191231600377762
+  },
+  "high_residual_static_axis_m": {
+    "p10": -0.06596444754501297,
+    "p50": 0.0013011366932773054,
+    "p90": 0.06829505737053827,
+    "max": 0.16823827522975032
+  },
+  "high_residual_static_perpendicular_m": {
+    "p10": 0.005796325120212745,
+    "p50": 0.01719777899617222,
+    "p90": 0.050709349503994985,
+    "max": 0.10380314944751227
+  },
+  "high_residual_drawer_axis_m": {
+    "p10": -0.05810512211935158,
+    "p50": -0.000338042402111568,
+    "p90": 0.0697794364025017,
+    "max": 0.1050799148848222
+  },
+  "high_residual_drawer_perpendicular_m": {
+    "p10": 0.005416335633020097,
+    "p50": 0.016158925024504948,
+    "p90": 0.05263254748402495,
+    "max": 0.099953066934633
+  }
+}

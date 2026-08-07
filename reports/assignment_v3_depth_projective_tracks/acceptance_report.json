@@ -1,0 +1,19 @@
+{
+  "output_kind": "extended_non_official_funrec_inspired_depth_projective_track_diagnostic",
+  "fixed_camera_pose": true,
+  "fixed_axis": true,
+  "fixed_q_t": true,
+  "camera_optimization_ran": false,
+  "axis_optimization_ran": false,
+  "q_t_optimization_ran": false,
+  "region_voting_ran": false,
+  "region_propagation_ran": false,
+  "sam2_v3_propagation_ran": false,
+  "tsdf_ran": false,
+  "nksr_ran": false,
+  "mesh_ran": false,
+  "reliable_moving_tracks_clearly_increased": false,
+  "ready_for_region_propagation": false,
+  "ready_for_dual_tsdf": false,
+  "stop_reason": "track diagnostics requested; propagation explicitly prohibited in this run"
+}

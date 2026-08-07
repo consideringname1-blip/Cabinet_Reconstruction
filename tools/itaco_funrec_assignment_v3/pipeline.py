@@ -157,7 +157,7 @@ def save_csv(path: Path, rows: list[dict]) -> None:
 def main(config_path: Path) -> None:
     cfg=yaml.safe_load(config_path.read_text()); out=Path(cfg["inputs"]["output_dir"])
     if out.exists() and any(out.iterdir()): raise FileExistsError(f"non-overwrite output exists: {out}")
-    out.mkdir(parents=True); (out/"visualization").mkdir(); (out/"per_frame_assignment").mkdir()
+    out.mkdir(parents=True); (out/"visualization").mkdir()
     (out/"config_resolved.yaml").write_text(yaml.safe_dump(cfg,sort_keys=False))
     inp=cfg["inputs"]; raw=Path(inp["raw_root"]); repro=json.loads(Path(inp["reproduction_manifest"]).read_text())
     interaction=json.loads(Path(inp["interaction_manifest"]).read_text())["source_indices"]
@@ -177,12 +177,18 @@ def main(config_path: Path) -> None:
         rgb=cv2.imread(str(rgb_paths[source])); depth=cv2.imread(str(depth_paths[source]),cv2.IMREAD_UNCHANGED).astype(np.float32)*float(cfg["validity"]["depth_scale_to_m"])
         hand=np.load(Path(inp["corrected_hand_dir"])/f"{source}.npy").squeeze().astype(bool)
         valid,edge=mask_valid(rgb,depth,hand,cfg["validity"]); frames.append({"source":source,"rgb":rgb,"depth":depth,"hand":hand,"valid":valid,"edge_distance":edge,"pose":poses[source],"proposals":load_proposals(source,cfg)})
-    audit={"output_kind":OUTPUT_KIND,"tracker":{"name":"Kornia LoFTR indoor with periodic grid reseeding","implementation":"kornia.feature.LoFTR 0.8.2; cached indoor checkpoint; v3 periodic association implementation","opencv_version":cv2.__version__,"forward_backward_check":True,"visibility_occlusion":"image bounds, registered-depth validity and depth-edge filtering; no learned occlusion model","package_version":cfg["audit"]["loftr_package_version"],"model_weights":cfg["audit"]["loftr_checkpoint"],"model_weight_sha256":cfg["audit"]["loftr_checkpoint_sha256"]},"input_resolution":[320,288],"registered_depth":{"source":"pinhole_projection/depth.txt registered uint16 PNG","scale_to_m":cfg["validity"]["depth_scale_to_m"],"ply_self_zbuffer_used":False},"proposals":{"source":"AutoSeg-SAM2 small final-output NPZ","generator":"SAM1 automatic masks + SAM2 propagation","autoseg_revision":cfg["audit"]["autoseg_revision"],"sam1_weight":inp["sam1_checkpoint"]},"sam2":{"entry":"sam2.build_sam.build_sam2_video_predictor/add_new_mask/propagate_in_video","revision":cfg["audit"]["sam2_revision"],"checkpoint":inp["sam2_checkpoint"],"checkpoint_sha256":cfg["audit"]["sam2_checkpoint_sha256"]},"python_environment":sys.executable,"new_dependencies_required":False}
+    audit={"output_kind":cfg.get("output_kind",OUTPUT_KIND),"tracker":{"name":"Kornia LoFTR indoor with periodic grid reseeding","implementation":"kornia.feature.LoFTR 0.8.2; cached indoor checkpoint; v3 periodic association implementation","opencv_version":cv2.__version__,"forward_backward_check":True,"visibility_occlusion":"image bounds, registered-depth validity and depth-edge filtering; no learned occlusion model","package_version":cfg["audit"]["loftr_package_version"],"model_weights":cfg["audit"]["loftr_checkpoint"],"model_weight_sha256":cfg["audit"]["loftr_checkpoint_sha256"]},"input_resolution":[320,288],"registered_depth":{"source":"pinhole_projection/depth.txt registered uint16 PNG","scale_to_m":cfg["validity"]["depth_scale_to_m"],"ply_self_zbuffer_used":False},"proposals":{"source":"AutoSeg-SAM2 small final-output NPZ","generator":"SAM1 automatic masks + SAM2 propagation","autoseg_revision":cfg["audit"]["autoseg_revision"],"sam1_weight":inp["sam1_checkpoint"]},"sam2":{"entry":"sam2.build_sam.build_sam2_video_predictor/add_new_mask/propagate_in_video","revision":cfg["audit"]["sam2_revision"],"checkpoint":inp["sam2_checkpoint"],"checkpoint_sha256":cfg["audit"]["sam2_checkpoint_sha256"]},"python_environment":sys.executable,"new_dependencies_required":False}
     (out/"tracker_and_segmentation_audit.json").write_text(json.dumps(audit,indent=2)+"\n")
     env={"python":sys.version,"executable":sys.executable,"platform":platform.platform(),"numpy":np.__version__,"opencv":cv2.__version__,"torch":torch.__version__,"torch_cuda":torch.version.cuda,"cuda_available":torch.cuda.is_available(),"kornia":metadata.version("kornia"),"scipy":metadata.version("scipy"),"open3d":metadata.version("open3d")}
     (out/"environment_manifest.json").write_text(json.dumps(env,indent=2)+"\n")
-    from .loftr_tracking import build_loftr_tracks
-    tracks=build_loftr_tracks(frames,axis,q,k,cfg)
+    association_mode=cfg.get("tracking",{}).get("association_mode","loftr_anchor")
+    if association_mode=="depth_projective":
+        from .depth_projective import build_depth_projective_tracks
+        tracks,projective_attempts=build_depth_projective_tracks(frames,axis,q,k,cfg)
+    else:
+        from .loftr_tracking import build_loftr_tracks
+        tracks=build_loftr_tracks(frames,axis,q,k,cfg)
+        projective_attempts=[]
     raw_obs=[o for t in tracks for o in t["observations"]]
     np.savez_compressed(out/"tracks_raw.npz",records=np.asarray(raw_obs,dtype=object))
     evidence=[classify_track(t["observations"],axis,travel,cfg["track_classification"]) for t in tracks]
@@ -194,6 +200,12 @@ def main(config_path: Path) -> None:
         for t,e in zip(tracks,evidence):
             if e["label"]==label: pts.extend(o["point_world"] for o in t["observations"])
         write_ply(out/f"{name}.ply",np.asarray(pts).reshape(-1,3),np.tile(color,(len(pts),1)))
+    if cfg.get("pipeline",{}).get("stop_before_region_propagation",False):
+        from .depth_projective import write_error_diagnostics
+        from .track_only_report import write_track_only_report
+        diagnostics=write_error_diagnostics(out,tracks,projective_attempts,evidence,axis,cfg)
+        write_track_only_report(out,evidence,diagnostics,cfg)
+        return
     keyframes=select_keyframes(frames,q,tracks,cfg); (out/"interaction_keyframes.json").write_text(json.dumps(keyframes,indent=2)+"\n")
     rows,seeds=region_votes(frames,tracks,evidence,keyframes,cfg,out); save_csv(out/"keyframe_region_votes.csv",rows)
     (out/"sam2_seed_manifest.json").write_text(json.dumps({"seeds":seeds},indent=2)+"\n")
@@ -231,7 +243,7 @@ def main(config_path: Path) -> None:
                     for p in frames[local]["proposals"]:
                         if p["proposal_id"]==row["proposal_id"]: static|=p["mask"]&valid
         labels=four_state(valid,drawer,static,conflict)
-        frame_dir=out/"per_frame_assignment"
+        frame_dir=out/"per_frame_assignment"; frame_dir.mkdir(exist_ok=True)
         for name,value in (("static",LABEL_STATIC),("drawer",LABEL_DRAWER),("unknown",LABEL_UNKNOWN),("invalid",LABEL_INVALID)):
             d=frame_dir/name; d.mkdir(exist_ok=True); np.save(d/f"{source}.npy",labels==value); phase_counts[phase][name]+=int((labels==value).sum())
         world=unproject(depth,poses[source],k,valid); vy,vx=np.nonzero(valid); vl=labels[vy,vx]; colors=rgb[vy,vx][:,::-1]

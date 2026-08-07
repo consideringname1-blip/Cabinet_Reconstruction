@@ -318,3 +318,56 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 - Failed/diagnostic outputs are preserved with `lk_diagnostic`,
   `loftr_failed_association_v1`, and `loftr_relative_only_diagnostic` suffixes.
 - Assignment v3 implementation/results commit: `07856bc0`; published to `whz/agent/funrec-inspired-assignment-v3`. No merge, stash, reset, or clean was performed.
+
+## Depth-projective track diagnostic update (2026-08-07)
+
+### Completed and verified
+
+- Added a fixed-input, depth-aware projective LoFTR association mode. Every
+  candidate observation is evaluated simultaneously under world-static and
+  fixed-axis/fixed-`q_t` drawer hypotheses using reprojection error, registered
+  depth residual, and occlusion checks. HoloLens poses, axis, and `q_t` remain
+  frozen; no parameter optimization runs.
+- Added per-observation residual decomposition for high-absolute-residual tracks:
+  projective pixel error, signed/absolute registered-depth residual, axis error,
+  perpendicular error, and total 3-D error under both hypotheses.
+- Added a hard diagnostic stop before region voting and propagation. The run did
+  not execute region voting, SAM2 propagation, assignment, TSDF, NKSR, Mesh, or
+  any camera/axis/`q_t` optimization.
+- All 18 Assignment v3 tests pass, including synthetic static/drawer association,
+  invalid depth, double-occlusion rejection, axis/perpendicular decomposition,
+  and the propagation hard gate.
+- Real-sequence result: 882 tracks, 21 static, 12 moving, and 849 unknown. The
+  previous formal-v3 moving count was 8; the configured clear-increase threshold
+  is 13, so region propagation remains prohibited.
+- The 12,360 candidate attempts yielded 1,531 accepted and 10,829 rejected. The
+  main rejection counts are 4,125 forward-backward inconsistencies, 3,803 invalid
+  target depth/mask observations, 1,266 excessive depth residuals, 752 excessive
+  projective costs, 451 low-confidence matches, 402 double-occlusions, and 30
+  reverse-association failures.
+- Among accepted attempts, the selected-model metadata contains 371 static, 242
+  drawer, and 918 ambiguous associations. This is association-level metadata;
+  final track labels are determined from complete-track static/drawer evidence.
+
+### In progress / not accepted
+
+- `ready_for_region_propagation=false` and `ready_for_dual_tsdf=false`.
+- The depth-projective result is a diagnostic, not an ownership assignment or a
+  reconstruction result. Its output point clouds visualize classified track
+  observations only.
+
+### Known issues
+
+- The reliable moving count improved from 8 to 12 but missed the configured
+  threshold of 13. Most tracks remain unknown: 672 have insufficient support,
+  149 lack motion excitation, 27 exceed the absolute residual gate, and one is
+  ambiguous.
+- High-residual tracks contain material perpendicular error as well as axial
+  error (drawer-hypothesis p90 approximately 5.26 cm perpendicular and 6.98 cm
+  axial). The remaining failures therefore cannot be attributed only to the
+  fixed axis or `q_t`; correspondence/depth/pose inconsistency remains plausible.
+- A candidate accepted under one hypothesis can legitimately have a large
+  residual under the alternative hypothesis. Alternative-model maxima in the
+  diagnostic report are not acceptance-threshold violations.
+
+### Next steps

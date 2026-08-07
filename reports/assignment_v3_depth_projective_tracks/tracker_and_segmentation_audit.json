@@ -1,0 +1,36 @@
+{
+  "output_kind": "extended_non_official_funrec_inspired_depth_projective_track_diagnostic",
+  "tracker": {
+    "name": "Kornia LoFTR indoor with periodic grid reseeding",
+    "implementation": "kornia.feature.LoFTR 0.8.2; cached indoor checkpoint; v3 periodic association implementation",
+    "opencv_version": "5.0.0",
+    "forward_backward_check": true,
+    "visibility_occlusion": "image bounds, registered-depth validity and depth-edge filtering; no learned occlusion model",
+    "package_version": "0.8.2",
+    "model_weights": "/root/.cache/torch/hub/checkpoints/loftr_indoor.ckpt",
+    "model_weight_sha256": "d73c54720370ba0690cd477e38404a626e881292cc0be09a6801da0cc6f53198"
+  },
+  "input_resolution": [
+    320,
+    288
+  ],
+  "registered_depth": {
+    "source": "pinhole_projection/depth.txt registered uint16 PNG",
+    "scale_to_m": 0.001,
+    "ply_self_zbuffer_used": false
+  },
+  "proposals": {
+    "source": "AutoSeg-SAM2 small final-output NPZ",
+    "generator": "SAM1 automatic masks + SAM2 propagation",
+    "autoseg_revision": "840a356f26bd31ac5f3033c05d3ba61a2ceaa38c",
+    "sam1_weight": "/workspace_whz/code/reconstruction/video2articulation/AutoSeg-SAM2/checkpoints/sam1/sam_vit_h_4b8939.pth"
+  },
+  "sam2": {
+    "entry": "sam2.build_sam.build_sam2_video_predictor/add_new_mask/propagate_in_video",
+    "revision": "2b90b9f5ceec907a1c18123530e92e794ad901a4",
+    "checkpoint": "/workspace_whz/code/reconstruction/video2articulation/AutoSeg-SAM2/checkpoints/sam2/sam2.1_hiera_large.pt",
+    "checkpoint_sha256": "2647878d5dfa5098f2f8649825738a9345572bae2d4350a2468587ece47dd318"
+  },
+  "python_environment": "/workspace_whz/envs/video_articulation/bin/python",
+  "new_dependencies_required": false
+}

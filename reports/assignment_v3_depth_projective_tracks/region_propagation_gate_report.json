@@ -1,0 +1,10 @@
+{
+  "baseline_reliable_moving_tracks": 8,
+  "current_reliable_moving_tracks": 12,
+  "required_reliable_moving_tracks": 13,
+  "reliable_moving_tracks_clearly_increased": false,
+  "region_voting_ran": false,
+  "region_propagation_ran": false,
+  "sam2_v3_propagation_ran": false,
+  "policy": "always stop this diagnostic before region voting/propagation; a later run requires explicit review"
+}

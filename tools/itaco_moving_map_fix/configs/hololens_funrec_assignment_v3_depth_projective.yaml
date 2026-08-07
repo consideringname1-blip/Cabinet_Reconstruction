@@ -1,0 +1,87 @@
+output_kind: extended_non_official_funrec_inspired_depth_projective_track_diagnostic
+inputs:
+  raw_root: /workspace_whz/data/upload/2026-07-30-002840
+  reproduction_manifest: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/articulated_model/reproduction_manifest.json
+  interaction_manifest: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/inputs/interaction_forward_177_213/sequence_manifest.json
+  open_manifest: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/inputs/open_forward_220_360/sequence_manifest.json
+  axis_path: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/joint_axis_opening_world.npy
+  q_path: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/q_interaction_monotonic_m.npy
+  interaction_pose_path: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/official/preprocess/gt_cam2world_all.npy
+  corrected_hand_dir: /workspace_whz/data/output/itaco_track_motion_stage1_5/2026-07-30-002840_trial_001/hand_masks_corrected
+  autoseg_reverse_mapping: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/inputs/autoseg_reverse_213_177/frame_mapping.json
+  autoseg_npz_dir: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output
+  v1_dir: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/dual_volume_fusion
+  v2_dir: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v2/assignment_v2
+  output_dir: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v3/funrec_assignment_v3_depth_projective_tracks
+  python_environment: /workspace_whz/envs/video_articulation/bin/python
+  sam2_repo: /workspace_whz/code/reconstruction/video2articulation/AutoSeg-SAM2/submodule/segment-anything-2
+  sam2_checkpoint: /workspace_whz/code/reconstruction/video2articulation/AutoSeg-SAM2/checkpoints/sam2/sam2.1_hiera_large.pt
+  sam2_model_config: configs/sam2.1/sam2.1_hiera_l.yaml
+  sam1_checkpoint: /workspace_whz/code/reconstruction/video2articulation/AutoSeg-SAM2/checkpoints/sam1/sam_vit_h_4b8939.pth
+audit:
+  autoseg_revision: 840a356f26bd31ac5f3033c05d3ba61a2ceaa38c
+  sam2_revision: 2b90b9f5ceec907a1c18123530e92e794ad901a4
+  sam2_checkpoint_sha256: 2647878d5dfa5098f2f8649825738a9345572bae2d4350a2468587ece47dd318
+  loftr_package_version: 0.8.2
+  loftr_checkpoint: /root/.cache/torch/hub/checkpoints/loftr_indoor.ckpt
+  loftr_checkpoint_sha256: d73c54720370ba0690cd477e38404a626e881292cc0be09a6801da0cc6f53198
+validity:
+  depth_scale_to_m: 0.001
+  depth_min_m: 0.2
+  depth_max_m: 4.0
+  depth_boundary_erosion_pixels: 2
+  rgb_erosion_pixels: 3
+  pose_equality_tolerance: 1.0e-10
+proposals:
+  min_area_px: 100
+  legacy_score: 1.0
+tracking:
+  association_mode: depth_projective
+  reseed_interval_frames: 3
+  grid_stride_pixels: 12
+  forward_backward_threshold_pixels: 1.5
+  lk_window_pixels: 21
+  lk_max_level: 3
+  lk_iterations: 30
+  lk_epsilon: 0.01
+  loftr_min_confidence: 0.35
+  loftr_seed_association_radius_pixels: 6.0
+  loftr_reverse_association_radius_pixels: 3.0
+track_classification:
+  min_track_observations: 4
+  min_track_q_span_fraction: 0.15
+  residual_margin_m: 0.003
+  max_absolute_residual_m: 0.05
+keyframes:
+  q_quantiles: [0.15, 0.5, 0.85]
+  track_count_weight: 0.15
+  minimum_separation_frames: 3
+region_voting:
+  min_labeled_tracks: 3
+  moving_ratio_threshold: 0.70
+  static_ratio_threshold: 0.30
+  max_unknown_track_fraction: 0.60
+sam2:
+  jpeg_quality: 95
+  minimum_agreeing_seeds: 1
+  conflict_min_agreement_fraction: 0.5
+assignment:
+  static_core_projection_distance_m: 0.02
+  output_voxel_m: 0.006
+near_contact:
+  support_distance_m: 0.025
+determinism:
+  seed: 20260807
+pipeline:
+  stop_before_region_propagation: true
+depth_projective_association:
+  pixel_sigma_px: 3.0
+  depth_sigma_m: 0.04
+  maximum_depth_residual_m: 0.08
+  maximum_association_cost: 3.0
+  occlusion_margin_m: 0.03
+  model_cost_margin: 0.25
+region_propagation_gate:
+  baseline_reliable_moving_tracks: 8
+  minimum_absolute_increase: 5
+  minimum_increase_factor: 1.5

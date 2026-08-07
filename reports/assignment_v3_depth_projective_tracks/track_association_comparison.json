@@ -1,0 +1,24 @@
+{
+  "previous_formal_v3": {
+    "moving": 8
+  },
+  "depth_projective_association": {
+    "tracks": 882,
+    "static": 21,
+    "moving": 12,
+    "unknown": 849,
+    "unknown_reasons": {
+      "unknown_insufficient_support": 672,
+      "static_track": 21,
+      "unknown_low_excitation": 149,
+      "unknown_absolute_residual": 27,
+      "moving_track": 12,
+      "unknown_ambiguous_track": 1
+    },
+    "accepted_projective_attempts": 1531,
+    "rejected_projective_attempts": 10829,
+    "high_residual_track_count": 27
+  },
+  "region_assignment_comparison": null,
+  "reason": "region voting and propagation intentionally did not run"
+}
