@@ -371,3 +371,18 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
   diagnostic report are not acceptance-threshold violations.
 
 ### Next steps
+
+1. Manually inspect the 12 moving tracks and 27 high-residual tracks before
+   changing thresholds.
+2. Improve correspondence continuity and registered-depth validity while
+   keeping poses, axis, and `q_t` frozen, then rerun the hard-stopped diagnostic.
+3. Do not run region propagation until moving support clearly exceeds the gate
+   and has credible spatial and temporal coverage.
+
+### Git state and output
+
+- Branch: `agent/funrec-inspired-assignment-v3`.
+- Depth-projective implementation/results commit: `0422ba54`; published to
+  `whz/agent/funrec-inspired-assignment-v3`.
+- Output mirrored under `reports/assignment_v3_depth_projective_tracks/`.
+- Draft PR creation is externally blocked: the authenticated CLI user and the
