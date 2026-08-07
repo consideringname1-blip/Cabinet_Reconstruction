@@ -1,0 +1,50 @@
+{
+  "passed": false,
+  "status": "failed_stop_before_116",
+  "checks": {
+    "drawer_front_4_of_4_moving_link": true,
+    "active_comoving_box_at_least_80pct_moving_link": false,
+    "active_comoving_box_zero_world_static": true,
+    "documented_floor_zero_moving_link": true,
+    "plateau_only_creates_no_ownership": true,
+    "synthetic_tests_all_pass": true
+  },
+  "failed_checks": [
+    "active_comoving_box_at_least_80pct_moving_link"
+  ],
+  "metrics": {
+    "drawer_front_count": 4,
+    "drawer_front_moving_link_count": 4,
+    "drawer_front_true_positive_rate": 1.0,
+    "active_comoving_box_count": 5,
+    "active_comoving_box_moving_link_count": 0,
+    "active_comoving_box_moving_link_fraction": 0.0,
+    "active_comoving_box_world_static_count": 0,
+    "documented_floor_count": 21,
+    "documented_floor_moving_link_count": 0,
+    "documented_floor_false_positive_rate": 0.0,
+    "plateau_only_count": 2,
+    "plateau_only_ownership_count": 0,
+    "synthetic_tests_passed": true
+  },
+  "decision_counts_by_group": {
+    "drawer_front": {
+      "MOVING_LINK": 4
+    },
+    "active_comoving_box": {
+      "UNKNOWN": 5
+    },
+    "documented_floor_false_positive": {
+      "UNKNOWN": 21
+    },
+    "plateau_only": {
+      "UNKNOWN": 2
+    },
+    "provisional_world_static": {
+      "UNKNOWN": 3
+    }
+  },
+  "thresholds_frozen_before_control_evaluation": true,
+  "threshold_tuning_after_gate": false,
+  "annotations_used_by_classifier": false
+}

@@ -129,3 +129,12 @@ Last updated: 2026-08-06
 - Decision: when articulated motion is tangent to a source plane, positive moving ownership requires a reliably observable finite boundary. Proposal edges coincident with the RGB/depth observation footprint are truncation boundaries, not physical anchors.
 - Decision: preserve failed `001`; use corrected `002`, where all 116 regions remain unknown. The gate is geometry/observability based and must not use UID, color, floor height, object position, or fixed frame rules.
 - Consequence: compatibility counts remain diagnostic only. No valid causal static disocclusion was observed, and `ready_for_dual_tsdf=false` remains mandatory.
+
+## 2026-08-07 — Transition controls gate v5 before the 116-region diagnostic
+
+- Status: transition-event implementation complete; real control gate failed and stopped before 116 regions.
+- Decision: formal v5 target selection uses only directed local raw-frame ACTIVE_MOTION transitions. Assignment-v4 per_target rows cannot select targets, unordered transition keys are prohibited, and target AutoSeg proposals are post-decision provenance only.
+- Decision: MOVING_LINK and WORLD_STATIC require symmetric immutable source-indexed projective chains. If both chains verify, ownership is UNKNOWN even when one residual is lower; score-margin tie breaking is prohibited. WORLD_STATIC does not imply cabinet membership.
+- Decision: causal static evidence requires measured 3-of-4 front-silhouette motion, local reveal, registered-depth support, actual frame/time gap, and persistent world residual; positive fields cannot be constants.
+- Evidence: front controls pass 4/4, documented floor controls produce 0/21 MOVING_LINK, and plateau controls create no ownership. Co-moving box controls fail at 0/5 because both models form valid chains on small late-motion local displacements.
+- Consequence: do not tune thresholds after the gate and do not run the 116 regions. No propagation or reconstruction may consume this diagnostic; ready_for_dual_tsdf=false.

@@ -1,0 +1,12 @@
+{
+  "control_gate_reran": false,
+  "control_decisions_modified": false,
+  "full_116_ran": false,
+  "purpose": "add measured reveal-band/new-support overlays and legend",
+  "groups": [
+    "drawer_front",
+    "active_comoving_box",
+    "documented_floor_false_positive",
+    "plateau_only"
+  ]
+}

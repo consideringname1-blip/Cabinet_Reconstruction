@@ -1,0 +1,1822 @@
+[
+  {
+    "source_frame": 181,
+    "target_frame": 183,
+    "source_q": 0.00019289409045231132,
+    "target_q": 0.00917081126755237,
+    "delta_q": 0.008977917177100059,
+    "elapsed_s": 0.4000087,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      182
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      181,
+      182,
+      183
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 181,
+    "target_frame": 184,
+    "source_q": 0.00019289409045231132,
+    "target_q": 0.019908451540738836,
+    "delta_q": 0.019715557450286525,
+    "elapsed_s": 0.600013,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      182,
+      183
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      181,
+      182,
+      183,
+      184
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 182,
+    "target_frame": 183,
+    "source_q": 0.0011284266228279716,
+    "target_q": 0.00917081126755237,
+    "delta_q": 0.008042384644724399,
+    "elapsed_s": 0.20000430000000002,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      182,
+      183
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 182,
+    "target_frame": 184,
+    "source_q": 0.0011284266228279716,
+    "target_q": 0.019908451540738836,
+    "delta_q": 0.018780024917910865,
+    "elapsed_s": 0.40000860000000005,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      183
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      182,
+      183,
+      184
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 182,
+    "target_frame": 185,
+    "source_q": 0.0011284266228279716,
+    "target_q": 0.03180521933127545,
+    "delta_q": 0.030676792708447476,
+    "elapsed_s": 0.6000130000000001,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      183,
+      184
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      182,
+      183,
+      184,
+      185
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 183,
+    "target_frame": 184,
+    "source_q": 0.00917081126755237,
+    "target_q": 0.019908451540738836,
+    "delta_q": 0.010737640273186466,
+    "elapsed_s": 0.20000430000000002,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      183,
+      184
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 183,
+    "target_frame": 185,
+    "source_q": 0.00917081126755237,
+    "target_q": 0.03180521933127545,
+    "delta_q": 0.022634408063723077,
+    "elapsed_s": 0.4000087000000001,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      184
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      183,
+      184,
+      185
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 183,
+    "target_frame": 186,
+    "source_q": 0.00917081126755237,
+    "target_q": 0.045213219262714155,
+    "delta_q": 0.036042407995161785,
+    "elapsed_s": 0.6000129000000001,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      184,
+      185
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      183,
+      184,
+      185,
+      186
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 184,
+    "target_frame": 185,
+    "source_q": 0.019908451540738836,
+    "target_q": 0.03180521933127545,
+    "delta_q": 0.011896767790536611,
+    "elapsed_s": 0.20000440000000008,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      184,
+      185
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 184,
+    "target_frame": 186,
+    "source_q": 0.019908451540738836,
+    "target_q": 0.045213219262714155,
+    "delta_q": 0.02530476772197532,
+    "elapsed_s": 0.40000860000000005,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      185
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      184,
+      185,
+      186
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 184,
+    "target_frame": 187,
+    "source_q": 0.019908451540738836,
+    "target_q": 0.05919969964910532,
+    "delta_q": 0.03929124810836648,
+    "elapsed_s": 0.6000129000000001,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      185,
+      186
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      184,
+      185,
+      186,
+      187
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 185,
+    "target_frame": 186,
+    "source_q": 0.03180521933127545,
+    "target_q": 0.045213219262714155,
+    "delta_q": 0.013407999931438708,
+    "elapsed_s": 0.20000419999999997,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      185,
+      186
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 185,
+    "target_frame": 187,
+    "source_q": 0.03180521933127545,
+    "target_q": 0.05919969964910532,
+    "delta_q": 0.027394480317829872,
+    "elapsed_s": 0.4000085,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      186
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      185,
+      186,
+      187
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 185,
+    "target_frame": 188,
+    "source_q": 0.03180521933127545,
+    "target_q": 0.07293716335462896,
+    "delta_q": 0.04113194402335352,
+    "elapsed_s": 0.6000129000000001,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      186,
+      187
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      185,
+      186,
+      187,
+      188
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 186,
+    "target_frame": 187,
+    "source_q": 0.045213219262714155,
+    "target_q": 0.05919969964910532,
+    "delta_q": 0.013986480386391165,
+    "elapsed_s": 0.20000430000000002,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      186,
+      187
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 186,
+    "target_frame": 188,
+    "source_q": 0.045213219262714155,
+    "target_q": 0.07293716335462896,
+    "delta_q": 0.02772394409191481,
+    "elapsed_s": 0.4000087000000001,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      187
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      186,
+      187,
+      188
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 186,
+    "target_frame": 189,
+    "source_q": 0.045213219262714155,
+    "target_q": 0.08973465676920167,
+    "delta_q": 0.044521437506487516,
+    "elapsed_s": 0.6000129000000001,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      187,
+      188
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      186,
+      187,
+      188,
+      189
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 187,
+    "target_frame": 188,
+    "source_q": 0.05919969964910532,
+    "target_q": 0.07293716335462896,
+    "delta_q": 0.013737463705523645,
+    "elapsed_s": 0.20000440000000008,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      187,
+      188
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 187,
+    "target_frame": 189,
+    "source_q": 0.05919969964910532,
+    "target_q": 0.08973465676920167,
+    "delta_q": 0.03053495712009635,
+    "elapsed_s": 0.40000860000000005,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      188
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      187,
+      188,
+      189
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 187,
+    "target_frame": 190,
+    "source_q": 0.05919969964910532,
+    "target_q": 0.10665393781713517,
+    "delta_q": 0.04745423816802985,
+    "elapsed_s": 0.6000130000000001,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      188,
+      189
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      187,
+      188,
+      189,
+      190
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 188,
+    "target_frame": 189,
+    "source_q": 0.07293716335462896,
+    "target_q": 0.08973465676920167,
+    "delta_q": 0.016797493414572706,
+    "elapsed_s": 0.20000419999999997,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      188,
+      189
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 188,
+    "target_frame": 190,
+    "source_q": 0.07293716335462896,
+    "target_q": 0.10665393781713517,
+    "delta_q": 0.033716774462506205,
+    "elapsed_s": 0.40000860000000005,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      189
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      188,
+      189,
+      190
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 188,
+    "target_frame": 191,
+    "source_q": 0.07293716335462896,
+    "target_q": 0.12346363394546822,
+    "delta_q": 0.050526470590839256,
+    "elapsed_s": 0.6000129999999997,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      189,
+      190
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      188,
+      189,
+      190,
+      191
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 189,
+    "target_frame": 190,
+    "source_q": 0.08973465676920167,
+    "target_q": 0.10665393781713517,
+    "delta_q": 0.0169192810479335,
+    "elapsed_s": 0.20000440000000008,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      189,
+      190
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 189,
+    "target_frame": 191,
+    "source_q": 0.08973465676920167,
+    "target_q": 0.12346363394546822,
+    "delta_q": 0.03372897717626655,
+    "elapsed_s": 0.4000087999999997,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      190
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      189,
+      190,
+      191
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 189,
+    "target_frame": 192,
+    "source_q": 0.08973465676920167,
+    "target_q": 0.14041430579681058,
+    "delta_q": 0.05067964902760891,
+    "elapsed_s": 0.6000131,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      190,
+      191
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      189,
+      190,
+      191,
+      192
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 190,
+    "target_frame": 191,
+    "source_q": 0.10665393781713517,
+    "target_q": 0.12346363394546822,
+    "delta_q": 0.01680969612833305,
+    "elapsed_s": 0.20000439999999964,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      190,
+      191
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 190,
+    "target_frame": 192,
+    "source_q": 0.10665393781713517,
+    "target_q": 0.14041430579681058,
+    "delta_q": 0.03376036797967541,
+    "elapsed_s": 0.4000086999999999,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      191
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      190,
+      191,
+      192
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 190,
+    "target_frame": 193,
+    "source_q": 0.10665393781713517,
+    "target_q": 0.1583840011236365,
+    "delta_q": 0.05173006330650132,
+    "elapsed_s": 0.6000129999999997,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      191,
+      192
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      190,
+      191,
+      192,
+      193
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 191,
+    "target_frame": 192,
+    "source_q": 0.12346363394546822,
+    "target_q": 0.14041430579681058,
+    "delta_q": 0.016950671851342358,
+    "elapsed_s": 0.20000430000000025,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      191,
+      192
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 191,
+    "target_frame": 193,
+    "source_q": 0.12346363394546822,
+    "target_q": 0.1583840011236365,
+    "delta_q": 0.034920367178168266,
+    "elapsed_s": 0.40000860000000005,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      192
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      191,
+      192,
+      193
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 191,
+    "target_frame": 194,
+    "source_q": 0.12346363394546822,
+    "target_q": 0.17589940581780827,
+    "delta_q": 0.05243577187234005,
+    "elapsed_s": 0.6000130000000001,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      192,
+      193
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      191,
+      192,
+      193,
+      194
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 192,
+    "target_frame": 193,
+    "source_q": 0.14041430579681058,
+    "target_q": 0.1583840011236365,
+    "delta_q": 0.017969695326825907,
+    "elapsed_s": 0.2000042999999998,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      192,
+      193
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 192,
+    "target_frame": 194,
+    "source_q": 0.14041430579681058,
+    "target_q": 0.17589940581780827,
+    "delta_q": 0.035485100020997695,
+    "elapsed_s": 0.4000086999999999,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      193
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      192,
+      193,
+      194
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 192,
+    "target_frame": 195,
+    "source_q": 0.14041430579681058,
+    "target_q": 0.19341339188972073,
+    "delta_q": 0.05299908609291015,
+    "elapsed_s": 0.6000131,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      193,
+      194
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      192,
+      193,
+      194,
+      195
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 193,
+    "target_frame": 194,
+    "source_q": 0.1583840011236365,
+    "target_q": 0.17589940581780827,
+    "delta_q": 0.017515404694171788,
+    "elapsed_s": 0.20000440000000008,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      193,
+      194
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 193,
+    "target_frame": 195,
+    "source_q": 0.1583840011236365,
+    "target_q": 0.19341339188972073,
+    "delta_q": 0.035029390766084245,
+    "elapsed_s": 0.40000880000000016,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      194
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      193,
+      194,
+      195
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 193,
+    "target_frame": 196,
+    "source_q": 0.1583840011236365,
+    "target_q": 0.2117328619537343,
+    "delta_q": 0.05334886083009782,
+    "elapsed_s": 0.6000131,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      194,
+      195
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      193,
+      194,
+      195,
+      196
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 194,
+    "target_frame": 195,
+    "source_q": 0.17589940581780827,
+    "target_q": 0.19341339188972073,
+    "delta_q": 0.017513986071912457,
+    "elapsed_s": 0.20000440000000008,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      194,
+      195
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 194,
+    "target_frame": 196,
+    "source_q": 0.17589940581780827,
+    "target_q": 0.2117328619537343,
+    "delta_q": 0.035833456135926034,
+    "elapsed_s": 0.4000086999999999,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      195
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      194,
+      195,
+      196
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 194,
+    "target_frame": 197,
+    "source_q": 0.17589940581780827,
+    "target_q": 0.23088570413786158,
+    "delta_q": 0.054986298320053306,
+    "elapsed_s": 0.6000130000000001,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      195,
+      196
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      194,
+      195,
+      196,
+      197
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 195,
+    "target_frame": 196,
+    "source_q": 0.19341339188972073,
+    "target_q": 0.2117328619537343,
+    "delta_q": 0.018319470064013577,
+    "elapsed_s": 0.2000042999999998,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      195,
+      196
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 195,
+    "target_frame": 197,
+    "source_q": 0.19341339188972073,
+    "target_q": 0.23088570413786158,
+    "delta_q": 0.03747231224814085,
+    "elapsed_s": 0.40000860000000005,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      196
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      195,
+      196,
+      197
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 195,
+    "target_frame": 198,
+    "source_q": 0.19341339188972073,
+    "target_q": 0.2468650200273087,
+    "delta_q": 0.05345162813758797,
+    "elapsed_s": 0.6000130000000001,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      196,
+      197
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      195,
+      196,
+      197,
+      198
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 196,
+    "target_frame": 197,
+    "source_q": 0.2117328619537343,
+    "target_q": 0.23088570413786158,
+    "delta_q": 0.019152842184127272,
+    "elapsed_s": 0.20000430000000025,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      196,
+      197
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 196,
+    "target_frame": 198,
+    "source_q": 0.2117328619537343,
+    "target_q": 0.2468650200273087,
+    "delta_q": 0.03513215807357439,
+    "elapsed_s": 0.40000870000000033,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      197
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      196,
+      197,
+      198
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 196,
+    "target_frame": 199,
+    "source_q": 0.2117328619537343,
+    "target_q": 0.26164481925107075,
+    "delta_q": 0.04991195729733644,
+    "elapsed_s": 0.6000128999999998,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      197,
+      198
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      196,
+      197,
+      198,
+      199
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 197,
+    "target_frame": 198,
+    "source_q": 0.23088570413786158,
+    "target_q": 0.2468650200273087,
+    "delta_q": 0.01597931588944712,
+    "elapsed_s": 0.20000440000000008,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      197,
+      198
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 197,
+    "target_frame": 199,
+    "source_q": 0.23088570413786158,
+    "target_q": 0.26164481925107075,
+    "delta_q": 0.030759115113209168,
+    "elapsed_s": 0.4000085999999996,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      198
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      197,
+      198,
+      199
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 197,
+    "target_frame": 200,
+    "source_q": 0.23088570413786158,
+    "target_q": 0.2734369146971839,
+    "delta_q": 0.04255121055932232,
+    "elapsed_s": 0.6000129999999997,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      198,
+      199
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      197,
+      198,
+      199,
+      200
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 198,
+    "target_frame": 199,
+    "source_q": 0.2468650200273087,
+    "target_q": 0.26164481925107075,
+    "delta_q": 0.014779799223762047,
+    "elapsed_s": 0.20000419999999952,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      198,
+      199
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 198,
+    "target_frame": 200,
+    "source_q": 0.2468650200273087,
+    "target_q": 0.2734369146971839,
+    "delta_q": 0.026571894669875196,
+    "elapsed_s": 0.4000085999999996,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      199
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      198,
+      199,
+      200
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 198,
+    "target_frame": 201,
+    "source_q": 0.2468650200273087,
+    "target_q": 0.2758790548320902,
+    "delta_q": 0.029014034804781486,
+    "elapsed_s": 0.6000126999999997,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      199,
+      200
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      198,
+      199,
+      200,
+      201
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 199,
+    "target_frame": 200,
+    "source_q": 0.26164481925107075,
+    "target_q": 0.2734369146971839,
+    "delta_q": 0.011792095446113149,
+    "elapsed_s": 0.20000440000000008,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      199,
+      200
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 199,
+    "target_frame": 201,
+    "source_q": 0.26164481925107075,
+    "target_q": 0.2758790548320902,
+    "delta_q": 0.014234235581019439,
+    "elapsed_s": 0.4000085000000002,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      200
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      199,
+      200,
+      201
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 199,
+    "target_frame": 202,
+    "source_q": 0.26164481925107075,
+    "target_q": 0.27760910093009805,
+    "delta_q": 0.015964281679027303,
+    "elapsed_s": 0.6000127000000006,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      200,
+      201
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      199,
+      200,
+      201,
+      202
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 200,
+    "target_frame": 203,
+    "source_q": 0.2734369146971839,
+    "target_q": 0.2815773461555924,
+    "delta_q": 0.008140431458408481,
+    "elapsed_s": 0.6000128,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      201,
+      202
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      200,
+      201,
+      202,
+      203
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 201,
+    "target_frame": 203,
+    "source_q": 0.2758790548320902,
+    "target_q": 0.2815773461555924,
+    "delta_q": 0.0056982913235021915,
+    "elapsed_s": 0.4000086999999999,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      202
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      201,
+      202,
+      203
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 201,
+    "target_frame": 204,
+    "source_q": 0.2758790548320902,
+    "target_q": 0.28446401290015544,
+    "delta_q": 0.008584958068065252,
+    "elapsed_s": 0.6000129999999997,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      202,
+      203
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      201,
+      202,
+      203,
+      204
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 202,
+    "target_frame": 204,
+    "source_q": 0.27760910093009805,
+    "target_q": 0.28446401290015544,
+    "delta_q": 0.006854911970057387,
+    "elapsed_s": 0.4000087999999993,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      203
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      202,
+      203,
+      204
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 202,
+    "target_frame": 205,
+    "source_q": 0.27760910093009805,
+    "target_q": 0.29123566231989506,
+    "delta_q": 0.01362656138979701,
+    "elapsed_s": 0.6000131,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      203,
+      204
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      202,
+      203,
+      204,
+      205
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 203,
+    "target_frame": 205,
+    "source_q": 0.2815773461555924,
+    "target_q": 0.29123566231989506,
+    "delta_q": 0.009658316164302683,
+    "elapsed_s": 0.4000086000000005,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      204
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      203,
+      204,
+      205
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 203,
+    "target_frame": 206,
+    "source_q": 0.2815773461555924,
+    "target_q": 0.2996387806033801,
+    "delta_q": 0.01806143444778774,
+    "elapsed_s": 0.6000130000000006,
+    "frame_gap": 3,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      204,
+      205
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      203,
+      204,
+      205,
+      206
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 204,
+    "target_frame": 205,
+    "source_q": 0.28446401290015544,
+    "target_q": 0.29123566231989506,
+    "delta_q": 0.006771649419739623,
+    "elapsed_s": 0.2000043000000007,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      204,
+      205
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 204,
+    "target_frame": 206,
+    "source_q": 0.28446401290015544,
+    "target_q": 0.2996387806033801,
+    "delta_q": 0.015174767703224679,
+    "elapsed_s": 0.40000870000000077,
+    "frame_gap": 2,
+    "chronological_direction": "forward",
+    "intermediate_frames": [
+      205
+    ],
+    "intermediate_states": [
+      "ACTIVE_MOTION"
+    ],
+    "interval_frames": [
+      204,
+      205,
+      206
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  },
+  {
+    "source_frame": 205,
+    "target_frame": 206,
+    "source_q": 0.29123566231989506,
+    "target_q": 0.2996387806033801,
+    "delta_q": 0.008403118283485056,
+    "elapsed_s": 0.20000440000000008,
+    "frame_gap": 1,
+    "chronological_direction": "forward",
+    "intermediate_frames": [],
+    "intermediate_states": [],
+    "interval_frames": [
+      205,
+      206
+    ],
+    "interval_states": [
+      "ACTIVE_MOTION",
+      "ACTIVE_MOTION"
+    ],
+    "valid": true,
+    "validity_reason": "all_local_active_transition_constraints_passed"
+  }
+]

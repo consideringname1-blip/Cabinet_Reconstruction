@@ -1,0 +1,298 @@
+[
+  {
+    "frame_id": 177,
+    "timestamp": 0.0,
+    "q": 0.0,
+    "velocity": 0.0,
+    "state": "CLOSED_PLATEAU",
+    "reason": "near_closed_extremum_and_not_active"
+  },
+  {
+    "frame_id": 178,
+    "timestamp": 0.2000044,
+    "q": 0.0,
+    "velocity": 0.0,
+    "state": "CLOSED_PLATEAU",
+    "reason": "near_closed_extremum_and_not_active"
+  },
+  {
+    "frame_id": 179,
+    "timestamp": 0.4000087,
+    "q": 0.0,
+    "velocity": 0.0,
+    "state": "CLOSED_PLATEAU",
+    "reason": "near_closed_extremum_and_not_active"
+  },
+  {
+    "frame_id": 180,
+    "timestamp": 0.6000129,
+    "q": 0.0,
+    "velocity": 0.000482224737742672,
+    "state": "CLOSED_PLATEAU",
+    "reason": "near_closed_extremum_and_not_active"
+  },
+  {
+    "frame_id": 181,
+    "timestamp": 0.8000172,
+    "q": 0.00019289409045231132,
+    "velocity": 0.0028210042719495052,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 182,
+    "timestamp": 1.0000216,
+    "q": 0.0011284266228279716,
+    "velocity": 0.022444313662302724,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 183,
+    "timestamp": 1.2000259,
+    "q": 0.00917081126755237,
+    "velocity": 0.04694905289014002,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 184,
+    "timestamp": 1.4000302,
+    "q": 0.019908451540738836,
+    "velocity": 0.056584787991298055,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 185,
+    "timestamp": 1.6000346,
+    "q": 0.03180521933127545,
+    "velocity": 0.06326056298086494,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 186,
+    "timestamp": 1.8000388,
+    "q": 0.045213219262714155,
+    "velocity": 0.06848474477067168,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 187,
+    "timestamp": 2.0000431,
+    "q": 0.05919969964910532,
+    "velocity": 0.06930835308438016,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 188,
+    "timestamp": 2.2000475,
+    "q": 0.07293716335462896,
+    "velocity": 0.07633575923136532,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 189,
+    "timestamp": 2.4000517,
+    "q": 0.08973465676920167,
+    "velocity": 0.08429012361418745,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 190,
+    "timestamp": 2.6000561,
+    "q": 0.10665393781713517,
+    "velocity": 0.08432058788773297,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 191,
+    "timestamp": 2.8000605,
+    "q": 0.12346363394546822,
+    "velocity": 0.08439908444532823,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 192,
+    "timestamp": 3.0000648,
+    "q": 0.14041430579681058,
+    "velocity": 0.08729904101603886,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 193,
+    "timestamp": 3.2000691,
+    "q": 0.1583840011236365,
+    "velocity": 0.08871082115999607,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 194,
+    "timestamp": 3.4000735,
+    "q": 0.17589940581780827,
+    "velocity": 0.08757155034110309,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 195,
+    "timestamp": 3.6000779,
+    "q": 0.19341339188972073,
+    "velocity": 0.08958169294483781,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 196,
+    "timestamp": 3.8000822,
+    "q": 0.2117328619537343,
+    "velocity": 0.09367876652687168,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 197,
+    "timestamp": 4.0000865,
+    "q": 0.23088570413786158,
+    "velocity": 0.08782848888113537,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 198,
+    "timestamp": 4.2000909,
+    "q": 0.2468650200273087,
+    "velocity": 0.07689613151750663,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 199,
+    "timestamp": 4.4000951,
+    "q": 0.26164481925107075,
+    "velocity": 0.06642831593502752,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 200,
+    "timestamp": 4.6000995,
+    "q": 0.2734369146971839,
+    "velocity": 0.03558479771404999,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 201,
+    "timestamp": 4.8001036,
+    "q": 0.2758790548320902,
+    "velocity": 0.010430250044697331,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 202,
+    "timestamp": 5.0001078,
+    "q": 0.27760910093009805,
+    "velocity": 0.014245410078038034,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 203,
+    "timestamp": 5.2001123,
+    "q": 0.2815773461555924,
+    "velocity": 0.01713690020946068,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 204,
+    "timestamp": 5.4001166,
+    "q": 0.28446401290015544,
+    "velocity": 0.024145271287424164,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 205,
+    "timestamp": 5.6001209,
+    "q": 0.29123566231989506,
+    "velocity": 0.03793609210877125,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 206,
+    "timestamp": 5.8001253,
+    "q": 0.2996387806033801,
+    "velocity": 0.02248426545569171,
+    "state": "ACTIVE_MOTION",
+    "reason": "frozen_q_velocity_exceeds_threshold"
+  },
+  {
+    "frame_id": 207,
+    "timestamp": 6.0001296,
+    "q": 0.3002295680213606,
+    "velocity": 0.0014769367908101794,
+    "state": "OPEN_PLATEAU",
+    "reason": "near_open_extremum_and_not_active"
+  },
+  {
+    "frame_id": 208,
+    "timestamp": 6.2001339,
+    "q": 0.3002295680213606,
+    "velocity": 0.0,
+    "state": "OPEN_PLATEAU",
+    "reason": "near_open_extremum_and_not_active"
+  },
+  {
+    "frame_id": 209,
+    "timestamp": 6.4001382,
+    "q": 0.3002295680213606,
+    "velocity": 0.0,
+    "state": "OPEN_PLATEAU",
+    "reason": "near_open_extremum_and_not_active"
+  },
+  {
+    "frame_id": 210,
+    "timestamp": 6.6001425,
+    "q": 0.3002295680213606,
+    "velocity": 2.220446049250313e-16,
+    "state": "OPEN_PLATEAU",
+    "reason": "near_open_extremum_and_not_active"
+  },
+  {
+    "frame_id": 211,
+    "timestamp": 6.8001468,
+    "q": 0.3002295680213606,
+    "velocity": -2.220446049250313e-16,
+    "state": "OPEN_PLATEAU",
+    "reason": "near_open_extremum_and_not_active"
+  },
+  {
+    "frame_id": 212,
+    "timestamp": 7.0001511,
+    "q": 0.3002295680213606,
+    "velocity": 0.0,
+    "state": "OPEN_PLATEAU",
+    "reason": "near_open_extremum_and_not_active"
+  },
+  {
+    "frame_id": 213,
+    "timestamp": 7.2001555,
+    "q": 0.3002295680213606,
+    "velocity": 0.0,
+    "state": "OPEN_PLATEAU",
+    "reason": "near_open_extremum_and_not_active"
+  }
+]

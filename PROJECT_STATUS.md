@@ -683,3 +683,35 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 - Failed preserved output: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/unknown_116_physical_events_001`
 - Corrected output: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/unknown_116_physical_events_002`
 - Report: `reports/assignment_v5/unknown_116_physical_events.md`
+
+## Assignment v5 transition-event logic repair (2026-08-07)
+
+### Completed and verified
+
+- Replaced the real-data adapter with directed local ACTIVE_MOTION transitions from raw timestamps and frozen q_t; 66 transitions passed and 39 candidates were rejected. V4 per_target rows and unordered transition keys are absent from formal target selection.
+- Added immutable source-indexed projective depth evidence, symmetric MOVING_LINK and WORLD_STATIC chains, physical boundary categories, measured trusted-front silhouette/reveal evidence, evaluation-only controls, and a control-first hard gate.
+- Passed 45/45 Assignment v5 tests, 34/34 Assignment v4 regressions, and 15/15 registered-depth provenance/projective regressions. The real 0.0002 m/count hard gate passed again.
+- Real controls: drawer front 4/4 MOVING_LINK; documented floor 0/21 MOVING_LINK; plateau-only 0/2 ownership. No SAM2 rerun, tracking, optimization, propagation, TSDF, NKSR, or Mesh ran.
+
+### In progress / not accepted
+
+- The control hard gate failed because the co-moving box was 0/5 MOVING_LINK; all five were UNKNOWN with both static and moving source-anchor chains compatible. The 116-region diagnostic therefore did not run.
+- ready_for_dual_tsdf=false. This result is a failed control diagnostic, not a reconstruction milestone.
+
+### Known issues
+
+- Frames 202-206 have small local delta q: moving residuals are substantially lower (2.47-6.73 mm) than static residuals (13.40-19.48 mm), but both remain within the frozen chain limits. The required both-compatible rule prevents a score-margin winner.
+- No positive measured causal reveal occurred in the controls. Provisional static controls are not manual GT and also remain both-compatible.
+
+### Next steps
+
+1. Do not tune the frozen thresholds against this failed gate or run the 116 regions from it.
+2. Separately design and authorize a stronger source-identity signal or sensor-noise-calibrated likelihood that separates the co-moving box without reviving floor false positives.
+3. Keep historical v5 failed_001 and corrected_002 outputs intact and keep reconstruction blocked.
+
+### Git state and outputs
+
+- Exact implementation parent: 70623ad22850231b0f13b6bc7b647c3d4f2f7d37 on agent/region-assignment-v4.
+- Local output: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/transition_event_logic_repair_001
+- Report: reports/assignment_v5/transition_event_logic_repair.md
+- Review bundle: reports/assignment_v5/results/transition_event_logic_repair/

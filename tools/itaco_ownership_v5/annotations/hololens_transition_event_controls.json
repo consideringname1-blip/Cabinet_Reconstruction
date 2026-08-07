@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "evaluation_only": true,
+  "prohibited_as_classifier_features": [
+    "control_group",
+    "expected_label",
+    "proposal_id",
+    "source_layer",
+    "object_description"
+  ],
+  "recording": "2026-07-30-002840",
+  "controls": [
+    {"control_group": "drawer_front", "original_frame_id": 195, "proposal_id": "frame_195_layer_25", "source_layer": 25, "expected_label": "MOVING_LINK", "object_description": "drawer front, v4 audited front seed", "annotation_provenance": "v4 sam2_seed_manifest front seed"},
+    {"control_group": "drawer_front", "original_frame_id": 196, "proposal_id": "frame_196_layer_25", "source_layer": 25, "expected_label": "MOVING_LINK", "object_description": "drawer front, v4 audited front seed", "annotation_provenance": "v4 sam2_seed_manifest front seed"},
+    {"control_group": "drawer_front", "original_frame_id": 197, "proposal_id": "frame_197_layer_25", "source_layer": 25, "expected_label": "MOVING_LINK", "object_description": "drawer front, v4 audited front seed", "annotation_provenance": "v4 sam2_seed_manifest front seed"},
+    {"control_group": "drawer_front", "original_frame_id": 198, "proposal_id": "frame_198_layer_25", "source_layer": 25, "expected_label": "MOVING_LINK", "object_description": "drawer front, v4 audited front seed", "annotation_provenance": "v4 sam2_seed_manifest front seed"},
+
+    {"control_group": "active_comoving_box", "original_frame_id": 202, "proposal_id": "frame_202_layer_2", "source_layer": 2, "expected_label": "MOVING_LINK", "object_description": "box carried by drawer; not structural drawer GT", "annotation_provenance": "user-confirmed object semantics plus v4 strong drawer evidence"},
+    {"control_group": "active_comoving_box", "original_frame_id": 203, "proposal_id": "frame_203_layer_2", "source_layer": 2, "expected_label": "MOVING_LINK", "object_description": "box carried by drawer; not structural drawer GT", "annotation_provenance": "user-confirmed object semantics plus v4 strong drawer evidence"},
+    {"control_group": "active_comoving_box", "original_frame_id": 204, "proposal_id": "frame_204_layer_2", "source_layer": 2, "expected_label": "MOVING_LINK", "object_description": "box carried by drawer; not structural drawer GT", "annotation_provenance": "user-confirmed object semantics plus v4 strong drawer evidence"},
+    {"control_group": "active_comoving_box", "original_frame_id": 205, "proposal_id": "frame_205_layer_2", "source_layer": 2, "expected_label": "MOVING_LINK", "object_description": "box carried by drawer; not structural drawer GT", "annotation_provenance": "user-confirmed object semantics plus v4 strong drawer evidence"},
+    {"control_group": "active_comoving_box", "original_frame_id": 206, "proposal_id": "frame_206_layer_2", "source_layer": 2, "expected_label": "MOVING_LINK", "object_description": "box carried by drawer; not structural drawer GT", "annotation_provenance": "user-confirmed object semantics plus v4 strong drawer evidence"},
+
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 188, "proposal_id": "frame_188_layer_0", "source_layer": 0, "expected_label": "NOT_MOVING_LINK", "object_description": "early floor observation", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 189, "proposal_id": "frame_189_layer_0", "source_layer": 0, "expected_label": "NOT_MOVING_LINK", "object_description": "early floor observation", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 189, "proposal_id": "frame_189_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 190, "proposal_id": "frame_190_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 191, "proposal_id": "frame_191_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 192, "proposal_id": "frame_192_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 193, "proposal_id": "frame_193_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 194, "proposal_id": "frame_194_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 195, "proposal_id": "frame_195_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 196, "proposal_id": "frame_196_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 197, "proposal_id": "frame_197_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 198, "proposal_id": "frame_198_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 199, "proposal_id": "frame_199_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 200, "proposal_id": "frame_200_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 201, "proposal_id": "frame_201_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 202, "proposal_id": "frame_202_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 203, "proposal_id": "frame_203_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 204, "proposal_id": "frame_204_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 205, "proposal_id": "frame_205_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 206, "proposal_id": "frame_206_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+    {"control_group": "documented_floor_false_positive", "original_frame_id": 207, "proposal_id": "frame_207_layer_6", "source_layer": 6, "expected_label": "NOT_MOVING_LINK", "object_description": "floor mask", "annotation_provenance": "manual audit of v5 failed_001"},
+
+    {"control_group": "plateau_only", "original_frame_id": 211, "proposal_id": "frame_211_layer_2", "source_layer": 2, "expected_label": "UNKNOWN", "evaluation_mode": "plateau_only", "object_description": "open-plateau layer2 seed", "annotation_provenance": "v4 sam2_seed_manifest revealed seed"},
+    {"control_group": "plateau_only", "original_frame_id": 213, "proposal_id": "frame_213_layer_2", "source_layer": 2, "expected_label": "UNKNOWN", "evaluation_mode": "plateau_only", "object_description": "open-plateau layer2 seed", "annotation_provenance": "v4 sam2_seed_manifest revealed seed"},
+
+    {"control_group": "provisional_world_static", "original_frame_id": 195, "proposal_id": "frame_195_layer_3", "source_layer": 3, "expected_label": "WORLD_STATIC_OR_UNKNOWN", "provisional": true, "object_description": "v4 strong static region; not manual GT", "annotation_provenance": "v4 surface identity control selection"},
+    {"control_group": "provisional_world_static", "original_frame_id": 196, "proposal_id": "frame_196_layer_3", "source_layer": 3, "expected_label": "WORLD_STATIC_OR_UNKNOWN", "provisional": true, "object_description": "v4 strong static region; not manual GT", "annotation_provenance": "v4 surface identity control selection"},
+    {"control_group": "provisional_world_static", "original_frame_id": 197, "proposal_id": "frame_197_layer_3", "source_layer": 3, "expected_label": "WORLD_STATIC_OR_UNKNOWN", "provisional": true, "object_description": "v4 strong static region; not manual GT", "annotation_provenance": "v4 surface identity control selection"}
+  ]
+}

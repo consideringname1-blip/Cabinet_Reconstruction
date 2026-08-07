@@ -1,0 +1,116 @@
+{
+  "source_metadata": {
+    "original_frame_id": 211,
+    "q_m": 0.3002295680213606,
+    "proposal_id": "frame_211_layer_2",
+    "source_layer": 2,
+    "evaluation_mode": "plateau_only"
+  },
+  "source_patch": {
+    "source_frame_id": 211,
+    "source_q_m": 0.3002295680213606,
+    "valid_region_pixel_count": 623,
+    "sample_count": 623
+  },
+  "decision": {
+    "label": "UNKNOWN",
+    "formal_ownership_label": "UNKNOWN",
+    "reason": "plateau_only_comparisons_cannot_create_ownership",
+    "raw_routes": {
+      "moving_chain_before_tangent_boundary_gate": false,
+      "moving_link_route": false,
+      "world_static_motion_route": false,
+      "causal_world_static_route": false
+    },
+    "evidence_families": {},
+    "tangent_boundary_gate_passed": false
+  },
+  "chains": {
+    "static": {
+      "positive_chain": false,
+      "verified_target_count": 0,
+      "longest_consecutive_verified_run": 0,
+      "verified_run_start": 211,
+      "verified_run_end": 211,
+      "verified_target_frames": [],
+      "verified_q_span_m": 0.0,
+      "verified_elapsed_time_s": 0.0,
+      "median_of_frame_median_residual_m": null,
+      "median_of_frame_p90_residual_m": null,
+      "gaps": [],
+      "contradiction_intervals": [],
+      "identity_state_counts": {}
+    },
+    "drawer": {
+      "positive_chain": false,
+      "verified_target_count": 0,
+      "longest_consecutive_verified_run": 0,
+      "verified_run_start": 211,
+      "verified_run_end": 211,
+      "verified_target_frames": [],
+      "verified_q_span_m": 0.0,
+      "verified_elapsed_time_s": 0.0,
+      "median_of_frame_median_residual_m": null,
+      "median_of_frame_p90_residual_m": null,
+      "gaps": [],
+      "contradiction_intervals": [],
+      "identity_state_counts": {}
+    }
+  },
+  "physical_boundary": {
+    "valid": true,
+    "boundary_point_count": 186,
+    "category_counts": {
+      "rgb_footprint_truncation": 88,
+      "depth_footprint_truncation": 0,
+      "depth_discontinuity": 13,
+      "normal_or_plane_discontinuity": 69,
+      "invalid_depth_hole": 0,
+      "segmentation_only": 16
+    },
+    "depth_edge_fraction": 0.06989247311827956,
+    "normal_edge_fraction": 0.3709677419354839,
+    "observation_clipped_fraction": 0.4731182795698925,
+    "invalid_hole_fraction": 0.0,
+    "segmentation_only_fraction": 0.08602150537634409,
+    "physical_boundary_fraction": 0.44086021505376344,
+    "leading_edge_physical_confidence": 0.9216,
+    "trailing_edge_physical_confidence": 0.1456,
+    "axis_extent_m": 0.012969937172359725,
+    "normal_axis_alignment": 0.9884231694577452,
+    "tangent_motion": false,
+    "has_trusted_axis_finite_edge": true
+  },
+  "moving_edge_chain": {
+    "confidence": 0.0,
+    "verified_edge_frames": 0,
+    "edge_sample_count": 250,
+    "target_frames": [],
+    "passed": false
+  },
+  "causal_reveal_events": [],
+  "per_target": {
+    "static": [],
+    "drawer": []
+  },
+  "hard_invariants": {
+    "assignment_v4_per_target_used": false,
+    "target_proposals_used_for_identity": false,
+    "target_proposals_posthoc_only": true,
+    "directed_transition_keys": true,
+    "source_anchor_immutable": true,
+    "world_static_is_not_cabinet_membership": true,
+    "dense_propagation_ran": false,
+    "reconstruction_ran": false
+  },
+  "evaluation_annotation": {
+    "control_group": "plateau_only",
+    "original_frame_id": 211,
+    "proposal_id": "frame_211_layer_2",
+    "source_layer": 2,
+    "expected_label": "UNKNOWN",
+    "evaluation_mode": "plateau_only",
+    "object_description": "open-plateau layer2 seed",
+    "annotation_provenance": "v4 sam2_seed_manifest revealed seed"
+  }
+}

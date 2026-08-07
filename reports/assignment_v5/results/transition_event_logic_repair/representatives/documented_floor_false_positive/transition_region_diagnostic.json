@@ -1,0 +1,1224 @@
+{
+  "source_metadata": {
+    "original_frame_id": 188,
+    "q_m": 0.07293716335462896,
+    "proposal_id": "frame_188_layer_0",
+    "source_layer": 0,
+    "evaluation_mode": "active_transition"
+  },
+  "source_patch": {
+    "source_frame_id": 188,
+    "source_q_m": 0.07293716335462896,
+    "valid_region_pixel_count": 888,
+    "sample_count": 888
+  },
+  "decision": {
+    "label": "UNKNOWN",
+    "reason": "motion_tangent_or_repeated_surface_ambiguity",
+    "formal_ownership_label": "UNKNOWN",
+    "raw_routes": {
+      "moving_chain_before_tangent_boundary_gate": true,
+      "moving_link_route": false,
+      "world_static_motion_route": true,
+      "causal_world_static_route": false
+    },
+    "evidence_families": {
+      "ARTICULATED_MOTION_TRANSITION": false,
+      "WORLD_STATIC_MOTION_TRANSITION": true,
+      "CAUSAL_OCCLUSION_DISOCCLUSION": false,
+      "FREE_SPACE_CONTRADICTION": false,
+      "TRUSTED_IDENTITY_PROPAGATION": false
+    },
+    "tangent_boundary_gate_passed": false
+  },
+  "chains": {
+    "static": {
+      "positive_chain": true,
+      "verified_target_count": 6,
+      "longest_consecutive_verified_run": 6,
+      "verified_run_start": 185,
+      "verified_run_end": 191,
+      "verified_target_frames": [
+        185,
+        186,
+        187,
+        189,
+        190,
+        191
+      ],
+      "verified_q_span_m": 0.09165841461419277,
+      "verified_elapsed_time_s": 1.2000258999999998,
+      "median_of_frame_median_residual_m": 0.002983791441544448,
+      "median_of_frame_p90_residual_m": 0.004745849836757243,
+      "gaps": [
+        {
+          "after_frame": 187,
+          "before_frame": 189,
+          "missing_frame_count": 1
+        }
+      ],
+      "contradiction_intervals": [],
+      "identity_state_counts": {
+        "VERIFIED_SOURCE_ANCHOR": 6
+      }
+    },
+    "drawer": {
+      "positive_chain": true,
+      "verified_target_count": 6,
+      "longest_consecutive_verified_run": 6,
+      "verified_run_start": 185,
+      "verified_run_end": 191,
+      "verified_target_frames": [
+        185,
+        186,
+        187,
+        189,
+        190,
+        191
+      ],
+      "verified_q_span_m": 0.09165841461419277,
+      "verified_elapsed_time_s": 1.2000258999999998,
+      "median_of_frame_median_residual_m": 0.0052908189785092164,
+      "median_of_frame_p90_residual_m": 0.008744563926701934,
+      "gaps": [
+        {
+          "after_frame": 187,
+          "before_frame": 189,
+          "missing_frame_count": 1
+        }
+      ],
+      "contradiction_intervals": [],
+      "identity_state_counts": {
+        "VERIFIED_SOURCE_ANCHOR": 6
+      }
+    }
+  },
+  "physical_boundary": {
+    "valid": true,
+    "boundary_point_count": 435,
+    "category_counts": {
+      "rgb_footprint_truncation": 435,
+      "depth_footprint_truncation": 0,
+      "depth_discontinuity": 0,
+      "normal_or_plane_discontinuity": 0,
+      "invalid_depth_hole": 0,
+      "segmentation_only": 0
+    },
+    "depth_edge_fraction": 0.0,
+    "normal_edge_fraction": 0.0,
+    "observation_clipped_fraction": 1.0,
+    "invalid_hole_fraction": 0.0,
+    "segmentation_only_fraction": 0.0,
+    "physical_boundary_fraction": 0.0,
+    "leading_edge_physical_confidence": 0.0,
+    "trailing_edge_physical_confidence": 0.0,
+    "axis_extent_m": 0.47656031923494746,
+    "normal_axis_alignment": 0.10262218540668501,
+    "tangent_motion": true,
+    "has_trusted_axis_finite_edge": false
+  },
+  "moving_edge_chain": {
+    "confidence": 0.351123595505618,
+    "verified_edge_frames": 6,
+    "edge_sample_count": 356,
+    "target_frames": [
+      185,
+      186,
+      187,
+      189,
+      190,
+      191
+    ],
+    "passed": false
+  },
+  "causal_reveal_events": [
+    {
+      "source_frame_id": 188,
+      "target_frame_id": 189,
+      "frame_gap": 1,
+      "elapsed_s": 0.20000419999999997,
+      "delta_q_m": 0.016797493414572706,
+      "chronological_direction": "forward",
+      "positive_causal_static_disocclusion": false,
+      "reason": "measured_causal_chain_incomplete",
+      "checks": {
+        "active_transition": true,
+        "verified_moving_occluder": true,
+        "occluder_motion_matches_articulation": true,
+        "local_depth_gap": false,
+        "near_silhouette_boundary": false,
+        "temporally_adjacent_reveal": true,
+        "silhouette_leaves_location": false,
+        "new_surface_appears": false,
+        "world_static_persistence": false
+      },
+      "failed_checks": [
+        "local_depth_gap",
+        "near_silhouette_boundary",
+        "silhouette_leaves_location",
+        "new_surface_appears",
+        "world_static_persistence"
+      ],
+      "field_provenance": {
+        "active_transition": "directed_local_transition",
+        "verified_moving_occluder": "four_front_seed_propagations_3of4_agreement",
+        "occluder_motion_matches_articulation": "predicted_vs_actual_trusted_silhouette",
+        "local_depth_gap": "registered_depth_same_predicted_ray",
+        "near_silhouette_boundary": "actual_before_trusted_mask_boundary_distance",
+        "temporally_adjacent_reveal": "raw_frame_id_and_timestamp_gap",
+        "silhouette_leaves_location": "predicted_and_actual_after_masks_at_candidate_ray",
+        "new_surface_appears": "after_registered_depth_world_support",
+        "world_static_persistence": "measured_after_and_future_world_residuals"
+      },
+      "silhouette": {
+        "source_sample_count": 3082,
+        "predicted_pixel_count": 3809,
+        "geometry_depth_residual_median": 0.0023000203837065247,
+        "geometry_depth_residual_p90": 0.004900689604761555,
+        "silhouette_iou": 0.8484216018784242,
+        "boundary_displacement_px": 2.0,
+        "predicted_pixels": 3809,
+        "actual_pixels": 3276
+      },
+      "local_occluded_sample_count": 0,
+      "reveal_band_sample_count": 0,
+      "newly_supported_sample_count": 0,
+      "local_depth_gap_median": null,
+      "local_depth_gap_p90": null,
+      "persistent_frame_count": 0,
+      "persistent_q_span_m": 0.0,
+      "persistent_sample_fraction_median": 0.0,
+      "persistent_world_residual_median": null,
+      "persistent_world_residual_p90": null,
+      "persistence_rows": [
+        {
+          "frame_id": 189,
+          "q_m": 0.08973465676920167,
+          "supported_sample_count": 0,
+          "supported_sample_fraction": 0.0,
+          "median_world_residual_m": null,
+          "p90_world_residual_m": null
+        },
+        {
+          "frame_id": 190,
+          "q_m": 0.10665393781713517,
+          "supported_sample_count": 0,
+          "supported_sample_fraction": 0.0,
+          "median_world_residual_m": null,
+          "p90_world_residual_m": null
+        },
+        {
+          "frame_id": 191,
+          "q_m": 0.12346363394546822,
+          "supported_sample_count": 0,
+          "supported_sample_fraction": 0.0,
+          "median_world_residual_m": null,
+          "p90_world_residual_m": null
+        },
+        {
+          "frame_id": 192,
+          "q_m": 0.14041430579681058,
+          "supported_sample_count": 0,
+          "supported_sample_fraction": 0.0,
+          "median_world_residual_m": null,
+          "p90_world_residual_m": null
+        }
+      ]
+    },
+    {
+      "source_frame_id": 188,
+      "target_frame_id": 190,
+      "frame_gap": 2,
+      "elapsed_s": 0.40000860000000005,
+      "delta_q_m": 0.033716774462506205,
+      "chronological_direction": "forward",
+      "positive_causal_static_disocclusion": false,
+      "reason": "measured_causal_chain_incomplete",
+      "checks": {
+        "active_transition": true,
+        "verified_moving_occluder": true,
+        "occluder_motion_matches_articulation": true,
+        "local_depth_gap": false,
+        "near_silhouette_boundary": false,
+        "temporally_adjacent_reveal": true,
+        "silhouette_leaves_location": false,
+        "new_surface_appears": false,
+        "world_static_persistence": false
+      },
+      "failed_checks": [
+        "local_depth_gap",
+        "near_silhouette_boundary",
+        "silhouette_leaves_location",
+        "new_surface_appears",
+        "world_static_persistence"
+      ],
+      "field_provenance": {
+        "active_transition": "directed_local_transition",
+        "verified_moving_occluder": "four_front_seed_propagations_3of4_agreement",
+        "occluder_motion_matches_articulation": "predicted_vs_actual_trusted_silhouette",
+        "local_depth_gap": "registered_depth_same_predicted_ray",
+        "near_silhouette_boundary": "actual_before_trusted_mask_boundary_distance",
+        "temporally_adjacent_reveal": "raw_frame_id_and_timestamp_gap",
+        "silhouette_leaves_location": "predicted_and_actual_after_masks_at_candidate_ray",
+        "new_surface_appears": "after_registered_depth_world_support",
+        "world_static_persistence": "measured_after_and_future_world_residuals"
+      },
+      "silhouette": {
+        "source_sample_count": 3082,
+        "predicted_pixel_count": 3753,
+        "geometry_depth_residual_median": 0.0028996171260572967,
+        "geometry_depth_residual_p90": 0.007723393448116358,
+        "silhouette_iou": 0.8321400159108989,
+        "boundary_displacement_px": 2.0,
+        "predicted_pixels": 3753,
+        "actual_pixels": 3156
+      },
+      "local_occluded_sample_count": 0,
+      "reveal_band_sample_count": 0,
+      "newly_supported_sample_count": 0,
+      "local_depth_gap_median": null,
+      "local_depth_gap_p90": null,
+      "persistent_frame_count": 0,
+      "persistent_q_span_m": 0.0,
+      "persistent_sample_fraction_median": 0.0,
+      "persistent_world_residual_median": null,
+      "persistent_world_residual_p90": null,
+      "persistence_rows": [
+        {
+          "frame_id": 190,
+          "q_m": 0.10665393781713517,
+          "supported_sample_count": 0,
+          "supported_sample_fraction": 0.0,
+          "median_world_residual_m": null,
+          "p90_world_residual_m": null
+        },
+        {
+          "frame_id": 191,
+          "q_m": 0.12346363394546822,
+          "supported_sample_count": 0,
+          "supported_sample_fraction": 0.0,
+          "median_world_residual_m": null,
+          "p90_world_residual_m": null
+        },
+        {
+          "frame_id": 192,
+          "q_m": 0.14041430579681058,
+          "supported_sample_count": 0,
+          "supported_sample_fraction": 0.0,
+          "median_world_residual_m": null,
+          "p90_world_residual_m": null
+        },
+        {
+          "frame_id": 193,
+          "q_m": 0.1583840011236365,
+          "supported_sample_count": 0,
+          "supported_sample_fraction": 0.0,
+          "median_world_residual_m": null,
+          "p90_world_residual_m": null
+        }
+      ]
+    },
+    {
+      "source_frame_id": 188,
+      "target_frame_id": 191,
+      "frame_gap": 3,
+      "elapsed_s": 0.6000129999999997,
+      "delta_q_m": 0.050526470590839256,
+      "chronological_direction": "forward",
+      "positive_causal_static_disocclusion": false,
+      "reason": "measured_causal_chain_incomplete",
+      "checks": {
+        "active_transition": true,
+        "verified_moving_occluder": true,
+        "occluder_motion_matches_articulation": true,
+        "local_depth_gap": false,
+        "near_silhouette_boundary": false,
+        "temporally_adjacent_reveal": true,
+        "silhouette_leaves_location": false,
+        "new_surface_appears": false,
+        "world_static_persistence": false
+      },
+      "failed_checks": [
+        "local_depth_gap",
+        "near_silhouette_boundary",
+        "silhouette_leaves_location",
+        "new_surface_appears",
+        "world_static_persistence"
+      ],
+      "field_provenance": {
+        "active_transition": "directed_local_transition",
+        "verified_moving_occluder": "four_front_seed_propagations_3of4_agreement",
+        "occluder_motion_matches_articulation": "predicted_vs_actual_trusted_silhouette",
+        "local_depth_gap": "registered_depth_same_predicted_ray",
+        "near_silhouette_boundary": "actual_before_trusted_mask_boundary_distance",
+        "temporally_adjacent_reveal": "raw_frame_id_and_timestamp_gap",
+        "silhouette_leaves_location": "predicted_and_actual_after_masks_at_candidate_ray",
+        "new_surface_appears": "after_registered_depth_world_support",
+        "world_static_persistence": "measured_after_and_future_world_residuals"
+      },
+      "silhouette": {
+        "source_sample_count": 3082,
+        "predicted_pixel_count": 3672,
+        "geometry_depth_residual_median": 0.003062243745997728,
+        "geometry_depth_residual_p90": 0.008927874468594256,
+        "silhouette_iou": 0.8227951153324288,
+        "boundary_displacement_px": 2.0,
+        "predicted_pixels": 3672,
+        "actual_pixels": 3045
+      },
+      "local_occluded_sample_count": 0,
+      "reveal_band_sample_count": 0,
+      "newly_supported_sample_count": 0,
+      "local_depth_gap_median": null,
+      "local_depth_gap_p90": null,
+      "persistent_frame_count": 0,
+      "persistent_q_span_m": 0.0,
+      "persistent_sample_fraction_median": 0.0,
+      "persistent_world_residual_median": null,
+      "persistent_world_residual_p90": null,
+      "persistence_rows": [
+        {
+          "frame_id": 191,
+          "q_m": 0.12346363394546822,
+          "supported_sample_count": 0,
+          "supported_sample_fraction": 0.0,
+          "median_world_residual_m": null,
+          "p90_world_residual_m": null
+        },
+        {
+          "frame_id": 192,
+          "q_m": 0.14041430579681058,
+          "supported_sample_count": 0,
+          "supported_sample_fraction": 0.0,
+          "median_world_residual_m": null,
+          "p90_world_residual_m": null
+        },
+        {
+          "frame_id": 193,
+          "q_m": 0.1583840011236365,
+          "supported_sample_count": 0,
+          "supported_sample_fraction": 0.0,
+          "median_world_residual_m": null,
+          "p90_world_residual_m": null
+        },
+        {
+          "frame_id": 194,
+          "q_m": 0.17589940581780827,
+          "supported_sample_count": 0,
+          "supported_sample_fraction": 0.0,
+          "median_world_residual_m": null,
+          "p90_world_residual_m": null
+        }
+      ]
+    }
+  ],
+  "per_target": {
+    "static": [
+      {
+        "model": "static",
+        "source_frame_id": 188,
+        "target_frame_id": 185,
+        "source_q_m": 0.07293716335462896,
+        "target_q_m": 0.03180521933127545,
+        "delta_q_m": -0.04113194402335352,
+        "identity_state": "VERIFIED_SOURCE_ANCHOR",
+        "identity_reason": "paired_source_samples_verify_immutable_anchor",
+        "source_sample_count": 888,
+        "valid_projected_samples": 272,
+        "supported_samples": 272,
+        "occluded_samples": 0,
+        "free_space_contradiction_samples": 0,
+        "unexplained_samples": 0,
+        "source_sample_index_coverage": 0.3063063063063063,
+        "spatial_coverage": 0.7692307692307693,
+        "inlier_fraction": 1.0,
+        "median_residual_m": 0.0035934987872966702,
+        "p90_residual_m": 0.005759845726370402,
+        "contradiction_fraction": 0.0,
+        "contradiction_spatial_coherence": 0.0,
+        "occlusion_fraction": 0.0,
+        "trusted_drawer_occlusion_fraction": 0.0,
+        "target_proposals_used_for_identity": false,
+        "source_anchor_immutable": true,
+        "identity_observation_direction": "backward_identity_confirmation",
+        "causal_eligible": false,
+        "chronological_transition": {
+          "source_frame": 185,
+          "target_frame": 188,
+          "source_q": 0.03180521933127545,
+          "target_q": 0.07293716335462896,
+          "delta_q": 0.04113194402335352,
+          "elapsed_s": 0.6000129000000001,
+          "frame_gap": 3,
+          "chronological_direction": "forward",
+          "intermediate_frames": [
+            186,
+            187
+          ],
+          "intermediate_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "interval_frames": [
+            185,
+            186,
+            187,
+            188
+          ],
+          "interval_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "valid": true,
+          "validity_reason": "all_local_active_transition_constraints_passed"
+        },
+        "target_proposal_posthoc_provenance": [
+          {
+            "proposal_id": "frame_185_layer_0",
+            "source_layer": 0,
+            "hit_count": 272,
+            "observable_overlap_fraction": 1.0,
+            "role": "posthoc_provenance_only_not_identity"
+          }
+        ]
+      },
+      {
+        "model": "static",
+        "source_frame_id": 188,
+        "target_frame_id": 186,
+        "source_q_m": 0.07293716335462896,
+        "target_q_m": 0.045213219262714155,
+        "delta_q_m": -0.02772394409191481,
+        "identity_state": "VERIFIED_SOURCE_ANCHOR",
+        "identity_reason": "paired_source_samples_verify_immutable_anchor",
+        "source_sample_count": 888,
+        "valid_projected_samples": 356,
+        "supported_samples": 356,
+        "occluded_samples": 0,
+        "free_space_contradiction_samples": 0,
+        "unexplained_samples": 0,
+        "source_sample_index_coverage": 0.4009009009009009,
+        "spatial_coverage": 0.7692307692307693,
+        "inlier_fraction": 1.0,
+        "median_residual_m": 0.002859955524323122,
+        "p90_residual_m": 0.00457762159702494,
+        "contradiction_fraction": 0.0,
+        "contradiction_spatial_coherence": 0.0,
+        "occlusion_fraction": 0.0,
+        "trusted_drawer_occlusion_fraction": 0.0,
+        "target_proposals_used_for_identity": false,
+        "source_anchor_immutable": true,
+        "identity_observation_direction": "backward_identity_confirmation",
+        "causal_eligible": false,
+        "chronological_transition": {
+          "source_frame": 186,
+          "target_frame": 188,
+          "source_q": 0.045213219262714155,
+          "target_q": 0.07293716335462896,
+          "delta_q": 0.02772394409191481,
+          "elapsed_s": 0.4000087000000001,
+          "frame_gap": 2,
+          "chronological_direction": "forward",
+          "intermediate_frames": [
+            187
+          ],
+          "intermediate_states": [
+            "ACTIVE_MOTION"
+          ],
+          "interval_frames": [
+            186,
+            187,
+            188
+          ],
+          "interval_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "valid": true,
+          "validity_reason": "all_local_active_transition_constraints_passed"
+        },
+        "target_proposal_posthoc_provenance": [
+          {
+            "proposal_id": "frame_186_layer_0",
+            "source_layer": 0,
+            "hit_count": 356,
+            "observable_overlap_fraction": 1.0,
+            "role": "posthoc_provenance_only_not_identity"
+          }
+        ]
+      },
+      {
+        "model": "static",
+        "source_frame_id": 188,
+        "target_frame_id": 187,
+        "source_q_m": 0.07293716335462896,
+        "target_q_m": 0.05919969964910532,
+        "delta_q_m": -0.013737463705523645,
+        "identity_state": "VERIFIED_SOURCE_ANCHOR",
+        "identity_reason": "paired_source_samples_verify_immutable_anchor",
+        "source_sample_count": 888,
+        "valid_projected_samples": 410,
+        "supported_samples": 410,
+        "occluded_samples": 0,
+        "free_space_contradiction_samples": 0,
+        "unexplained_samples": 0,
+        "source_sample_index_coverage": 0.4617117117117117,
+        "spatial_coverage": 0.9230769230769231,
+        "inlier_fraction": 1.0,
+        "median_residual_m": 0.0026528329864007947,
+        "p90_residual_m": 0.0046857795826323505,
+        "contradiction_fraction": 0.0,
+        "contradiction_spatial_coherence": 0.0,
+        "occlusion_fraction": 0.0,
+        "trusted_drawer_occlusion_fraction": 0.0,
+        "target_proposals_used_for_identity": false,
+        "source_anchor_immutable": true,
+        "identity_observation_direction": "backward_identity_confirmation",
+        "causal_eligible": false,
+        "chronological_transition": {
+          "source_frame": 187,
+          "target_frame": 188,
+          "source_q": 0.05919969964910532,
+          "target_q": 0.07293716335462896,
+          "delta_q": 0.013737463705523645,
+          "elapsed_s": 0.20000440000000008,
+          "frame_gap": 1,
+          "chronological_direction": "forward",
+          "intermediate_frames": [],
+          "intermediate_states": [],
+          "interval_frames": [
+            187,
+            188
+          ],
+          "interval_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "valid": true,
+          "validity_reason": "all_local_active_transition_constraints_passed"
+        },
+        "target_proposal_posthoc_provenance": [
+          {
+            "proposal_id": "frame_187_layer_0",
+            "source_layer": 0,
+            "hit_count": 410,
+            "observable_overlap_fraction": 1.0,
+            "role": "posthoc_provenance_only_not_identity"
+          }
+        ]
+      },
+      {
+        "model": "static",
+        "source_frame_id": 188,
+        "target_frame_id": 189,
+        "source_q_m": 0.07293716335462896,
+        "target_q_m": 0.08973465676920167,
+        "delta_q_m": 0.016797493414572706,
+        "identity_state": "VERIFIED_SOURCE_ANCHOR",
+        "identity_reason": "paired_source_samples_verify_immutable_anchor",
+        "source_sample_count": 888,
+        "valid_projected_samples": 521,
+        "supported_samples": 521,
+        "occluded_samples": 0,
+        "free_space_contradiction_samples": 0,
+        "unexplained_samples": 0,
+        "source_sample_index_coverage": 0.5867117117117117,
+        "spatial_coverage": 0.9230769230769231,
+        "inlier_fraction": 1.0,
+        "median_residual_m": 0.0032532527553824184,
+        "p90_residual_m": 0.005468902160034152,
+        "contradiction_fraction": 0.0,
+        "contradiction_spatial_coherence": 0.0,
+        "occlusion_fraction": 0.0,
+        "trusted_drawer_occlusion_fraction": 0.0,
+        "target_proposals_used_for_identity": false,
+        "source_anchor_immutable": true,
+        "identity_observation_direction": "forward",
+        "causal_eligible": true,
+        "chronological_transition": {
+          "source_frame": 188,
+          "target_frame": 189,
+          "source_q": 0.07293716335462896,
+          "target_q": 0.08973465676920167,
+          "delta_q": 0.016797493414572706,
+          "elapsed_s": 0.20000419999999997,
+          "frame_gap": 1,
+          "chronological_direction": "forward",
+          "intermediate_frames": [],
+          "intermediate_states": [],
+          "interval_frames": [
+            188,
+            189
+          ],
+          "interval_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "valid": true,
+          "validity_reason": "all_local_active_transition_constraints_passed"
+        },
+        "target_proposal_posthoc_provenance": [
+          {
+            "proposal_id": "frame_189_layer_0",
+            "source_layer": 0,
+            "hit_count": 521,
+            "observable_overlap_fraction": 1.0,
+            "role": "posthoc_provenance_only_not_identity"
+          }
+        ]
+      },
+      {
+        "model": "static",
+        "source_frame_id": 188,
+        "target_frame_id": 190,
+        "source_q_m": 0.07293716335462896,
+        "target_q_m": 0.10665393781713517,
+        "delta_q_m": 0.033716774462506205,
+        "identity_state": "VERIFIED_SOURCE_ANCHOR",
+        "identity_reason": "paired_source_samples_verify_immutable_anchor",
+        "source_sample_count": 888,
+        "valid_projected_samples": 405,
+        "supported_samples": 405,
+        "occluded_samples": 0,
+        "free_space_contradiction_samples": 0,
+        "unexplained_samples": 0,
+        "source_sample_index_coverage": 0.4560810810810811,
+        "spatial_coverage": 0.9230769230769231,
+        "inlier_fraction": 1.0,
+        "median_residual_m": 0.00281634807289438,
+        "p90_residual_m": 0.00450500014552056,
+        "contradiction_fraction": 0.0,
+        "contradiction_spatial_coherence": 0.0,
+        "occlusion_fraction": 0.0,
+        "trusted_drawer_occlusion_fraction": 0.0,
+        "target_proposals_used_for_identity": false,
+        "source_anchor_immutable": true,
+        "identity_observation_direction": "forward",
+        "causal_eligible": true,
+        "chronological_transition": {
+          "source_frame": 188,
+          "target_frame": 190,
+          "source_q": 0.07293716335462896,
+          "target_q": 0.10665393781713517,
+          "delta_q": 0.033716774462506205,
+          "elapsed_s": 0.40000860000000005,
+          "frame_gap": 2,
+          "chronological_direction": "forward",
+          "intermediate_frames": [
+            189
+          ],
+          "intermediate_states": [
+            "ACTIVE_MOTION"
+          ],
+          "interval_frames": [
+            188,
+            189,
+            190
+          ],
+          "interval_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "valid": true,
+          "validity_reason": "all_local_active_transition_constraints_passed"
+        },
+        "target_proposal_posthoc_provenance": [
+          {
+            "proposal_id": "frame_190_layer_0",
+            "source_layer": 0,
+            "hit_count": 405,
+            "observable_overlap_fraction": 1.0,
+            "role": "posthoc_provenance_only_not_identity"
+          }
+        ]
+      },
+      {
+        "model": "static",
+        "source_frame_id": 188,
+        "target_frame_id": 191,
+        "source_q_m": 0.07293716335462896,
+        "target_q_m": 0.12346363394546822,
+        "delta_q_m": 0.050526470590839256,
+        "identity_state": "VERIFIED_SOURCE_ANCHOR",
+        "identity_reason": "paired_source_samples_verify_immutable_anchor",
+        "source_sample_count": 888,
+        "valid_projected_samples": 388,
+        "supported_samples": 388,
+        "occluded_samples": 0,
+        "free_space_contradiction_samples": 0,
+        "unexplained_samples": 0,
+        "source_sample_index_coverage": 0.4369369369369369,
+        "spatial_coverage": 0.9230769230769231,
+        "inlier_fraction": 1.0,
+        "median_residual_m": 0.0031076273587657736,
+        "p90_residual_m": 0.004805920090882136,
+        "contradiction_fraction": 0.0,
+        "contradiction_spatial_coherence": 0.0,
+        "occlusion_fraction": 0.0,
+        "trusted_drawer_occlusion_fraction": 0.0,
+        "target_proposals_used_for_identity": false,
+        "source_anchor_immutable": true,
+        "identity_observation_direction": "forward",
+        "causal_eligible": true,
+        "chronological_transition": {
+          "source_frame": 188,
+          "target_frame": 191,
+          "source_q": 0.07293716335462896,
+          "target_q": 0.12346363394546822,
+          "delta_q": 0.050526470590839256,
+          "elapsed_s": 0.6000129999999997,
+          "frame_gap": 3,
+          "chronological_direction": "forward",
+          "intermediate_frames": [
+            189,
+            190
+          ],
+          "intermediate_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "interval_frames": [
+            188,
+            189,
+            190,
+            191
+          ],
+          "interval_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "valid": true,
+          "validity_reason": "all_local_active_transition_constraints_passed"
+        },
+        "target_proposal_posthoc_provenance": [
+          {
+            "proposal_id": "frame_191_layer_0",
+            "source_layer": 0,
+            "hit_count": 388,
+            "observable_overlap_fraction": 1.0,
+            "role": "posthoc_provenance_only_not_identity"
+          }
+        ]
+      }
+    ],
+    "drawer": [
+      {
+        "model": "drawer",
+        "source_frame_id": 188,
+        "target_frame_id": 185,
+        "source_q_m": 0.07293716335462896,
+        "target_q_m": 0.03180521933127545,
+        "delta_q_m": -0.04113194402335352,
+        "identity_state": "VERIFIED_SOURCE_ANCHOR",
+        "identity_reason": "paired_source_samples_verify_immutable_anchor",
+        "source_sample_count": 888,
+        "valid_projected_samples": 314,
+        "supported_samples": 314,
+        "occluded_samples": 0,
+        "free_space_contradiction_samples": 0,
+        "unexplained_samples": 0,
+        "source_sample_index_coverage": 0.3536036036036036,
+        "spatial_coverage": 0.7692307692307693,
+        "inlier_fraction": 1.0,
+        "median_residual_m": 0.008449469255869105,
+        "p90_residual_m": 0.01089140177977974,
+        "contradiction_fraction": 0.0,
+        "contradiction_spatial_coherence": 0.0,
+        "occlusion_fraction": 0.0,
+        "trusted_drawer_occlusion_fraction": 0.0,
+        "target_proposals_used_for_identity": false,
+        "source_anchor_immutable": true,
+        "identity_observation_direction": "backward_identity_confirmation",
+        "causal_eligible": false,
+        "chronological_transition": {
+          "source_frame": 185,
+          "target_frame": 188,
+          "source_q": 0.03180521933127545,
+          "target_q": 0.07293716335462896,
+          "delta_q": 0.04113194402335352,
+          "elapsed_s": 0.6000129000000001,
+          "frame_gap": 3,
+          "chronological_direction": "forward",
+          "intermediate_frames": [
+            186,
+            187
+          ],
+          "intermediate_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "interval_frames": [
+            185,
+            186,
+            187,
+            188
+          ],
+          "interval_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "valid": true,
+          "validity_reason": "all_local_active_transition_constraints_passed"
+        },
+        "target_proposal_posthoc_provenance": [
+          {
+            "proposal_id": "frame_185_layer_0",
+            "source_layer": 0,
+            "hit_count": 314,
+            "observable_overlap_fraction": 1.0,
+            "role": "posthoc_provenance_only_not_identity"
+          }
+        ]
+      },
+      {
+        "model": "drawer",
+        "source_frame_id": 188,
+        "target_frame_id": 186,
+        "source_q_m": 0.07293716335462896,
+        "target_q_m": 0.045213219262714155,
+        "delta_q_m": -0.02772394409191481,
+        "identity_state": "VERIFIED_SOURCE_ANCHOR",
+        "identity_reason": "paired_source_samples_verify_immutable_anchor",
+        "source_sample_count": 888,
+        "valid_projected_samples": 371,
+        "supported_samples": 371,
+        "occluded_samples": 0,
+        "free_space_contradiction_samples": 0,
+        "unexplained_samples": 0,
+        "source_sample_index_coverage": 0.4177927927927928,
+        "spatial_coverage": 0.9230769230769231,
+        "inlier_fraction": 1.0,
+        "median_residual_m": 0.004653274912976596,
+        "p90_residual_m": 0.007707644675225567,
+        "contradiction_fraction": 0.0,
+        "contradiction_spatial_coherence": 0.0,
+        "occlusion_fraction": 0.0,
+        "trusted_drawer_occlusion_fraction": 0.0,
+        "target_proposals_used_for_identity": false,
+        "source_anchor_immutable": true,
+        "identity_observation_direction": "backward_identity_confirmation",
+        "causal_eligible": false,
+        "chronological_transition": {
+          "source_frame": 186,
+          "target_frame": 188,
+          "source_q": 0.045213219262714155,
+          "target_q": 0.07293716335462896,
+          "delta_q": 0.02772394409191481,
+          "elapsed_s": 0.4000087000000001,
+          "frame_gap": 2,
+          "chronological_direction": "forward",
+          "intermediate_frames": [
+            187
+          ],
+          "intermediate_states": [
+            "ACTIVE_MOTION"
+          ],
+          "interval_frames": [
+            186,
+            187,
+            188
+          ],
+          "interval_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "valid": true,
+          "validity_reason": "all_local_active_transition_constraints_passed"
+        },
+        "target_proposal_posthoc_provenance": [
+          {
+            "proposal_id": "frame_186_layer_0",
+            "source_layer": 0,
+            "hit_count": 371,
+            "observable_overlap_fraction": 1.0,
+            "role": "posthoc_provenance_only_not_identity"
+          }
+        ]
+      },
+      {
+        "model": "drawer",
+        "source_frame_id": 188,
+        "target_frame_id": 187,
+        "source_q_m": 0.07293716335462896,
+        "target_q_m": 0.05919969964910532,
+        "delta_q_m": -0.013737463705523645,
+        "identity_state": "VERIFIED_SOURCE_ANCHOR",
+        "identity_reason": "paired_source_samples_verify_immutable_anchor",
+        "source_sample_count": 888,
+        "valid_projected_samples": 411,
+        "supported_samples": 411,
+        "occluded_samples": 0,
+        "free_space_contradiction_samples": 0,
+        "unexplained_samples": 0,
+        "source_sample_index_coverage": 0.46283783783783783,
+        "spatial_coverage": 0.9230769230769231,
+        "inlier_fraction": 1.0,
+        "median_residual_m": 0.003193998931662028,
+        "p90_residual_m": 0.006941659751982644,
+        "contradiction_fraction": 0.0,
+        "contradiction_spatial_coherence": 0.0,
+        "occlusion_fraction": 0.0,
+        "trusted_drawer_occlusion_fraction": 0.0,
+        "target_proposals_used_for_identity": false,
+        "source_anchor_immutable": true,
+        "identity_observation_direction": "backward_identity_confirmation",
+        "causal_eligible": false,
+        "chronological_transition": {
+          "source_frame": 187,
+          "target_frame": 188,
+          "source_q": 0.05919969964910532,
+          "target_q": 0.07293716335462896,
+          "delta_q": 0.013737463705523645,
+          "elapsed_s": 0.20000440000000008,
+          "frame_gap": 1,
+          "chronological_direction": "forward",
+          "intermediate_frames": [],
+          "intermediate_states": [],
+          "interval_frames": [
+            187,
+            188
+          ],
+          "interval_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "valid": true,
+          "validity_reason": "all_local_active_transition_constraints_passed"
+        },
+        "target_proposal_posthoc_provenance": [
+          {
+            "proposal_id": "frame_187_layer_0",
+            "source_layer": 0,
+            "hit_count": 411,
+            "observable_overlap_fraction": 1.0,
+            "role": "posthoc_provenance_only_not_identity"
+          }
+        ]
+      },
+      {
+        "model": "drawer",
+        "source_frame_id": 188,
+        "target_frame_id": 189,
+        "source_q_m": 0.07293716335462896,
+        "target_q_m": 0.08973465676920167,
+        "delta_q_m": 0.016797493414572706,
+        "identity_state": "VERIFIED_SOURCE_ANCHOR",
+        "identity_reason": "paired_source_samples_verify_immutable_anchor",
+        "source_sample_count": 888,
+        "valid_projected_samples": 579,
+        "supported_samples": 579,
+        "occluded_samples": 0,
+        "free_space_contradiction_samples": 0,
+        "unexplained_samples": 0,
+        "source_sample_index_coverage": 0.652027027027027,
+        "spatial_coverage": 0.9230769230769231,
+        "inlier_fraction": 1.0,
+        "median_residual_m": 0.0021218143097896853,
+        "p90_residual_m": 0.005216154123348099,
+        "contradiction_fraction": 0.0,
+        "contradiction_spatial_coherence": 0.0,
+        "occlusion_fraction": 0.0,
+        "trusted_drawer_occlusion_fraction": 0.0,
+        "target_proposals_used_for_identity": false,
+        "source_anchor_immutable": true,
+        "identity_observation_direction": "forward",
+        "causal_eligible": true,
+        "chronological_transition": {
+          "source_frame": 188,
+          "target_frame": 189,
+          "source_q": 0.07293716335462896,
+          "target_q": 0.08973465676920167,
+          "delta_q": 0.016797493414572706,
+          "elapsed_s": 0.20000419999999997,
+          "frame_gap": 1,
+          "chronological_direction": "forward",
+          "intermediate_frames": [],
+          "intermediate_states": [],
+          "interval_frames": [
+            188,
+            189
+          ],
+          "interval_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "valid": true,
+          "validity_reason": "all_local_active_transition_constraints_passed"
+        },
+        "target_proposal_posthoc_provenance": [
+          {
+            "proposal_id": "frame_189_layer_0",
+            "source_layer": 0,
+            "hit_count": 579,
+            "observable_overlap_fraction": 1.0,
+            "role": "posthoc_provenance_only_not_identity"
+          }
+        ]
+      },
+      {
+        "model": "drawer",
+        "source_frame_id": 188,
+        "target_frame_id": 190,
+        "source_q_m": 0.07293716335462896,
+        "target_q_m": 0.10665393781713517,
+        "delta_q_m": 0.033716774462506205,
+        "identity_state": "VERIFIED_SOURCE_ANCHOR",
+        "identity_reason": "paired_source_samples_verify_immutable_anchor",
+        "source_sample_count": 888,
+        "valid_projected_samples": 483,
+        "supported_samples": 483,
+        "occluded_samples": 0,
+        "free_space_contradiction_samples": 0,
+        "unexplained_samples": 0,
+        "source_sample_index_coverage": 0.543918918918919,
+        "spatial_coverage": 0.8461538461538461,
+        "inlier_fraction": 1.0,
+        "median_residual_m": 0.005928363044041837,
+        "p90_residual_m": 0.009781483178178303,
+        "contradiction_fraction": 0.0,
+        "contradiction_spatial_coherence": 0.0,
+        "occlusion_fraction": 0.0,
+        "trusted_drawer_occlusion_fraction": 0.0,
+        "target_proposals_used_for_identity": false,
+        "source_anchor_immutable": true,
+        "identity_observation_direction": "forward",
+        "causal_eligible": true,
+        "chronological_transition": {
+          "source_frame": 188,
+          "target_frame": 190,
+          "source_q": 0.07293716335462896,
+          "target_q": 0.10665393781713517,
+          "delta_q": 0.033716774462506205,
+          "elapsed_s": 0.40000860000000005,
+          "frame_gap": 2,
+          "chronological_direction": "forward",
+          "intermediate_frames": [
+            189
+          ],
+          "intermediate_states": [
+            "ACTIVE_MOTION"
+          ],
+          "interval_frames": [
+            188,
+            189,
+            190
+          ],
+          "interval_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "valid": true,
+          "validity_reason": "all_local_active_transition_constraints_passed"
+        },
+        "target_proposal_posthoc_provenance": [
+          {
+            "proposal_id": "frame_190_layer_0",
+            "source_layer": 0,
+            "hit_count": 483,
+            "observable_overlap_fraction": 1.0,
+            "role": "posthoc_provenance_only_not_identity"
+          }
+        ]
+      },
+      {
+        "model": "drawer",
+        "source_frame_id": 188,
+        "target_frame_id": 191,
+        "source_q_m": 0.07293716335462896,
+        "target_q_m": 0.12346363394546822,
+        "delta_q_m": 0.050526470590839256,
+        "identity_state": "VERIFIED_SOURCE_ANCHOR",
+        "identity_reason": "paired_source_samples_verify_immutable_anchor",
+        "source_sample_count": 888,
+        "valid_projected_samples": 340,
+        "supported_samples": 340,
+        "occluded_samples": 0,
+        "free_space_contradiction_samples": 0,
+        "unexplained_samples": 0,
+        "source_sample_index_coverage": 0.38288288288288286,
+        "spatial_coverage": 0.6923076923076923,
+        "inlier_fraction": 1.0,
+        "median_residual_m": 0.009595396238653759,
+        "p90_residual_m": 0.01097127532769579,
+        "contradiction_fraction": 0.0,
+        "contradiction_spatial_coherence": 0.0,
+        "occlusion_fraction": 0.0,
+        "trusted_drawer_occlusion_fraction": 0.0,
+        "target_proposals_used_for_identity": false,
+        "source_anchor_immutable": true,
+        "identity_observation_direction": "forward",
+        "causal_eligible": true,
+        "chronological_transition": {
+          "source_frame": 188,
+          "target_frame": 191,
+          "source_q": 0.07293716335462896,
+          "target_q": 0.12346363394546822,
+          "delta_q": 0.050526470590839256,
+          "elapsed_s": 0.6000129999999997,
+          "frame_gap": 3,
+          "chronological_direction": "forward",
+          "intermediate_frames": [
+            189,
+            190
+          ],
+          "intermediate_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "interval_frames": [
+            188,
+            189,
+            190,
+            191
+          ],
+          "interval_states": [
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION",
+            "ACTIVE_MOTION"
+          ],
+          "valid": true,
+          "validity_reason": "all_local_active_transition_constraints_passed"
+        },
+        "target_proposal_posthoc_provenance": [
+          {
+            "proposal_id": "frame_191_layer_0",
+            "source_layer": 0,
+            "hit_count": 340,
+            "observable_overlap_fraction": 1.0,
+            "role": "posthoc_provenance_only_not_identity"
+          }
+        ]
+      }
+    ]
+  },
+  "hard_invariants": {
+    "assignment_v4_per_target_used": false,
+    "target_proposals_used_for_identity": false,
+    "target_proposals_posthoc_only": true,
+    "directed_transition_keys": true,
+    "source_anchor_immutable": true,
+    "world_static_is_not_cabinet_membership": true,
+    "dense_propagation_ran": false,
+    "reconstruction_ran": false
+  },
+  "evaluation_annotation": {
+    "control_group": "documented_floor_false_positive",
+    "original_frame_id": 188,
+    "proposal_id": "frame_188_layer_0",
+    "source_layer": 0,
+    "expected_label": "NOT_MOVING_LINK",
+    "object_description": "early floor observation",
+    "annotation_provenance": "manual audit of v5 failed_001"
+  }
+}

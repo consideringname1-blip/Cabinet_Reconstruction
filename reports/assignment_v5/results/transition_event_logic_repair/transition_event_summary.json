@@ -1,0 +1,40 @@
+{
+  "stage": "assignment_v5_transition_event_logic_repair",
+  "control_gate_passed": false,
+  "control_metrics": {
+    "drawer_front_count": 4,
+    "drawer_front_moving_link_count": 4,
+    "drawer_front_true_positive_rate": 1.0,
+    "active_comoving_box_count": 5,
+    "active_comoving_box_moving_link_count": 0,
+    "active_comoving_box_moving_link_fraction": 0.0,
+    "active_comoving_box_world_static_count": 0,
+    "documented_floor_count": 21,
+    "documented_floor_moving_link_count": 0,
+    "documented_floor_false_positive_rate": 0.0,
+    "plateau_only_count": 2,
+    "plateau_only_ownership_count": 0,
+    "synthetic_tests_passed": true
+  },
+  "full_116_ran": false,
+  "full_116": {
+    "ran": false,
+    "reason": "control_hard_gate_failed_stop_before_116",
+    "decision_counts": null,
+    "ready_for_dual_tsdf": false
+  },
+  "local_transition_count": 66,
+  "rejected_local_transition_candidate_count": 39,
+  "assignment_v4_per_target_used": false,
+  "target_proposals_used_for_identity": false,
+  "world_static_route_implemented": true,
+  "causal_fields_measured": true,
+  "formal_v4_labels_modified": false,
+  "sam2_ran": false,
+  "dense_propagation_ran": false,
+  "camera_axis_q_modified": false,
+  "tsdf_ran": false,
+  "nksr_ran": false,
+  "mesh_ran": false,
+  "ready_for_dual_tsdf": false
+}

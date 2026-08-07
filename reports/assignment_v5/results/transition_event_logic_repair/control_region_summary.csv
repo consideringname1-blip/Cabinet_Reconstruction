@@ -1,0 +1,36 @@
+original_frame_id,proposal_id,source_layer,control_group,decision,formal_ownership_label,decision_reason,static_positive_chain,moving_positive_chain,static_longest_run,moving_longest_run,tangent_motion,physical_boundary_accepted,causal_reveal_positive_count,expected_label,annotation_provenance
+195,frame_195_layer_25,25,drawer_front,MOVING_LINK,MOVING_LINK,articulated_motion_transition_verified_static_route_not_verified,False,True,0,6,False,True,0,MOVING_LINK,v4 sam2_seed_manifest front seed
+196,frame_196_layer_25,25,drawer_front,MOVING_LINK,MOVING_LINK,articulated_motion_transition_verified_static_route_not_verified,False,True,0,6,False,True,0,MOVING_LINK,v4 sam2_seed_manifest front seed
+197,frame_197_layer_25,25,drawer_front,MOVING_LINK,MOVING_LINK,articulated_motion_transition_verified_static_route_not_verified,False,True,0,6,False,True,0,MOVING_LINK,v4 sam2_seed_manifest front seed
+198,frame_198_layer_25,25,drawer_front,MOVING_LINK,MOVING_LINK,articulated_motion_transition_verified_static_route_not_verified,False,True,0,6,False,False,0,MOVING_LINK,v4 sam2_seed_manifest front seed
+202,frame_202_layer_2,2,active_comoving_box,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,2,2,False,True,0,MOVING_LINK,user-confirmed object semantics plus v4 strong drawer evidence
+203,frame_203_layer_2,2,active_comoving_box,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,2,2,False,True,0,MOVING_LINK,user-confirmed object semantics plus v4 strong drawer evidence
+204,frame_204_layer_2,2,active_comoving_box,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,2,2,False,True,0,MOVING_LINK,user-confirmed object semantics plus v4 strong drawer evidence
+205,frame_205_layer_2,2,active_comoving_box,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,4,4,False,True,0,MOVING_LINK,user-confirmed object semantics plus v4 strong drawer evidence
+206,frame_206_layer_2,2,active_comoving_box,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,3,3,False,True,0,MOVING_LINK,user-confirmed object semantics plus v4 strong drawer evidence
+188,frame_188_layer_0,0,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+189,frame_189_layer_0,0,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,True,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+189,frame_189_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+190,frame_190_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+191,frame_191_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+192,frame_192_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+193,frame_193_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+194,frame_194_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+195,frame_195_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+196,frame_196_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+197,frame_197_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+198,frame_198_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+199,frame_199_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,6,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+200,frame_200_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,3,3,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+201,frame_201_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,2,2,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+202,frame_202_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,2,2,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+203,frame_203_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,2,2,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+204,frame_204_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,2,2,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+205,frame_205_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,4,4,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+206,frame_206_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,3,3,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+207,frame_207_layer_6,6,documented_floor_false_positive,UNKNOWN,UNKNOWN,both_models_lost_or_unobservable,False,False,0,0,True,False,0,NOT_MOVING_LINK,manual audit of v5 failed_001
+211,frame_211_layer_2,2,plateau_only,UNKNOWN,UNKNOWN,plateau_only_comparisons_cannot_create_ownership,False,False,0,0,False,True,0,UNKNOWN,v4 sam2_seed_manifest revealed seed
+213,frame_213_layer_2,2,plateau_only,UNKNOWN,UNKNOWN,plateau_only_comparisons_cannot_create_ownership,False,False,0,0,False,True,0,UNKNOWN,v4 sam2_seed_manifest revealed seed
+195,frame_195_layer_3,3,provisional_world_static,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,3,False,True,0,WORLD_STATIC_OR_UNKNOWN,v4 surface identity control selection
+196,frame_196_layer_3,3,provisional_world_static,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,3,False,True,0,WORLD_STATIC_OR_UNKNOWN,v4 surface identity control selection
+197,frame_197_layer_3,3,provisional_world_static,UNKNOWN,UNKNOWN,motion_tangent_or_repeated_surface_ambiguity,True,True,6,4,False,True,0,WORLD_STATIC_OR_UNKNOWN,v4 surface identity control selection
