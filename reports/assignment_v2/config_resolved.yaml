@@ -1,0 +1,41 @@
+inputs:
+  source_config: /workspace_whz/tools/itaco_moving_map_fix/configs/hololens_interior_dual_volume.yaml
+  reproduction_manifest: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/articulated_model/reproduction_manifest.json
+  v1_fusion_dir: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/dual_volume_fusion
+  official_run_root: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001
+  output_dir: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v2/assignment_v2
+validity:
+  depth_min_m: 0.2
+  depth_max_m: 4.0
+  depth_consistency_threshold_m: 0.025
+  diagnosed_thresholds_m:
+  - 0.015
+  - 0.025
+  - 0.04
+  depth_boundary_erosion_pixels: 1
+core:
+  voxel_size_m: 0.01
+  q_zero_max_fraction: 0.03
+  minimum_unique_frames: 3
+  drawer_seed_ambiguity_m: 0.025
+  static_minimum_unique_frames: 4
+  output_voxel_m: 0.006
+revealed:
+  core_explained_distance_m: 0.012
+  region_margin_m: 0.1
+  hypothesis_voxel_sizes_m:
+  - 0.01
+  - 0.015
+  - 0.02
+  primary_voxel_size_m: 0.015
+  minimum_static_frames: 3
+  minimum_drawer_frames: 3
+  maximum_spread_m: 0.012
+  evidence_spread_margin_m: 0.002
+  minimum_drawer_q_span_fraction: 0.2
+  dual_close_proximity_m: 0.025
+  output_voxel_m: 0.006
+visualization:
+  frames_per_phase: 3
+  max_points_per_cloud: 60000
+  seed: 20260807

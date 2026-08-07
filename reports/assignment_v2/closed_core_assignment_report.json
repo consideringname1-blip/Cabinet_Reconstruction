@@ -1,0 +1,8 @@
+{
+  "source": "rebuilt conservatively; no existing partition reused",
+  "static_points": 101097,
+  "drawer_points": 2878,
+  "unknown_points": 123624,
+  "drawer_q_zero_max_m": 0.009006887040640817,
+  "static_is_remainder": false
+}

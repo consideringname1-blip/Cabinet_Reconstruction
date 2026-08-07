@@ -1,0 +1,39 @@
+{
+  "official_compatible_surface": {
+    "artifact_path": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/official/view/surface/surface.ply",
+    "source_frames": "official interaction input; not closed-only",
+    "camera_policy": "HoloLens substitution in MonST3R-compatible slot",
+    "moving_map_source": "official refined moving map",
+    "partition_method": "first-frame moving-map threshold then 3cm surface distance",
+    "whether_reused": false,
+    "reason": "validation explicitly warns background/cabinet over-selection"
+  },
+  "existing_closed_partition": {
+    "artifact_path": null,
+    "whether_reused": false,
+    "reason": "no verified clean closed static/moving partition found"
+  },
+  "geometry_interior_v1": {
+    "artifact_path": "/workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/dual_volume_fusion",
+    "source_frames": {
+      "closed": [
+        5,
+        165
+      ],
+      "interaction": [
+        177,
+        213
+      ],
+      "open": [
+        220,
+        360
+      ]
+    },
+    "camera_policy": "fixed recorded HoloLens T_world_camera",
+    "moving_map_source": "/workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/gate_no_minmax/moving_map_labels.npz",
+    "partition_method": "drawer canonical template growth; static remainder inside cabinet bounds",
+    "whether_reused": false,
+    "reason": "cabinet_static_points is known contaminated and static is remainder"
+  },
+  "v2_core_policy": "conservative rebuild from closed observations and q\u22480 repaired moving seeds"
+}

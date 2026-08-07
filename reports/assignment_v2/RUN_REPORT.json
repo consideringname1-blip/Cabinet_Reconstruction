@@ -1,0 +1,91 @@
+{
+  "tsdf_ran": false,
+  "nksr_ran": false,
+  "mesh_ran": false,
+  "frozen_inputs_verified": true,
+  "primary_voxel": "15mm",
+  "output_file_rehash_verified": true,
+  "full_deterministic_rerun_performed": false,
+  "hashes": {
+    "drawer_v2_canonical_points.ply": "d607210de787dcf0c0d5d9b06e9c3055c7c9f468fc5738f5d6f7b1379ffb2b2c",
+    "static_v2_points.ply": "a42ce4eb92ca3112b9699e3e219bf007fd8100bacd73876b17145f0079a86480",
+    "unknown_v2_points.ply": "6b108bc6cea0503dc05819fd4284ad5a6368802027e47ee9bdbc7dfb45c7f3de"
+  },
+  "ready_for_dual_tsdf": false,
+  "readiness_reason": "requires human/geometric review; precision criteria not auto-asserted",
+  "comparison": {
+    "v1": {
+      "static": 57155,
+      "drawer_closed": 63465,
+      "drawer_open": 63465,
+      "combined_open": 102537
+    },
+    "closed_core_only": {
+      "static": 101097,
+      "drawer_closed": 2878,
+      "unknown": 123624
+    },
+    "assignment_v2": {
+      "static": 167055,
+      "drawer_closed": 17270,
+      "unknown": 212988,
+      "static_new": 93406,
+      "drawer_new": 15610
+    },
+    "per_phase": {
+      "interaction": {
+        "static_new": 150397,
+        "drawer_new": 78276,
+        "unknown": 27686
+      },
+      "open": {
+        "static_new": 144207,
+        "drawer_new": 18028,
+        "unknown": 123922
+      }
+    },
+    "dual_close_region": {
+      "observations": 2722,
+      "static_new_ratio": 0.8574577516531962,
+      "drawer_new_ratio": 0.12417340191036003,
+      "unknown_new_ratio": 0.018368846436443792,
+      "E_static_p50": 3522.1791124221254,
+      "E_drawer_p50": 25.024075288357835,
+      "q_span_p50_m": 0.00917081126755237,
+      "support_frames_p50": {
+        "static": 26.0,
+        "drawer": 7.0
+      },
+      "classification_margin_p50_m": -6.464225539880471e-05
+    },
+    "ablations": {
+      "10mm": {
+        "static_new": 281515,
+        "drawer_new": 79252,
+        "unknown": 181749
+      },
+      "15mm": {
+        "static_new": 294604,
+        "drawer_new": 96304,
+        "unknown": 151608
+      },
+      "20mm": {
+        "static_new": 276335,
+        "drawer_new": 47380,
+        "unknown": 218801
+      }
+    },
+    "old_static_fate": {
+      "static": 29006,
+      "drawer": 187,
+      "unknown": 27291,
+      "invalid_or_unmatched": 671
+    },
+    "old_drawer_fate": {
+      "static": 16606,
+      "drawer": 18580,
+      "unknown": 15625,
+      "invalid_or_unmatched": 12654
+    }
+  }
+}
