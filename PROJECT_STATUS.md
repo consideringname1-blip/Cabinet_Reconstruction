@@ -147,6 +147,14 @@ Validation commands that passed in the existing `foundationpose` environment:
 No official reproduction job or long-running reconstruction job is currently
 known to be running.
 
+The Assignment v4 near-contact ambiguity audit is complete. It decomposed all
+131 unknown difficult regions into 116 regions simultaneously supported by the
+static and drawer models, 14 with insufficient evidence, and one borderline
+both-bad region. Per-region source overlays, q-dependent visibility, and target-
+surface hit visualizations are available under the documented independent
+output directory. The result remains a diagnostic and is not ready for dual
+TSDF.
+
 The following work is incomplete and must not be presented as completed:
 
 - Convert the final sequence of helper commands into a clean, deterministic
@@ -171,6 +179,10 @@ The following work is incomplete and must not be presented as completed:
   stability, and 5/21 manual classification accuracy. This is insufficient for
   releasing camera, axis, and labels into unconstrained joint optimization.
 - Only one real prismatic drawer sequence has reached the current quality level.
+- Verified-depth Assignment v4 still has 131 unresolved difficult regions. Of
+  these, 116 are supported by both frozen motion hypotheses across cabinet,
+  drawer, edge, and floor/background surfaces. This is a surface-identity and
+  observability problem; threshold relaxation or region propagation is unsafe.
 - Local output artifacts are large. A path in this document does not imply that
   its artifact is tracked by Git.
 

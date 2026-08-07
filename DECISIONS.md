@@ -83,3 +83,18 @@ Last updated: 2026-08-06
 - Consequence: the scale failure is resolved for this run, but near-contact
   ownership remains completely unknown and human review is absent.
   `ready_for_dual_tsdf=false`; no reconstruction stage may consume it yet.
+
+## 2026-08-07 — Near-contact ambiguity is primarily dual-model non-identifiability
+
+- Status: audit complete; all audited regions remain unknown.
+- Evidence: of 131 verified-depth difficult regions, 116 have median support at
+  least 0.90 and contradiction at most 0.10 under both the world-static and
+  frozen-drawer hypotheses; 14 are insufficient and one is borderline both-bad.
+- Decision: do not propagate, threshold-relax, or force either ownership label
+  for this set. The automatically selected set spans cabinet, drawer, edge, and
+  floor/background surfaces and is not a literal near-contact-only subset.
+- Decision: preserve proposal IDs only as target-surface provenance. Overlapping
+  proposal hits and nearby planar surfaces require stronger cross-frame surface
+  identity and negative evidence before ownership can be released.
+- Consequence: `ready_for_dual_tsdf=false`; pose, axis, `q_t`, moving map, and
+  reconstruction remain frozen.

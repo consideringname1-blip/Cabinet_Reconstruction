@@ -1,0 +1,19 @@
+inputs:
+  assignment_v4_config: tools/itaco_moving_map_fix/configs/hololens_region_assignment_v4_verified_depth.yaml
+  assignment_v4_output: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001
+output_dir: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/near_contact_ambiguity_audit_002
+taxonomy:
+  insufficient_reasons: [unknown_insufficient_evidence]
+  minimum_total_testable_points: 80
+  both_supported_minimum_median_support: 0.90
+  both_supported_maximum_median_contradiction: 0.10
+visualization:
+  target_tile_size: [160, 144]
+  target_grid_columns: 3
+  overview_contact_columns: 3
+  overview_thumbnail_width: 360
+audit:
+  expected_unknown_region_count: 131
+  maximum_recomputed_evidence_difference: 1.0e-12
+  modifies_assignment: false
+  runs_reconstruction: false

@@ -9,6 +9,12 @@
 > corrected run is still not accepted for dual TSDF pending human ownership
 > review. See `verified_depth_rerun.md`.
 
+> **Near-contact ambiguity audit:** all 131 verified-depth unknown difficult
+> regions were decomposed into 116 static≈drawer≈1, 14 insufficient, and one
+> borderline both-bad region, with per-q visibility and predicted target-surface
+> visualizations. The set is not confined to a literal contact boundary, and
+> remains unsafe for propagation or fusion. See `near_contact_ambiguity_audit.md`.
+
 Status: extended research diagnostic; **not accepted for dual TSDF**.
 
 ## Scope and frozen inputs
