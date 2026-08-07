@@ -1,0 +1,20 @@
+{
+  "stage": "Phase D region voting",
+  "code": "no_high_confidence_drawer_region_seed",
+  "details": {
+    "moving_tracks": 8,
+    "static_tracks": 6,
+    "unknown_tracks": 868,
+    "unknown_absolute_residual": 359,
+    "sam2_seed_count": 0
+  },
+  "downstream_skipped": [
+    "SAM2 v3 propagation",
+    "four-state assignment",
+    "near-contact assignment analysis",
+    "v3 ownership point clouds",
+    "TSDF",
+    "NKSR",
+    "mesh"
+  ]
+}

@@ -255,3 +255,66 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
    Next steps.
 7. Record exact commands/configs, frame ranges/order, model revisions,
    validations, and output paths for every new reproduction.
+
+
+## Assignment v3 isolated-worktree update (2026-08-07)
+
+### Completed and verified
+
+- Created isolated branch `agent/funrec-inspired-assignment-v3` from exact commit
+  `d5ef666310022604fcefbeac0df2034225e05c66`; the source worktree was not modified.
+- Implemented `extended_non_official_funrec_inspired_assignment_v3`: periodic,
+  spatially balanced LoFTR tracks; fixed HoloLens poses/axis/q; explicit AutoSeg
+  proposals; robust track evidence; conservative region voting; SAM2 propagation
+  and four-state assignment code paths; and structured safe-stop reporting.
+- Audited Kornia LoFTR 0.8.2 with cached indoor checkpoint SHA-256
+  `d73c54720370ba0690cd477e38404a626e881292cc0be09a6801da0cc6f53198`,
+  AutoSeg-SAM2 revision `840a356f26bd31ac5f3033c05d3ba61a2ceaa38c`,
+  SAM2 revision `2b90b9f5ceec907a1c18123530e92e794ad901a4`, and SAM2 checkpoint
+  SHA-256 `2647878d5dfa5098f2f8649825738a9345572bae2d4350a2468587ece47dd318`.
+- All 12 core tests pass. Two independent formal Phase B-D attempts produced
+  identical hashes for raw/filtered tracks, labels, and region votes.
+- Formal result: 882 tracks; 8 moving, 6 static, 868 unknown. Of the unknown
+  tracks, 357 lack support, 152 lack excitation, and 359 fail the configured
+  5 cm absolute residual gate.
+- The formal run safely stopped in Phase D because no keyframe region had enough
+  high-confidence moving support to seed SAM2.
+- No formal SAM2 propagation, four-state assignment, TSDF, NKSR, mesh, GLB,
+  URDF, or parameter refinement ran.
+
+### In progress / not accepted
+
+- `ready_for_dual_tsdf=false`. No v3 ownership point clouds are accepted.
+- Drawer-side retention and cabinet-inner-wall leakage remain unobservable.
+
+### Known issues
+
+- LoFTR provides long-span correspondences, but most geometrically supported
+  tracks have absolute world/canonical residual above 5 cm. Relative model
+  preference alone produced unsafe drawer regions and is retained only as a
+  diagnostic failure.
+- The configured 2 px depth-boundary exclusion also makes open registered depth
+  sparse, but formal execution stops before the open assignment stage.
+- SAM2's optional compiled `_C` fill-hole extension is absent. This was observed
+  only in preserved diagnostic propagation runs, not the formal stopped run.
+- No independent manual ownership labels exist for this v3 attempt.
+
+### Next steps
+
+1. Diagnose RGB/depth correspondence and point-track geometric residuals before
+   changing the 5 cm acceptance threshold.
+2. Evaluate a repository-available tracker with depth-aware association or add
+   explicit reprojection/occlusion checks without downloading a substitute.
+3. Do not run SAM2 propagation or dual TSDF until interaction regions receive
+   high-confidence moving support.
+
+### Git and outputs
+
+- Worktree: `/workspace_whz_worktrees/funrec-assignment-v3`
+- Branch: `agent/funrec-inspired-assignment-v3`
+- HEAD: `d5ef666310022604fcefbeac0df2034225e05c66`
+- Formal stopped output: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v3/funrec_assignment_v3`
+- Formal repeat: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v3/funrec_assignment_v3_repeat`
+- Failed/diagnostic outputs are preserved with `lk_diagnostic`,
+  `loftr_failed_association_v1`, and `loftr_relative_only_diagnostic` suffixes.
+- Changes are intentionally uncommitted; no commit, push, merge, stash, reset, or clean.

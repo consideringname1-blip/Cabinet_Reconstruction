@@ -1,0 +1,23 @@
+[
+  {
+    "local_index": 6,
+    "original_frame_id": 183,
+    "q_m": 0.00917081126755237,
+    "track_observation_count": 139,
+    "target_quantile": 0.15
+  },
+  {
+    "local_index": 18,
+    "original_frame_id": 195,
+    "q_m": 0.19341339188972073,
+    "track_observation_count": 164,
+    "target_quantile": 0.5
+  },
+  {
+    "local_index": 34,
+    "original_frame_id": 211,
+    "q_m": 0.3002295680213606,
+    "track_observation_count": 265,
+    "target_quantile": 0.85
+  }
+]

@@ -1,0 +1,37 @@
+{
+  "v1": {
+    "static": 57155,
+    "drawer_closed": 63465,
+    "drawer_open": 63465,
+    "combined_open": 102537
+  },
+  "v2": {
+    "static": 167055,
+    "drawer_closed": 17270,
+    "unknown": 212988,
+    "static_new": 93406,
+    "drawer_new": 15610
+  },
+  "v3": {
+    "status": "stopped_before_sam2_and_assignment",
+    "tracks": {
+      "unknown": 868,
+      "static": 6,
+      "moving": 8
+    },
+    "unknown_reasons": {
+      "unknown_insufficient_support": 357,
+      "unknown_low_excitation": 152,
+      "unknown_absolute_residual": 359,
+      "static_track": 6,
+      "moving_track": 8
+    },
+    "assignment_point_counts": null,
+    "per_phase_assignment": null,
+    "near_contact_ratio": null,
+    "old_point_fates": null,
+    "drawer_side_coverage": null,
+    "cabinet_inner_wall_leakage": null
+  },
+  "interpretation": "No v3 ownership comparison is claimed because the evidence gate stopped the run."
+}

@@ -1,0 +1,6 @@
+{
+  "ran": false,
+  "reason": "no high-confidence interaction drawer seed after support, excitation, absolute residual and region-vote gates",
+  "sam2_seed_count": 0,
+  "open_plateau_reidentified": false
+}

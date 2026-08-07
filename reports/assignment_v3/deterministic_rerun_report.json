@@ -1,0 +1,23 @@
+{
+  "full_pipeline_attempt_repeated": true,
+  "same_stop_condition": "no high-confidence drawer seed",
+  "all_phase_b_d_hashes_equal": true,
+  "files": {
+    "tracks_raw.npz": {
+      "primary": "d8d3764a702cf5727ab57a1c794cd08f3e95f7fc626afe4ba683f8743d8a8a4c",
+      "repeat": "d8d3764a702cf5727ab57a1c794cd08f3e95f7fc626afe4ba683f8743d8a8a4c"
+    },
+    "tracks_filtered.npz": {
+      "primary": "22039aa8ce20438abd824505043393534620fcab43bb8e9f25743797b7d7539d",
+      "repeat": "22039aa8ce20438abd824505043393534620fcab43bb8e9f25743797b7d7539d"
+    },
+    "track_labels.json": {
+      "primary": "91950a1c6cbff8e0c454f89c27e3aacbfad1f590f69dc0703a80fdbf61a42527",
+      "repeat": "91950a1c6cbff8e0c454f89c27e3aacbfad1f590f69dc0703a80fdbf61a42527"
+    },
+    "keyframe_region_votes.csv": {
+      "primary": "94d642adb08c90eb838cc6d85e55e5ef562952b9bd252654440f3be95091ce6d",
+      "repeat": "94d642adb08c90eb838cc6d85e55e5ef562952b9bd252654440f3be95091ce6d"
+    }
+  }
+}

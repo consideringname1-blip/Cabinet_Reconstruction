@@ -1,0 +1,128 @@
+[
+  {
+    "key": "proposal_000",
+    "proposal_id": "frame_211_layer_0",
+    "source_uid_provenance_only": 0,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_001",
+    "proposal_id": "frame_211_layer_1",
+    "source_uid_provenance_only": 1,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_002",
+    "proposal_id": "frame_211_layer_2",
+    "source_uid_provenance_only": 2,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_003",
+    "proposal_id": "frame_211_layer_3",
+    "source_uid_provenance_only": 3,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_004",
+    "proposal_id": "frame_211_layer_4",
+    "source_uid_provenance_only": 4,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_005",
+    "proposal_id": "frame_211_layer_5",
+    "source_uid_provenance_only": 5,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_006",
+    "proposal_id": "frame_211_layer_6",
+    "source_uid_provenance_only": 6,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_007",
+    "proposal_id": "frame_211_layer_7",
+    "source_uid_provenance_only": 7,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_008",
+    "proposal_id": "frame_211_layer_8",
+    "source_uid_provenance_only": 8,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_009",
+    "proposal_id": "frame_211_layer_9",
+    "source_uid_provenance_only": 9,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_010",
+    "proposal_id": "frame_211_layer_10",
+    "source_uid_provenance_only": 10,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_011",
+    "proposal_id": "frame_211_layer_11",
+    "source_uid_provenance_only": 11,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_012",
+    "proposal_id": "frame_211_layer_12",
+    "source_uid_provenance_only": 12,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_013",
+    "proposal_id": "frame_211_layer_13",
+    "source_uid_provenance_only": 13,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_014",
+    "proposal_id": "frame_211_layer_14",
+    "source_uid_provenance_only": 14,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_015",
+    "proposal_id": "frame_211_layer_15",
+    "source_uid_provenance_only": 15,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_016",
+    "proposal_id": "frame_211_layer_19",
+    "source_uid_provenance_only": 19,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_017",
+    "proposal_id": "frame_211_layer_23",
+    "source_uid_provenance_only": 23,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_018",
+    "proposal_id": "frame_211_layer_24",
+    "source_uid_provenance_only": 24,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_019",
+    "proposal_id": "frame_211_layer_25",
+    "source_uid_provenance_only": 25,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  },
+  {
+    "key": "proposal_020",
+    "proposal_id": "frame_211_layer_28",
+    "source_uid_provenance_only": 28,
+    "source": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output/mask_002.npz"
+  }
+]

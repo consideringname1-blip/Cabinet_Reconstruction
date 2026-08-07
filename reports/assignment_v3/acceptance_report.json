@@ -1,0 +1,17 @@
+{
+  "output_kind": "extended_non_official_funrec_inspired_assignment_v3",
+  "official_funrec_reproduction": false,
+  "status": "stopped_safely",
+  "frozen_inputs_verified": true,
+  "deterministic_phase_b_d_repeat": true,
+  "tsdf_ran": false,
+  "nksr_ran": false,
+  "mesh_ran": false,
+  "ready_for_dual_tsdf": false,
+  "blocking_reasons": [
+    "no high-confidence drawer region seed",
+    "359 supported/excited tracks fail the 5 cm absolute residual gate",
+    "SAM2 identity propagation and four-state assignment were therefore not run",
+    "no drawer-side or cabinet-inner-wall acceptance evidence"
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "ran": false,
+  "reason": "pipeline stopped before assignment; near-contact ownership cannot be evaluated",
+  "manual_roi_used": false
+}
