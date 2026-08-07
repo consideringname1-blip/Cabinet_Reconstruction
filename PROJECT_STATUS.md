@@ -317,4 +317,4 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 - Formal repeat: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v3/funrec_assignment_v3_repeat`
 - Failed/diagnostic outputs are preserved with `lk_diagnostic`,
   `loftr_failed_association_v1`, and `loftr_relative_only_diagnostic` suffixes.
-- Changes are intentionally uncommitted; no commit, push, merge, stash, reset, or clean.
+- Assignment v3 implementation/results commit: `07856bc0`; published to `whz/agent/funrec-inspired-assignment-v3`. No merge, stash, reset, or clean was performed.
