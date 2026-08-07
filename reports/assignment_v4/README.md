@@ -1,5 +1,7 @@
 # Assignment v4: Region-level Articulation Consistency
 
+> **Critical follow-up (2026-08-07):** the formal run used `depth_scale_to_m=0.001`, but stored pinhole depth is approximately 5x the corresponding Long Throw PLY projection. The formal ownership result is retained as a failed diagnostic and must not be used for fusion. See `followup_depth_scale_diagnostic.md`.
+
 Status: extended research diagnostic; **not accepted for dual TSDF**.
 
 ## Scope and frozen inputs

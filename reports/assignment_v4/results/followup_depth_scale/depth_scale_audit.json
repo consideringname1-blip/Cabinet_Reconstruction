@@ -1,0 +1,259 @@
+{
+  "finding": "stored pinhole depth is approximately five times the corresponding Long Throw PLY PV-z projection",
+  "formal_config_depth_scale_to_m": 0.001,
+  "diagnostic_corrected_depth_scale_to_m": 0.0002,
+  "correction_is_diagnostic_only": true,
+  "formal_assignment_modified": false,
+  "front": [
+    {
+      "source_frame_id": 195,
+      "target_frame_id": 177,
+      "delta_q_m": -0.19341339188972073,
+      "source_valid_points": 2708,
+      "corrected_scale_drawer": {
+        "counts": {
+          "unobservable": 130,
+          "supported": 2187,
+          "occluded": 273,
+          "contradiction": 118
+        },
+        "testable_count": 2305,
+        "support_ratio": 0.9488069414316703,
+        "contradiction_ratio": 0.051193058568329716,
+        "observable_fraction": 0.9519940915805022,
+        "testable_signed_residual_m": {
+          "p10": -0.00963323549094417,
+          "p25": -0.005460534053962851,
+          "p50": -0.0023927432781388758,
+          "p75": 0.0020874028980490955,
+          "p90": 0.014580546026612781
+        }
+      }
+    },
+    {
+      "source_frame_id": 195,
+      "target_frame_id": 202,
+      "delta_q_m": 0.08419570904037732,
+      "source_valid_points": 2708,
+      "corrected_scale_drawer": {
+        "counts": {
+          "unobservable": 258,
+          "supported": 2356,
+          "occluded": 94,
+          "contradiction": 0
+        },
+        "testable_count": 2356,
+        "support_ratio": 1.0,
+        "contradiction_ratio": 0.0,
+        "observable_fraction": 0.9047267355982275,
+        "testable_signed_residual_m": {
+          "p10": -0.007575987762616032,
+          "p25": -0.004076073290302698,
+          "p50": -0.00014500292211505617,
+          "p75": 0.005433118875411813,
+          "p90": 0.014965755200750164
+        }
+      }
+    },
+    {
+      "source_frame_id": 195,
+      "target_frame_id": 213,
+      "delta_q_m": 0.10681617613163985,
+      "source_valid_points": 2708,
+      "corrected_scale_drawer": {
+        "counts": {
+          "unobservable": 402,
+          "supported": 2199,
+          "occluded": 106,
+          "contradiction": 1
+        },
+        "testable_count": 2200,
+        "support_ratio": 0.9995454545454545,
+        "contradiction_ratio": 0.00045454545454545455,
+        "observable_fraction": 0.8515509601181684,
+        "testable_signed_residual_m": {
+          "p10": -0.008996505121656095,
+          "p25": -0.005983183218654625,
+          "p50": -0.0025379429964598743,
+          "p75": 0.002640700518034389,
+          "p90": 0.01720333400135148
+        }
+      }
+    },
+    {
+      "source_frame_id": 202,
+      "target_frame_id": 177,
+      "delta_q_m": -0.27760910093009805,
+      "source_valid_points": 2539,
+      "corrected_scale_drawer": {
+        "counts": {
+          "unobservable": 107,
+          "supported": 1925,
+          "occluded": 270,
+          "contradiction": 237
+        },
+        "testable_count": 2162,
+        "support_ratio": 0.8903792784458835,
+        "contradiction_ratio": 0.10962072155411656,
+        "observable_fraction": 0.9578574241827491,
+        "testable_signed_residual_m": {
+          "p10": -0.0066643936687426405,
+          "p25": -0.00340863074128947,
+          "p50": -0.00018724518003149226,
+          "p75": 0.005792493329387471,
+          "p90": 0.03416812920580967
+        }
+      }
+    },
+    {
+      "source_frame_id": 202,
+      "target_frame_id": 195,
+      "delta_q_m": -0.08419570904037732,
+      "source_valid_points": 2539,
+      "corrected_scale_drawer": {
+        "counts": {
+          "unobservable": 102,
+          "supported": 2350,
+          "occluded": 0,
+          "contradiction": 87
+        },
+        "testable_count": 2437,
+        "support_ratio": 0.9643003693065244,
+        "contradiction_ratio": 0.035699630693475586,
+        "observable_fraction": 0.9598267034265459,
+        "testable_signed_residual_m": {
+          "p10": -0.015284745184419067,
+          "p25": -0.005044517103986901,
+          "p50": 0.0005281784336728101,
+          "p75": 0.004700750711617685,
+          "p90": 0.009752228710425939
+        }
+      }
+    },
+    {
+      "source_frame_id": 202,
+      "target_frame_id": 213,
+      "delta_q_m": 0.02262046709126253,
+      "source_valid_points": 2539,
+      "corrected_scale_drawer": {
+        "counts": {
+          "unobservable": 193,
+          "supported": 2345,
+          "occluded": 1,
+          "contradiction": 0
+        },
+        "testable_count": 2345,
+        "support_ratio": 1.0,
+        "contradiction_ratio": 0.0,
+        "observable_fraction": 0.9239858211894446,
+        "testable_signed_residual_m": {
+          "p10": -0.006611709464414051,
+          "p25": -0.0032420839290123737,
+          "p50": -0.001555261651973061,
+          "p75": 0.002103433547900213,
+          "p90": 0.0037638373572411064
+        }
+      }
+    }
+  ],
+  "depth": [
+    {
+      "original_frame_id": 195,
+      "stored_nonzero_ratio": 0.6166666666666667,
+      "formal_v4_valid_ratio": 0.2193576388888889,
+      "corrected_valid_ratio": 0.6166666666666667,
+      "long_throw_projected_valid_ratio": 0.6166666666666667,
+      "corrected_vs_ply_mask_iou": 0.9999648091777664,
+      "stored_to_ply_depth_ratio": {
+        "p10": 4.998870849609375,
+        "p25": 4.999179363250732,
+        "p50": 4.999523639678955,
+        "p75": 4.999826431274414,
+        "p90": 5.00042200088501
+      },
+      "corrected_signed_difference_m": {
+        "p10": -0.00017702579498291016,
+        "p25": -0.00014317035675048828,
+        "p50": -8.767843246459961e-05,
+        "p75": -3.191828727722168e-05,
+        "p90": 7.534027099609375e-05
+      },
+      "corrected_absolute_difference_m": {
+        "p10": 2.1338462829589844e-05,
+        "p25": 5.4717063903808594e-05,
+        "p50": 0.00010967254638671875,
+        "p75": 0.00016498565673828125,
+        "p90": 0.0001984238624572754
+      },
+      "corrected_within_1mm_ratio": 0.933891714029315,
+      "corrected_within_1cm_ratio": 0.9962872375991976,
+      "corrected_within_3cm_ratio": 0.9997712516056377
+    },
+    {
+      "original_frame_id": 202,
+      "stored_nonzero_ratio": 0.6179470486111112,
+      "formal_v4_valid_ratio": 0.16903211805555557,
+      "corrected_valid_ratio": 0.6179470486111112,
+      "long_throw_projected_valid_ratio": 0.6179470486111112,
+      "corrected_vs_ply_mask_iou": 0.9999648820916226,
+      "stored_to_ply_depth_ratio": {
+        "p10": 4.998957633972168,
+        "p25": 4.999235153198242,
+        "p50": 4.999558448791504,
+        "p75": 4.999831199645996,
+        "p90": 4.999995231628418
+      },
+      "corrected_signed_difference_m": {
+        "p10": -0.00017702579498291016,
+        "p25": -0.0001436471939086914,
+        "p50": -8.875131607055664e-05,
+        "p75": -3.3915042877197266e-05,
+        "p90": -9.5367431640625e-07
+      },
+      "corrected_absolute_difference_m": {
+        "p10": 2.1457672119140625e-05,
+        "p25": 5.429983139038086e-05,
+        "p50": 0.00010859966278076172,
+        "p75": 0.00016313791275024414,
+        "p90": 0.00019688606262207057
+      },
+      "corrected_within_1mm_ratio": 0.9420534162145077,
+      "corrected_within_1cm_ratio": 0.9961720135559887,
+      "corrected_within_3cm_ratio": 0.99961368944143
+    },
+    {
+      "original_frame_id": 206,
+      "stored_nonzero_ratio": 0.6190755208333333,
+      "formal_v4_valid_ratio": 0.17164713541666668,
+      "corrected_valid_ratio": 0.6190755208333333,
+      "long_throw_projected_valid_ratio": 0.6190863715277778,
+      "corrected_vs_ply_mask_iou": 0.9998422685290664,
+      "stored_to_ply_depth_ratio": {
+        "p10": 4.998938083648682,
+        "p25": 4.9992170333862305,
+        "p50": 4.99954080581665,
+        "p75": 4.99981963634491,
+        "p90": 4.999985218048096
+      },
+      "corrected_signed_difference_m": {
+        "p10": -0.00017958879470825195,
+        "p25": -0.00014650821685791016,
+        "p50": -9.149312973022461e-05,
+        "p75": -3.629922866821289e-05,
+        "p90": -3.0994415283203125e-06
+      },
+      "corrected_absolute_difference_m": {
+        "p10": 2.3663043975830078e-05,
+        "p25": 5.657970905303955e-05,
+        "p50": 0.00011086463928222656,
+        "p75": 0.00016552209854125977,
+        "p90": 0.0001983642578125
+      },
+      "corrected_within_1mm_ratio": 0.9433479404031552,
+      "corrected_within_1cm_ratio": 0.9962839614373357,
+      "corrected_within_3cm_ratio": 0.9996669588080631
+    }
+  ],
+  "tsdf_ran": false,
+  "reconstruction_ran": false
+}

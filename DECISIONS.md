@@ -37,3 +37,18 @@ Last updated: 2026-08-06
 - Consequence: current positive static and open propagation support are too
   sparse. Human review is absent, so `ready_for_dual_tsdf=false` and no
   reconstruction stage may run from this result.
+
+## 2026-08-07 — Assignment v4 formal 0.001 depth scale is invalidated
+
+- Status: accepted diagnostic finding; corrected full assignment not yet run.
+- Evidence: stored pinhole registered depth is approximately 4.9995x the same
+  Long Throw world PLY projected into the PV camera. A diagnostic 0.0002 m/count
+  scale restores >99.98% valid-mask IoU and millimetre-scale depth agreement.
+- Decision: preserve the 0.001-scale v4 output as a failed diagnostic and prohibit
+  it from dual TSDF. Do not silently overwrite its config or artifacts.
+- Decision: require an explicit physical-unit/provenance audit and a hard
+  pinhole-versus-PLY scale-consistency gate before the corrected scale becomes a
+  frozen pipeline input.
+- Consequence: the earlier near-total layer25 contradiction is attributed mainly
+  to depth scale, not to the fixed axis or `q_t`; corrected ownership still needs
+  a separate full rerun and human review.

@@ -456,3 +456,55 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 - Preserved failed first attempt: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4`
 - Tracked report: `reports/assignment_v4/README.md`
 - Assignment v4 code, curated results, and reports are published from this branch; no merge, stash, reset, or clean was performed.
+
+## Assignment v4 registered-depth scale follow-up (2026-08-07)
+
+### Completed and verified
+
+- Added read-only diagnostics for the five accepted layer2 regions, layer25
+  drawer-front projective residuals, and same-frame pinhole-depth versus Long
+  Throw PLY projection.
+- The five layer2 masks at frames 202–206 cover the same small brown vertical
+  interior surface, not the large white drawer front. A diagnostic corrected
+  depth scale continues to classify them as revealed drawer candidates, but
+  drawer-rear-panel versus cabinet-inner-wall identity still requires human review.
+- Identified a fivefold depth-scale mismatch: stored pinhole registered depth is
+  4.9995x the corresponding Long Throw→PV optical-depth projection. The formal
+  v4 config used 0.001 m/count; the diagnostic matching scale is 0.0002 m/count.
+- After `/5` correction, pinhole/PLY valid-mask IoU is 99.984–99.996%, median
+  absolute depth difference is about 0.11 mm, and 99.62% of common pixels agree
+  within 1 cm.
+- Layer25 changes from near-total free-space contradiction to 89–100% drawer
+  support on the inspected frame pairs; residual medians return to millimetres.
+
+### In progress / not accepted
+
+- The original Assignment v4 formal output is retained as a failed diagnostic,
+  not a valid ownership result. It must not enter dual TSDF.
+- The `/5` result is a focused diagnostic only; a complete corrected v4 run has
+  not been started.
+
+### Known issues
+
+- The provenance of the stored 0.2 mm/count encoding is not documented beside
+  `pinhole_projection/depth`; audit the producer before making the scale a new
+  frozen input.
+- Corrected support does not by itself prove that the accepted brown interior
+  surface belongs to the drawer rather than the cabinet; explicit visual and
+  multi-view ownership review remains required.
+
+### Next steps
+
+1. Audit and record the registered-depth producer and physical unit contract.
+2. Add a hard PLY/pinhole scale-consistency gate to the loader.
+3. Rerun Assignment v4 into a new output directory with the verified scale,
+   preserving the failed 0.001-scale output.
+4. Do not run dual TSDF until corrected ownership and human review pass.
+
+### Diagnostic outputs
+
+- `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_followup_masks_depth_001`
+- `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_followup_depth_scale_001`
+- Report: `reports/assignment_v4/followup_depth_scale_diagnostic.md`
+- GitHub-curated masks/projections: `reports/assignment_v4/results/followup_masks_depth/`
+- GitHub-curated scale audit: `reports/assignment_v4/results/followup_depth_scale/`
