@@ -1,0 +1,44 @@
+{
+  "schema_version": 1,
+  "source": "registered_depth_same_plateau_source_indexed_projection",
+  "calibration_uses_control_annotations": false,
+  "calibration_uses_box_results": false,
+  "plateau_states": [
+    "CLOSED_PLATEAU",
+    "OPEN_PLATEAU"
+  ],
+  "pair_count": 42,
+  "categories": {
+    "surface_interior": {
+      "sample_count": 8555,
+      "median_m": 0.001683278623712881,
+      "p90_m": 0.0027655496649683967,
+      "p95_m": 0.0032333640348286845,
+      "p99_m": 0.004640522487945443,
+      "tail_scale_m": 0.0018749728229770462
+    },
+    "depth_or_geometry_edge": {
+      "sample_count": 183296,
+      "median_m": 0.0028960379475581437,
+      "p90_m": 0.006685687503230885,
+      "p95_m": 0.00865232242113024,
+      "p99_m": 0.014399158957818623,
+      "tail_scale_m": 0.0077134714545877385
+    }
+  },
+  "combined": {
+    "sample_count": 191851,
+    "median_m": 0.0028128734655911637,
+    "p90_m": 0.006567159908727125,
+    "p95_m": 0.008518826104827217,
+    "p99_m": 0.01423328074396703,
+    "tail_scale_m": 0.007666120835239904
+  },
+  "edge_definition": {
+    "depth_discontinuity_distance_pixels": 6.0,
+    "minimum_local_depth_gradient_m_per_pixel": 0.02
+  },
+  "frozen_before_control_evaluation": true,
+  "observation_mean_surprisal_p95": 2.99549771060747,
+  "frozen_model_sha256": "d1c2a22cb4e26b05adafe1e08334d449d7b41e19f350ae5cecca9ae6e30f6d67"
+}

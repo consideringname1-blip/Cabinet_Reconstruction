@@ -1,0 +1,65 @@
+{
+  "frozen_before_control_evaluation": true,
+  "git_parent_revision": "707634a6936c963c5d4cee5fea79adda70ac2c09",
+  "config_path": "tools/itaco_moving_map_fix/configs/hololens_ownership_v5_multi_baseline.yaml",
+  "config_sha256": "a0b6bb5e92c7f80edd6ac0090a2e7450c09c860d9b7eb6881e8b8260c327b684",
+  "noise_model_sha256": "d1c2a22cb4e26b05adafe1e08334d449d7b41e19f350ae5cecca9ae6e30f6d67",
+  "classifier_module_sha256": {
+    "tools/itaco_ownership_v5/multi_baseline.py": "fa2e4948de62681f4123eae912f8ee874ee9daba3bb2ba10245214a12cca0ffa",
+    "tools/itaco_ownership_v5/plateau_noise.py": "706cf967991c46c59f46409b427636d94e152cec6b49f391865cdfc54d2abe22",
+    "tools/itaco_ownership_v5/motion_discrimination.py": "d52d2511e1ce3a7e17de2caad2625e523aa348be5507c2523b23b78a687bfc35",
+    "tools/itaco_ownership_v5/multi_baseline_diagnostic.py": "87879dc45c482acddff8ee4991e8573bf15fd27f169212d6d3499dc1c628af50"
+  },
+  "frozen_thresholds": {
+    "multi_baseline": {
+      "short": {
+        "minimum_delta_q_m": 0.005,
+        "maximum_delta_q_m": 0.015
+      },
+      "medium": {
+        "minimum_delta_q_m": 0.02,
+        "maximum_delta_q_m": 0.05
+      },
+      "long": {
+        "minimum_delta_q_m": 0.050000001,
+        "maximum_delta_q_m": 0.35
+      },
+      "require_all_interval_frames_active": true,
+      "allow_backward_motion_discrimination": true
+    },
+    "plateau_noise": {
+      "maximum_calibration_frame_gap": 3,
+      "maximum_source_samples_per_pair": 5000,
+      "minimum_samples_per_category": 500,
+      "edge_definition": {
+        "depth_discontinuity_distance_pixels": 6.0,
+        "minimum_local_depth_gradient_m_per_pixel": 0.02
+      }
+    },
+    "visibility": {
+      "minimum_common_source_samples": 35,
+      "minimum_common_source_coverage": 0.15,
+      "minimum_spatial_coverage": 0.15,
+      "coverage_grid_size": 4
+    },
+    "model_discrimination": {
+      "minimum_discriminative_to_plateau_p90_ratio": 1.0,
+      "minimum_informative_observations": 2,
+      "minimum_posterior_probability": 0.99,
+      "minimum_direction_consistency_fraction": 0.6
+    },
+    "physical_boundary": {
+      "observation_boundary_margin_pixels": 3.0,
+      "cross_boundary_sample_offset_pixels": 2,
+      "minimum_depth_jump_m": 0.045,
+      "minimum_normal_jump_degrees": 18.0,
+      "minimum_plane_offset_m": 0.025,
+      "maximum_normal_axis_alignment_for_tangent": 0.3,
+      "minimum_axis_edge_physical_confidence": 0.35,
+      "minimum_source_geometry_points": 35,
+      "minimum_moving_edge_support_fraction": 0.4
+    }
+  },
+  "control_annotations_read_by_classifier": false,
+  "parameter_tuning_after_control_evaluation": false
+}

@@ -1,0 +1,41 @@
+{
+  "scope": "post-gate read-only aggregation of frozen control observations",
+  "parameter_or_classifier_change_after_gate": false,
+  "active_comoving_box": {
+    "short": {
+      "accepted_observations": 14,
+      "discriminative_displacement_median_mm": 8.30,
+      "discriminative_displacement_range_mm": [5.63, 13.46],
+      "static_residual_median_mm": 13.36,
+      "static_residual_p90_median_mm": 17.02,
+      "moving_residual_median_mm": 2.77,
+      "moving_residual_p90_median_mm": 4.00,
+      "common_source_coverage_median": 0.940
+    },
+    "medium": {
+      "accepted_observations": 12,
+      "discriminative_displacement_median_mm": 29.80,
+      "discriminative_displacement_range_mm": [21.76, 46.15],
+      "static_residual_median_mm": 51.83,
+      "static_residual_p90_median_mm": 56.60,
+      "moving_residual_median_mm": 4.08,
+      "moving_residual_p90_median_mm": 6.75,
+      "common_source_coverage_median": 0.667
+    },
+    "long": {
+      "accepted_observations": 75,
+      "discriminative_displacement_median_mm": 209.10,
+      "discriminative_displacement_range_mm": [50.08, 296.09],
+      "static_residual_median_mm": 122.99,
+      "static_residual_p90_median_mm": 178.96,
+      "moving_residual_median_mm": 298.44,
+      "moving_residual_p90_median_mm": 368.63,
+      "common_source_coverage_median": 0.378
+    }
+  },
+  "diagnosis": {
+    "short_and_medium_behavior": "moving stays near the frozen plateau noise while static worsens with discriminative displacement",
+    "long_behavior": "both hypotheses are far outside the frozen plateau noise distribution and the moving projection is worse",
+    "remaining_blocker": "the implemented long-baseline visibility check establishes valid registered-depth coverage but not continued identity of the immutable source anchor; unrelated target surfaces can therefore contaminate long-baseline evidence"
+  }
+}

@@ -715,3 +715,60 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 - Local output: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/transition_event_logic_repair_001
 - Report: reports/assignment_v5/transition_event_logic_repair.md
 - Review bundle: reports/assignment_v5/results/transition_event_logic_repair/
+
+## Assignment v5 multi-baseline motion discrimination (2026-08-07)
+
+### Completed and verified
+
+- Added immutable source-indexed short (5-15 mm), medium (20-50 mm), and
+  long (>50 mm) ACTIVE_MOTION observations. Motion discrimination is
+  bidirectional; measured causal disocclusion remains chronological forward.
+- Calibrated a frozen registered-depth noise model from 42 same-plateau frame
+  pairs before reading control annotations. Interior residual median/p90 is
+  1.68/2.77 mm; depth/geometry-edge residual median/p90 is 2.90/6.69 mm.
+- Replaced the final absolute-30-mm decision with empirical noise-surprisal
+  evidence, posterior model discrimination, residual/displacement trend checks,
+  and the existing tangent/finite-edge ambiguity gate.
+- Passed 52/52 v5 tests and 34/34 v4 regression tests. The verified registered
+  depth scale gate passed again.
+- Real controls: drawer front 4/4 MOVING_LINK; documented floor 0/21
+  MOVING_LINK; plateau-only 0/2 ownership. No SAM2, region propagation,
+  optimization, TSDF, NKSR, Mesh, or Assignment v6 ran.
+
+### In progress / not accepted
+
+- The hard gate failed because the active co-moving box remained 0/5
+  MOVING_LINK; all five controls are UNKNOWN. The 116 ambiguity regions were
+  therefore not run.
+- ready_for_dual_tsdf=false. This is a failed control diagnostic, not a
+  reconstruction-ready ownership result.
+
+### Known issues
+
+- Box short/medium observations support the drawer model (moving residual
+  medians 2.77/4.08 mm versus static 13.36/51.83 mm), but long observations put
+  both models far outside plateau noise (moving 298.44 mm, static 122.99 mm).
+- The implemented long-baseline check verifies valid registered-depth/common
+  source-index coverage, not continued finite-surface identity. A projection
+  can therefore land on an unrelated target surface and contaminate the
+  aggregate likelihood.
+- The depth/geometry-edge calibration category is conservative and dominates
+  the plateau sample count (183,296 edge versus 8,555 interior samples).
+
+### Next steps
+
+1. Do not tune or rerun against the now-observed control gate.
+2. In a separately authorized experiment, define source-identity-aware
+   long-baseline censoring using independently frozen evidence and fresh
+   held-out controls.
+3. Keep the 116 regions and all reconstruction stages blocked.
+
+### Git state and outputs
+
+- Experiment parent: 707634a6936c963c5d4cee5fea79adda70ac2c09
+  on agent/region-assignment-v4.
+- Local output:
+  /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/multi_baseline_motion_discrimination_001
+- Report: reports/assignment_v5/multi_baseline_motion_discrimination.md
+- Review bundle:
+  reports/assignment_v5/results/multi_baseline_motion_discrimination/

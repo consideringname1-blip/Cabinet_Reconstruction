@@ -1,0 +1,6 @@
+{
+  "ran": false,
+  "reason": "control_hard_gate_failed_stop_before_116",
+  "decision_counts": null,
+  "ready_for_dual_tsdf": false
+}

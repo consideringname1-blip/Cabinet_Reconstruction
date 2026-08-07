@@ -138,3 +138,26 @@ Last updated: 2026-08-06
 - Decision: causal static evidence requires measured 3-of-4 front-silhouette motion, local reveal, registered-depth support, actual frame/time gap, and persistent world residual; positive fields cannot be constants.
 - Evidence: front controls pass 4/4, documented floor controls produce 0/21 MOVING_LINK, and plateau controls create no ownership. Co-moving box controls fail at 0/5 because both models form valid chains on small late-motion local displacements.
 - Consequence: do not tune thresholds after the gate and do not run the 116 regions. No propagation or reconstruction may consume this diagnostic; ready_for_dual_tsdf=false.
+
+## 2026-08-07 — Frozen-noise multi-baseline gate preserves failure rather than tuning controls
+
+- Status: implementation and one-shot held-out control evaluation complete;
+  control gate failed and stopped before the 116 regions.
+- Decision: compare static and drawer hypotheses using immutable source-indexed
+  short/medium/long ACTIVE_MOTION observations and a registered-depth noise
+  distribution frozen from same-plateau geometry. Forward and backward
+  observations may discriminate motion; causal disocclusion remains strictly
+  forward in recorded time.
+- Decision: absolute 30 mm compatibility is not a final classifier. Use
+  noise-normalized likelihood evidence and residual-versus-discriminative-
+  displacement behavior, while retaining tangent/repeated-plane ambiguity.
+- Evidence: front controls pass 4/4, floor controls produce 0/21 MOVING_LINK,
+  and plateau controls create no ownership. Box short/medium baselines favor
+  the moving model, but accepted long baselines hit surfaces incompatible with
+  both hypotheses; all five box controls remain UNKNOWN.
+- Decision: preserve this failed gate without parameter changes or a second
+  control run. The present long-baseline valid-depth coverage check is not
+  sufficient proof of continued immutable-anchor identity.
+- Consequence: the 116 regions remain unrun, formal v4 labels remain unchanged,
+  and ready_for_dual_tsdf=false. A future source-identity-aware visibility
+  design requires independent freezing and fresh held-out evaluation.
