@@ -1,0 +1,7 @@
+{
+  "checkpoint_path": "/workspace_whz/code/reconstruction/video2articulation/AutoSeg-SAM2/checkpoints/sam2/sam2.1_hiera_large.pt",
+  "expected_sha256": "2647878d5dfa5098f2f8649825738a9345572bae2d4350a2468587ece47dd318",
+  "actual_sha256": "2647878d5dfa5098f2f8649825738a9345572bae2d4350a2468587ece47dd318",
+  "match": true,
+  "note": "post-run audit for primary output; the deterministic repeat executed with the hard hash gate in frame_data.py"
+}

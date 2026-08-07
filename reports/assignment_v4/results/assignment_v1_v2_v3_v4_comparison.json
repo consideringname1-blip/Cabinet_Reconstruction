@@ -1,0 +1,45 @@
+{
+  "v1": {
+    "method": "drawer template plus static remainder",
+    "static_point_count": 57155,
+    "drawer_point_count": 63465
+  },
+  "v2": {
+    "method": "dual-close static bias with conservative cores",
+    "static_point_count": 167055,
+    "drawer_point_count": 17270
+  },
+  "v3": {
+    "method": "point-track diagnostic",
+    "formal_assignment": false,
+    "point_count_comparison": null,
+    "failure": "track sparsity/correspondence failure"
+  },
+  "v4": {
+    "method": "region-level direct projective geometry",
+    "static_point_count": 26,
+    "drawer_point_count": 2065,
+    "unknown_point_count": 294427
+  },
+  "old_v1_static_fate": {
+    "static": 0,
+    "drawer": 0,
+    "unknown": 0,
+    "invalid_or_unmatched": 57155
+  },
+  "old_v1_drawer_fate": {
+    "static": 0,
+    "drawer": 0,
+    "unknown": 0,
+    "invalid_or_unmatched": 63465
+  },
+  "v2_static_fate": {
+    "static": 0,
+    "drawer": 0,
+    "unknown": 0,
+    "invalid_or_unmatched": 167055
+  },
+  "near_contact_unknown_ratio": 1.0,
+  "drawer_regions_without_initial_seed_overlap": 5,
+  "open_only_unknown_ratio": 0.9625100048023051
+}

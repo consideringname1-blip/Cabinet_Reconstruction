@@ -21,3 +21,19 @@ Last updated: 2026-08-06
   place.
 - Consequence: `ready_for_dual_tsdf=false` until near-contact observability,
   drawer-side retention, inner-wall leakage, and independent review pass.
+
+## 2026-08-07 — Assignment v4 uses region-level direct projective evidence
+
+- Status: accepted as an extended diagnostic design; not accepted for fusion.
+- Decision: use frame-local AutoSeg surface regions as the ownership unit and
+  compare world-static against the frozen prismatic drawer model directly in
+  registered target RGB-D. Predicted-surface z-buffering is required; occlusion
+  is neutral, free space is contradictory, and unobservable samples do not enter
+  evidence denominators.
+- Decision: moving labels are seed priors only. Static is never a remainder,
+  proposal layers are provenance only, and mixed regions remain unknown.
+- Decision: run audited SAM2 only after direct geometry accepts drawer seeds;
+  propagation cannot override geometry and open-only surfaces remain unknown.
+- Consequence: current positive static and open propagation support are too
+  sparse. Human review is absent, so `ready_for_dual_tsdf=false` and no
+  reconstruction stage may run from this result.

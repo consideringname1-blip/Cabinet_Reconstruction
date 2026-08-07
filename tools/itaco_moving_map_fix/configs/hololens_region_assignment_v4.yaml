@@ -1,0 +1,91 @@
+output_kind: extended_non_official_region_level_articulation_consistency_v4
+inputs:
+  raw_root: /workspace_whz/data/upload/2026-07-30-002840
+  reproduction_manifest: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/articulated_model/reproduction_manifest.json
+  closed_manifest: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/inputs/closed_forward_005_165/sequence_manifest.json
+  interaction_manifest: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/inputs/interaction_forward_177_213/sequence_manifest.json
+  open_manifest: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/inputs/open_forward_220_360/sequence_manifest.json
+  axis_path: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/joint_axis_opening_world.npy
+  q_path: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/q_interaction_monotonic_m.npy
+  moving_labels_path: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/gate_no_minmax/moving_map_labels.npz
+  interaction_pose_path: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/official/preprocess/gt_cam2world_all.npy
+  corrected_hand_dir: /workspace_whz/data/output/itaco_track_motion_stage1_5/2026-07-30-002840_trial_001/hand_masks_corrected
+  autoseg_reverse_mapping: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/inputs/autoseg_reverse_213_177/frame_mapping.json
+  autoseg_npz_dir: /workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/preprocess/video_segment_reverse/small/final-output
+  v1_dir: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/dual_volume_fusion
+  v2_dir: /workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v2/assignment_v2
+  output_dir: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_attempt_002_valid_discontinuities
+  python_environment: /workspace_whz/envs/video_articulation/bin/python
+  sam2_repo: /workspace_whz/code/reconstruction/video2articulation/AutoSeg-SAM2/submodule/segment-anything-2
+  sam2_checkpoint: /workspace_whz/code/reconstruction/video2articulation/AutoSeg-SAM2/checkpoints/sam2/sam2.1_hiera_large.pt
+  sam2_model_config: configs/sam2.1/sam2.1_hiera_l.yaml
+validity:
+  depth_scale_to_m: 0.001
+  depth_min_m: 0.2
+  depth_max_m: 4.0
+  rgb_erosion_pixels: 3
+  depth_discontinuity_threshold_m: 0.08
+  depth_boundary_erosion_pixels: 2
+  pose_equality_tolerance: 1.0e-10
+proposals:
+  minimum_area_pixels: 100
+  region_erosion_pixels: 2
+  legacy_score: 1.0
+projective_evidence:
+  depth_support_threshold_m: 0.03
+  occlusion_margin_m: 0.03
+  free_space_margin_m: 0.03
+region_evidence:
+  depth_support_threshold_m: 0.03
+  occlusion_margin_m: 0.03
+  free_space_margin_m: 0.03
+  minimum_pair_q_span_fraction: 0.15
+  maximum_target_frames: 0
+  maximum_sampled_points_per_region: 1200
+  minimum_valid_region_pixels: 100
+  minimum_sampled_points: 80
+  minimum_target_frames: 3
+  minimum_testable_points_per_target: 20
+  minimum_total_testable_points: 80
+  frame_support_ratio_threshold: 0.55
+  minimum_support_ratio_median: 0.55
+  minimum_support_ratio_p25: 0.35
+  maximum_contradiction_ratio: 0.25
+  minimum_supported_frames: 3
+  minimum_point_preferred_fraction: 0.45
+  minimum_model_score_margin: 0.12
+  point_preference_score_margin: 0.20
+  minimum_point_testable_observations: 1
+  mixed_surface_min_fraction: 0.20
+  seed_conflict_overlap_ratio: 0.10
+sampling:
+  interaction_stride: 1
+  closed_pointcloud_stride: 5
+  interaction_pointcloud_stride: 1
+  open_pointcloud_stride: 5
+sam2:
+  jpeg_quality: 95
+  maximum_seed_count: 6
+  minimum_agreement_fraction: 0.60
+assignment:
+  output_voxel_m: 0.006
+near_contact:
+  maximum_evidence_margin: 0.15
+  region_centroid_distance_m: 0.05
+comparison:
+  nearest_assignment_distance_m: 0.02
+diagnostic_sweep:
+  depth_support_threshold_m: [0.02, 0.03, 0.04]
+  occlusion_margin_m: [0.02, 0.03]
+  executed_in_primary_run: false
+  primary_selection_reason: 0.03 m matches the registered-depth noise scale used by prior verified diagnostics while retaining a separate free-space contradiction class; the sweep is recorded but not combinatorially executed.
+audit:
+  parent_commit: fd07a99c9efd821f4f1dfd477090d993e56b6b55
+  branch: agent/region-assignment-v4
+  autoseg_revision: 840a356f26bd31ac5f3033c05d3ba61a2ceaa38c
+  sam2_revision: 2b90b9f5ceec907a1c18123530e92e794ad901a4
+  sam2_checkpoint_sha256: 2647878d5dfa5098f2f8649825738a9345572bae2d4350a2468587ece47dd318
+  point_tracking_primary: false
+  loftr_formal_run: false
+  lk_formal_run: false
+  tapip3d_formal_run: false

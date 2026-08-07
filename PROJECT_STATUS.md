@@ -4,7 +4,7 @@ This file is the canonical handoff summary for `/workspace_whz`.
 
 - Tracked workspace: `/workspace_whz`
 - Excluded workspace: `/workspace` — do not inspect, modify, or include it in project status
-- Last updated: 2026-08-06
+- Last updated: 2026-08-07
 - Verified project baseline before this status-only update: `7e394359d2b5a0412398fbd1743e5d8f47d43d4c`
 - Cabinet publication target: `whz/main` at `consideringname1-blip/Cabinet_Reconstruction.git`
 
@@ -385,4 +385,74 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 - Depth-projective implementation/results commit: `0422ba54`; published to
   `whz/agent/funrec-inspired-assignment-v3`.
 - Output mirrored under `reports/assignment_v3_depth_projective_tracks/`.
-- Draft PR creation is externally blocked: the authenticated CLI user and the
+- Draft PR creation was externally blocked at that time by the authenticated CLI user and GitHub App authorization.
+
+## Assignment v4 region-level diagnostic update (2026-08-07)
+
+### Completed and verified
+
+- Added `tools/itaco_region_assignment_v4/` and the
+  `tools/fuse_hololens_articulation_assignment_v4.py` entry point. Formal
+  ownership uses direct static-versus-prismatic projective RGB-D evidence on
+  frame-local AutoSeg regions; LoFTR, LK, and TAPIP3D are not formal classifiers.
+- Frozen-input validation preserves the verified HoloLens poses, prismatic axis,
+  monotonic `q_t`, calibration, frame policy, repaired moving labels, and hand
+  masks. It also verifies the configured SAM2 checkpoint SHA-256 before use.
+- The formal corrected run evaluates all 37 interaction frames and outputs four
+  exclusive states. It classified 690 proposals as 1 static, 5 drawer, 154
+  unknown, and 530 invalid. All five drawer regions are zero-moving-seed-overlap
+  revealed candidates; five mixed proposals remain unknown.
+- Audited SAM2 ran only after direct geometry accepted drawer seeds. It was active
+  in 20/37 interaction frames and 4/141 open frames; open drawer coverage is
+  3.749%, while 96.251% of effective open support remains unknown.
+- A one-factor threshold diagnostic produced static/drawer counts of 1/3 at 2 cm
+  support, 1/5 at the 3 cm primary setting, and 2/6 at 4 cm support. Changing only
+  occlusion margin from 3 cm to 2 cm kept the primary 1/5 counts.
+- A full deterministic repeat matched 2,287/2,287 evidence, per-frame assignment,
+  SAM2-mask, and diagnostic-cloud artifact hashes.
+- Assignment v4 tests pass 13/13; Assignment v3 regression tests pass 18/18;
+  syntax compilation and whitespace checks pass.
+
+### In progress / not accepted
+
+- `ready_for_dual_tsdf=false`. Assignment v4 is an extended ownership diagnostic,
+  not a reconstruction and not a new best verified result.
+- Generated contact sheets and projection panels still require explicit human
+  inspection. The current execution environment's image viewer failed because
+  unprivileged bubblewrap namespaces are unavailable.
+
+### Known issues
+
+- No drawer-front region was accepted; every accepted drawer seed has repaired
+  moving overlap zero and still needs visual confirmation as drawer side/bottom.
+- Positive static support is nearly absent: one interaction static region and no
+  closed/open positive static pixels. Consequently all old v1/v2 comparison
+  points are unmatched at the 2 cm diagnostic radius.
+- The 133 automatically selected near-contact difficult regions are all unknown,
+  but no accepted drawer/static pair is spatially close. Inner-wall leakage at
+  the critical interface is therefore not yet demonstrated to be solved.
+- SAM2 propagation reaches only four open frames. The optional SAM2 `_C` fill-hole
+  extension is unavailable, so that post-processing step was skipped.
+
+### Next steps
+
+1. Manually inspect drawer/static/mixed contact sheets and the accepted projection
+   panels, explicitly checking drawer front, side/bottom, cabinet inner wall, and
+   floor leakage.
+2. Recover reliable positive static evidence without defining static as a
+   remainder and without relaxing thresholds merely to increase counts.
+3. Improve open identity continuity from geometry-validated interaction seeds;
+   keep open-only and propagation-conflict pixels unknown.
+4. Rerun the same fixed-input diagnostic after those evidence changes. Do not run
+   dual TSDF until all acceptance conditions, including human review, pass.
+
+### Git state and outputs
+
+- Worktree: `/workspace_whz_worktrees/funrec-assignment-v3`
+- Branch: `agent/region-assignment-v4`
+- Exact parent before Assignment v4 changes: `fd07a99c9efd821f4f1dfd477090d993e56b6b55`
+- Formal output: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_attempt_002_valid_discontinuities`
+- Deterministic repeat: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_attempt_002_repeat`
+- Preserved failed first attempt: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4`
+- Tracked report: `reports/assignment_v4/README.md`
+- Assignment v4 code, curated results, and reports are published from this branch; no merge, stash, reset, or clean was performed.

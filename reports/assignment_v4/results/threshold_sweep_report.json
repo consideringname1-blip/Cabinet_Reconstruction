@@ -1,0 +1,226 @@
+{
+  "policy": "one factor at a time; no combinatorial sweep",
+  "free_space_margin_m": 0.03,
+  "cases": [
+    {
+      "name": "primary_3cm",
+      "depth_support_threshold_m": 0.03,
+      "occlusion_margin_m": 0.03,
+      "region_counts": {
+        "invalid": 530,
+        "unknown": 154,
+        "static": 1,
+        "drawer": 5
+      },
+      "reason_counts": {
+        "invalid_insufficient_depth": 530,
+        "unknown_ambiguous": 64,
+        "unknown_seed_geometry_conflict": 36,
+        "unknown_mixed_surface": 5,
+        "unknown_insufficient_evidence": 49,
+        "static_region_geometry": 1,
+        "drawer_region_geometry_revealed": 5
+      },
+      "evidence_margin_distribution": {
+        "p10": -0.09264785924759585,
+        "p25": 0.0,
+        "p50": 0.0,
+        "p75": 0.0,
+        "p90": 0.10010720986111657
+      },
+      "accepted_static_regions": [
+        [
+          197,
+          "frame_197_layer_2"
+        ]
+      ],
+      "accepted_drawer_regions": [
+        [
+          202,
+          "frame_202_layer_2"
+        ],
+        [
+          203,
+          "frame_203_layer_2"
+        ],
+        [
+          204,
+          "frame_204_layer_2"
+        ],
+        [
+          205,
+          "frame_205_layer_2"
+        ],
+        [
+          206,
+          "frame_206_layer_2"
+        ]
+      ]
+    },
+    {
+      "name": "support_2cm",
+      "depth_support_threshold_m": 0.02,
+      "occlusion_margin_m": 0.03,
+      "region_counts": {
+        "invalid": 530,
+        "unknown": 156,
+        "static": 1,
+        "drawer": 3
+      },
+      "reason_counts": {
+        "invalid_insufficient_depth": 530,
+        "unknown_ambiguous": 65,
+        "unknown_seed_geometry_conflict": 36,
+        "unknown_mixed_surface": 4,
+        "unknown_insufficient_evidence": 51,
+        "static_region_geometry": 1,
+        "drawer_region_geometry_revealed": 3
+      },
+      "evidence_margin_distribution": {
+        "p10": -0.061945737189639694,
+        "p25": 0.0,
+        "p50": 0.0,
+        "p75": 0.0,
+        "p90": 0.014454135084602604
+      },
+      "accepted_static_regions": [
+        [
+          197,
+          "frame_197_layer_2"
+        ]
+      ],
+      "accepted_drawer_regions": [
+        [
+          202,
+          "frame_202_layer_2"
+        ],
+        [
+          204,
+          "frame_204_layer_2"
+        ],
+        [
+          206,
+          "frame_206_layer_2"
+        ]
+      ]
+    },
+    {
+      "name": "support_4cm",
+      "depth_support_threshold_m": 0.04,
+      "occlusion_margin_m": 0.03,
+      "region_counts": {
+        "invalid": 530,
+        "unknown": 152,
+        "static": 2,
+        "drawer": 6
+      },
+      "reason_counts": {
+        "invalid_insufficient_depth": 530,
+        "unknown_ambiguous": 62,
+        "unknown_seed_geometry_conflict": 35,
+        "unknown_mixed_surface": 8,
+        "unknown_insufficient_evidence": 47,
+        "static_region_geometry": 2,
+        "drawer_region_geometry_revealed": 6
+      },
+      "evidence_margin_distribution": {
+        "p10": -0.11948515312740095,
+        "p25": 0.0,
+        "p50": 0.0,
+        "p75": 0.0,
+        "p90": 0.13491638379151272
+      },
+      "accepted_static_regions": [
+        [
+          197,
+          "frame_197_layer_2"
+        ],
+        [
+          198,
+          "frame_198_layer_2"
+        ]
+      ],
+      "accepted_drawer_regions": [
+        [
+          202,
+          "frame_202_layer_2"
+        ],
+        [
+          203,
+          "frame_203_layer_2"
+        ],
+        [
+          204,
+          "frame_204_layer_2"
+        ],
+        [
+          205,
+          "frame_205_layer_2"
+        ],
+        [
+          206,
+          "frame_206_layer_2"
+        ],
+        [
+          207,
+          "frame_207_layer_2"
+        ]
+      ]
+    },
+    {
+      "name": "occlusion_2cm",
+      "depth_support_threshold_m": 0.03,
+      "occlusion_margin_m": 0.02,
+      "region_counts": {
+        "invalid": 530,
+        "unknown": 154,
+        "static": 1,
+        "drawer": 5
+      },
+      "reason_counts": {
+        "invalid_insufficient_depth": 530,
+        "unknown_ambiguous": 64,
+        "unknown_seed_geometry_conflict": 36,
+        "unknown_mixed_surface": 5,
+        "unknown_insufficient_evidence": 49,
+        "static_region_geometry": 1,
+        "drawer_region_geometry_revealed": 5
+      },
+      "evidence_margin_distribution": {
+        "p10": -0.09264785924759585,
+        "p25": 0.0,
+        "p50": 0.0,
+        "p75": 0.0,
+        "p90": 0.10010720986111657
+      },
+      "accepted_static_regions": [
+        [
+          197,
+          "frame_197_layer_2"
+        ]
+      ],
+      "accepted_drawer_regions": [
+        [
+          202,
+          "frame_202_layer_2"
+        ],
+        [
+          203,
+          "frame_203_layer_2"
+        ],
+        [
+          204,
+          "frame_204_layer_2"
+        ],
+        [
+          205,
+          "frame_205_layer_2"
+        ],
+        [
+          206,
+          "frame_206_layer_2"
+        ]
+      ]
+    }
+  ]
+}

@@ -1,0 +1,57 @@
+{
+  "candidate_count": 5,
+  "selected_count": 5,
+  "seeds": [
+    {
+      "seed_id": "seed_000_202",
+      "original_frame_id": 202,
+      "proposal_id": "frame_202_layer_2",
+      "seed_kind": "revealed",
+      "combined_index": 25,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_attempt_002_valid_discontinuities/sam2_seed_masks/seed_000_202.npy",
+      "area_px": 333,
+      "seed_overlap_ratio": 0.0
+    },
+    {
+      "seed_id": "seed_001_203",
+      "original_frame_id": 203,
+      "proposal_id": "frame_203_layer_2",
+      "seed_kind": "revealed",
+      "combined_index": 26,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_attempt_002_valid_discontinuities/sam2_seed_masks/seed_001_203.npy",
+      "area_px": 370,
+      "seed_overlap_ratio": 0.0
+    },
+    {
+      "seed_id": "seed_002_204",
+      "original_frame_id": 204,
+      "proposal_id": "frame_204_layer_2",
+      "seed_kind": "revealed",
+      "combined_index": 27,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_attempt_002_valid_discontinuities/sam2_seed_masks/seed_002_204.npy",
+      "area_px": 362,
+      "seed_overlap_ratio": 0.0
+    },
+    {
+      "seed_id": "seed_003_205",
+      "original_frame_id": 205,
+      "proposal_id": "frame_205_layer_2",
+      "seed_kind": "revealed",
+      "combined_index": 28,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_attempt_002_valid_discontinuities/sam2_seed_masks/seed_003_205.npy",
+      "area_px": 380,
+      "seed_overlap_ratio": 0.0
+    },
+    {
+      "seed_id": "seed_004_206",
+      "original_frame_id": 206,
+      "proposal_id": "frame_206_layer_2",
+      "seed_kind": "revealed",
+      "combined_index": 29,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_attempt_002_valid_discontinuities/sam2_seed_masks/seed_004_206.npy",
+      "area_px": 391,
+      "seed_overlap_ratio": 0.0
+    }
+  ],
+  "prompt_source": "accepted drawer region masks; no point tracks or LoFTR prompts"
+}

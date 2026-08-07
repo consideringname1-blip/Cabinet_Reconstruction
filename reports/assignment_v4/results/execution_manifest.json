@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "tools/fuse_hololens_articulation_assignment_v4.py",
+    "--config",
+    "tools/itaco_moving_map_fix/configs/hololens_region_assignment_v4.yaml"
+  ],
+  "cwd": "/workspace_whz_worktrees/funrec-assignment-v3",
+  "entry_script": "tools/fuse_hololens_articulation_assignment_v4.py",
+  "parent_commit": "fd07a99c9efd821f4f1dfd477090d993e56b6b55"
+}

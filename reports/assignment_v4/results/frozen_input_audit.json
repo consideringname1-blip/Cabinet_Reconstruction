@@ -1,0 +1,53 @@
+{
+  "verified": true,
+  "manifest": "/workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/articulated_model/reproduction_manifest.json",
+  "joint_type": "prismatic",
+  "axis_world": [
+    0.5380529878004112,
+    0.08855245285159109,
+    0.838246649508972
+  ],
+  "travel_m": 0.3002295680213606,
+  "frame_ranges": {
+    "closed": [
+      5,
+      165,
+      161
+    ],
+    "interaction": [
+      177,
+      213,
+      37
+    ],
+    "open": [
+      220,
+      360,
+      141
+    ]
+  },
+  "frame_order": "forward",
+  "pose_max_abs_difference": 0.0,
+  "input_hashes": {
+    "axis_path": {
+      "path": "/workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/joint_axis_opening_world.npy",
+      "sha256": "6cf3aef9dfd59005491f5019676f0de50ffaf43c94f2e883eeb1d641b37a10af"
+    },
+    "q_path": {
+      "path": "/workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/geometry_interior_v1/q_interaction_monotonic_m.npy",
+      "sha256": "0a83ef0fa57386542bd73803cd84f996123e38ab81896b6f0cd49a9197153645"
+    },
+    "moving_labels_path": {
+      "path": "/workspace_whz/data/output/itaco_moving_map_fix/2026-07-30-002840_fixed_hololens_fixed_map_axis_trial_001/gate_no_minmax/moving_map_labels.npz",
+      "sha256": "13da1082e31b33d19faaa903efbd9a3a420b81d93d6c370f1367b7fb5a56a486"
+    },
+    "interaction_pose_path": {
+      "path": "/workspace_whz/data/output/itaco_hololens_gt/2026-07-30-002840_revolute_interior_001/official/preprocess/gt_cam2world_all.npy",
+      "sha256": "4e02c2a2218d684a0c7e1692562f2a6d418cd635e56ca8678e901ab2fd6f1e77"
+    }
+  },
+  "camera_optimization_ran": false,
+  "axis_optimization_ran": false,
+  "q_t_optimization_ran": false,
+  "moving_map_optimization_ran": false,
+  "calibration_optimization_ran": false
+}
