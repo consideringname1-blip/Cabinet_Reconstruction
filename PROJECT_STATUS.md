@@ -469,7 +469,7 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
   depth scale continues to classify them as revealed drawer candidates, but
   drawer-rear-panel versus cabinet-inner-wall identity still requires human review.
 - Identified a fivefold depth-scale mismatch: stored pinhole registered depth is
-  4.9995x the corresponding Long Throw→PV optical-depth projection. The formal
+  4.9995x the corresponding Long Throw→virtual-pinhole optical-axis projection. The formal
   v4 config used 0.001 m/count; the diagnostic matching scale is 0.0002 m/count.
 - After `/5` correction, pinhole/PLY valid-mask IoU is 99.984–99.996%, median
   absolute depth difference is about 0.11 mm, and 99.62% of common pixels agree
@@ -495,9 +495,9 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 
 ### Next steps
 
-1. Audit and record the registered-depth producer and physical unit contract.
-2. Add a hard PLY/pinhole scale-consistency gate to the loader.
-3. Rerun Assignment v4 into a new output directory with the verified scale,
+1. Use `reports/assignment_v4/registered_depth_provenance_audit/` as the unit contract evidence.
+2. Integrate the specified PLY/pinhole scale-consistency gate only before an approved rerun.
+3. If the user authorizes it, rerun Assignment v4 into a new output directory,
    preserving the failed 0.001-scale output.
 4. Do not run dual TSDF until corrected ownership and human review pass.
 
@@ -508,3 +508,51 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 - Report: `reports/assignment_v4/followup_depth_scale_diagnostic.md`
 - GitHub-curated masks/projections: `reports/assignment_v4/results/followup_masks_depth/`
 - GitHub-curated scale audit: `reports/assignment_v4/results/followup_depth_scale/`
+
+## Registered-depth physical-unit and provenance audit (2026-08-07)
+
+### Completed and verified
+
+- Identified the `pinhole_projection` producer family as Microsoft
+  HoloLens2ForCV StreamRecorderConverter. Its exact output signature matches the
+  recording and its source explicitly encodes virtual-pinhole optical-axis Z as
+  `uint16(Z_m * 5000)`.
+- Audited all 382 registered PNGs: every image is 288x320 uint16, zero is the
+  invalid value, no 65535 saturation occurs, and the nonzero raw range is
+  996–30,403 counts.
+- Evaluated 11 uniformly distributed frames: closed 5/85/165, interaction
+  177/186/195/204/213, and open 220/290/360. Robust through-origin scale is
+  0.000200013845 m/count; per-frame peak-to-peak variation is 0.00441%.
+- Producer-algorithm re-encoding agrees exactly on 98.86–99.85% of common
+  pixels. Source PGM radial range and PLY range agree at sub-micrometre median
+  error. Optical-Z residual median is 0.052 mm, versus 60.1 mm for radial range
+  and 85.0 mm for true PV forward depth.
+- Added the independent audit tool, nine synthetic/unit tests, consumer audit,
+  historical impact audit, unit contract and a non-integrated gate specification.
+
+### In progress / not accepted
+
+- The exact HoloLens2ForCV checkout and literal conversion command used on the
+  recording were not preserved. Producer family/formula are verified, but exact
+  execution-revision provenance remains partial.
+- Corrected Assignment v4 has not run and is not authorized by this audit.
+
+### Known issues
+
+- Assignment v3, v3 depth-projective and formal v4 directly decoded the
+  registered PNG with 0.001 m/count and require separate reruns.
+- The earlier phrase “PV depth” was imprecise: RGB is PV color resampled into a
+  virtual Long Throw pinhole view; the stored depth is not true PV-camera Z.
+
+### Next steps
+
+1. Ask the user whether to authorize a separate corrected-v4 research rerun.
+2. Before that run, integrate and test the specified scale-consistency gate.
+3. Keep all failed 0.001-scale outputs intact and separate.
+
+### Git state and outputs
+
+- Branch: `agent/region-assignment-v4`
+- Audit-start HEAD: `052094187789b1d78f1032e2572d1af015bcc434`
+- Output: `reports/assignment_v4/registered_depth_provenance_audit/`
+- No commit, push, merge, Assignment v4, SAM2, TSDF, NKSR or Mesh run occurred.

@@ -1,0 +1,26 @@
+{
+  "behavior": "raise RuntimeError before loading frames into an assignment or fusion pipeline",
+  "failure_message": "registered depth physical-unit mismatch",
+  "metrics": [
+    "median fitted scale",
+    "per-frame scale drift",
+    "valid-mask IoU",
+    "median absolute error",
+    "p90 absolute error"
+  ],
+  "required_reference_artifacts": [
+    "representative registered PNGs",
+    "matching Long Throw world PLYs",
+    "odometry.log",
+    "calibration.txt"
+  ],
+  "status": "specification_only_not_integrated",
+  "thresholds": {
+    "maximum_median_abs_error_m": 0.001,
+    "maximum_p90_abs_error_m": 0.005,
+    "maximum_per_frame_scale_drift": 0.005,
+    "maximum_scale_relative_error_to_contract": 0.01,
+    "minimum_frames": 3,
+    "minimum_valid_mask_iou": 0.98
+  }
+}

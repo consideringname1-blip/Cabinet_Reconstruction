@@ -1,0 +1,18 @@
+{
+  "coordinate_frame": "fixed virtual 320x288 pinhole camera over Long Throw camera-space points; K=(200,200,160,144)",
+  "decoding_formula": "nominal Z_m = stored_uint16 / 5000; exact Z lies in [stored/5000,(stored+1)/5000)",
+  "encoding_formula": "stored_uint16 = trunc_toward_zero(Z_m * 5000)",
+  "invalid_value": 0,
+  "not_quantities": [
+    "Long Throw radial range",
+    "true PV-camera optical-axis Z",
+    "inverse depth",
+    "disparity"
+  ],
+  "offset_m": 0.0,
+  "physical_quantity": "virtual Long Throw pinhole optical-axis Z",
+  "quantization_step_m": 0.0002,
+  "scale_to_m": 0.0002,
+  "stored_dtype": "uint16",
+  "unit_contract_status": "verified"
+}

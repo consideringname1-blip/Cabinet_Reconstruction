@@ -42,7 +42,7 @@ Last updated: 2026-08-06
 
 - Status: accepted diagnostic finding; corrected full assignment not yet run.
 - Evidence: stored pinhole registered depth is approximately 4.9995x the same
-  Long Throw world PLY projected into the PV camera. A diagnostic 0.0002 m/count
+  Long Throw world PLY reprojected into the recorded virtual pinhole camera. A diagnostic 0.0002 m/count
   scale restores >99.98% valid-mask IoU and millimetre-scale depth agreement.
 - Decision: preserve the 0.001-scale v4 output as a failed diagnostic and prohibit
   it from dual TSDF. Do not silently overwrite its config or artifacts.
@@ -52,3 +52,20 @@ Last updated: 2026-08-06
 - Consequence: the earlier near-total layer25 contradiction is attributed mainly
   to depth scale, not to the fixed axis or `q_t`; corrected ownership still needs
   a separate full rerun and human review.
+
+## 2026-08-07 — Registered-depth unit contract verified; execution revision remains partial
+
+- Status: provenance/unit diagnostic complete; corrected Assignment v4 not run.
+- Evidence: the recording exactly matches Microsoft HoloLens2ForCV
+  StreamRecorderConverter output (`*_proj.png`, fixed K=200/200/160/144,
+  depth/rgb indexes, trajectory and odometry). The matched source explicitly
+  writes `uint16(virtual_pinhole_Z_m * 5000)`. Across 11 closed/interaction/open
+  frames, the robust fitted scale is 0.000200013845 m/count with no drift.
+- Decision: treat 0.0002 m/count as the verified unit contract for this artifact
+  family. The quantity is virtual Long Throw pinhole optical-axis Z, not radial
+  range and not true PV-camera Z.
+- Limitation: the exact converter checkout and literal command used for this
+  recording were not preserved, so producer execution provenance is partial.
+- Consequence: Assignment v3 and v4 registered-PNG results require rerun; PLY-
+  based official preprocess, moving-map, axis/q, v1/v2 geometry and GLB/URDF are
+  not invalidated by this unit issue. Corrected v4 still requires user approval.

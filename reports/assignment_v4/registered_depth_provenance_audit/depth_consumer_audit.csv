@@ -1,0 +1,21 @@
+consumer_path,assumed_scale,physical_quantity_assumption,affected_outputs,potentially_affected,path_exists
+tools/itaco_track_motion_v1/reference.py,configured; 0.001 in recording config,registered virtual-pinhole Z,Stage 1/1.5 reference and validity,True,True
+tools/itaco_track_motion_v1/validity.py,configured; 0.001 in recording config,registered virtual-pinhole Z,Stage 1/1.5 tracks,True,True
+tools/itaco_funrec_assignment_v3/pipeline.py,configured; 0.001,registered virtual-pinhole Z,Assignment v3 and depth-projective tracks,True,True
+tools/itaco_region_assignment_v4/frame_data.py,configured; 0.001,registered virtual-pinhole Z,Assignment v4 formal ownership,True,True
+tools/compare_gt_monst3r_upload.py,hard-coded 0.001; comment says uint16 mm,assumed millimetres,VGGT/MonST3R comparison diagnostics,True,True
+tools/build_hololens_rgbd_video.py,hard-coded /1000,assumed millimetres,generic HoloLens RGB-D video when pointed at pinhole_projection,True,True
+tools/build_itaco_gt_surface.py,hard-coded /1000 for uint16,assumed millimetres,generic GT surface helper when pointed at registered PNG,True,True
+tools/visualize_axis_compare.py,hard-coded 0.001 on registered PNG,assumed millimetres,legacy axis/depth comparison,True,True
+tools/diagnose_assignment_v4_masks_depth.py,inherits formal v4 0.001,registered virtual-pinhole Z,failed formal-scale follow-up panels,True,True
+tools/diagnose_assignment_v4_depth_scale.py,explicit diagnostic formal_scale/5,registered virtual-pinhole Z,corrected-scale follow-up only,False,True
+tools/audit_hololens_registered_depth_provenance.py,producer-verified 1/5000,virtual-pinhole optical Z,this provenance audit,False,True
+tools/build_itaco_movable_mesh.py,hard-coded /1000 where PNG is read,assumed millimetres,legacy uploaded-depth mesh helper,True,True
+tools/run_itaco_upload_gt_sam3.py,hard-coded /1000 where PNG is read,assumed millimetres,legacy GT+SAM3 helper,True,True
+tools/fuse_hololens_articulation_assignment_v2.py,none; projects Long Throw PLY,PLY metres,Assignment v2,False,True
+tools/fuse_hololens_articulation_dual_volume.py,none; projects Long Throw PLY,PLY metres,geometry_interior_v1,False,True
+tools/fuse_hololens_articulation_dual_tsdf.py,none for geometry; Long Throw PLY,PLY metres,dual TSDF diagnostic,False,False
+tools/test_arkit_pose_error_tsdf.py,none for source geometry; Long Throw PLY,PLY metres,pose-error TSDF diagnostic,False,True
+tools/build_itaco_gt_surface_from_world_ply.py,none; Long Throw PLY,PLY metres,GT surface/preprocess,False,True
+tools/reproject_hololens_world_ply_depth.py,writes float-metre PLY reprojection,PLY metres,registered-depth alternative diagnostic,False,True
+tools/recompute_prismatic_q_from_moving_labels.py,none; consumes float-metre prompt_depth_video NPY,metres,monotonic q_t,False,True

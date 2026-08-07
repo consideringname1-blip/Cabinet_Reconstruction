@@ -1,0 +1,47 @@
+{
+  "artifact": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth",
+  "coordinate_frame": "fixed virtual 320x288 pinhole camera over Long Throw camera-space points; K=(200,200,160,144)",
+  "dataset_recording": "2026-07-30-002840",
+  "decoding_formula": "nominal Z_m = stored_uint16 / 5000; exact Z lies in [stored/5000,(stored+1)/5000)",
+  "empirical_validation": {
+    "correlation": 0.9999999882608428,
+    "median_abs_residual_m": 5.156150902929646e-05,
+    "median_ratio": 0.00020001627466820072,
+    "p90_abs_residual_m": 0.00011392910462433293,
+    "per_frame_scale_95pct_interval": [
+      0.00020001081298094632,
+      0.0002000193476502281
+    ],
+    "per_frame_scale_drift": {
+      "drift_detected": false,
+      "median": 0.00020001704910551255,
+      "relative_peak_to_peak": 4.4055071125359865e-05,
+      "threshold": 0.005
+    },
+    "ratio_mad": 9.021243761394866e-09,
+    "sample_count": 626313,
+    "scale": 0.00020001384482515934
+  },
+  "encoding_formula": "stored_uint16 = trunc_toward_zero(Z_m * 5000)",
+  "evidence_level": "A for producer family/formula; B for exact recording scale; exact execution revision unresolved",
+  "invalid_value": 0,
+  "limitations": [
+    "exact producer checkout and literal command were not preserved",
+    "last-write projection is not a nearest-depth z-buffer"
+  ],
+  "offset_m": 0.0,
+  "producer": "Microsoft HoloLens2ForCV StreamRecorderConverter/save_pclouds.py",
+  "producer_revision": null,
+  "provenance_status": "partial",
+  "quantity_definition": "virtual Long Throw pinhole optical-axis Z",
+  "reference_source_revision": "207205596840ae6e7b8c2a795d35c3c4e7bec22e",
+  "scale_to_m": 0.0002,
+  "source_quantity": "Long Throw radial-range PGM + unit-ray LUT converted to metre 3D points",
+  "stored_dtype": "uint16",
+  "stored_unit_or_encoding": "5000 counts per metre of virtual-pinhole optical Z",
+  "unit_contract_status": "verified",
+  "valid_raw_range": [
+    1,
+    30403
+  ]
+}

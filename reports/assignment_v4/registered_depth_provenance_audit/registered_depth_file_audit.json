@@ -1,0 +1,6343 @@
+{
+  "all_frames": [
+    {
+      "association_timestamp": 134298125200467407,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125201483730,
+      "max_raw": 24655,
+      "median_raw_nonzero": 7801.0,
+      "min_raw_nonzero": 1353,
+      "nonzero_ratio": 0.5526150173611111,
+      "original_frame_id": 0,
+      "p95_raw_nonzero": 15681.599999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125202467451,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125202483322,
+      "max_raw": 24487,
+      "median_raw_nonzero": 7757.0,
+      "min_raw_nonzero": 1328,
+      "nonzero_ratio": 0.5766710069444444,
+      "original_frame_id": 1,
+      "p95_raw_nonzero": 15547.5,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125204467495,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125204482507,
+      "max_raw": 26900,
+      "median_raw_nonzero": 7650.0,
+      "min_raw_nonzero": 1372,
+      "nonzero_ratio": 0.5614691840277778,
+      "original_frame_id": 2,
+      "p95_raw_nonzero": 15395.799999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125206467539,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125206481691,
+      "max_raw": 27106,
+      "median_raw_nonzero": 7914.0,
+      "min_raw_nonzero": 1234,
+      "nonzero_ratio": 0.5460611979166666,
+      "original_frame_id": 3,
+      "p95_raw_nonzero": 14849.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125208467584,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125208480875,
+      "max_raw": 21231,
+      "median_raw_nonzero": 7603.0,
+      "min_raw_nonzero": 2323,
+      "nonzero_ratio": 0.6055772569444444,
+      "original_frame_id": 4,
+      "p95_raw_nonzero": 15143.549999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125210467627,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125210480060,
+      "max_raw": 21551,
+      "median_raw_nonzero": 7457.0,
+      "min_raw_nonzero": 1599,
+      "nonzero_ratio": 0.6066080729166666,
+      "original_frame_id": 5,
+      "p95_raw_nonzero": 14622.799999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125212467671,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125212479244,
+      "max_raw": 24206,
+      "median_raw_nonzero": 7431.0,
+      "min_raw_nonzero": 1806,
+      "nonzero_ratio": 0.6066297743055555,
+      "original_frame_id": 6,
+      "p95_raw_nonzero": 14559.399999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125214467715,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125214478429,
+      "max_raw": 21269,
+      "median_raw_nonzero": 7447.0,
+      "min_raw_nonzero": 4626,
+      "nonzero_ratio": 0.6091254340277777,
+      "original_frame_id": 7,
+      "p95_raw_nonzero": 14629.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125216467759,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125216477613,
+      "max_raw": 21084,
+      "median_raw_nonzero": 7516.0,
+      "min_raw_nonzero": 4662,
+      "nonzero_ratio": 0.60888671875,
+      "original_frame_id": 8,
+      "p95_raw_nonzero": 14848.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125218467803,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125218476797,
+      "max_raw": 21390,
+      "median_raw_nonzero": 7731.0,
+      "min_raw_nonzero": 4691,
+      "nonzero_ratio": 0.6032986111111112,
+      "original_frame_id": 9,
+      "p95_raw_nonzero": 15763.099999999991,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125220467847,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125220475982,
+      "max_raw": 21426,
+      "median_raw_nonzero": 7709.0,
+      "min_raw_nonzero": 4664,
+      "nonzero_ratio": 0.6017578125,
+      "original_frame_id": 10,
+      "p95_raw_nonzero": 15879.299999999988,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125222467891,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125222475166,
+      "max_raw": 20283,
+      "median_raw_nonzero": 7356.0,
+      "min_raw_nonzero": 4548,
+      "nonzero_ratio": 0.6052300347222223,
+      "original_frame_id": 11,
+      "p95_raw_nonzero": 15053.299999999988,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125224467935,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125224474350,
+      "max_raw": 23189,
+      "median_raw_nonzero": 6965.0,
+      "min_raw_nonzero": 4370,
+      "nonzero_ratio": 0.6088107638888889,
+      "original_frame_id": 12,
+      "p95_raw_nonzero": 13946.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125226467979,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125226473535,
+      "max_raw": 19102,
+      "median_raw_nonzero": 6795.0,
+      "min_raw_nonzero": 4369,
+      "nonzero_ratio": 0.6151150173611111,
+      "original_frame_id": 13,
+      "p95_raw_nonzero": 13306.599999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125228468024,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125228472719,
+      "max_raw": 18701,
+      "median_raw_nonzero": 6884.0,
+      "min_raw_nonzero": 4587,
+      "nonzero_ratio": 0.6190538194444445,
+      "original_frame_id": 14,
+      "p95_raw_nonzero": 13019.899999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125230468067,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125230471904,
+      "max_raw": 17976,
+      "median_raw_nonzero": 7218.0,
+      "min_raw_nonzero": 4963,
+      "nonzero_ratio": 0.6225260416666667,
+      "original_frame_id": 15,
+      "p95_raw_nonzero": 13099.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125232468112,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125232471087,
+      "max_raw": 15510,
+      "median_raw_nonzero": 7382.0,
+      "min_raw_nonzero": 5248,
+      "nonzero_ratio": 0.62451171875,
+      "original_frame_id": 16,
+      "p95_raw_nonzero": 12622.299999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125234468155,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125234470272,
+      "max_raw": 15311,
+      "median_raw_nonzero": 7469.0,
+      "min_raw_nonzero": 5342,
+      "nonzero_ratio": 0.6246527777777777,
+      "original_frame_id": 17,
+      "p95_raw_nonzero": 12557.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125236468200,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125236469456,
+      "max_raw": 18022,
+      "median_raw_nonzero": 7748.0,
+      "min_raw_nonzero": 5308,
+      "nonzero_ratio": 0.6242404513888888,
+      "original_frame_id": 18,
+      "p95_raw_nonzero": 13654.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125238468243,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125238468641,
+      "max_raw": 17015,
+      "median_raw_nonzero": 7625.0,
+      "min_raw_nonzero": 5342,
+      "nonzero_ratio": 0.6293836805555556,
+      "original_frame_id": 19,
+      "p95_raw_nonzero": 12865.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125240468288,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125240467825,
+      "max_raw": 16728,
+      "median_raw_nonzero": 7769.0,
+      "min_raw_nonzero": 5420,
+      "nonzero_ratio": 0.6294704861111111,
+      "original_frame_id": 20,
+      "p95_raw_nonzero": 13049.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125242468331,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125242467009,
+      "max_raw": 15787,
+      "median_raw_nonzero": 7745.5,
+      "min_raw_nonzero": 5408,
+      "nonzero_ratio": 0.6317491319444445,
+      "original_frame_id": 21,
+      "p95_raw_nonzero": 12657.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125244468376,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125244466193,
+      "max_raw": 16382,
+      "median_raw_nonzero": 7844.0,
+      "min_raw_nonzero": 5499,
+      "nonzero_ratio": 0.63193359375,
+      "original_frame_id": 22,
+      "p95_raw_nonzero": 12925.099999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125246468419,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125246465377,
+      "max_raw": 17272,
+      "median_raw_nonzero": 7801.0,
+      "min_raw_nonzero": 5516,
+      "nonzero_ratio": 0.6305555555555555,
+      "original_frame_id": 23,
+      "p95_raw_nonzero": 12671.449999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125248468463,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125248464561,
+      "max_raw": 15815,
+      "median_raw_nonzero": 7800.0,
+      "min_raw_nonzero": 5542,
+      "nonzero_ratio": 0.63251953125,
+      "original_frame_id": 24,
+      "p95_raw_nonzero": 12823.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125250468507,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125250463746,
+      "max_raw": 15095,
+      "median_raw_nonzero": 7773.0,
+      "min_raw_nonzero": 5618,
+      "nonzero_ratio": 0.6333984375,
+      "original_frame_id": 25,
+      "p95_raw_nonzero": 12347.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125252468552,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125252462930,
+      "max_raw": 13865,
+      "median_raw_nonzero": 7730.0,
+      "min_raw_nonzero": 5645,
+      "nonzero_ratio": 0.6354275173611111,
+      "original_frame_id": 26,
+      "p95_raw_nonzero": 11839.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125254468596,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125254462114,
+      "max_raw": 13833,
+      "median_raw_nonzero": 7722.0,
+      "min_raw_nonzero": 5645,
+      "nonzero_ratio": 0.63447265625,
+      "original_frame_id": 27,
+      "p95_raw_nonzero": 11766.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125256468640,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125256461299,
+      "max_raw": 14191,
+      "median_raw_nonzero": 7731.0,
+      "min_raw_nonzero": 5658,
+      "nonzero_ratio": 0.6326063368055556,
+      "original_frame_id": 28,
+      "p95_raw_nonzero": 11868.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125258468685,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125258460482,
+      "max_raw": 14428,
+      "median_raw_nonzero": 7712.0,
+      "min_raw_nonzero": 5609,
+      "nonzero_ratio": 0.6298828125,
+      "original_frame_id": 29,
+      "p95_raw_nonzero": 12087.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125260468729,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125260459667,
+      "max_raw": 14833,
+      "median_raw_nonzero": 7703.0,
+      "min_raw_nonzero": 5570,
+      "nonzero_ratio": 0.6282877604166667,
+      "original_frame_id": 30,
+      "p95_raw_nonzero": 12783.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125262468774,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125262458850,
+      "max_raw": 14649,
+      "median_raw_nonzero": 7448.0,
+      "min_raw_nonzero": 5357,
+      "nonzero_ratio": 0.6283962673611111,
+      "original_frame_id": 31,
+      "p95_raw_nonzero": 12554.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125264468818,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125264458035,
+      "max_raw": 14201,
+      "median_raw_nonzero": 7166.0,
+      "min_raw_nonzero": 5068,
+      "nonzero_ratio": 0.6305772569444444,
+      "original_frame_id": 32,
+      "p95_raw_nonzero": 12094.349999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125266468861,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125266457219,
+      "max_raw": 13016,
+      "median_raw_nonzero": 6936.0,
+      "min_raw_nonzero": 4806,
+      "nonzero_ratio": 0.6325737847222223,
+      "original_frame_id": 33,
+      "p95_raw_nonzero": 11046.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125268468906,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125268456403,
+      "max_raw": 12351,
+      "median_raw_nonzero": 6929.0,
+      "min_raw_nonzero": 4697,
+      "nonzero_ratio": 0.633203125,
+      "original_frame_id": 34,
+      "p95_raw_nonzero": 10776.25,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125270468950,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125270455587,
+      "max_raw": 12314,
+      "median_raw_nonzero": 6880.0,
+      "min_raw_nonzero": 4601,
+      "nonzero_ratio": 0.6337348090277778,
+      "original_frame_id": 35,
+      "p95_raw_nonzero": 10605.799999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125272468994,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125272454771,
+      "max_raw": 12175,
+      "median_raw_nonzero": 6768.0,
+      "min_raw_nonzero": 4484,
+      "nonzero_ratio": 0.6350911458333334,
+      "original_frame_id": 36,
+      "p95_raw_nonzero": 10348.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125274469039,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125274453955,
+      "max_raw": 19094,
+      "median_raw_nonzero": 6683.0,
+      "min_raw_nonzero": 4410,
+      "nonzero_ratio": 0.6365559895833334,
+      "original_frame_id": 37,
+      "p95_raw_nonzero": 10254.599999999991,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125276469082,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125276453139,
+      "max_raw": 11607,
+      "median_raw_nonzero": 6620.0,
+      "min_raw_nonzero": 4398,
+      "nonzero_ratio": 0.6375542534722223,
+      "original_frame_id": 38,
+      "p95_raw_nonzero": 9676.199999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125278469127,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125278452323,
+      "max_raw": 11898,
+      "median_raw_nonzero": 6682.0,
+      "min_raw_nonzero": 3370,
+      "nonzero_ratio": 0.6363715277777777,
+      "original_frame_id": 39,
+      "p95_raw_nonzero": 9779.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125280469171,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125280451507,
+      "max_raw": 12307,
+      "median_raw_nonzero": 6688.0,
+      "min_raw_nonzero": 3537,
+      "nonzero_ratio": 0.6357204861111111,
+      "original_frame_id": 40,
+      "p95_raw_nonzero": 9956.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125282469216,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125282450691,
+      "max_raw": 12657,
+      "median_raw_nonzero": 6772.0,
+      "min_raw_nonzero": 4549,
+      "nonzero_ratio": 0.6351996527777778,
+      "original_frame_id": 41,
+      "p95_raw_nonzero": 10212.049999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125284469260,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125284449875,
+      "max_raw": 13074,
+      "median_raw_nonzero": 6848.0,
+      "min_raw_nonzero": 3529,
+      "nonzero_ratio": 0.6311631944444445,
+      "original_frame_id": 42,
+      "p95_raw_nonzero": 10449.649999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125286469305,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125286449059,
+      "max_raw": 12044,
+      "median_raw_nonzero": 6809.0,
+      "min_raw_nonzero": 4564,
+      "nonzero_ratio": 0.6343858506944444,
+      "original_frame_id": 43,
+      "p95_raw_nonzero": 10137.799999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125288469347,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125288448243,
+      "max_raw": 12113,
+      "median_raw_nonzero": 6875.0,
+      "min_raw_nonzero": 4606,
+      "nonzero_ratio": 0.6348415798611111,
+      "original_frame_id": 44,
+      "p95_raw_nonzero": 10343.699999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125290469392,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125290447426,
+      "max_raw": 12628,
+      "median_raw_nonzero": 7125.0,
+      "min_raw_nonzero": 4756,
+      "nonzero_ratio": 0.6348307291666667,
+      "original_frame_id": 45,
+      "p95_raw_nonzero": 11149.75,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125292469435,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125292446610,
+      "max_raw": 12762,
+      "median_raw_nonzero": 7185.0,
+      "min_raw_nonzero": 4817,
+      "nonzero_ratio": 0.6348198784722222,
+      "original_frame_id": 46,
+      "p95_raw_nonzero": 11181.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125294469479,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125294445794,
+      "max_raw": 12923,
+      "median_raw_nonzero": 7163.0,
+      "min_raw_nonzero": 4828,
+      "nonzero_ratio": 0.6341796875,
+      "original_frame_id": 47,
+      "p95_raw_nonzero": 11215.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125296469524,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125296444978,
+      "max_raw": 12785,
+      "median_raw_nonzero": 7065.0,
+      "min_raw_nonzero": 4800,
+      "nonzero_ratio": 0.6347005208333333,
+      "original_frame_id": 48,
+      "p95_raw_nonzero": 10941.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125298469567,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125298444162,
+      "max_raw": 13149,
+      "median_raw_nonzero": 7095.0,
+      "min_raw_nonzero": 4855,
+      "nonzero_ratio": 0.6346137152777778,
+      "original_frame_id": 49,
+      "p95_raw_nonzero": 11045.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125300469613,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125300443346,
+      "max_raw": 12792,
+      "median_raw_nonzero": 7039.0,
+      "min_raw_nonzero": 4873,
+      "nonzero_ratio": 0.6344292534722222,
+      "original_frame_id": 50,
+      "p95_raw_nonzero": 10649.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125302469657,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125302442530,
+      "max_raw": 12877,
+      "median_raw_nonzero": 7076.0,
+      "min_raw_nonzero": 4901,
+      "nonzero_ratio": 0.6336371527777778,
+      "original_frame_id": 51,
+      "p95_raw_nonzero": 10844.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125304469702,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125304441713,
+      "max_raw": 12348,
+      "median_raw_nonzero": 6955.0,
+      "min_raw_nonzero": 4796,
+      "nonzero_ratio": 0.6338975694444444,
+      "original_frame_id": 52,
+      "p95_raw_nonzero": 10478.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125306469745,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125306440897,
+      "max_raw": 12073,
+      "median_raw_nonzero": 6907.0,
+      "min_raw_nonzero": 4719,
+      "nonzero_ratio": 0.6349283854166666,
+      "original_frame_id": 53,
+      "p95_raw_nonzero": 10292.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125308469791,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125308440081,
+      "max_raw": 11618,
+      "median_raw_nonzero": 6949.0,
+      "min_raw_nonzero": 4722,
+      "nonzero_ratio": 0.6354926215277777,
+      "original_frame_id": 54,
+      "p95_raw_nonzero": 10177.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125310469835,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125310439264,
+      "max_raw": 11691,
+      "median_raw_nonzero": 7074.0,
+      "min_raw_nonzero": 4801,
+      "nonzero_ratio": 0.6355360243055556,
+      "original_frame_id": 55,
+      "p95_raw_nonzero": 10412.5,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125312469880,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125312438448,
+      "max_raw": 11613,
+      "median_raw_nonzero": 7160.0,
+      "min_raw_nonzero": 4853,
+      "nonzero_ratio": 0.6359049479166666,
+      "original_frame_id": 56,
+      "p95_raw_nonzero": 10452.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125314469924,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125314437632,
+      "max_raw": 10939,
+      "median_raw_nonzero": 7106.0,
+      "min_raw_nonzero": 2928,
+      "nonzero_ratio": 0.63447265625,
+      "original_frame_id": 57,
+      "p95_raw_nonzero": 9814.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125316469968,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125316436815,
+      "max_raw": 11434,
+      "median_raw_nonzero": 7263.0,
+      "min_raw_nonzero": 3033,
+      "nonzero_ratio": 0.6331163194444445,
+      "original_frame_id": 58,
+      "p95_raw_nonzero": 10202.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125318470013,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125318435999,
+      "max_raw": 11622,
+      "median_raw_nonzero": 7383.0,
+      "min_raw_nonzero": 3006,
+      "nonzero_ratio": 0.6334526909722222,
+      "original_frame_id": 59,
+      "p95_raw_nonzero": 10378.099999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125320470056,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125320435183,
+      "max_raw": 12258,
+      "median_raw_nonzero": 7459.0,
+      "min_raw_nonzero": 3159,
+      "nonzero_ratio": 0.6340386284722223,
+      "original_frame_id": 60,
+      "p95_raw_nonzero": 10757.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125322470102,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125322434367,
+      "max_raw": 12091,
+      "median_raw_nonzero": 7468.0,
+      "min_raw_nonzero": 3177,
+      "nonzero_ratio": 0.6346245659722223,
+      "original_frame_id": 61,
+      "p95_raw_nonzero": 10700.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125324470145,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125324433550,
+      "max_raw": 12607,
+      "median_raw_nonzero": 7549.0,
+      "min_raw_nonzero": 3208,
+      "nonzero_ratio": 0.6341796875,
+      "original_frame_id": 62,
+      "p95_raw_nonzero": 10991.75,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125326470190,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125326432734,
+      "max_raw": 19804,
+      "median_raw_nonzero": 7458.0,
+      "min_raw_nonzero": 2749,
+      "nonzero_ratio": 0.6335177951388888,
+      "original_frame_id": 63,
+      "p95_raw_nonzero": 10476.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125328470233,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125328431918,
+      "max_raw": 11947,
+      "median_raw_nonzero": 7583.5,
+      "min_raw_nonzero": 2654,
+      "nonzero_ratio": 0.6351996527777778,
+      "original_frame_id": 64,
+      "p95_raw_nonzero": 10627.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125330470276,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125330431101,
+      "max_raw": 12139,
+      "median_raw_nonzero": 7640.0,
+      "min_raw_nonzero": 2639,
+      "nonzero_ratio": 0.6363498263888889,
+      "original_frame_id": 65,
+      "p95_raw_nonzero": 10804.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125332470319,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125332430285,
+      "max_raw": 11270,
+      "median_raw_nonzero": 7487.0,
+      "min_raw_nonzero": 2264,
+      "nonzero_ratio": 0.6340169270833333,
+      "original_frame_id": 66,
+      "p95_raw_nonzero": 10275.5,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125334470363,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125334429468,
+      "max_raw": 11415,
+      "median_raw_nonzero": 7466.0,
+      "min_raw_nonzero": 2402,
+      "nonzero_ratio": 0.6355685763888889,
+      "original_frame_id": 67,
+      "p95_raw_nonzero": 10320.349999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125336470404,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125336428652,
+      "max_raw": 11212,
+      "median_raw_nonzero": 7429.0,
+      "min_raw_nonzero": 2244,
+      "nonzero_ratio": 0.6359809027777777,
+      "original_frame_id": 68,
+      "p95_raw_nonzero": 10221.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125338470449,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125338427835,
+      "max_raw": 11344,
+      "median_raw_nonzero": 7462.0,
+      "min_raw_nonzero": 2249,
+      "nonzero_ratio": 0.6361653645833333,
+      "original_frame_id": 69,
+      "p95_raw_nonzero": 10279.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125340470491,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125340427019,
+      "max_raw": 10855,
+      "median_raw_nonzero": 7400.0,
+      "min_raw_nonzero": 2070,
+      "nonzero_ratio": 0.6357313368055556,
+      "original_frame_id": 70,
+      "p95_raw_nonzero": 9960.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125342470535,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125342426202,
+      "max_raw": 16925,
+      "median_raw_nonzero": 7420.0,
+      "min_raw_nonzero": 2197,
+      "nonzero_ratio": 0.6357747395833333,
+      "original_frame_id": 71,
+      "p95_raw_nonzero": 9986.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125344470578,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125344425386,
+      "max_raw": 11218,
+      "median_raw_nonzero": 7536.0,
+      "min_raw_nonzero": 2232,
+      "nonzero_ratio": 0.6358072916666667,
+      "original_frame_id": 72,
+      "p95_raw_nonzero": 10197.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125346470621,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125346424570,
+      "max_raw": 11178,
+      "median_raw_nonzero": 7572.0,
+      "min_raw_nonzero": 2249,
+      "nonzero_ratio": 0.6354166666666666,
+      "original_frame_id": 73,
+      "p95_raw_nonzero": 10283.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125348470665,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125348423753,
+      "max_raw": 10950,
+      "median_raw_nonzero": 7523.0,
+      "min_raw_nonzero": 2232,
+      "nonzero_ratio": 0.6351453993055556,
+      "original_frame_id": 74,
+      "p95_raw_nonzero": 10050.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125350470707,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125350422937,
+      "max_raw": 18991,
+      "median_raw_nonzero": 7568.0,
+      "min_raw_nonzero": 2286,
+      "nonzero_ratio": 0.6344292534722222,
+      "original_frame_id": 75,
+      "p95_raw_nonzero": 10333.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125352470751,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125352422120,
+      "max_raw": 17576,
+      "median_raw_nonzero": 7560.0,
+      "min_raw_nonzero": 2286,
+      "nonzero_ratio": 0.6335394965277777,
+      "original_frame_id": 76,
+      "p95_raw_nonzero": 10361.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125354470794,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125354421304,
+      "max_raw": 18908,
+      "median_raw_nonzero": 7575.0,
+      "min_raw_nonzero": 2348,
+      "nonzero_ratio": 0.6315212673611111,
+      "original_frame_id": 77,
+      "p95_raw_nonzero": 10362.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125356470836,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125356420487,
+      "max_raw": 10842,
+      "median_raw_nonzero": 7451.0,
+      "min_raw_nonzero": 2207,
+      "nonzero_ratio": 0.6313693576388889,
+      "original_frame_id": 78,
+      "p95_raw_nonzero": 9860.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125358470879,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125358419671,
+      "max_raw": 11183,
+      "median_raw_nonzero": 7560.0,
+      "min_raw_nonzero": 2322,
+      "nonzero_ratio": 0.6322916666666667,
+      "original_frame_id": 79,
+      "p95_raw_nonzero": 10020.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125360470923,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125360418855,
+      "max_raw": 10992,
+      "median_raw_nonzero": 7505.5,
+      "min_raw_nonzero": 2295,
+      "nonzero_ratio": 0.6322265625,
+      "original_frame_id": 80,
+      "p95_raw_nonzero": 9917.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125362470966,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125362418038,
+      "max_raw": 10539,
+      "median_raw_nonzero": 7523.0,
+      "min_raw_nonzero": 2365,
+      "nonzero_ratio": 0.6328884548611111,
+      "original_frame_id": 81,
+      "p95_raw_nonzero": 9829.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125364471009,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125364417221,
+      "max_raw": 10922,
+      "median_raw_nonzero": 7609.0,
+      "min_raw_nonzero": 2519,
+      "nonzero_ratio": 0.6343858506944444,
+      "original_frame_id": 82,
+      "p95_raw_nonzero": 10260.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125366471052,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125366416405,
+      "max_raw": 11549,
+      "median_raw_nonzero": 7674.0,
+      "min_raw_nonzero": 2606,
+      "nonzero_ratio": 0.6349826388888888,
+      "original_frame_id": 83,
+      "p95_raw_nonzero": 10522.049999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125368471096,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125368415588,
+      "max_raw": 12615,
+      "median_raw_nonzero": 7874.5,
+      "min_raw_nonzero": 2875,
+      "nonzero_ratio": 0.6317708333333333,
+      "original_frame_id": 84,
+      "p95_raw_nonzero": 11112.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125370471138,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125370414772,
+      "max_raw": 13452,
+      "median_raw_nonzero": 8012.0,
+      "min_raw_nonzero": 3062,
+      "nonzero_ratio": 0.6314236111111111,
+      "original_frame_id": 85,
+      "p95_raw_nonzero": 11555.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125372471183,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125372413956,
+      "max_raw": 14168,
+      "median_raw_nonzero": 8135.0,
+      "min_raw_nonzero": 3254,
+      "nonzero_ratio": 0.6296115451388888,
+      "original_frame_id": 86,
+      "p95_raw_nonzero": 11991.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125374471224,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125374413139,
+      "max_raw": 15405,
+      "median_raw_nonzero": 8365.0,
+      "min_raw_nonzero": 3505,
+      "nonzero_ratio": 0.6264431423611111,
+      "original_frame_id": 87,
+      "p95_raw_nonzero": 12728.399999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125376471267,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125376412323,
+      "max_raw": 15517,
+      "median_raw_nonzero": 8397.5,
+      "min_raw_nonzero": 3760,
+      "nonzero_ratio": 0.6263020833333334,
+      "original_frame_id": 88,
+      "p95_raw_nonzero": 13018.049999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125378471312,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125378411506,
+      "max_raw": 15608,
+      "median_raw_nonzero": 8368.0,
+      "min_raw_nonzero": 5600,
+      "nonzero_ratio": 0.6292426215277778,
+      "original_frame_id": 89,
+      "p95_raw_nonzero": 13116.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125380471355,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125380410689,
+      "max_raw": 15329,
+      "median_raw_nonzero": 8339.0,
+      "min_raw_nonzero": 5569,
+      "nonzero_ratio": 0.6272894965277778,
+      "original_frame_id": 90,
+      "p95_raw_nonzero": 12819.5,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125382471396,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125382409873,
+      "max_raw": 15875,
+      "median_raw_nonzero": 8399.0,
+      "min_raw_nonzero": 5558,
+      "nonzero_ratio": 0.6244357638888889,
+      "original_frame_id": 91,
+      "p95_raw_nonzero": 12930.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125384471440,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125384409057,
+      "max_raw": 14783,
+      "median_raw_nonzero": 8251.0,
+      "min_raw_nonzero": 5521,
+      "nonzero_ratio": 0.625390625,
+      "original_frame_id": 92,
+      "p95_raw_nonzero": 12226.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125386471470,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125386408240,
+      "max_raw": 15007,
+      "median_raw_nonzero": 8321.0,
+      "min_raw_nonzero": 5606,
+      "nonzero_ratio": 0.6267686631944445,
+      "original_frame_id": 93,
+      "p95_raw_nonzero": 12303.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125388471479,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125388407423,
+      "max_raw": 13878,
+      "median_raw_nonzero": 8196.0,
+      "min_raw_nonzero": 5573,
+      "nonzero_ratio": 0.6305772569444444,
+      "original_frame_id": 94,
+      "p95_raw_nonzero": 11809.349999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125390471488,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125390406608,
+      "max_raw": 14727,
+      "median_raw_nonzero": 8237.0,
+      "min_raw_nonzero": 5555,
+      "nonzero_ratio": 0.6318250868055556,
+      "original_frame_id": 95,
+      "p95_raw_nonzero": 11993.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125392471498,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125392405791,
+      "max_raw": 15095,
+      "median_raw_nonzero": 8220.0,
+      "min_raw_nonzero": 5574,
+      "nonzero_ratio": 0.63203125,
+      "original_frame_id": 96,
+      "p95_raw_nonzero": 11972.649999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125394471507,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125394404974,
+      "max_raw": 15654,
+      "median_raw_nonzero": 8345.0,
+      "min_raw_nonzero": 5703,
+      "nonzero_ratio": 0.6309678819444444,
+      "original_frame_id": 97,
+      "p95_raw_nonzero": 12666.549999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125396471515,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125396404157,
+      "max_raw": 16888,
+      "median_raw_nonzero": 8469.0,
+      "min_raw_nonzero": 5841,
+      "nonzero_ratio": 0.62998046875,
+      "original_frame_id": 98,
+      "p95_raw_nonzero": 13377.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125398471524,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125398403341,
+      "max_raw": 16160,
+      "median_raw_nonzero": 8469.0,
+      "min_raw_nonzero": 5906,
+      "nonzero_ratio": 0.6309027777777778,
+      "original_frame_id": 99,
+      "p95_raw_nonzero": 13353.849999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125400471533,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125400402524,
+      "max_raw": 16844,
+      "median_raw_nonzero": 8591.0,
+      "min_raw_nonzero": 5961,
+      "nonzero_ratio": 0.6284505208333333,
+      "original_frame_id": 100,
+      "p95_raw_nonzero": 13800.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125402471543,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125402401708,
+      "max_raw": 16829,
+      "median_raw_nonzero": 8575.5,
+      "min_raw_nonzero": 5900,
+      "nonzero_ratio": 0.6275824652777777,
+      "original_frame_id": 101,
+      "p95_raw_nonzero": 13823.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125404471552,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125404400891,
+      "max_raw": 16259,
+      "median_raw_nonzero": 8432.0,
+      "min_raw_nonzero": 5791,
+      "nonzero_ratio": 0.6311197916666667,
+      "original_frame_id": 102,
+      "p95_raw_nonzero": 13297.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125406471560,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125406400074,
+      "max_raw": 15436,
+      "median_raw_nonzero": 8392.0,
+      "min_raw_nonzero": 5746,
+      "nonzero_ratio": 0.6328016493055556,
+      "original_frame_id": 103,
+      "p95_raw_nonzero": 12971.099999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125408471570,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125408399258,
+      "max_raw": 14792,
+      "median_raw_nonzero": 8332.0,
+      "min_raw_nonzero": 5692,
+      "nonzero_ratio": 0.6343424479166667,
+      "original_frame_id": 104,
+      "p95_raw_nonzero": 12680.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125410471579,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125410398441,
+      "max_raw": 15201,
+      "median_raw_nonzero": 8290.0,
+      "min_raw_nonzero": 5640,
+      "nonzero_ratio": 0.6324652777777777,
+      "original_frame_id": 105,
+      "p95_raw_nonzero": 12809.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125412471590,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125412397624,
+      "max_raw": 14766,
+      "median_raw_nonzero": 8139.0,
+      "min_raw_nonzero": 5549,
+      "nonzero_ratio": 0.6327799479166667,
+      "original_frame_id": 106,
+      "p95_raw_nonzero": 12620.199999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125414471599,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125414396808,
+      "max_raw": 14627,
+      "median_raw_nonzero": 8057.0,
+      "min_raw_nonzero": 5498,
+      "nonzero_ratio": 0.6304904513888889,
+      "original_frame_id": 107,
+      "p95_raw_nonzero": 12621.75,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125416471608,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125416395992,
+      "max_raw": 14525,
+      "median_raw_nonzero": 7968.0,
+      "min_raw_nonzero": 5445,
+      "nonzero_ratio": 0.6280707465277777,
+      "original_frame_id": 108,
+      "p95_raw_nonzero": 12584.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125418471616,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125418395174,
+      "max_raw": 15113,
+      "median_raw_nonzero": 8047.0,
+      "min_raw_nonzero": 5496,
+      "nonzero_ratio": 0.6287000868055556,
+      "original_frame_id": 109,
+      "p95_raw_nonzero": 12921.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125420471627,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125420394358,
+      "max_raw": 15208,
+      "median_raw_nonzero": 8065.0,
+      "min_raw_nonzero": 5525,
+      "nonzero_ratio": 0.63125,
+      "original_frame_id": 110,
+      "p95_raw_nonzero": 12972.25,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125422471635,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125422393541,
+      "max_raw": 15142,
+      "median_raw_nonzero": 8094.0,
+      "min_raw_nonzero": 4101,
+      "nonzero_ratio": 0.6312282986111111,
+      "original_frame_id": 111,
+      "p95_raw_nonzero": 12945.349999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125424471645,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125424392724,
+      "max_raw": 14923,
+      "median_raw_nonzero": 8084.0,
+      "min_raw_nonzero": 3594,
+      "nonzero_ratio": 0.6323459201388889,
+      "original_frame_id": 112,
+      "p95_raw_nonzero": 12766.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125426471654,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125426391908,
+      "max_raw": 20919,
+      "median_raw_nonzero": 8090.0,
+      "min_raw_nonzero": 4079,
+      "nonzero_ratio": 0.6337890625,
+      "original_frame_id": 113,
+      "p95_raw_nonzero": 12787.549999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125428471662,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125428391092,
+      "max_raw": 14505,
+      "median_raw_nonzero": 7979.0,
+      "min_raw_nonzero": 5471,
+      "nonzero_ratio": 0.6343207465277778,
+      "original_frame_id": 114,
+      "p95_raw_nonzero": 12431.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125430471672,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125430390274,
+      "max_raw": 14928,
+      "median_raw_nonzero": 7991.0,
+      "min_raw_nonzero": 5432,
+      "nonzero_ratio": 0.6353081597222222,
+      "original_frame_id": 115,
+      "p95_raw_nonzero": 12512.549999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125432471681,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125432389458,
+      "max_raw": 15373,
+      "median_raw_nonzero": 8011.0,
+      "min_raw_nonzero": 5421,
+      "nonzero_ratio": 0.6339301215277777,
+      "original_frame_id": 116,
+      "p95_raw_nonzero": 12620.899999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125434471689,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125434388641,
+      "max_raw": 14119,
+      "median_raw_nonzero": 7897.0,
+      "min_raw_nonzero": 5361,
+      "nonzero_ratio": 0.6347113715277778,
+      "original_frame_id": 117,
+      "p95_raw_nonzero": 12050.299999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125436471699,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125436387824,
+      "max_raw": 14840,
+      "median_raw_nonzero": 7961.0,
+      "min_raw_nonzero": 5375,
+      "nonzero_ratio": 0.6336263020833334,
+      "original_frame_id": 118,
+      "p95_raw_nonzero": 12462.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125438471708,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125438387007,
+      "max_raw": 15470,
+      "median_raw_nonzero": 7993.0,
+      "min_raw_nonzero": 5387,
+      "nonzero_ratio": 0.6310221354166666,
+      "original_frame_id": 119,
+      "p95_raw_nonzero": 12796.299999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125440471718,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125440386191,
+      "max_raw": 15574,
+      "median_raw_nonzero": 7972.0,
+      "min_raw_nonzero": 5403,
+      "nonzero_ratio": 0.6311740451388889,
+      "original_frame_id": 120,
+      "p95_raw_nonzero": 12798.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125442471727,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125442385374,
+      "max_raw": 22870,
+      "median_raw_nonzero": 7958.0,
+      "min_raw_nonzero": 5440,
+      "nonzero_ratio": 0.6295247395833333,
+      "original_frame_id": 121,
+      "p95_raw_nonzero": 12745.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125444471736,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125444384558,
+      "max_raw": 15170,
+      "median_raw_nonzero": 7950.0,
+      "min_raw_nonzero": 5504,
+      "nonzero_ratio": 0.6300238715277777,
+      "original_frame_id": 122,
+      "p95_raw_nonzero": 12525.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125446471770,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125446383741,
+      "max_raw": 20203,
+      "median_raw_nonzero": 7936.0,
+      "min_raw_nonzero": 3923,
+      "nonzero_ratio": 0.6289713541666667,
+      "original_frame_id": 123,
+      "p95_raw_nonzero": 12216.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125448471846,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125448382923,
+      "max_raw": 14298,
+      "median_raw_nonzero": 8000.0,
+      "min_raw_nonzero": 3398,
+      "nonzero_ratio": 0.6283637152777778,
+      "original_frame_id": 124,
+      "p95_raw_nonzero": 12202.549999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125450471924,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125450382107,
+      "max_raw": 13655,
+      "median_raw_nonzero": 7954.0,
+      "min_raw_nonzero": 3354,
+      "nonzero_ratio": 0.6301866319444445,
+      "original_frame_id": 125,
+      "p95_raw_nonzero": 11788.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125452472002,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125452381291,
+      "max_raw": 13599,
+      "median_raw_nonzero": 7972.0,
+      "min_raw_nonzero": 3613,
+      "nonzero_ratio": 0.6341688368055556,
+      "original_frame_id": 126,
+      "p95_raw_nonzero": 11721.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125454472078,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125454380473,
+      "max_raw": 13330,
+      "median_raw_nonzero": 7967.0,
+      "min_raw_nonzero": 3175,
+      "nonzero_ratio": 0.6357313368055556,
+      "original_frame_id": 127,
+      "p95_raw_nonzero": 11589.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125456472155,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125456379656,
+      "max_raw": 13171,
+      "median_raw_nonzero": 7985.0,
+      "min_raw_nonzero": 3071,
+      "nonzero_ratio": 0.63623046875,
+      "original_frame_id": 128,
+      "p95_raw_nonzero": 11481.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125458472233,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125458378839,
+      "max_raw": 12728,
+      "median_raw_nonzero": 7921.0,
+      "min_raw_nonzero": 3049,
+      "nonzero_ratio": 0.6356770833333333,
+      "original_frame_id": 129,
+      "p95_raw_nonzero": 11256.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125460472309,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125460378023,
+      "max_raw": 17241,
+      "median_raw_nonzero": 7797.0,
+      "min_raw_nonzero": 2968,
+      "nonzero_ratio": 0.6359049479166666,
+      "original_frame_id": 130,
+      "p95_raw_nonzero": 11065.799999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125462472386,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125462377206,
+      "max_raw": 12918,
+      "median_raw_nonzero": 7790.0,
+      "min_raw_nonzero": 2972,
+      "nonzero_ratio": 0.6350802951388889,
+      "original_frame_id": 131,
+      "p95_raw_nonzero": 11234.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125464472464,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125464376389,
+      "max_raw": 13003,
+      "median_raw_nonzero": 7814.0,
+      "min_raw_nonzero": 3014,
+      "nonzero_ratio": 0.6346028645833334,
+      "original_frame_id": 132,
+      "p95_raw_nonzero": 11312.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125466472541,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125466375572,
+      "max_raw": 12803,
+      "median_raw_nonzero": 7736.0,
+      "min_raw_nonzero": 3016,
+      "nonzero_ratio": 0.6351996527777778,
+      "original_frame_id": 133,
+      "p95_raw_nonzero": 11136.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125468472619,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125468374755,
+      "max_raw": 13115,
+      "median_raw_nonzero": 7678.0,
+      "min_raw_nonzero": 2930,
+      "nonzero_ratio": 0.6343424479166667,
+      "original_frame_id": 134,
+      "p95_raw_nonzero": 11258.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125470472696,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125470373938,
+      "max_raw": 12795,
+      "median_raw_nonzero": 7604.0,
+      "min_raw_nonzero": 2672,
+      "nonzero_ratio": 0.6344943576388888,
+      "original_frame_id": 135,
+      "p95_raw_nonzero": 11117.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125472472772,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125472373121,
+      "max_raw": 12333,
+      "median_raw_nonzero": 7552.0,
+      "min_raw_nonzero": 2560,
+      "nonzero_ratio": 0.6355034722222223,
+      "original_frame_id": 136,
+      "p95_raw_nonzero": 10841.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125474472850,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125474372305,
+      "max_raw": 11960,
+      "median_raw_nonzero": 7465.0,
+      "min_raw_nonzero": 2518,
+      "nonzero_ratio": 0.6352647569444444,
+      "original_frame_id": 137,
+      "p95_raw_nonzero": 10522.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125476472927,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125476371488,
+      "max_raw": 11877,
+      "median_raw_nonzero": 7451.0,
+      "min_raw_nonzero": 2684,
+      "nonzero_ratio": 0.6340386284722223,
+      "original_frame_id": 138,
+      "p95_raw_nonzero": 10481.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125478473005,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125478370671,
+      "max_raw": 11753,
+      "median_raw_nonzero": 7371.0,
+      "min_raw_nonzero": 2625,
+      "nonzero_ratio": 0.6342230902777778,
+      "original_frame_id": 139,
+      "p95_raw_nonzero": 10265.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125480473082,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125480369854,
+      "max_raw": 11398,
+      "median_raw_nonzero": 7348.0,
+      "min_raw_nonzero": 2605,
+      "nonzero_ratio": 0.6342881944444444,
+      "original_frame_id": 140,
+      "p95_raw_nonzero": 10090.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125482473158,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125482369037,
+      "max_raw": 11675,
+      "median_raw_nonzero": 7470.0,
+      "min_raw_nonzero": 2721,
+      "nonzero_ratio": 0.6335828993055556,
+      "original_frame_id": 141,
+      "p95_raw_nonzero": 10317.5,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125484473234,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125484368220,
+      "max_raw": 10861,
+      "median_raw_nonzero": 7350.0,
+      "min_raw_nonzero": 2557,
+      "nonzero_ratio": 0.6326931423611111,
+      "original_frame_id": 142,
+      "p95_raw_nonzero": 9799.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125486473311,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125486367404,
+      "max_raw": 11183,
+      "median_raw_nonzero": 7387.0,
+      "min_raw_nonzero": 2668,
+      "nonzero_ratio": 0.6332356770833333,
+      "original_frame_id": 143,
+      "p95_raw_nonzero": 9994.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125488473389,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125488366586,
+      "max_raw": 11359,
+      "median_raw_nonzero": 7345.0,
+      "min_raw_nonzero": 2549,
+      "nonzero_ratio": 0.6324435763888889,
+      "original_frame_id": 144,
+      "p95_raw_nonzero": 10047.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125490473465,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125490365770,
+      "max_raw": 11269,
+      "median_raw_nonzero": 7355.0,
+      "min_raw_nonzero": 2544,
+      "nonzero_ratio": 0.6330729166666667,
+      "original_frame_id": 145,
+      "p95_raw_nonzero": 10027.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125492473543,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125492364952,
+      "max_raw": 11521,
+      "median_raw_nonzero": 7358.0,
+      "min_raw_nonzero": 2581,
+      "nonzero_ratio": 0.6330295138888888,
+      "original_frame_id": 146,
+      "p95_raw_nonzero": 10152.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125494473622,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125494364136,
+      "max_raw": 11370,
+      "median_raw_nonzero": 7293.0,
+      "min_raw_nonzero": 2628,
+      "nonzero_ratio": 0.6332899305555556,
+      "original_frame_id": 147,
+      "p95_raw_nonzero": 10036.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125496473698,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125496363319,
+      "max_raw": 10900,
+      "median_raw_nonzero": 7240.5,
+      "min_raw_nonzero": 2624,
+      "nonzero_ratio": 0.6332899305555556,
+      "original_frame_id": 148,
+      "p95_raw_nonzero": 9723.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125498473776,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125498362501,
+      "max_raw": 10945,
+      "median_raw_nonzero": 7248.0,
+      "min_raw_nonzero": 2721,
+      "nonzero_ratio": 0.6334092881944444,
+      "original_frame_id": 149,
+      "p95_raw_nonzero": 9793.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125500473854,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125500694882,
+      "max_raw": 10964,
+      "median_raw_nonzero": 7215.0,
+      "min_raw_nonzero": 2735,
+      "nonzero_ratio": 0.6333767361111111,
+      "original_frame_id": 150,
+      "p95_raw_nonzero": 9725.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125502473929,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125502360868,
+      "max_raw": 10212,
+      "median_raw_nonzero": 7144.0,
+      "min_raw_nonzero": 2502,
+      "nonzero_ratio": 0.6330295138888888,
+      "original_frame_id": 151,
+      "p95_raw_nonzero": 9233.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125504474005,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125504360051,
+      "max_raw": 10242,
+      "median_raw_nonzero": 7191.0,
+      "min_raw_nonzero": 2697,
+      "nonzero_ratio": 0.6326497395833334,
+      "original_frame_id": 152,
+      "p95_raw_nonzero": 9301.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125506474070,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125506359234,
+      "max_raw": 10740,
+      "median_raw_nonzero": 7210.0,
+      "min_raw_nonzero": 2730,
+      "nonzero_ratio": 0.6326280381944445,
+      "original_frame_id": 153,
+      "p95_raw_nonzero": 9644.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125508474114,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125508358417,
+      "max_raw": 11067,
+      "median_raw_nonzero": 7187.0,
+      "min_raw_nonzero": 2636,
+      "nonzero_ratio": 0.6327690972222222,
+      "original_frame_id": 154,
+      "p95_raw_nonzero": 9859.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125510474156,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125510357600,
+      "max_raw": 12188,
+      "median_raw_nonzero": 7245.0,
+      "min_raw_nonzero": 2769,
+      "nonzero_ratio": 0.6331705729166667,
+      "original_frame_id": 155,
+      "p95_raw_nonzero": 10407.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125512474199,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125512356783,
+      "max_raw": 13160,
+      "median_raw_nonzero": 7339.0,
+      "min_raw_nonzero": 2911,
+      "nonzero_ratio": 0.6289279513888889,
+      "original_frame_id": 156,
+      "p95_raw_nonzero": 11131.949999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125514474243,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125514355966,
+      "max_raw": 15109,
+      "median_raw_nonzero": 7196.0,
+      "min_raw_nonzero": 3123,
+      "nonzero_ratio": 0.6254991319444444,
+      "original_frame_id": 157,
+      "p95_raw_nonzero": 11747.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125516474286,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125516355149,
+      "max_raw": 15599,
+      "median_raw_nonzero": 6729.0,
+      "min_raw_nonzero": 2520,
+      "nonzero_ratio": 0.62265625,
+      "original_frame_id": 158,
+      "p95_raw_nonzero": 11769.849999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125518474330,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125518354332,
+      "max_raw": 15880,
+      "median_raw_nonzero": 6257.0,
+      "min_raw_nonzero": 2502,
+      "nonzero_ratio": 0.6220377604166667,
+      "original_frame_id": 159,
+      "p95_raw_nonzero": 11710.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125520474371,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125520353515,
+      "max_raw": 16035,
+      "median_raw_nonzero": 5888.0,
+      "min_raw_nonzero": 2765,
+      "nonzero_ratio": 0.622265625,
+      "original_frame_id": 160,
+      "p95_raw_nonzero": 10998.949999999983,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125522474416,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125522352698,
+      "max_raw": 16045,
+      "median_raw_nonzero": 5705.0,
+      "min_raw_nonzero": 2651,
+      "nonzero_ratio": 0.6244466145833333,
+      "original_frame_id": 161,
+      "p95_raw_nonzero": 10760.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125524474459,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125524351881,
+      "max_raw": 19355,
+      "median_raw_nonzero": 5863.0,
+      "min_raw_nonzero": 2929,
+      "nonzero_ratio": 0.6165364583333334,
+      "original_frame_id": 162,
+      "p95_raw_nonzero": 11773.149999999987,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125526474502,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125526351063,
+      "max_raw": 19869,
+      "median_raw_nonzero": 6079.0,
+      "min_raw_nonzero": 3757,
+      "nonzero_ratio": 0.6109049479166667,
+      "original_frame_id": 163,
+      "p95_raw_nonzero": 13133.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125528474545,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125528350247,
+      "max_raw": 20588,
+      "median_raw_nonzero": 6116.0,
+      "min_raw_nonzero": 3749,
+      "nonzero_ratio": 0.6055338541666667,
+      "original_frame_id": 164,
+      "p95_raw_nonzero": 13412.75,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125530474588,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125530349430,
+      "max_raw": 20252,
+      "median_raw_nonzero": 6034.0,
+      "min_raw_nonzero": 3659,
+      "nonzero_ratio": 0.6047417534722223,
+      "original_frame_id": 165,
+      "p95_raw_nonzero": 13377.799999999988,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125532474631,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125532348612,
+      "max_raw": 20057,
+      "median_raw_nonzero": 5782.5,
+      "min_raw_nonzero": 3515,
+      "nonzero_ratio": 0.6126736111111111,
+      "original_frame_id": 166,
+      "p95_raw_nonzero": 12284.399999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125534474673,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125534347796,
+      "max_raw": 19451,
+      "median_raw_nonzero": 5706.0,
+      "min_raw_nonzero": 3472,
+      "nonzero_ratio": 0.6116427951388889,
+      "original_frame_id": 167,
+      "p95_raw_nonzero": 11894.799999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125536474717,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125536346979,
+      "max_raw": 19659,
+      "median_raw_nonzero": 5667.0,
+      "min_raw_nonzero": 3401,
+      "nonzero_ratio": 0.6095160590277777,
+      "original_frame_id": 168,
+      "p95_raw_nonzero": 12240.599999999977,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125538474761,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125538346161,
+      "max_raw": 20057,
+      "median_raw_nonzero": 5489.0,
+      "min_raw_nonzero": 2813,
+      "nonzero_ratio": 0.6043728298611111,
+      "original_frame_id": 169,
+      "p95_raw_nonzero": 12216.399999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125540474803,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125540345344,
+      "max_raw": 19543,
+      "median_raw_nonzero": 5260.0,
+      "min_raw_nonzero": 2490,
+      "nonzero_ratio": 0.6045572916666667,
+      "original_frame_id": 170,
+      "p95_raw_nonzero": 12057.25,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125542474846,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125542344527,
+      "max_raw": 19799,
+      "median_raw_nonzero": 5035.0,
+      "min_raw_nonzero": 1785,
+      "nonzero_ratio": 0.6042426215277777,
+      "original_frame_id": 171,
+      "p95_raw_nonzero": 11608.399999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125544474890,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125544343710,
+      "max_raw": 18901,
+      "median_raw_nonzero": 4793.0,
+      "min_raw_nonzero": 1658,
+      "nonzero_ratio": 0.6037109375,
+      "original_frame_id": 172,
+      "p95_raw_nonzero": 10511.199999999953,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125546474932,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125546342893,
+      "max_raw": 22476,
+      "median_raw_nonzero": 4528.0,
+      "min_raw_nonzero": 1439,
+      "nonzero_ratio": 0.6039171006944445,
+      "original_frame_id": 173,
+      "p95_raw_nonzero": 9639.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125548474976,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125548342076,
+      "max_raw": 21903,
+      "median_raw_nonzero": 4407.0,
+      "min_raw_nonzero": 1341,
+      "nonzero_ratio": 0.6010091145833333,
+      "original_frame_id": 174,
+      "p95_raw_nonzero": 9796.599999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125550475019,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125550341259,
+      "max_raw": 22416,
+      "median_raw_nonzero": 4320.0,
+      "min_raw_nonzero": 1396,
+      "nonzero_ratio": 0.6003146701388888,
+      "original_frame_id": 175,
+      "p95_raw_nonzero": 9608.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125552475062,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125552340442,
+      "max_raw": 18461,
+      "median_raw_nonzero": 4280.0,
+      "min_raw_nonzero": 1427,
+      "nonzero_ratio": 0.6031792534722222,
+      "original_frame_id": 176,
+      "p95_raw_nonzero": 9480.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125554475105,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125554339625,
+      "max_raw": 18215,
+      "median_raw_nonzero": 4216.0,
+      "min_raw_nonzero": 1383,
+      "nonzero_ratio": 0.6064344618055556,
+      "original_frame_id": 177,
+      "p95_raw_nonzero": 8750.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125556475149,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125556338808,
+      "max_raw": 21751,
+      "median_raw_nonzero": 4202.0,
+      "min_raw_nonzero": 1358,
+      "nonzero_ratio": 0.6084635416666667,
+      "original_frame_id": 178,
+      "p95_raw_nonzero": 8417.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125558475192,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125558337991,
+      "max_raw": 21888,
+      "median_raw_nonzero": 4180.0,
+      "min_raw_nonzero": 1299,
+      "nonzero_ratio": 0.6087565104166667,
+      "original_frame_id": 179,
+      "p95_raw_nonzero": 8355.899999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125560475234,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125560337173,
+      "max_raw": 22440,
+      "median_raw_nonzero": 4184.0,
+      "min_raw_nonzero": 1291,
+      "nonzero_ratio": 0.6100043402777777,
+      "original_frame_id": 180,
+      "p95_raw_nonzero": 8293.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125562475277,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125562336356,
+      "max_raw": 22031,
+      "median_raw_nonzero": 4165.0,
+      "min_raw_nonzero": 1252,
+      "nonzero_ratio": 0.6111328125,
+      "original_frame_id": 181,
+      "p95_raw_nonzero": 8086.949999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125564475321,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125564335539,
+      "max_raw": 22226,
+      "median_raw_nonzero": 4153.0,
+      "min_raw_nonzero": 1222,
+      "nonzero_ratio": 0.6118272569444444,
+      "original_frame_id": 182,
+      "p95_raw_nonzero": 7908.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125566475364,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125566334722,
+      "max_raw": 22128,
+      "median_raw_nonzero": 4184.0,
+      "min_raw_nonzero": 1253,
+      "nonzero_ratio": 0.6095703125,
+      "original_frame_id": 183,
+      "p95_raw_nonzero": 8285.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125568475407,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125568333905,
+      "max_raw": 21965,
+      "median_raw_nonzero": 4192.0,
+      "min_raw_nonzero": 1276,
+      "nonzero_ratio": 0.6103190104166667,
+      "original_frame_id": 184,
+      "p95_raw_nonzero": 8212.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125570475451,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125570333087,
+      "max_raw": 22429,
+      "median_raw_nonzero": 4208.0,
+      "min_raw_nonzero": 1280,
+      "nonzero_ratio": 0.61025390625,
+      "original_frame_id": 185,
+      "p95_raw_nonzero": 8178.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125572475493,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125572332270,
+      "max_raw": 22177,
+      "median_raw_nonzero": 4224.0,
+      "min_raw_nonzero": 1297,
+      "nonzero_ratio": 0.6106228298611112,
+      "original_frame_id": 186,
+      "p95_raw_nonzero": 8183.299999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125574475536,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125574331453,
+      "max_raw": 17878,
+      "median_raw_nonzero": 4225.0,
+      "min_raw_nonzero": 1286,
+      "nonzero_ratio": 0.6123263888888889,
+      "original_frame_id": 187,
+      "p95_raw_nonzero": 7719.449999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125576475580,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125576330636,
+      "max_raw": 17858,
+      "median_raw_nonzero": 4247.0,
+      "min_raw_nonzero": 1296,
+      "nonzero_ratio": 0.6127821180555556,
+      "original_frame_id": 188,
+      "p95_raw_nonzero": 7709.3499999999985,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125578475622,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125578329819,
+      "max_raw": 17907,
+      "median_raw_nonzero": 4261.0,
+      "min_raw_nonzero": 1312,
+      "nonzero_ratio": 0.6128363715277778,
+      "original_frame_id": 189,
+      "p95_raw_nonzero": 7670.0999999999985,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125580475666,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125580329001,
+      "max_raw": 22898,
+      "median_raw_nonzero": 4286.0,
+      "min_raw_nonzero": 1340,
+      "nonzero_ratio": 0.6114908854166666,
+      "original_frame_id": 190,
+      "p95_raw_nonzero": 7683.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125582475710,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125582328184,
+      "max_raw": 24147,
+      "median_raw_nonzero": 4321.0,
+      "min_raw_nonzero": 1385,
+      "nonzero_ratio": 0.6101236979166667,
+      "original_frame_id": 191,
+      "p95_raw_nonzero": 7950.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125584475753,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125584327367,
+      "max_raw": 18091,
+      "median_raw_nonzero": 4324.0,
+      "min_raw_nonzero": 1379,
+      "nonzero_ratio": 0.6106011284722223,
+      "original_frame_id": 192,
+      "p95_raw_nonzero": 7826.399999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125586475796,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125586326550,
+      "max_raw": 15444,
+      "median_raw_nonzero": 4337.0,
+      "min_raw_nonzero": 1385,
+      "nonzero_ratio": 0.6116319444444445,
+      "original_frame_id": 193,
+      "p95_raw_nonzero": 7779.649999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125588475840,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125588325733,
+      "max_raw": 15267,
+      "median_raw_nonzero": 4339.0,
+      "min_raw_nonzero": 1397,
+      "nonzero_ratio": 0.6138454861111111,
+      "original_frame_id": 194,
+      "p95_raw_nonzero": 7633.349999999991,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125590475884,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125590324916,
+      "max_raw": 17459,
+      "median_raw_nonzero": 4364.0,
+      "min_raw_nonzero": 1404,
+      "nonzero_ratio": 0.6166666666666667,
+      "original_frame_id": 195,
+      "p95_raw_nonzero": 7722.449999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125592475927,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125592324098,
+      "max_raw": 15222,
+      "median_raw_nonzero": 4406.0,
+      "min_raw_nonzero": 1429,
+      "nonzero_ratio": 0.6174696180555556,
+      "original_frame_id": 196,
+      "p95_raw_nonzero": 8028.75,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125594475970,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125594323281,
+      "max_raw": 15440,
+      "median_raw_nonzero": 4456.0,
+      "min_raw_nonzero": 1449,
+      "nonzero_ratio": 0.6167643229166667,
+      "original_frame_id": 197,
+      "p95_raw_nonzero": 8660.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125596476014,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125596322463,
+      "max_raw": 15233,
+      "median_raw_nonzero": 4479.0,
+      "min_raw_nonzero": 1426,
+      "nonzero_ratio": 0.6189127604166667,
+      "original_frame_id": 198,
+      "p95_raw_nonzero": 8636.099999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125598476056,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125598321646,
+      "max_raw": 18869,
+      "median_raw_nonzero": 4547.0,
+      "min_raw_nonzero": 1479,
+      "nonzero_ratio": 0.6188259548611111,
+      "original_frame_id": 199,
+      "p95_raw_nonzero": 9213.5,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125600476100,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125600320829,
+      "max_raw": 15551,
+      "median_raw_nonzero": 4565.0,
+      "min_raw_nonzero": 1504,
+      "nonzero_ratio": 0.6157660590277778,
+      "original_frame_id": 200,
+      "p95_raw_nonzero": 9273.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125602476141,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125602320012,
+      "max_raw": 15571,
+      "median_raw_nonzero": 4600.0,
+      "min_raw_nonzero": 1528,
+      "nonzero_ratio": 0.61689453125,
+      "original_frame_id": 201,
+      "p95_raw_nonzero": 9326.399999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125604476183,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125604319195,
+      "max_raw": 15589,
+      "median_raw_nonzero": 4606.0,
+      "min_raw_nonzero": 1528,
+      "nonzero_ratio": 0.6179470486111112,
+      "original_frame_id": 202,
+      "p95_raw_nonzero": 9315.099999999991,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125606476228,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125606318377,
+      "max_raw": 15510,
+      "median_raw_nonzero": 4603.0,
+      "min_raw_nonzero": 1508,
+      "nonzero_ratio": 0.6183810763888888,
+      "original_frame_id": 203,
+      "p95_raw_nonzero": 9247.549999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125608476271,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125608317560,
+      "max_raw": 15474,
+      "median_raw_nonzero": 4596.0,
+      "min_raw_nonzero": 1524,
+      "nonzero_ratio": 0.6188585069444444,
+      "original_frame_id": 204,
+      "p95_raw_nonzero": 9294.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125610476314,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125610316743,
+      "max_raw": 15553,
+      "median_raw_nonzero": 4603.0,
+      "min_raw_nonzero": 1524,
+      "nonzero_ratio": 0.6181206597222222,
+      "original_frame_id": 205,
+      "p95_raw_nonzero": 9362.75,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125612476358,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125612315925,
+      "max_raw": 15649,
+      "median_raw_nonzero": 4601.0,
+      "min_raw_nonzero": 1516,
+      "nonzero_ratio": 0.6190755208333333,
+      "original_frame_id": 206,
+      "p95_raw_nonzero": 9390.699999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125614476401,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125614315108,
+      "max_raw": 18919,
+      "median_raw_nonzero": 4617.0,
+      "min_raw_nonzero": 1516,
+      "nonzero_ratio": 0.6189453125,
+      "original_frame_id": 207,
+      "p95_raw_nonzero": 9495.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125616476444,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125616314291,
+      "max_raw": 22930,
+      "median_raw_nonzero": 4619.0,
+      "min_raw_nonzero": 1512,
+      "nonzero_ratio": 0.6182942708333333,
+      "original_frame_id": 208,
+      "p95_raw_nonzero": 9391.949999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125618476487,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125618313473,
+      "max_raw": 19181,
+      "median_raw_nonzero": 4613.0,
+      "min_raw_nonzero": 1504,
+      "nonzero_ratio": 0.6183485243055555,
+      "original_frame_id": 209,
+      "p95_raw_nonzero": 9359.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125620476530,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125620312656,
+      "max_raw": 22702,
+      "median_raw_nonzero": 4630.0,
+      "min_raw_nonzero": 1544,
+      "nonzero_ratio": 0.6192599826388889,
+      "original_frame_id": 210,
+      "p95_raw_nonzero": 9410.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125622476573,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125622311838,
+      "max_raw": 15467,
+      "median_raw_nonzero": 4649.0,
+      "min_raw_nonzero": 1593,
+      "nonzero_ratio": 0.6189561631944445,
+      "original_frame_id": 211,
+      "p95_raw_nonzero": 9428.899999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125624476616,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125624311021,
+      "max_raw": 15422,
+      "median_raw_nonzero": 4745.0,
+      "min_raw_nonzero": 2248,
+      "nonzero_ratio": 0.6188368055555555,
+      "original_frame_id": 212,
+      "p95_raw_nonzero": 9458.449999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125626476660,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125626310204,
+      "max_raw": 15560,
+      "median_raw_nonzero": 4872.0,
+      "min_raw_nonzero": 2482,
+      "nonzero_ratio": 0.6212673611111111,
+      "original_frame_id": 213,
+      "p95_raw_nonzero": 9508.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125628476703,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125628642584,
+      "max_raw": 15555,
+      "median_raw_nonzero": 4954.0,
+      "min_raw_nonzero": 2567,
+      "nonzero_ratio": 0.6214626736111111,
+      "original_frame_id": 214,
+      "p95_raw_nonzero": 9649.349999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125630476744,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125630641766,
+      "max_raw": 19729,
+      "median_raw_nonzero": 4945.0,
+      "min_raw_nonzero": 2585,
+      "nonzero_ratio": 0.6234592013888889,
+      "original_frame_id": 215,
+      "p95_raw_nonzero": 9088.299999999988,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125632476788,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125632974146,
+      "max_raw": 15695,
+      "median_raw_nonzero": 5070.0,
+      "min_raw_nonzero": 2691,
+      "nonzero_ratio": 0.6222981770833333,
+      "original_frame_id": 216,
+      "p95_raw_nonzero": 9713.5,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125634476830,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125634640132,
+      "max_raw": 15708,
+      "median_raw_nonzero": 5021.0,
+      "min_raw_nonzero": 2644,
+      "nonzero_ratio": 0.6212890625,
+      "original_frame_id": 217,
+      "p95_raw_nonzero": 9689.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125636476873,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125636639314,
+      "max_raw": 15591,
+      "median_raw_nonzero": 4864.0,
+      "min_raw_nonzero": 2461,
+      "nonzero_ratio": 0.6218858506944445,
+      "original_frame_id": 218,
+      "p95_raw_nonzero": 9649.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125638476915,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125638638497,
+      "max_raw": 15723,
+      "median_raw_nonzero": 4746.0,
+      "min_raw_nonzero": 2350,
+      "nonzero_ratio": 0.6187825520833333,
+      "original_frame_id": 219,
+      "p95_raw_nonzero": 9611.699999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125640476957,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125640637680,
+      "max_raw": 19547,
+      "median_raw_nonzero": 4670.0,
+      "min_raw_nonzero": 2270,
+      "nonzero_ratio": 0.6178819444444444,
+      "original_frame_id": 220,
+      "p95_raw_nonzero": 9533.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125642477002,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125642636862,
+      "max_raw": 22844,
+      "median_raw_nonzero": 4665.0,
+      "min_raw_nonzero": 2269,
+      "nonzero_ratio": 0.6192491319444444,
+      "original_frame_id": 221,
+      "p95_raw_nonzero": 9452.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125644477044,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125644636045,
+      "max_raw": 18316,
+      "median_raw_nonzero": 4713.0,
+      "min_raw_nonzero": 2271,
+      "nonzero_ratio": 0.6230902777777778,
+      "original_frame_id": 222,
+      "p95_raw_nonzero": 9355.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125646477086,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125646635227,
+      "max_raw": 23605,
+      "median_raw_nonzero": 4830.0,
+      "min_raw_nonzero": 2341,
+      "nonzero_ratio": 0.6297200520833334,
+      "original_frame_id": 223,
+      "p95_raw_nonzero": 8680.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125648477128,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125648634410,
+      "max_raw": 13353,
+      "median_raw_nonzero": 5261.0,
+      "min_raw_nonzero": 2734,
+      "nonzero_ratio": 0.6271375868055555,
+      "original_frame_id": 224,
+      "p95_raw_nonzero": 9497.199999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125650477171,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125650633592,
+      "max_raw": 15250,
+      "median_raw_nonzero": 5598.0,
+      "min_raw_nonzero": 3019,
+      "nonzero_ratio": 0.6240885416666667,
+      "original_frame_id": 225,
+      "p95_raw_nonzero": 10304.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125652477215,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125652632775,
+      "max_raw": 14100,
+      "median_raw_nonzero": 5770.0,
+      "min_raw_nonzero": 3216,
+      "nonzero_ratio": 0.6284722222222222,
+      "original_frame_id": 226,
+      "p95_raw_nonzero": 10093.049999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125654477257,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125654631957,
+      "max_raw": 13434,
+      "median_raw_nonzero": 5980.0,
+      "min_raw_nonzero": 3440,
+      "nonzero_ratio": 0.6304796006944444,
+      "original_frame_id": 227,
+      "p95_raw_nonzero": 10050.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125656477300,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125656631139,
+      "max_raw": 12366,
+      "median_raw_nonzero": 6120.0,
+      "min_raw_nonzero": 3617,
+      "nonzero_ratio": 0.6315538194444444,
+      "original_frame_id": 228,
+      "p95_raw_nonzero": 9827.849999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125658477342,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125658630322,
+      "max_raw": 11962,
+      "median_raw_nonzero": 6288.0,
+      "min_raw_nonzero": 3796,
+      "nonzero_ratio": 0.6302300347222223,
+      "original_frame_id": 229,
+      "p95_raw_nonzero": 9709.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125660477386,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125660629505,
+      "max_raw": 12066,
+      "median_raw_nonzero": 6520.0,
+      "min_raw_nonzero": 4001,
+      "nonzero_ratio": 0.6294162326388889,
+      "original_frame_id": 230,
+      "p95_raw_nonzero": 9878.099999999991,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125662477430,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125662628687,
+      "max_raw": 12760,
+      "median_raw_nonzero": 6746.0,
+      "min_raw_nonzero": 4140,
+      "nonzero_ratio": 0.6280707465277777,
+      "original_frame_id": 231,
+      "p95_raw_nonzero": 10424.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125664477472,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125664961067,
+      "max_raw": 12089,
+      "median_raw_nonzero": 6705.0,
+      "min_raw_nonzero": 4067,
+      "nonzero_ratio": 0.6288628472222222,
+      "original_frame_id": 232,
+      "p95_raw_nonzero": 10076.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125666477514,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125666627052,
+      "max_raw": 11392,
+      "median_raw_nonzero": 6665.0,
+      "min_raw_nonzero": 3981,
+      "nonzero_ratio": 0.6323784722222222,
+      "original_frame_id": 233,
+      "p95_raw_nonzero": 9673.049999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125668477557,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125668626235,
+      "max_raw": 11253,
+      "median_raw_nonzero": 6739.0,
+      "min_raw_nonzero": 3993,
+      "nonzero_ratio": 0.6355794270833334,
+      "original_frame_id": 234,
+      "p95_raw_nonzero": 9609.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125670477598,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125670625417,
+      "max_raw": 11054,
+      "median_raw_nonzero": 6754.0,
+      "min_raw_nonzero": 3967,
+      "nonzero_ratio": 0.6360894097222223,
+      "original_frame_id": 235,
+      "p95_raw_nonzero": 9528.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125672477642,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125672624599,
+      "max_raw": 10805,
+      "median_raw_nonzero": 6741.0,
+      "min_raw_nonzero": 3862,
+      "nonzero_ratio": 0.6364691840277777,
+      "original_frame_id": 236,
+      "p95_raw_nonzero": 9411.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125674477684,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125674623782,
+      "max_raw": 10994,
+      "median_raw_nonzero": 6805.0,
+      "min_raw_nonzero": 4017,
+      "nonzero_ratio": 0.6353515625,
+      "original_frame_id": 237,
+      "p95_raw_nonzero": 9519.349999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125676477727,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125676622965,
+      "max_raw": 10597,
+      "median_raw_nonzero": 6805.0,
+      "min_raw_nonzero": 4101,
+      "nonzero_ratio": 0.63642578125,
+      "original_frame_id": 238,
+      "p95_raw_nonzero": 9307.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125678477770,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125678622147,
+      "max_raw": 10640,
+      "median_raw_nonzero": 6889.0,
+      "min_raw_nonzero": 4235,
+      "nonzero_ratio": 0.6366102430555556,
+      "original_frame_id": 239,
+      "p95_raw_nonzero": 9388.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125680477811,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125680621329,
+      "max_raw": 11144,
+      "median_raw_nonzero": 7010.0,
+      "min_raw_nonzero": 4341,
+      "nonzero_ratio": 0.63544921875,
+      "original_frame_id": 240,
+      "p95_raw_nonzero": 9838.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125682477855,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125682620511,
+      "max_raw": 10900,
+      "median_raw_nonzero": 6939.0,
+      "min_raw_nonzero": 4305,
+      "nonzero_ratio": 0.6354817708333333,
+      "original_frame_id": 241,
+      "p95_raw_nonzero": 9593.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125684477897,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125684619694,
+      "max_raw": 10533,
+      "median_raw_nonzero": 6870.0,
+      "min_raw_nonzero": 4282,
+      "nonzero_ratio": 0.6361545138888889,
+      "original_frame_id": 242,
+      "p95_raw_nonzero": 9332.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125686477940,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125686618876,
+      "max_raw": 10549,
+      "median_raw_nonzero": 6859.0,
+      "min_raw_nonzero": 4261,
+      "nonzero_ratio": 0.6357421875,
+      "original_frame_id": 243,
+      "p95_raw_nonzero": 9379.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125688477983,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125688618059,
+      "max_raw": 9976,
+      "median_raw_nonzero": 6786.0,
+      "min_raw_nonzero": 4188,
+      "nonzero_ratio": 0.6365234375,
+      "original_frame_id": 244,
+      "p95_raw_nonzero": 9086.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125690478026,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125690617241,
+      "max_raw": 10300,
+      "median_raw_nonzero": 6805.0,
+      "min_raw_nonzero": 4180,
+      "nonzero_ratio": 0.6361545138888889,
+      "original_frame_id": 245,
+      "p95_raw_nonzero": 9165.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125692478069,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125692949620,
+      "max_raw": 10332,
+      "median_raw_nonzero": 6860.0,
+      "min_raw_nonzero": 4216,
+      "nonzero_ratio": 0.6326714409722223,
+      "original_frame_id": 246,
+      "p95_raw_nonzero": 9250.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125694478111,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125694615606,
+      "max_raw": 11416,
+      "median_raw_nonzero": 7004.0,
+      "min_raw_nonzero": 4297,
+      "nonzero_ratio": 0.6299696180555555,
+      "original_frame_id": 247,
+      "p95_raw_nonzero": 9965.149999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125696478155,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125695948394,
+      "max_raw": 12066,
+      "median_raw_nonzero": 7077.0,
+      "min_raw_nonzero": 4331,
+      "nonzero_ratio": 0.6284939236111111,
+      "original_frame_id": 248,
+      "p95_raw_nonzero": 10306.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125698478197,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125698613970,
+      "max_raw": 12649,
+      "median_raw_nonzero": 7212.0,
+      "min_raw_nonzero": 4405,
+      "nonzero_ratio": 0.6275716145833333,
+      "original_frame_id": 249,
+      "p95_raw_nonzero": 10921.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125700478240,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125700613153,
+      "max_raw": 12328,
+      "median_raw_nonzero": 7194.0,
+      "min_raw_nonzero": 4419,
+      "nonzero_ratio": 0.62900390625,
+      "original_frame_id": 250,
+      "p95_raw_nonzero": 10705.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125702478283,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125702612335,
+      "max_raw": 12070,
+      "median_raw_nonzero": 7152.0,
+      "min_raw_nonzero": 4393,
+      "nonzero_ratio": 0.6312608506944445,
+      "original_frame_id": 251,
+      "p95_raw_nonzero": 10543.199999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125704478327,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125704611518,
+      "max_raw": 12400,
+      "median_raw_nonzero": 7241.0,
+      "min_raw_nonzero": 4446,
+      "nonzero_ratio": 0.6321506076388889,
+      "original_frame_id": 252,
+      "p95_raw_nonzero": 10885.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125706478370,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125706610700,
+      "max_raw": 12687,
+      "median_raw_nonzero": 7394.0,
+      "min_raw_nonzero": 4553,
+      "nonzero_ratio": 0.6334526909722222,
+      "original_frame_id": 253,
+      "p95_raw_nonzero": 11429.099999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125708478413,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125708609882,
+      "max_raw": 12796,
+      "median_raw_nonzero": 7386.5,
+      "min_raw_nonzero": 4571,
+      "nonzero_ratio": 0.6340494791666667,
+      "original_frame_id": 254,
+      "p95_raw_nonzero": 11429.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125710478455,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125710609064,
+      "max_raw": 12271,
+      "median_raw_nonzero": 7252.0,
+      "min_raw_nonzero": 4519,
+      "nonzero_ratio": 0.6339409722222222,
+      "original_frame_id": 255,
+      "p95_raw_nonzero": 10819.849999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125712478497,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125712608247,
+      "max_raw": 12350,
+      "median_raw_nonzero": 7216.0,
+      "min_raw_nonzero": 4471,
+      "nonzero_ratio": 0.6332573784722222,
+      "original_frame_id": 256,
+      "p95_raw_nonzero": 10797.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125714478540,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125714607429,
+      "max_raw": 12807,
+      "median_raw_nonzero": 7244.0,
+      "min_raw_nonzero": 4420,
+      "nonzero_ratio": 0.6329752604166666,
+      "original_frame_id": 257,
+      "p95_raw_nonzero": 11303.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125716478583,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125716606611,
+      "max_raw": 13047,
+      "median_raw_nonzero": 7292.0,
+      "min_raw_nonzero": 4424,
+      "nonzero_ratio": 0.6338433159722222,
+      "original_frame_id": 258,
+      "p95_raw_nonzero": 11617.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125718478627,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125718605794,
+      "max_raw": 12843,
+      "median_raw_nonzero": 7247.0,
+      "min_raw_nonzero": 4391,
+      "nonzero_ratio": 0.6333441840277778,
+      "original_frame_id": 259,
+      "p95_raw_nonzero": 11360.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125720478670,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125720604976,
+      "max_raw": 12806,
+      "median_raw_nonzero": 7277.0,
+      "min_raw_nonzero": 4400,
+      "nonzero_ratio": 0.6340060763888888,
+      "original_frame_id": 260,
+      "p95_raw_nonzero": 11402.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125722478711,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125722604158,
+      "max_raw": 13011,
+      "median_raw_nonzero": 7294.0,
+      "min_raw_nonzero": 4413,
+      "nonzero_ratio": 0.6330078125,
+      "original_frame_id": 261,
+      "p95_raw_nonzero": 11582.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125724478754,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125724603341,
+      "max_raw": 13294,
+      "median_raw_nonzero": 7367.0,
+      "min_raw_nonzero": 4547,
+      "nonzero_ratio": 0.6332356770833333,
+      "original_frame_id": 262,
+      "p95_raw_nonzero": 11679.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125726478797,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125726602523,
+      "max_raw": 12779,
+      "median_raw_nonzero": 7394.0,
+      "min_raw_nonzero": 4659,
+      "nonzero_ratio": 0.6330403645833333,
+      "original_frame_id": 263,
+      "p95_raw_nonzero": 11561.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125728478841,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125728601705,
+      "max_raw": 13122,
+      "median_raw_nonzero": 7479.0,
+      "min_raw_nonzero": 4796,
+      "nonzero_ratio": 0.6332573784722222,
+      "original_frame_id": 264,
+      "p95_raw_nonzero": 11696.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125730478883,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125731267281,
+      "max_raw": 13498,
+      "median_raw_nonzero": 7502.0,
+      "min_raw_nonzero": 4900,
+      "nonzero_ratio": 0.6332139756944445,
+      "original_frame_id": 265,
+      "p95_raw_nonzero": 11769.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125732478927,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125732600070,
+      "max_raw": 13320,
+      "median_raw_nonzero": 7481.0,
+      "min_raw_nonzero": 4952,
+      "nonzero_ratio": 0.6324327256944444,
+      "original_frame_id": 266,
+      "p95_raw_nonzero": 11634.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125734478969,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125734599252,
+      "max_raw": 12928,
+      "median_raw_nonzero": 7389.0,
+      "min_raw_nonzero": 4910,
+      "nonzero_ratio": 0.6329644097222222,
+      "original_frame_id": 267,
+      "p95_raw_nonzero": 11365.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125736479012,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125736598434,
+      "max_raw": 13107,
+      "median_raw_nonzero": 7354.0,
+      "min_raw_nonzero": 4890,
+      "nonzero_ratio": 0.6334526909722222,
+      "original_frame_id": 268,
+      "p95_raw_nonzero": 11297.099999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125738479055,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125738597617,
+      "max_raw": 12625,
+      "median_raw_nonzero": 7317.0,
+      "min_raw_nonzero": 4867,
+      "nonzero_ratio": 0.6338541666666667,
+      "original_frame_id": 269,
+      "p95_raw_nonzero": 11083.25,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125740479096,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125740596799,
+      "max_raw": 12089,
+      "median_raw_nonzero": 7266.0,
+      "min_raw_nonzero": 4844,
+      "nonzero_ratio": 0.6352322048611111,
+      "original_frame_id": 270,
+      "p95_raw_nonzero": 10810.899999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125742479140,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125742595981,
+      "max_raw": 19921,
+      "median_raw_nonzero": 7140.0,
+      "min_raw_nonzero": 4769,
+      "nonzero_ratio": 0.6359917534722223,
+      "original_frame_id": 271,
+      "p95_raw_nonzero": 10422.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125744479183,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125744595163,
+      "max_raw": 12476,
+      "median_raw_nonzero": 7219.0,
+      "min_raw_nonzero": 4727,
+      "nonzero_ratio": 0.6354926215277777,
+      "original_frame_id": 272,
+      "p95_raw_nonzero": 10894.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125746479225,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125746594345,
+      "max_raw": 11979,
+      "median_raw_nonzero": 7098.0,
+      "min_raw_nonzero": 4668,
+      "nonzero_ratio": 0.6354926215277777,
+      "original_frame_id": 273,
+      "p95_raw_nonzero": 10610.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125748479268,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125748593527,
+      "max_raw": 11981,
+      "median_raw_nonzero": 7132.0,
+      "min_raw_nonzero": 4714,
+      "nonzero_ratio": 0.6353298611111111,
+      "original_frame_id": 274,
+      "p95_raw_nonzero": 10625.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125750479311,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125750592710,
+      "max_raw": 11597,
+      "median_raw_nonzero": 7095.5,
+      "min_raw_nonzero": 4735,
+      "nonzero_ratio": 0.635546875,
+      "original_frame_id": 275,
+      "p95_raw_nonzero": 10404.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125752479353,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125752591892,
+      "max_raw": 11287,
+      "median_raw_nonzero": 7104.0,
+      "min_raw_nonzero": 4732,
+      "nonzero_ratio": 0.6361545138888889,
+      "original_frame_id": 276,
+      "p95_raw_nonzero": 10262.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125754479396,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125754591074,
+      "max_raw": 11328,
+      "median_raw_nonzero": 7173.0,
+      "min_raw_nonzero": 4768,
+      "nonzero_ratio": 0.6357421875,
+      "original_frame_id": 277,
+      "p95_raw_nonzero": 10227.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125756479439,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125756590256,
+      "max_raw": 11720,
+      "median_raw_nonzero": 7294.0,
+      "min_raw_nonzero": 4776,
+      "nonzero_ratio": 0.6360460069444445,
+      "original_frame_id": 278,
+      "p95_raw_nonzero": 10474.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125758479482,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125758589438,
+      "max_raw": 11678,
+      "median_raw_nonzero": 7300.0,
+      "min_raw_nonzero": 3406,
+      "nonzero_ratio": 0.6346354166666667,
+      "original_frame_id": 279,
+      "p95_raw_nonzero": 10413.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125760479523,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125760588621,
+      "max_raw": 11434,
+      "median_raw_nonzero": 7271.0,
+      "min_raw_nonzero": 3132,
+      "nonzero_ratio": 0.6346137152777778,
+      "original_frame_id": 280,
+      "p95_raw_nonzero": 10272.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125762479566,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125762587803,
+      "max_raw": 11545,
+      "median_raw_nonzero": 7319.0,
+      "min_raw_nonzero": 2981,
+      "nonzero_ratio": 0.6334201388888889,
+      "original_frame_id": 281,
+      "p95_raw_nonzero": 10330.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125764479608,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125764586985,
+      "max_raw": 11671,
+      "median_raw_nonzero": 7292.0,
+      "min_raw_nonzero": 2994,
+      "nonzero_ratio": 0.6340060763888888,
+      "original_frame_id": 282,
+      "p95_raw_nonzero": 10262.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125766479652,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125766586167,
+      "max_raw": 10695,
+      "median_raw_nonzero": 7123.0,
+      "min_raw_nonzero": 2876,
+      "nonzero_ratio": 0.6347764756944444,
+      "original_frame_id": 283,
+      "p95_raw_nonzero": 9790.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125768479694,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125768585349,
+      "max_raw": 10066,
+      "median_raw_nonzero": 7138.0,
+      "min_raw_nonzero": 2877,
+      "nonzero_ratio": 0.6348198784722222,
+      "original_frame_id": 284,
+      "p95_raw_nonzero": 9585.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125770479736,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125770584531,
+      "max_raw": 10184,
+      "median_raw_nonzero": 7213.0,
+      "min_raw_nonzero": 2944,
+      "nonzero_ratio": 0.6352864583333333,
+      "original_frame_id": 285,
+      "p95_raw_nonzero": 9670.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125772479780,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125772583713,
+      "max_raw": 10154,
+      "median_raw_nonzero": 7208.0,
+      "min_raw_nonzero": 2829,
+      "nonzero_ratio": 0.6349175347222222,
+      "original_frame_id": 286,
+      "p95_raw_nonzero": 9590.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125774479822,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125774249699,
+      "max_raw": 10686,
+      "median_raw_nonzero": 7325.0,
+      "min_raw_nonzero": 2856,
+      "nonzero_ratio": 0.6323676215277778,
+      "original_frame_id": 287,
+      "p95_raw_nonzero": 9864.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125776479864,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125776582078,
+      "max_raw": 10911,
+      "median_raw_nonzero": 7402.0,
+      "min_raw_nonzero": 2802,
+      "nonzero_ratio": 0.6299045138888889,
+      "original_frame_id": 288,
+      "p95_raw_nonzero": 10018.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125778479907,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125778581260,
+      "max_raw": 20040,
+      "median_raw_nonzero": 7489.0,
+      "min_raw_nonzero": 2656,
+      "nonzero_ratio": 0.6295355902777777,
+      "original_frame_id": 289,
+      "p95_raw_nonzero": 10249.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125780479951,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125780580442,
+      "max_raw": 11320,
+      "median_raw_nonzero": 7535.0,
+      "min_raw_nonzero": 2477,
+      "nonzero_ratio": 0.6297526041666667,
+      "original_frame_id": 290,
+      "p95_raw_nonzero": 10282.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125782479993,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125782579624,
+      "max_raw": 19759,
+      "median_raw_nonzero": 7533.0,
+      "min_raw_nonzero": 2728,
+      "nonzero_ratio": 0.6288736979166667,
+      "original_frame_id": 291,
+      "p95_raw_nonzero": 10321.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125784480035,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125784578806,
+      "max_raw": 11367,
+      "median_raw_nonzero": 7486.0,
+      "min_raw_nonzero": 4734,
+      "nonzero_ratio": 0.6328125,
+      "original_frame_id": 292,
+      "p95_raw_nonzero": 10244.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125786480077,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125786577988,
+      "max_raw": 12318,
+      "median_raw_nonzero": 7624.0,
+      "min_raw_nonzero": 4751,
+      "nonzero_ratio": 0.63154296875,
+      "original_frame_id": 293,
+      "p95_raw_nonzero": 10852.899999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125788480121,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125788577171,
+      "max_raw": 11398,
+      "median_raw_nonzero": 7570.0,
+      "min_raw_nonzero": 4818,
+      "nonzero_ratio": 0.6319227430555555,
+      "original_frame_id": 294,
+      "p95_raw_nonzero": 10168.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125790480164,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125790576353,
+      "max_raw": 11885,
+      "median_raw_nonzero": 7727.0,
+      "min_raw_nonzero": 4940,
+      "nonzero_ratio": 0.6278537326388889,
+      "original_frame_id": 295,
+      "p95_raw_nonzero": 10482.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125792480206,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125792575535,
+      "max_raw": 11863,
+      "median_raw_nonzero": 7771.0,
+      "min_raw_nonzero": 5012,
+      "nonzero_ratio": 0.6272135416666667,
+      "original_frame_id": 296,
+      "p95_raw_nonzero": 10501.849999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125794480249,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125794574717,
+      "max_raw": 12416,
+      "median_raw_nonzero": 7823.0,
+      "min_raw_nonzero": 5072,
+      "nonzero_ratio": 0.6281792534722223,
+      "original_frame_id": 297,
+      "p95_raw_nonzero": 10799.399999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125796480292,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125796573899,
+      "max_raw": 20947,
+      "median_raw_nonzero": 7937.0,
+      "min_raw_nonzero": 5222,
+      "nonzero_ratio": 0.6322157118055556,
+      "original_frame_id": 298,
+      "p95_raw_nonzero": 10939.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125798480334,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125798573081,
+      "max_raw": 12913,
+      "median_raw_nonzero": 7997.0,
+      "min_raw_nonzero": 5344,
+      "nonzero_ratio": 0.63486328125,
+      "original_frame_id": 299,
+      "p95_raw_nonzero": 11050.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125800480377,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125800572263,
+      "max_raw": 13457,
+      "median_raw_nonzero": 8083.0,
+      "min_raw_nonzero": 5464,
+      "nonzero_ratio": 0.6338541666666667,
+      "original_frame_id": 300,
+      "p95_raw_nonzero": 11353.25,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125802480419,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125802571446,
+      "max_raw": 13926,
+      "median_raw_nonzero": 8141.0,
+      "min_raw_nonzero": 5544,
+      "nonzero_ratio": 0.6339518229166666,
+      "original_frame_id": 301,
+      "p95_raw_nonzero": 11734.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125804480463,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125804570628,
+      "max_raw": 21803,
+      "median_raw_nonzero": 8098.0,
+      "min_raw_nonzero": 5505,
+      "nonzero_ratio": 0.6338975694444444,
+      "original_frame_id": 302,
+      "p95_raw_nonzero": 11668.049999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125806480505,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125806569810,
+      "max_raw": 21909,
+      "median_raw_nonzero": 8115.0,
+      "min_raw_nonzero": 5475,
+      "nonzero_ratio": 0.6332248263888889,
+      "original_frame_id": 303,
+      "p95_raw_nonzero": 11997.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125808480547,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125808568992,
+      "max_raw": 15095,
+      "median_raw_nonzero": 8287.0,
+      "min_raw_nonzero": 5521,
+      "nonzero_ratio": 0.6308485243055556,
+      "original_frame_id": 304,
+      "p95_raw_nonzero": 12748.099999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125810480590,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125810568174,
+      "max_raw": 16926,
+      "median_raw_nonzero": 8527.0,
+      "min_raw_nonzero": 5535,
+      "nonzero_ratio": 0.6262803819444445,
+      "original_frame_id": 305,
+      "p95_raw_nonzero": 13821.149999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125812480632,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125812567356,
+      "max_raw": 16249,
+      "median_raw_nonzero": 8563.0,
+      "min_raw_nonzero": 5530,
+      "nonzero_ratio": 0.6267903645833334,
+      "original_frame_id": 306,
+      "p95_raw_nonzero": 13929.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125814480675,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125814566538,
+      "max_raw": 16267,
+      "median_raw_nonzero": 8613.0,
+      "min_raw_nonzero": 5482,
+      "nonzero_ratio": 0.6243706597222223,
+      "original_frame_id": 307,
+      "p95_raw_nonzero": 14117.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125816480718,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125816565720,
+      "max_raw": 15908,
+      "median_raw_nonzero": 8537.0,
+      "min_raw_nonzero": 5380,
+      "nonzero_ratio": 0.6265625,
+      "original_frame_id": 308,
+      "p95_raw_nonzero": 13798.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125818480761,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125818564902,
+      "max_raw": 14938,
+      "median_raw_nonzero": 8438.0,
+      "min_raw_nonzero": 5328,
+      "nonzero_ratio": 0.6296006944444444,
+      "original_frame_id": 309,
+      "p95_raw_nonzero": 13263.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125820480804,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125820564084,
+      "max_raw": 14456,
+      "median_raw_nonzero": 8328.0,
+      "min_raw_nonzero": 5302,
+      "nonzero_ratio": 0.6306315104166667,
+      "original_frame_id": 310,
+      "p95_raw_nonzero": 12796.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125822480846,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125822563266,
+      "max_raw": 14025,
+      "median_raw_nonzero": 8171.0,
+      "min_raw_nonzero": 5259,
+      "nonzero_ratio": 0.6282877604166667,
+      "original_frame_id": 311,
+      "p95_raw_nonzero": 12360.899999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125824480889,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125824562448,
+      "max_raw": 13823,
+      "median_raw_nonzero": 8113.0,
+      "min_raw_nonzero": 5236,
+      "nonzero_ratio": 0.6284830729166667,
+      "original_frame_id": 312,
+      "p95_raw_nonzero": 12213.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125826480932,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125826561630,
+      "max_raw": 13465,
+      "median_raw_nonzero": 8054.0,
+      "min_raw_nonzero": 5206,
+      "nonzero_ratio": 0.6294704861111111,
+      "original_frame_id": 313,
+      "p95_raw_nonzero": 11941.449999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125828480974,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125827561221,
+      "max_raw": 13311,
+      "median_raw_nonzero": 7987.0,
+      "min_raw_nonzero": 5140,
+      "nonzero_ratio": 0.6307291666666667,
+      "original_frame_id": 314,
+      "p95_raw_nonzero": 11781.649999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125830481018,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125830559994,
+      "max_raw": 13138,
+      "median_raw_nonzero": 7933.0,
+      "min_raw_nonzero": 5098,
+      "nonzero_ratio": 0.6328233506944444,
+      "original_frame_id": 315,
+      "p95_raw_nonzero": 11543.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125832481059,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125832559176,
+      "max_raw": 12724,
+      "median_raw_nonzero": 7833.0,
+      "min_raw_nonzero": 5033,
+      "nonzero_ratio": 0.6342013888888889,
+      "original_frame_id": 316,
+      "p95_raw_nonzero": 11311.649999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125834481103,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125834558358,
+      "max_raw": 12451,
+      "median_raw_nonzero": 7782.0,
+      "min_raw_nonzero": 5030,
+      "nonzero_ratio": 0.6347005208333333,
+      "original_frame_id": 317,
+      "p95_raw_nonzero": 11049.349999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125836481146,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125835224752,
+      "max_raw": 12654,
+      "median_raw_nonzero": 7812.0,
+      "min_raw_nonzero": 5083,
+      "nonzero_ratio": 0.63515625,
+      "original_frame_id": 318,
+      "p95_raw_nonzero": 11257.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125838481189,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125838556722,
+      "max_raw": 12758,
+      "median_raw_nonzero": 7807.5,
+      "min_raw_nonzero": 5155,
+      "nonzero_ratio": 0.6340277777777777,
+      "original_frame_id": 319,
+      "p95_raw_nonzero": 11138.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125840481231,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125840555905,
+      "max_raw": 13392,
+      "median_raw_nonzero": 7879.0,
+      "min_raw_nonzero": 5270,
+      "nonzero_ratio": 0.6328450520833333,
+      "original_frame_id": 320,
+      "p95_raw_nonzero": 11513.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125842481273,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125842555086,
+      "max_raw": 13653,
+      "median_raw_nonzero": 7943.0,
+      "min_raw_nonzero": 4594,
+      "nonzero_ratio": 0.6315212673611111,
+      "original_frame_id": 321,
+      "p95_raw_nonzero": 11744.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125844481317,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125844554268,
+      "max_raw": 13792,
+      "median_raw_nonzero": 7983.5,
+      "min_raw_nonzero": 4395,
+      "nonzero_ratio": 0.6297309027777778,
+      "original_frame_id": 322,
+      "p95_raw_nonzero": 11945.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125846481359,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125846553450,
+      "max_raw": 13255,
+      "median_raw_nonzero": 7925.0,
+      "min_raw_nonzero": 4016,
+      "nonzero_ratio": 0.62919921875,
+      "original_frame_id": 323,
+      "p95_raw_nonzero": 11594.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125848481402,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125848552632,
+      "max_raw": 13163,
+      "median_raw_nonzero": 7927.0,
+      "min_raw_nonzero": 5554,
+      "nonzero_ratio": 0.6297200520833334,
+      "original_frame_id": 324,
+      "p95_raw_nonzero": 11637.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125850481445,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125850551814,
+      "max_raw": 20981,
+      "median_raw_nonzero": 7894.0,
+      "min_raw_nonzero": 5508,
+      "nonzero_ratio": 0.6294921875,
+      "original_frame_id": 325,
+      "p95_raw_nonzero": 11541.349999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125852481488,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125852550996,
+      "max_raw": 12726,
+      "median_raw_nonzero": 7817.0,
+      "min_raw_nonzero": 5236,
+      "nonzero_ratio": 0.6303819444444444,
+      "original_frame_id": 326,
+      "p95_raw_nonzero": 11256.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125854481530,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125854550178,
+      "max_raw": 12601,
+      "median_raw_nonzero": 7834.0,
+      "min_raw_nonzero": 5253,
+      "nonzero_ratio": 0.63212890625,
+      "original_frame_id": 327,
+      "p95_raw_nonzero": 11279.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125856481573,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125855882966,
+      "max_raw": 12655,
+      "median_raw_nonzero": 7839.0,
+      "min_raw_nonzero": 5373,
+      "nonzero_ratio": 0.6337131076388889,
+      "original_frame_id": 328,
+      "p95_raw_nonzero": 11390.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125858481615,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125858548542,
+      "max_raw": 12049,
+      "median_raw_nonzero": 7732.0,
+      "min_raw_nonzero": 5158,
+      "nonzero_ratio": 0.6345811631944445,
+      "original_frame_id": 329,
+      "p95_raw_nonzero": 10930.899999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125860481659,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125860547724,
+      "max_raw": 12203,
+      "median_raw_nonzero": 7761.0,
+      "min_raw_nonzero": 5118,
+      "nonzero_ratio": 0.6353624131944444,
+      "original_frame_id": 330,
+      "p95_raw_nonzero": 11008.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125862481702,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125861547315,
+      "max_raw": 12366,
+      "median_raw_nonzero": 7787.0,
+      "min_raw_nonzero": 5304,
+      "nonzero_ratio": 0.6364691840277777,
+      "original_frame_id": 331,
+      "p95_raw_nonzero": 11141.199999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125864481743,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125864879285,
+      "max_raw": 11992,
+      "median_raw_nonzero": 7717.0,
+      "min_raw_nonzero": 5265,
+      "nonzero_ratio": 0.6365993923611111,
+      "original_frame_id": 332,
+      "p95_raw_nonzero": 10890.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125866481786,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125866545270,
+      "max_raw": 11780,
+      "median_raw_nonzero": 7706.0,
+      "min_raw_nonzero": 5264,
+      "nonzero_ratio": 0.6364474826388888,
+      "original_frame_id": 333,
+      "p95_raw_nonzero": 10743.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125868481829,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125868544452,
+      "max_raw": 11888,
+      "median_raw_nonzero": 7746.0,
+      "min_raw_nonzero": 5323,
+      "nonzero_ratio": 0.63564453125,
+      "original_frame_id": 334,
+      "p95_raw_nonzero": 10860.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125870481871,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125870543634,
+      "max_raw": 11802,
+      "median_raw_nonzero": 7732.0,
+      "min_raw_nonzero": 4152,
+      "nonzero_ratio": 0.6362087673611111,
+      "original_frame_id": 335,
+      "p95_raw_nonzero": 10843.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125872481915,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125872542816,
+      "max_raw": 11996,
+      "median_raw_nonzero": 7785.0,
+      "min_raw_nonzero": 4210,
+      "nonzero_ratio": 0.6353732638888889,
+      "original_frame_id": 336,
+      "p95_raw_nonzero": 11007.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125874481957,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125874541997,
+      "max_raw": 12079,
+      "median_raw_nonzero": 7740.0,
+      "min_raw_nonzero": 4359,
+      "nonzero_ratio": 0.6355360243055556,
+      "original_frame_id": 337,
+      "p95_raw_nonzero": 10969.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125876481999,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125876541180,
+      "max_raw": 11734,
+      "median_raw_nonzero": 7693.0,
+      "min_raw_nonzero": 4987,
+      "nonzero_ratio": 0.6354817708333333,
+      "original_frame_id": 338,
+      "p95_raw_nonzero": 10769.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125878482041,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125878540361,
+      "max_raw": 11742,
+      "median_raw_nonzero": 7684.0,
+      "min_raw_nonzero": 5201,
+      "nonzero_ratio": 0.6363389756944444,
+      "original_frame_id": 339,
+      "p95_raw_nonzero": 10828.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125880482084,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125880539543,
+      "max_raw": 17645,
+      "median_raw_nonzero": 7638.0,
+      "min_raw_nonzero": 5140,
+      "nonzero_ratio": 0.6358181423611111,
+      "original_frame_id": 340,
+      "p95_raw_nonzero": 10764.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125882482126,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125882538725,
+      "max_raw": 12171,
+      "median_raw_nonzero": 7704.0,
+      "min_raw_nonzero": 3979,
+      "nonzero_ratio": 0.6343967013888889,
+      "original_frame_id": 341,
+      "p95_raw_nonzero": 11146.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125884482169,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125883871513,
+      "max_raw": 12238,
+      "median_raw_nonzero": 7738.0,
+      "min_raw_nonzero": 3822,
+      "nonzero_ratio": 0.6346028645833334,
+      "original_frame_id": 342,
+      "p95_raw_nonzero": 11206.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125886482211,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125886537089,
+      "max_raw": 12043,
+      "median_raw_nonzero": 7710.0,
+      "min_raw_nonzero": 4009,
+      "nonzero_ratio": 0.6347005208333333,
+      "original_frame_id": 343,
+      "p95_raw_nonzero": 11035.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125888482254,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125888536271,
+      "max_raw": 11724,
+      "median_raw_nonzero": 7603.0,
+      "min_raw_nonzero": 3421,
+      "nonzero_ratio": 0.6352322048611111,
+      "original_frame_id": 344,
+      "p95_raw_nonzero": 10686.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125890482297,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125890535452,
+      "max_raw": 11310,
+      "median_raw_nonzero": 7577.0,
+      "min_raw_nonzero": 3157,
+      "nonzero_ratio": 0.6336046006944445,
+      "original_frame_id": 345,
+      "p95_raw_nonzero": 10423.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125892482339,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125892534635,
+      "max_raw": 11224,
+      "median_raw_nonzero": 7575.0,
+      "min_raw_nonzero": 2952,
+      "nonzero_ratio": 0.6330512152777777,
+      "original_frame_id": 346,
+      "p95_raw_nonzero": 10335.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125894482382,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125894867013,
+      "max_raw": 11231,
+      "median_raw_nonzero": 7616.0,
+      "min_raw_nonzero": 2765,
+      "nonzero_ratio": 0.6333984375,
+      "original_frame_id": 347,
+      "p95_raw_nonzero": 10374.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125896482423,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125896532998,
+      "max_raw": 11175,
+      "median_raw_nonzero": 7636.0,
+      "min_raw_nonzero": 2577,
+      "nonzero_ratio": 0.6325737847222223,
+      "original_frame_id": 348,
+      "p95_raw_nonzero": 10320.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125898482466,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125898532180,
+      "max_raw": 11093,
+      "median_raw_nonzero": 7638.0,
+      "min_raw_nonzero": 2491,
+      "nonzero_ratio": 0.6330078125,
+      "original_frame_id": 349,
+      "p95_raw_nonzero": 10367.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125900482508,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125900531362,
+      "max_raw": 10951,
+      "median_raw_nonzero": 7599.0,
+      "min_raw_nonzero": 2445,
+      "nonzero_ratio": 0.6332465277777778,
+      "original_frame_id": 350,
+      "p95_raw_nonzero": 10276.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125902482551,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125902530544,
+      "max_raw": 11039,
+      "median_raw_nonzero": 7590.0,
+      "min_raw_nonzero": 2529,
+      "nonzero_ratio": 0.6318359375,
+      "original_frame_id": 351,
+      "p95_raw_nonzero": 10286.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125904482595,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125904529726,
+      "max_raw": 11208,
+      "median_raw_nonzero": 7577.0,
+      "min_raw_nonzero": 2672,
+      "nonzero_ratio": 0.6323350694444444,
+      "original_frame_id": 352,
+      "p95_raw_nonzero": 10321.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125906482636,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125906528908,
+      "max_raw": 11056,
+      "median_raw_nonzero": 7528.0,
+      "min_raw_nonzero": 2625,
+      "nonzero_ratio": 0.6324652777777777,
+      "original_frame_id": 353,
+      "p95_raw_nonzero": 10154.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125908482680,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125908528089,
+      "max_raw": 11355,
+      "median_raw_nonzero": 7572.0,
+      "min_raw_nonzero": 2676,
+      "nonzero_ratio": 0.6318576388888889,
+      "original_frame_id": 354,
+      "p95_raw_nonzero": 10236.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125910482722,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125910527271,
+      "max_raw": 10912,
+      "median_raw_nonzero": 7473.0,
+      "min_raw_nonzero": 2664,
+      "nonzero_ratio": 0.6320638020833333,
+      "original_frame_id": 355,
+      "p95_raw_nonzero": 10024.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125912482764,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125912193256,
+      "max_raw": 11130,
+      "median_raw_nonzero": 7474.0,
+      "min_raw_nonzero": 2732,
+      "nonzero_ratio": 0.632421875,
+      "original_frame_id": 356,
+      "p95_raw_nonzero": 10108.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125914482807,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125914525635,
+      "max_raw": 11536,
+      "median_raw_nonzero": 7453.0,
+      "min_raw_nonzero": 2975,
+      "nonzero_ratio": 0.6334092881944444,
+      "original_frame_id": 357,
+      "p95_raw_nonzero": 10230.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125916482849,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125916524817,
+      "max_raw": 11338,
+      "median_raw_nonzero": 7398.0,
+      "min_raw_nonzero": 3099,
+      "nonzero_ratio": 0.6328559027777778,
+      "original_frame_id": 358,
+      "p95_raw_nonzero": 10150.849999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125918482891,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125918523999,
+      "max_raw": 11355,
+      "median_raw_nonzero": 7382.0,
+      "min_raw_nonzero": 3113,
+      "nonzero_ratio": 0.6320638020833333,
+      "original_frame_id": 359,
+      "p95_raw_nonzero": 10121.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125920482935,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125920523181,
+      "max_raw": 11781,
+      "median_raw_nonzero": 7384.0,
+      "min_raw_nonzero": 3801,
+      "nonzero_ratio": 0.6318684895833333,
+      "original_frame_id": 360,
+      "p95_raw_nonzero": 10381.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125922482977,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125922522362,
+      "max_raw": 11934,
+      "median_raw_nonzero": 7272.0,
+      "min_raw_nonzero": 4511,
+      "nonzero_ratio": 0.6318142361111111,
+      "original_frame_id": 361,
+      "p95_raw_nonzero": 10426.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125924483018,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125924521544,
+      "max_raw": 13973,
+      "median_raw_nonzero": 7366.0,
+      "min_raw_nonzero": 4403,
+      "nonzero_ratio": 0.6270616319444444,
+      "original_frame_id": 362,
+      "p95_raw_nonzero": 11768.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125926483060,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125926520726,
+      "max_raw": 14852,
+      "median_raw_nonzero": 7233.0,
+      "min_raw_nonzero": 4336,
+      "nonzero_ratio": 0.6247178819444444,
+      "original_frame_id": 363,
+      "p95_raw_nonzero": 12107.349999999999,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125928483103,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125928519908,
+      "max_raw": 16390,
+      "median_raw_nonzero": 7368.0,
+      "min_raw_nonzero": 4317,
+      "nonzero_ratio": 0.6226779513888889,
+      "original_frame_id": 364,
+      "p95_raw_nonzero": 13398.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125930483145,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125930519089,
+      "max_raw": 17648,
+      "median_raw_nonzero": 7291.0,
+      "min_raw_nonzero": 4230,
+      "nonzero_ratio": 0.6220160590277778,
+      "original_frame_id": 365,
+      "p95_raw_nonzero": 13788.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125932483188,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125932518271,
+      "max_raw": 19808,
+      "median_raw_nonzero": 7102.0,
+      "min_raw_nonzero": 4012,
+      "nonzero_ratio": 0.61640625,
+      "original_frame_id": 366,
+      "p95_raw_nonzero": 14346.649999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125934483230,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125934517453,
+      "max_raw": 22447,
+      "median_raw_nonzero": 6838.0,
+      "min_raw_nonzero": 3825,
+      "nonzero_ratio": 0.6061089409722222,
+      "original_frame_id": 367,
+      "p95_raw_nonzero": 14776.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125936483272,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125936516635,
+      "max_raw": 23115,
+      "median_raw_nonzero": 6507.0,
+      "min_raw_nonzero": 3625,
+      "nonzero_ratio": 0.5962348090277778,
+      "original_frame_id": 368,
+      "p95_raw_nonzero": 14736.399999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125938483316,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125938515817,
+      "max_raw": 23144,
+      "median_raw_nonzero": 6202.0,
+      "min_raw_nonzero": 3474,
+      "nonzero_ratio": 0.5963216145833333,
+      "original_frame_id": 369,
+      "p95_raw_nonzero": 14392.199999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125940483358,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125940514998,
+      "max_raw": 23158,
+      "median_raw_nonzero": 6107.0,
+      "min_raw_nonzero": 3459,
+      "nonzero_ratio": 0.5968532986111111,
+      "original_frame_id": 370,
+      "p95_raw_nonzero": 14265.5,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125942483400,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125942514180,
+      "max_raw": 23309,
+      "median_raw_nonzero": 6194.0,
+      "min_raw_nonzero": 3538,
+      "nonzero_ratio": 0.5879231770833333,
+      "original_frame_id": 371,
+      "p95_raw_nonzero": 14699.899999999994,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125944483445,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125944513362,
+      "max_raw": 23628,
+      "median_raw_nonzero": 6393.0,
+      "min_raw_nonzero": 3659,
+      "nonzero_ratio": 0.5847005208333333,
+      "original_frame_id": 372,
+      "p95_raw_nonzero": 15277.75,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125946483487,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125945846150,
+      "max_raw": 23792,
+      "median_raw_nonzero": 6465.0,
+      "min_raw_nonzero": 3723,
+      "nonzero_ratio": 0.5840494791666667,
+      "original_frame_id": 373,
+      "p95_raw_nonzero": 15432.75,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125948483531,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125948178529,
+      "max_raw": 23787,
+      "median_raw_nonzero": 6461.0,
+      "min_raw_nonzero": 3765,
+      "nonzero_ratio": 0.5857855902777778,
+      "original_frame_id": 374,
+      "p95_raw_nonzero": 15233.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125950483573,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125950177710,
+      "max_raw": 23944,
+      "median_raw_nonzero": 6626.0,
+      "min_raw_nonzero": 3862,
+      "nonzero_ratio": 0.5830729166666667,
+      "original_frame_id": 375,
+      "p95_raw_nonzero": 15621.25,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125952483615,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125952510089,
+      "max_raw": 30403,
+      "median_raw_nonzero": 6692.0,
+      "min_raw_nonzero": 1573,
+      "nonzero_ratio": 0.5819986979166667,
+      "original_frame_id": 376,
+      "p95_raw_nonzero": 15759.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125954483656,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125954176073,
+      "max_raw": 24628,
+      "median_raw_nonzero": 6415.0,
+      "min_raw_nonzero": 996,
+      "nonzero_ratio": 0.533984375,
+      "original_frame_id": 377,
+      "p95_raw_nonzero": 15581.449999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125956483699,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125956175255,
+      "max_raw": 23509,
+      "median_raw_nonzero": 6537.0,
+      "min_raw_nonzero": 1473,
+      "nonzero_ratio": 0.5541232638888889,
+      "original_frame_id": 378,
+      "p95_raw_nonzero": 15705.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125958483741,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125958507634,
+      "max_raw": 24185,
+      "median_raw_nonzero": 6619.0,
+      "min_raw_nonzero": 1513,
+      "nonzero_ratio": 0.5661458333333333,
+      "original_frame_id": 379,
+      "p95_raw_nonzero": 15895.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125960483784,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125959507225,
+      "max_raw": 24144,
+      "median_raw_nonzero": 6760.0,
+      "min_raw_nonzero": 1540,
+      "nonzero_ratio": 0.57509765625,
+      "original_frame_id": 380,
+      "p95_raw_nonzero": 15860.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125962483826,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125959507225,
+      "max_raw": 24144,
+      "median_raw_nonzero": 6760.0,
+      "min_raw_nonzero": 1540,
+      "nonzero_ratio": 0.57509765625,
+      "original_frame_id": 381,
+      "p95_raw_nonzero": 15860.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    }
+  ],
+  "artifact": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth",
+  "association_timestamp_has_pgm_and_ply_all": true,
+  "dtypes": {
+    "uint16": 382
+  },
+  "file_count": 382,
+  "image_shapes": {
+    "(288, 320)": 382
+  },
+  "max_raw": 30403,
+  "median_raw_nonzero": 7203,
+  "min_raw_nonzero": 996,
+  "p95_raw_nonzero": 11436,
+  "png_header_first": {
+    "bit_depth": 16,
+    "color_type": 0,
+    "compression": 0,
+    "filter": 0,
+    "height": 288,
+    "interlace": 0,
+    "is_png": true,
+    "width": 320
+  },
+  "png_metadata_note": "PNG IHDR contains no physical-unit tag",
+  "representative_frames": [
+    {
+      "association_timestamp": 134298125210467627,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125210480060,
+      "max_raw": 21551,
+      "median_raw_nonzero": 7457.0,
+      "min_raw_nonzero": 1599,
+      "nonzero_ratio": 0.6066080729166666,
+      "original_frame_id": 5,
+      "p95_raw_nonzero": 14622.799999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125370471138,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125370414772,
+      "max_raw": 13452,
+      "median_raw_nonzero": 8012.0,
+      "min_raw_nonzero": 3062,
+      "nonzero_ratio": 0.6314236111111111,
+      "original_frame_id": 85,
+      "p95_raw_nonzero": 11555.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125530474588,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125530349430,
+      "max_raw": 20252,
+      "median_raw_nonzero": 6034.0,
+      "min_raw_nonzero": 3659,
+      "nonzero_ratio": 0.6047417534722223,
+      "original_frame_id": 165,
+      "p95_raw_nonzero": 13377.799999999988,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125554475105,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125554339625,
+      "max_raw": 18215,
+      "median_raw_nonzero": 4216.0,
+      "min_raw_nonzero": 1383,
+      "nonzero_ratio": 0.6064344618055556,
+      "original_frame_id": 177,
+      "p95_raw_nonzero": 8750.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125572475493,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125572332270,
+      "max_raw": 22177,
+      "median_raw_nonzero": 4224.0,
+      "min_raw_nonzero": 1297,
+      "nonzero_ratio": 0.6106228298611112,
+      "original_frame_id": 186,
+      "p95_raw_nonzero": 8183.299999999996,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125590475884,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125590324916,
+      "max_raw": 17459,
+      "median_raw_nonzero": 4364.0,
+      "min_raw_nonzero": 1404,
+      "nonzero_ratio": 0.6166666666666667,
+      "original_frame_id": 195,
+      "p95_raw_nonzero": 7722.449999999997,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125608476271,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125608317560,
+      "max_raw": 15474,
+      "median_raw_nonzero": 4596.0,
+      "min_raw_nonzero": 1524,
+      "nonzero_ratio": 0.6188585069444444,
+      "original_frame_id": 204,
+      "p95_raw_nonzero": 9294.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125626476660,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125626310204,
+      "max_raw": 15560,
+      "median_raw_nonzero": 4872.0,
+      "min_raw_nonzero": 2482,
+      "nonzero_ratio": 0.6212673611111111,
+      "original_frame_id": 213,
+      "p95_raw_nonzero": 9508.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125640476957,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125640637680,
+      "max_raw": 19547,
+      "median_raw_nonzero": 4670.0,
+      "min_raw_nonzero": 2270,
+      "nonzero_ratio": 0.6178819444444444,
+      "original_frame_id": 220,
+      "p95_raw_nonzero": 9533.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125780479951,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125780580442,
+      "max_raw": 11320,
+      "median_raw_nonzero": 7535.0,
+      "min_raw_nonzero": 2477,
+      "nonzero_ratio": 0.6297526041666667,
+      "original_frame_id": 290,
+      "p95_raw_nonzero": 10282.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    },
+    {
+      "association_timestamp": 134298125920482935,
+      "dtype": "uint16",
+      "filename_timestamp": 134298125920523181,
+      "max_raw": 11781,
+      "median_raw_nonzero": 7384.0,
+      "min_raw_nonzero": 3801,
+      "nonzero_ratio": 0.6318684895833333,
+      "original_frame_id": 360,
+      "p95_raw_nonzero": 10381.0,
+      "saturated_65535": 0,
+      "shape": [
+        288,
+        320
+      ]
+    }
+  ],
+  "representative_original_frame_ids": {
+    "closed": [
+      5,
+      85,
+      165
+    ],
+    "interaction": [
+      177,
+      186,
+      195,
+      204,
+      213
+    ],
+    "open": [
+      220,
+      290,
+      360
+    ]
+  },
+  "rgb_depth_filename_timestamp_match_all": true,
+  "rgb_file_count": 382,
+  "saturation_65535_pixels": 0,
+  "timestamp_semantics": "depth.txt column 1 is Long Throw timestamp; path stem is matched PV timestamp",
+  "uniform_shape_and_dtype": true,
+  "zero_ratio": 0.3741863115365038
+}

@@ -27,7 +27,7 @@ Layer25 is the large white drawer-front mask and overlaps repaired moving-front
 seed evidence by 1.0. The original v4 configuration interpreted stored uint16
 registered depth with `depth_scale_to_m=0.001`. Direct comparison with the
 corresponding Long Throw world PLY projection shows that stored registered depth
-is almost exactly five times PV optical-axis depth:
+is almost exactly five times virtual Long Throw pinhole optical-axis depth:
 
 - frame 195 median stored/PLY ratio: 4.99952
 - frame 202 median stored/PLY ratio: 4.99956
@@ -72,7 +72,7 @@ The stored nonzero support is not as sparse as v4 reported:
 
 The apparent 17–22% depth sparsity was therefore mostly artificial: values
 physically inside 0.2–4 m were multiplied by five and rejected by v4's 4 m gate.
-After `/5` correction, pinhole depth and Long Throw→RGB projection agree closely:
+After `/5` correction, pinhole depth and Long Throw→virtual-pinhole projection agree closely:
 
 - median absolute difference: 0.109–0.111 mm
 - within 1 mm: 93.39–94.33%

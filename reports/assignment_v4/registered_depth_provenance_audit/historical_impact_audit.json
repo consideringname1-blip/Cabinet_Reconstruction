@@ -1,0 +1,86 @@
+[
+  {
+    "affected": "no",
+    "depth_source_used": "float-metre prompt_depth_video generated from Long Throw PLY",
+    "reason": "does not decode registered uint16 PNG with 0.001",
+    "requires_rerun": "no",
+    "result": "official-compatible iTACO baseline"
+  },
+  {
+    "affected": "no",
+    "depth_source_used": "official float-metre preprocess depth plus masks",
+    "reason": "registered PNG scale is not its physical-depth decoder",
+    "requires_rerun": "no",
+    "result": "moving-map fix"
+  },
+  {
+    "affected": "no",
+    "depth_source_used": "float-metre prompt_depth_video",
+    "reason": "axis input is already metre-valued NPY",
+    "requires_rerun": "no",
+    "result": "centroid axis"
+  },
+  {
+    "affected": "no",
+    "depth_source_used": "float-metre prompt_depth_video",
+    "reason": "q recomputation reads NPY directly",
+    "requires_rerun": "no",
+    "result": "monotonic q_t"
+  },
+  {
+    "affected": "no",
+    "depth_source_used": "Long Throw world PLY in metres",
+    "reason": "fusion projects PLY and does not decode registered PNG",
+    "requires_rerun": "no",
+    "result": "geometry_interior_v1"
+  },
+  {
+    "affected": "no",
+    "depth_source_used": "Long Throw world PLY self-projection",
+    "reason": "visibility depth is generated from the same PLY",
+    "requires_rerun": "no",
+    "result": "Assignment v2"
+  },
+  {
+    "affected": "yes",
+    "depth_source_used": "registered uint16 PNG decoded with 0.001",
+    "reason": "3D tracks and residuals inherit factor-five error",
+    "requires_rerun": "yes",
+    "result": "Assignment v3"
+  },
+  {
+    "affected": "yes",
+    "depth_source_used": "registered uint16 PNG decoded with 0.001",
+    "reason": "projective depth association uses wrong physical scale",
+    "requires_rerun": "yes",
+    "result": "v3 depth-projective"
+  },
+  {
+    "affected": "yes",
+    "depth_source_used": "registered uint16 PNG decoded with 0.001",
+    "reason": "direct projective ownership evidence is invalid",
+    "requires_rerun": "yes, only after user authorization",
+    "result": "Assignment v4 formal"
+  },
+  {
+    "affected": "no",
+    "depth_source_used": "Long Throw PLY",
+    "reason": "audited helpers construct geometry from metre PLY",
+    "requires_rerun": "no for this unit issue",
+    "result": "static TSDF diagnostics"
+  },
+  {
+    "affected": "no",
+    "depth_source_used": "Long Throw PLY plus pose perturbation",
+    "reason": "does not use registered PNG scale",
+    "requires_rerun": "no",
+    "result": "pose-error TSDF diagnostics"
+  },
+  {
+    "affected": "no",
+    "depth_source_used": "geometry_interior_v1 PLY/NKSR outputs",
+    "reason": "upstream geometry, axis and q use metre-valued PLY/NPY paths",
+    "requires_rerun": "no for this unit issue",
+    "result": "articulated GLB/URDF"
+  }
+]

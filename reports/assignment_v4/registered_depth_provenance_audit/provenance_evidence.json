@@ -1,0 +1,26 @@
+{
+  "double_scaling_hypothesis": {
+    "evidence": [
+      "raw radial millimetres are converted once to metre points by /1000",
+      "virtual optical Z metres are intentionally encoded once by *5000",
+      "factor-five error enters only when downstream decodes as *0.001"
+    ],
+    "supported": false
+  },
+  "evidence_levels": {
+    "A_provenance_verified": [
+      "producer family",
+      "encoding formula",
+      "quantity definition"
+    ],
+    "B_empirically_verified": [
+      "scale stability",
+      "PLY/PNG re-encoding",
+      "quantity discrimination"
+    ],
+    "C_unresolved": [
+      "exact converter checkout revision",
+      "literal command and environment used"
+    ]
+  }
+}

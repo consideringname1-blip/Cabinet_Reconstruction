@@ -1,0 +1,9 @@
+{
+  "context": "depth_scale_to_m: 0.001; compare_gt_monst3r_upload.py labels uint16 as mm",
+  "file": "tools/itaco_track_motion_v1/configs/hololens_2026-07-30-002840.yaml",
+  "first_seen_commit": "9812ffcd762781a2323bd847484e3d4733f0b6e2",
+  "v4_inheritance": "7eb840e7343c43c1b4f5c4ab91a61263f8073f11 copied the same 0.001 assumption into v4",
+  "whether_dataset_specific": true,
+  "whether_evidence_backed": false,
+  "why": "unresolved beyond an undocumented generic uint16-millimetre assumption; no producer citation or scale check"
+}

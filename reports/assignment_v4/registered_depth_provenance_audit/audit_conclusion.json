@@ -1,0 +1,17 @@
+{
+  "assignment_v4_ran": false,
+  "branch": "agent/region-assignment-v4",
+  "corrected_v4_rerun_allowed": false,
+  "empirical_fitted_scale_to_m": 0.00020001384482515934,
+  "empirical_scale_status": "consistent",
+  "formal_scale_to_m": 0.0002,
+  "head_at_audit_start": "052094187789b1d78f1032e2572d1af015bcc434",
+  "mesh_ran": false,
+  "nksr_ran": false,
+  "producer_provenance_status": "partial",
+  "reason_rerun_not_allowed": "this audit did not grant execution authorization",
+  "recommended_next_action": "ask user to authorize a separate corrected-v4 rerun and then integrate/test the scale-consistency gate",
+  "sam2_ran": false,
+  "tsdf_ran": false,
+  "unit_contract_status": "verified"
+}

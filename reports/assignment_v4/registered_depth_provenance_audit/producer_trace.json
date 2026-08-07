@@ -1,0 +1,59 @@
+{
+  "actual_execution_command_log_found": false,
+  "actual_execution_revision": null,
+  "identified_producer": "Microsoft HoloLens2ForCV StreamRecorderConverter/save_pclouds.py",
+  "producer_provenance_status": "partial",
+  "recording_signature": {
+    "bundle": [
+      "depth.txt",
+      "rgb.txt",
+      "trajectory.xyz",
+      "odometry.log"
+    ],
+    "calibration": [
+      200.0,
+      200.0,
+      160.0,
+      144.0
+    ],
+    "expected": [
+      200,
+      200,
+      160,
+      144
+    ],
+    "fixed_shape": [
+      288,
+      320
+    ],
+    "matches": true,
+    "suffix": "_proj.png"
+  },
+  "reference_revision": "207205596840ae6e7b8c2a795d35c3c4e7bec22e",
+  "rejected_local_candidate": {
+    "path": "/workspace_whz/code/Hololens2/DepthConvertToRGB/align_pv_depth.py",
+    "reason": "different PV-size align_depth artifact and explicit pv_z*1000 encoding"
+  },
+  "repository": "https://github.com/microsoft/HoloLens2ForCV",
+  "source_evidence": [
+    {
+      "lines": "130-176, 208-221",
+      "path": "Samples/StreamRecorder/StreamRecorderConverter/save_pclouds.py",
+      "role": "virtual camera, projection, encoding, indexes, pose"
+    },
+    {
+      "lines": "16-18, 152-175",
+      "path": "Samples/StreamRecorder/StreamRecorderConverter/utils.py",
+      "role": "explicit factor 5000 and optical-Z projection"
+    },
+    {
+      "lines": "17-56",
+      "path": "Samples/StreamRecorder/StreamRecorderConverter/process_all.py",
+      "role": "standard conversion entry command"
+    }
+  ],
+  "standard_commands": [
+    "python process_all.py --recording_path <recording>",
+    "python save_pclouds.py --recording_path <recording>"
+  ]
+}

@@ -1,0 +1,857 @@
+{
+  "lut_ray_norm_percentiles": [
+    0.9999998807907104,
+    0.9999998807907104,
+    1.0,
+    1.0000001192092896,
+    1.0000001192092896
+  ],
+  "per_frame": [
+    {
+      "common_pixels": 55901,
+      "long_throw_timestamp": 134298125210467627,
+      "matched_pv_timestamp": 134298125210480060,
+      "original_frame_id": 5,
+      "pgm_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125210467627.pgm",
+      "phase": "closed",
+      "ply_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125210467627.ply",
+      "point_count": 71554,
+      "producer_reencode_common_pixels": 55901,
+      "producer_reencode_exact_ratio_on_common": 0.9969231319654389,
+      "quantity_fit": {
+        "best_quantity": "virtual_pinhole_optical_axis_z_m",
+        "candidates": {
+          "true_pv_camera_forward_depth_m": {
+            "correlation": 0.9964665856433426,
+            "median_abs_residual_m": 0.12030819853212105,
+            "median_ratio": 0.00019643301895832973,
+            "p90_abs_residual_m": 0.20905487649737386,
+            "ratio_mad": 1.450368175686531e-05,
+            "sample_count": 55901,
+            "scale": 0.00020515341004029094
+          },
+          "true_pv_camera_signed_z_m": {
+            "correlation": -0.9964665856433426,
+            "median_abs_residual_m": 0.12030819853212105,
+            "median_ratio": -0.00019643301895832973,
+            "p90_abs_residual_m": 0.20905487649737386,
+            "ratio_mad": 1.450368175686531e-05,
+            "sample_count": 55901,
+            "scale": -0.00020515341004029094
+          },
+          "virtual_pinhole_euclidean_range_m": {
+            "correlation": 0.9897971621579942,
+            "median_abs_residual_m": 0.09145357136540166,
+            "median_ratio": 0.00022131149329578125,
+            "p90_abs_residual_m": 0.2017918728632777,
+            "ratio_mad": 1.0810794335519873e-05,
+            "sample_count": 55901,
+            "scale": 0.00022603143256525894
+          },
+          "virtual_pinhole_optical_axis_z_m": {
+            "correlation": 0.9999999886876012,
+            "median_abs_residual_m": 5.070969367415579e-05,
+            "median_ratio": 0.0002000118810390475,
+            "p90_abs_residual_m": 0.00011100605478153724,
+            "ratio_mad": 6.564462946611954e-09,
+            "sample_count": 55901,
+            "scale": 0.00020001054713399526
+          }
+        }
+      },
+      "registered_path": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth/134298125210480060_proj.png",
+      "scale_fit": {
+        "correlation": 0.9999999886876012,
+        "median_abs_residual_m": 5.070969367415579e-05,
+        "median_ratio": 0.0002000118810390475,
+        "p90_abs_residual_m": 0.00011100605478153724,
+        "ratio_mad": 6.564462946611954e-09,
+        "sample_count": 55901,
+        "scale": 0.00020001054713399526
+      },
+      "scale_offset_fit": {
+        "median_abs_residual_m": 5.024562066147098e-05,
+        "offset_m": 0.00010028372456943634,
+        "p90_abs_residual_m": 9.008167936830347e-05,
+        "sample_count": 55901,
+        "scale": 0.00019999997613063213
+      },
+      "source_pgm_range_ordering_tested": true,
+      "source_pgm_vs_ply_range_median_abs_error_m": 6.831008897423274e-07,
+      "source_pgm_vs_ply_range_p90_abs_error_m": 1.2236646861785163e-06
+    },
+    {
+      "common_pixels": 58190,
+      "long_throw_timestamp": 134298125370471138,
+      "matched_pv_timestamp": 134298125370414772,
+      "original_frame_id": 85,
+      "pgm_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125370471138.pgm",
+      "phase": "closed",
+      "ply_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125370471138.ply",
+      "point_count": 74347,
+      "producer_reencode_common_pixels": 58190,
+      "producer_reencode_exact_ratio_on_common": 0.9969926104141605,
+      "quantity_fit": {
+        "best_quantity": "virtual_pinhole_optical_axis_z_m",
+        "candidates": {
+          "true_pv_camera_forward_depth_m": {
+            "correlation": 0.9747052030912435,
+            "median_abs_residual_m": 0.12298090715113963,
+            "median_ratio": 0.00019763568223528298,
+            "p90_abs_residual_m": 0.24365455590286778,
+            "ratio_mad": 1.4983219496189943e-05,
+            "sample_count": 58190,
+            "scale": 0.0002019318732030582
+          },
+          "true_pv_camera_signed_z_m": {
+            "correlation": -0.9747052030912435,
+            "median_abs_residual_m": 0.12298090715113963,
+            "median_ratio": -0.00019763568223528298,
+            "p90_abs_residual_m": 0.24365455590286778,
+            "ratio_mad": 1.4983219496189943e-05,
+            "sample_count": 58190,
+            "scale": -0.0002019318732030582
+          },
+          "virtual_pinhole_euclidean_range_m": {
+            "correlation": 0.9727378862057696,
+            "median_abs_residual_m": 0.09132863583985662,
+            "median_ratio": 0.00022204941748405992,
+            "p90_abs_residual_m": 0.19888465911326153,
+            "ratio_mad": 1.108362230358887e-05,
+            "sample_count": 58190,
+            "scale": 0.00022513983461162576
+          },
+          "virtual_pinhole_optical_axis_z_m": {
+            "correlation": 0.9999999796797747,
+            "median_abs_residual_m": 4.9772101288425574e-05,
+            "median_ratio": 0.00020001210713870617,
+            "p90_abs_residual_m": 9.737039503550093e-05,
+            "ratio_mad": 6.042310942997527e-09,
+            "sample_count": 58190,
+            "scale": 0.00020001161052179948
+          }
+        }
+      },
+      "registered_path": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth/134298125370414772_proj.png",
+      "scale_fit": {
+        "correlation": 0.9999999796797747,
+        "median_abs_residual_m": 4.9772101288425574e-05,
+        "median_ratio": 0.00020001210713870617,
+        "p90_abs_residual_m": 9.737039503550093e-05,
+        "ratio_mad": 6.042310942997527e-09,
+        "sample_count": 58190,
+        "scale": 0.00020001161052179948
+      },
+      "scale_offset_fit": {
+        "median_abs_residual_m": 4.992816553861523e-05,
+        "offset_m": 9.865825138200983e-05,
+        "p90_abs_residual_m": 9.006487509251037e-05,
+        "sample_count": 58190,
+        "scale": 0.00020000024167556398
+      },
+      "source_pgm_range_ordering_tested": true,
+      "source_pgm_vs_ply_range_median_abs_error_m": 6.053952268381124e-07,
+      "source_pgm_vs_ply_range_p90_abs_error_m": 1.4029435185136669e-06
+    },
+    {
+      "common_pixels": 55733,
+      "long_throw_timestamp": 134298125530474588,
+      "matched_pv_timestamp": 134298125530349430,
+      "original_frame_id": 165,
+      "pgm_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125530474588.pgm",
+      "phase": "closed",
+      "ply_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125530474588.ply",
+      "point_count": 70620,
+      "producer_reencode_common_pixels": 55733,
+      "producer_reencode_exact_ratio_on_common": 0.9983133870417885,
+      "quantity_fit": {
+        "best_quantity": "virtual_pinhole_optical_axis_z_m",
+        "candidates": {
+          "true_pv_camera_forward_depth_m": {
+            "correlation": 0.991656829082012,
+            "median_abs_residual_m": 0.10149945136405436,
+            "median_ratio": 0.00019640742826897733,
+            "p90_abs_residual_m": 0.1933270698809828,
+            "ratio_mad": 1.4536544949827286e-05,
+            "sample_count": 55733,
+            "scale": 0.00020344768842332027
+          },
+          "true_pv_camera_signed_z_m": {
+            "correlation": -0.991656829082012,
+            "median_abs_residual_m": 0.10149945136405436,
+            "median_ratio": -0.00019640742826897733,
+            "p90_abs_residual_m": 0.1933270698809828,
+            "ratio_mad": 1.4536544949827286e-05,
+            "sample_count": 55733,
+            "scale": -0.00020344768842332027
+          },
+          "virtual_pinhole_euclidean_range_m": {
+            "correlation": 0.9919266734493619,
+            "median_abs_residual_m": 0.07302795241772841,
+            "median_ratio": 0.00022123162597629975,
+            "p90_abs_residual_m": 0.17113065184492143,
+            "ratio_mad": 1.0741351171561703e-05,
+            "sample_count": 55733,
+            "scale": 0.0002262925007283356
+          },
+          "virtual_pinhole_optical_axis_z_m": {
+            "correlation": 0.9999999925998287,
+            "median_abs_residual_m": 5.142492358745088e-05,
+            "median_ratio": 0.00020001431976164667,
+            "p90_abs_residual_m": 0.00011431877870906607,
+            "ratio_mad": 7.969747079379077e-09,
+            "sample_count": 55733,
+            "scale": 0.00020001224867804938
+          }
+        }
+      },
+      "registered_path": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth/134298125530349430_proj.png",
+      "scale_fit": {
+        "correlation": 0.9999999925998287,
+        "median_abs_residual_m": 5.142492358745088e-05,
+        "median_ratio": 0.00020001431976164667,
+        "p90_abs_residual_m": 0.00011431877870906607,
+        "ratio_mad": 7.969747079379077e-09,
+        "sample_count": 55733,
+        "scale": 0.00020001224867804938
+      },
+      "scale_offset_fit": {
+        "median_abs_residual_m": 5.017522253103479e-05,
+        "offset_m": 0.00010111608646307247,
+        "p90_abs_residual_m": 8.986391173593233e-05,
+        "sample_count": 55733,
+        "scale": 0.0001999999120075726
+      },
+      "source_pgm_range_ordering_tested": true,
+      "source_pgm_vs_ply_range_median_abs_error_m": 2.2854871462030246e-07,
+      "source_pgm_vs_ply_range_p90_abs_error_m": 1.2041989640110268e-06
+    },
+    {
+      "common_pixels": 55885,
+      "long_throw_timestamp": 134298125554475105,
+      "matched_pv_timestamp": 134298125554339625,
+      "original_frame_id": 177,
+      "pgm_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125554475105.pgm",
+      "phase": "interaction",
+      "ply_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125554475105.ply",
+      "point_count": 71377,
+      "producer_reencode_common_pixels": 55885,
+      "producer_reencode_exact_ratio_on_common": 0.9983716560794489,
+      "quantity_fit": {
+        "best_quantity": "virtual_pinhole_optical_axis_z_m",
+        "candidates": {
+          "true_pv_camera_forward_depth_m": {
+            "correlation": 0.9835080534946911,
+            "median_abs_residual_m": 0.060983591035061124,
+            "median_ratio": 0.00019634246147048244,
+            "p90_abs_residual_m": 0.13474482364593054,
+            "ratio_mad": 1.4847903475835665e-05,
+            "sample_count": 55885,
+            "scale": 0.00019774581649563595
+          },
+          "true_pv_camera_signed_z_m": {
+            "correlation": -0.9835080534946911,
+            "median_abs_residual_m": 0.060983591035061124,
+            "median_ratio": -0.00019634246147048244,
+            "p90_abs_residual_m": 0.13474482364593054,
+            "ratio_mad": 1.4847903475835665e-05,
+            "sample_count": 55885,
+            "scale": -0.00019774581649563595
+          },
+          "virtual_pinhole_euclidean_range_m": {
+            "correlation": 0.9923686232998381,
+            "median_abs_residual_m": 0.04371636104281018,
+            "median_ratio": 0.00022120629398497937,
+            "p90_abs_residual_m": 0.1102160947696877,
+            "ratio_mad": 1.0650471713022635e-05,
+            "sample_count": 55885,
+            "scale": 0.00022424944617479127
+          },
+          "virtual_pinhole_optical_axis_z_m": {
+            "correlation": 0.9999999823397497,
+            "median_abs_residual_m": 5.218247216576266e-05,
+            "median_ratio": 0.00020002247410262291,
+            "p90_abs_residual_m": 0.00011547020555666697,
+            "ratio_mad": 1.254560228435269e-08,
+            "sample_count": 55885,
+            "scale": 0.00020001849320655486
+          }
+        }
+      },
+      "registered_path": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth/134298125554339625_proj.png",
+      "scale_fit": {
+        "correlation": 0.9999999823397497,
+        "median_abs_residual_m": 5.218247216576266e-05,
+        "median_ratio": 0.00020002247410262291,
+        "p90_abs_residual_m": 0.00011547020555666697,
+        "ratio_mad": 1.254560228435269e-08,
+        "sample_count": 55885,
+        "scale": 0.00020001849320655486
+      },
+      "scale_offset_fit": {
+        "median_abs_residual_m": 4.9529536507497696e-05,
+        "offset_m": 9.995864807671899e-05,
+        "p90_abs_residual_m": 8.99024425643602e-05,
+        "sample_count": 55885,
+        "scale": 0.00020000003859308008
+      },
+      "source_pgm_range_ordering_tested": true,
+      "source_pgm_vs_ply_range_median_abs_error_m": 3.279725834248737e-07,
+      "source_pgm_vs_ply_range_p90_abs_error_m": 9.040960670780862e-07
+    },
+    {
+      "common_pixels": 56272,
+      "long_throw_timestamp": 134298125572475493,
+      "matched_pv_timestamp": 134298125572332270,
+      "original_frame_id": 186,
+      "pgm_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125572475493.pgm",
+      "phase": "interaction",
+      "ply_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125572475493.ply",
+      "point_count": 72041,
+      "producer_reencode_common_pixels": 56272,
+      "producer_reencode_exact_ratio_on_common": 0.9985427921524026,
+      "quantity_fit": {
+        "best_quantity": "virtual_pinhole_optical_axis_z_m",
+        "candidates": {
+          "true_pv_camera_forward_depth_m": {
+            "correlation": 0.9802503792150216,
+            "median_abs_residual_m": 0.06030846916315752,
+            "median_ratio": 0.0001965074035508907,
+            "p90_abs_residual_m": 0.12523475387751068,
+            "ratio_mad": 1.4919060111666103e-05,
+            "sample_count": 56272,
+            "scale": 0.00019636598181731703
+          },
+          "true_pv_camera_signed_z_m": {
+            "correlation": -0.9802503792150216,
+            "median_abs_residual_m": 0.06030846916315752,
+            "median_ratio": -0.0001965074035508907,
+            "p90_abs_residual_m": 0.12523475387751068,
+            "ratio_mad": 1.4919060111666103e-05,
+            "sample_count": 56272,
+            "scale": -0.00019636598181731703
+          },
+          "virtual_pinhole_euclidean_range_m": {
+            "correlation": 0.9898736171944026,
+            "median_abs_residual_m": 0.04065440332106446,
+            "median_ratio": 0.00022142740063120118,
+            "p90_abs_residual_m": 0.10688547227566131,
+            "ratio_mad": 1.0747071239981915e-05,
+            "sample_count": 56272,
+            "scale": 0.00022263006475548778
+          },
+          "virtual_pinhole_optical_axis_z_m": {
+            "correlation": 0.9999999641968654,
+            "median_abs_residual_m": 5.2116685017117304e-05,
+            "median_ratio": 0.00020002300695345983,
+            "p90_abs_residual_m": 0.00011347457538579686,
+            "ratio_mad": 1.2679684288776716e-08,
+            "sample_count": 56272,
+            "scale": 0.0002000193588993199
+          }
+        }
+      },
+      "registered_path": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth/134298125572332270_proj.png",
+      "scale_fit": {
+        "correlation": 0.9999999641968654,
+        "median_abs_residual_m": 5.2116685017117304e-05,
+        "median_ratio": 0.00020002300695345983,
+        "p90_abs_residual_m": 0.00011347457538579686,
+        "ratio_mad": 1.2679684288776716e-08,
+        "sample_count": 56272,
+        "scale": 0.0002000193588993199
+      },
+      "scale_offset_fit": {
+        "median_abs_residual_m": 4.9889648677914344e-05,
+        "offset_m": 0.00010092804326306635,
+        "p90_abs_residual_m": 9.021413157947467e-05,
+        "sample_count": 56272,
+        "scale": 0.00019999982417509912
+      },
+      "source_pgm_range_ordering_tested": true,
+      "source_pgm_vs_ply_range_median_abs_error_m": 3.080273356381724e-07,
+      "source_pgm_vs_ply_range_p90_abs_error_m": 6.955040873224405e-07
+    },
+    {
+      "common_pixels": 56831,
+      "long_throw_timestamp": 134298125590475884,
+      "matched_pv_timestamp": 134298125590324916,
+      "original_frame_id": 195,
+      "pgm_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125590475884.pgm",
+      "phase": "interaction",
+      "ply_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125590475884.ply",
+      "point_count": 72883,
+      "producer_reencode_common_pixels": 56831,
+      "producer_reencode_exact_ratio_on_common": 0.9953546479914132,
+      "quantity_fit": {
+        "best_quantity": "virtual_pinhole_optical_axis_z_m",
+        "candidates": {
+          "true_pv_camera_forward_depth_m": {
+            "correlation": 0.976041218978028,
+            "median_abs_residual_m": 0.06540319262797345,
+            "median_ratio": 0.0001967597723559782,
+            "p90_abs_residual_m": 0.12384789380764227,
+            "ratio_mad": 1.4821210516990544e-05,
+            "sample_count": 56831,
+            "scale": 0.00019695286685380921
+          },
+          "true_pv_camera_signed_z_m": {
+            "correlation": -0.976041218978028,
+            "median_abs_residual_m": 0.06540319262797345,
+            "median_ratio": -0.0001967597723559782,
+            "p90_abs_residual_m": 0.12384789380764227,
+            "ratio_mad": 1.4821210516990544e-05,
+            "sample_count": 56831,
+            "scale": -0.00019695286685380921
+          },
+          "virtual_pinhole_euclidean_range_m": {
+            "correlation": 0.9866974435888681,
+            "median_abs_residual_m": 0.04338493761259232,
+            "median_ratio": 0.00022170268706257185,
+            "p90_abs_residual_m": 0.10549036190037575,
+            "ratio_mad": 1.0862661314761814e-05,
+            "sample_count": 56831,
+            "scale": 0.00022261283181464086
+          },
+          "virtual_pinhole_optical_axis_z_m": {
+            "correlation": 0.9999999785071907,
+            "median_abs_residual_m": 5.154874506019258e-05,
+            "median_ratio": 0.00020002190832469092,
+            "p90_abs_residual_m": 0.0001069042387434882,
+            "ratio_mad": 1.1850209044453937e-08,
+            "sample_count": 56831,
+            "scale": 0.00020001931390295271
+          }
+        }
+      },
+      "registered_path": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth/134298125590324916_proj.png",
+      "scale_fit": {
+        "correlation": 0.9999999785071907,
+        "median_abs_residual_m": 5.154874506019258e-05,
+        "median_ratio": 0.00020002190832469092,
+        "p90_abs_residual_m": 0.0001069042387434882,
+        "ratio_mad": 1.1850209044453937e-08,
+        "sample_count": 56831,
+        "scale": 0.00020001931390295271
+      },
+      "scale_offset_fit": {
+        "median_abs_residual_m": 4.980608996962843e-05,
+        "offset_m": 0.00010057450189376039,
+        "p90_abs_residual_m": 8.992008948804919e-05,
+        "sample_count": 56831,
+        "scale": 0.0001999996981385378
+      },
+      "source_pgm_range_ordering_tested": true,
+      "source_pgm_vs_ply_range_median_abs_error_m": 6.094563960168387e-07,
+      "source_pgm_vs_ply_range_p90_abs_error_m": 1.3517107529281704e-06
+    },
+    {
+      "common_pixels": 57033,
+      "long_throw_timestamp": 134298125608476271,
+      "matched_pv_timestamp": 134298125608317560,
+      "original_frame_id": 204,
+      "pgm_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125608476271.pgm",
+      "phase": "interaction",
+      "ply_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125608476271.ply",
+      "point_count": 73011,
+      "producer_reencode_common_pixels": 57033,
+      "producer_reencode_exact_ratio_on_common": 0.9976154156365613,
+      "quantity_fit": {
+        "best_quantity": "virtual_pinhole_optical_axis_z_m",
+        "candidates": {
+          "true_pv_camera_forward_depth_m": {
+            "correlation": 0.9807449904477131,
+            "median_abs_residual_m": 0.07186566922783588,
+            "median_ratio": 0.00019704406220901334,
+            "p90_abs_residual_m": 0.13874480521816265,
+            "ratio_mad": 1.49216805475803e-05,
+            "sample_count": 57033,
+            "scale": 0.00019935642345114538
+          },
+          "true_pv_camera_signed_z_m": {
+            "correlation": -0.9807449904477131,
+            "median_abs_residual_m": 0.07186566922783588,
+            "median_ratio": -0.00019704406220901334,
+            "p90_abs_residual_m": 0.13874480521816265,
+            "ratio_mad": 1.49216805475803e-05,
+            "sample_count": 57033,
+            "scale": -0.00019935642345114538
+          },
+          "virtual_pinhole_euclidean_range_m": {
+            "correlation": 0.9886176684984889,
+            "median_abs_residual_m": 0.047394339126097695,
+            "median_ratio": 0.00022177475318686454,
+            "p90_abs_residual_m": 0.11682693022621353,
+            "ratio_mad": 1.0844083304045011e-05,
+            "sample_count": 57033,
+            "scale": 0.00022400070108298357
+          },
+          "virtual_pinhole_optical_axis_z_m": {
+            "correlation": 0.9999999775456002,
+            "median_abs_residual_m": 5.1738569812331825e-05,
+            "median_ratio": 0.00020002047974191644,
+            "p90_abs_residual_m": 0.0001089937655162632,
+            "ratio_mad": 1.1108517750107886e-08,
+            "sample_count": 57033,
+            "scale": 0.00020001796260811716
+          }
+        }
+      },
+      "registered_path": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth/134298125608317560_proj.png",
+      "scale_fit": {
+        "correlation": 0.9999999775456002,
+        "median_abs_residual_m": 5.1738569812331825e-05,
+        "median_ratio": 0.00020002047974191644,
+        "p90_abs_residual_m": 0.0001089937655162632,
+        "ratio_mad": 1.1108517750107886e-08,
+        "sample_count": 57033,
+        "scale": 0.00020001796260811716
+      },
+      "scale_offset_fit": {
+        "median_abs_residual_m": 5.004110909601067e-05,
+        "offset_m": 0.00010066521943608357,
+        "p90_abs_residual_m": 9.02369920046553e-05,
+        "sample_count": 57033,
+        "scale": 0.00019999990239290798
+      },
+      "source_pgm_range_ordering_tested": true,
+      "source_pgm_vs_ply_range_median_abs_error_m": 4.908971624750791e-07,
+      "source_pgm_vs_ply_range_p90_abs_error_m": 9.811784097424336e-07
+    },
+    {
+      "common_pixels": 57255,
+      "long_throw_timestamp": 134298125626476660,
+      "matched_pv_timestamp": 134298125626310204,
+      "original_frame_id": 213,
+      "pgm_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125626476660.pgm",
+      "phase": "interaction",
+      "ply_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125626476660.ply",
+      "point_count": 73245,
+      "producer_reencode_common_pixels": 57255,
+      "producer_reencode_exact_ratio_on_common": 0.9980438389660292,
+      "quantity_fit": {
+        "best_quantity": "virtual_pinhole_optical_axis_z_m",
+        "candidates": {
+          "true_pv_camera_forward_depth_m": {
+            "correlation": 0.9815306846348573,
+            "median_abs_residual_m": 0.07608227488257846,
+            "median_ratio": 0.0001967276281420517,
+            "p90_abs_residual_m": 0.14372657335207376,
+            "ratio_mad": 1.483527824389116e-05,
+            "sample_count": 57255,
+            "scale": 0.00019994010995294645
+          },
+          "true_pv_camera_signed_z_m": {
+            "correlation": -0.9815306846348573,
+            "median_abs_residual_m": 0.07608227488257846,
+            "median_ratio": -0.0001967276281420517,
+            "p90_abs_residual_m": 0.14372657335207376,
+            "ratio_mad": 1.483527824389116e-05,
+            "sample_count": 57255,
+            "scale": -0.00019994010995294645
+          },
+          "virtual_pinhole_euclidean_range_m": {
+            "correlation": 0.9884812838544456,
+            "median_abs_residual_m": 0.05442224226743164,
+            "median_ratio": 0.0002218245310321152,
+            "p90_abs_residual_m": 0.1310321705320837,
+            "ratio_mad": 1.087535542379587e-05,
+            "sample_count": 57255,
+            "scale": 0.0002254117412140538
+          },
+          "virtual_pinhole_optical_axis_z_m": {
+            "correlation": 0.9999999823732024,
+            "median_abs_residual_m": 5.101991151579277e-05,
+            "median_ratio": 0.0002000188541604069,
+            "p90_abs_residual_m": 0.0001066252492333275,
+            "ratio_mad": 1.0237466978774189e-08,
+            "sample_count": 57255,
+            "scale": 0.00020001704910551255
+          }
+        }
+      },
+      "registered_path": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth/134298125626310204_proj.png",
+      "scale_fit": {
+        "correlation": 0.9999999823732024,
+        "median_abs_residual_m": 5.101991151579277e-05,
+        "median_ratio": 0.0002000188541604069,
+        "p90_abs_residual_m": 0.0001066252492333275,
+        "ratio_mad": 1.0237466978774189e-08,
+        "sample_count": 57255,
+        "scale": 0.00020001704910551255
+      },
+      "scale_offset_fit": {
+        "median_abs_residual_m": 5.016139106528428e-05,
+        "offset_m": 9.928774631564553e-05,
+        "p90_abs_residual_m": 9.000231104219213e-05,
+        "sample_count": 57255,
+        "scale": 0.0002000001568718615
+      },
+      "source_pgm_range_ordering_tested": true,
+      "source_pgm_vs_ply_range_median_abs_error_m": 2.9766948395071324e-07,
+      "source_pgm_vs_ply_range_p90_abs_error_m": 7.037526347009051e-07
+    },
+    {
+      "common_pixels": 56944,
+      "long_throw_timestamp": 134298125640476957,
+      "matched_pv_timestamp": 134298125640637680,
+      "original_frame_id": 220,
+      "pgm_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125640476957.pgm",
+      "phase": "open",
+      "ply_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125640476957.ply",
+      "point_count": 72730,
+      "producer_reencode_common_pixels": 56944,
+      "producer_reencode_exact_ratio_on_common": 0.9959785051980894,
+      "quantity_fit": {
+        "best_quantity": "virtual_pinhole_optical_axis_z_m",
+        "candidates": {
+          "true_pv_camera_forward_depth_m": {
+            "correlation": 0.9828878070319915,
+            "median_abs_residual_m": 0.073715181506189,
+            "median_ratio": 0.0001970848486364455,
+            "p90_abs_residual_m": 0.14014254295430764,
+            "ratio_mad": 1.473417166035402e-05,
+            "sample_count": 56944,
+            "scale": 0.00020032385509478393
+          },
+          "true_pv_camera_signed_z_m": {
+            "correlation": -0.9828878070319915,
+            "median_abs_residual_m": 0.073715181506189,
+            "median_ratio": -0.0001970848486364455,
+            "p90_abs_residual_m": 0.14014254295430764,
+            "ratio_mad": 1.473417166035402e-05,
+            "sample_count": 56944,
+            "scale": -0.00020032385509478393
+          },
+          "virtual_pinhole_euclidean_range_m": {
+            "correlation": 0.9899324930574083,
+            "median_abs_residual_m": 0.052298498705113994,
+            "median_ratio": 0.0002217290285811364,
+            "p90_abs_residual_m": 0.12690371109412574,
+            "ratio_mad": 1.082897042410144e-05,
+            "sample_count": 56944,
+            "scale": 0.00022550506790356423
+          },
+          "virtual_pinhole_optical_axis_z_m": {
+            "correlation": 0.999999976907332,
+            "median_abs_residual_m": 5.120958307758272e-05,
+            "median_ratio": 0.0002000194047518028,
+            "p90_abs_residual_m": 0.00010860152897335108,
+            "ratio_mad": 1.0681960801355375e-08,
+            "sample_count": 56944,
+            "scale": 0.00020001722386074099
+          }
+        }
+      },
+      "registered_path": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth/134298125640637680_proj.png",
+      "scale_fit": {
+        "correlation": 0.999999976907332,
+        "median_abs_residual_m": 5.120958307758272e-05,
+        "median_ratio": 0.0002000194047518028,
+        "p90_abs_residual_m": 0.00010860152897335108,
+        "ratio_mad": 1.0681960801355375e-08,
+        "sample_count": 56944,
+        "scale": 0.00020001722386074099
+      },
+      "scale_offset_fit": {
+        "median_abs_residual_m": 5.0062486814383966e-05,
+        "offset_m": 0.00010023253856260998,
+        "p90_abs_residual_m": 9.020393497251035e-05,
+        "sample_count": 56944,
+        "scale": 0.00019999984241538161
+      },
+      "source_pgm_range_ordering_tested": true,
+      "source_pgm_vs_ply_range_median_abs_error_m": 5.880137025071619e-07,
+      "source_pgm_vs_ply_range_p90_abs_error_m": 1.2125659289541345e-06
+    },
+    {
+      "common_pixels": 58037,
+      "long_throw_timestamp": 134298125780479951,
+      "matched_pv_timestamp": 134298125780580442,
+      "original_frame_id": 290,
+      "pgm_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125780479951.pgm",
+      "phase": "open",
+      "ply_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125780479951.ply",
+      "point_count": 74262,
+      "producer_reencode_common_pixels": 58037,
+      "producer_reencode_exact_ratio_on_common": 0.9967951479228768,
+      "quantity_fit": {
+        "best_quantity": "virtual_pinhole_optical_axis_z_m",
+        "candidates": {
+          "true_pv_camera_forward_depth_m": {
+            "correlation": 0.9603935336240331,
+            "median_abs_residual_m": 0.11040049934319351,
+            "median_ratio": 0.00019785440818301117,
+            "p90_abs_residual_m": 0.22975591546049165,
+            "ratio_mad": 1.519878260625347e-05,
+            "sample_count": 58037,
+            "scale": 0.00020118060162613264
+          },
+          "true_pv_camera_signed_z_m": {
+            "correlation": -0.9603935336240331,
+            "median_abs_residual_m": 0.11040049934319351,
+            "median_ratio": -0.00019785440818301117,
+            "p90_abs_residual_m": 0.22975591546049165,
+            "ratio_mad": 1.519878260625347e-05,
+            "sample_count": 58037,
+            "scale": -0.00020118060162613264
+          },
+          "virtual_pinhole_euclidean_range_m": {
+            "correlation": 0.972042550450748,
+            "median_abs_residual_m": 0.08381884199809475,
+            "median_ratio": 0.00022230740847945042,
+            "p90_abs_residual_m": 0.18247482519499206,
+            "ratio_mad": 1.113149538202739e-05,
+            "sample_count": 58037,
+            "scale": 0.0002252485844932475
+          },
+          "virtual_pinhole_optical_axis_z_m": {
+            "correlation": 0.9999999823226107,
+            "median_abs_residual_m": 5.027428559811753e-05,
+            "median_ratio": 0.00020001326030710676,
+            "p90_abs_residual_m": 9.696452612559803e-05,
+            "ratio_mad": 6.656942088415158e-09,
+            "sample_count": 58037,
+            "scale": 0.00020001263906716226
+          }
+        }
+      },
+      "registered_path": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth/134298125780580442_proj.png",
+      "scale_fit": {
+        "correlation": 0.9999999823226107,
+        "median_abs_residual_m": 5.027428559811753e-05,
+        "median_ratio": 0.00020001326030710676,
+        "p90_abs_residual_m": 9.696452612559803e-05,
+        "ratio_mad": 6.656942088415158e-09,
+        "sample_count": 58037,
+        "scale": 0.00020001263906716226
+      },
+      "scale_offset_fit": {
+        "median_abs_residual_m": 4.980526842923716e-05,
+        "offset_m": 0.000101893070297306,
+        "p90_abs_residual_m": 9.00588912778666e-05,
+        "sample_count": 58037,
+        "scale": 0.00019999980335093454
+      },
+      "source_pgm_range_ordering_tested": true,
+      "source_pgm_vs_ply_range_median_abs_error_m": 7.126382626232441e-07,
+      "source_pgm_vs_ply_range_p90_abs_error_m": 1.0901600105528433e-06
+    },
+    {
+      "common_pixels": 58232,
+      "long_throw_timestamp": 134298125920482935,
+      "matched_pv_timestamp": 134298125920523181,
+      "original_frame_id": 360,
+      "pgm_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125920482935.pgm",
+      "phase": "open",
+      "ply_path": "/workspace_whz/data/upload/2026-07-30-002840/Depth Long Throw/134298125920482935.ply",
+      "point_count": 74584,
+      "producer_reencode_common_pixels": 58232,
+      "producer_reencode_exact_ratio_on_common": 0.9885973347987361,
+      "quantity_fit": {
+        "best_quantity": "virtual_pinhole_optical_axis_z_m",
+        "candidates": {
+          "true_pv_camera_forward_depth_m": {
+            "correlation": 0.9534337672184139,
+            "median_abs_residual_m": 0.11147176587786312,
+            "median_ratio": 0.00019769767893341403,
+            "p90_abs_residual_m": 0.229883986578706,
+            "ratio_mad": 1.5160217301606014e-05,
+            "sample_count": 58232,
+            "scale": 0.00020037766295837202
+          },
+          "true_pv_camera_signed_z_m": {
+            "correlation": -0.9534337672184139,
+            "median_abs_residual_m": 0.11147176587786312,
+            "median_ratio": -0.00019769767893341403,
+            "p90_abs_residual_m": 0.229883986578706,
+            "ratio_mad": 1.5160217301606014e-05,
+            "sample_count": 58232,
+            "scale": -0.00020037766295837202
+          },
+          "virtual_pinhole_euclidean_range_m": {
+            "correlation": 0.9698922692350715,
+            "median_abs_residual_m": 0.08246075351215765,
+            "median_ratio": 0.00022218928151920137,
+            "p90_abs_residual_m": 0.1800886500612404,
+            "ratio_mad": 1.107726102386683e-05,
+            "sample_count": 58232,
+            "scale": 0.00022495376792972834
+          },
+          "virtual_pinhole_optical_axis_z_m": {
+            "correlation": 0.9999999709079099,
+            "median_abs_residual_m": 5.012062888631874e-05,
+            "median_ratio": 0.00020001296583897944,
+            "p90_abs_residual_m": 9.644381799638335e-05,
+            "ratio_mad": 6.6603852660564915e-09,
+            "sample_count": 58232,
+            "scale": 0.0002000124563962477
+          }
+        }
+      },
+      "registered_path": "/workspace_whz/data/upload/2026-07-30-002840/pinhole_projection/depth/134298125920523181_proj.png",
+      "scale_fit": {
+        "correlation": 0.9999999709079099,
+        "median_abs_residual_m": 5.012062888631874e-05,
+        "median_ratio": 0.00020001296583897944,
+        "p90_abs_residual_m": 9.644381799638335e-05,
+        "ratio_mad": 6.6603852660564915e-09,
+        "sample_count": 58232,
+        "scale": 0.0002000124563962477
+      },
+      "scale_offset_fit": {
+        "median_abs_residual_m": 5.0140063416637126e-05,
+        "offset_m": 0.00010322188502821165,
+        "p90_abs_residual_m": 9.011679238231097e-05,
+        "sample_count": 58232,
+        "scale": 0.0001999993302633036
+      },
+      "source_pgm_range_ordering_tested": true,
+      "source_pgm_vs_ply_range_median_abs_error_m": 1.8063823066238882e-06,
+      "source_pgm_vs_ply_range_p90_abs_error_m": 4.137340151677548e-06
+    }
+  ],
+  "quantity_comparison": {
+    "best_quantity": "virtual_pinhole_optical_axis_z_m",
+    "candidates": {
+      "true_pv_camera_forward_depth_m": {
+        "correlation": 0.9838352403747873,
+        "median_abs_residual_m": 0.08502541247947293,
+        "median_ratio": 0.00019695497727605966,
+        "p90_abs_residual_m": 0.1953643599161066,
+        "ratio_mad": 1.4855163858963947e-05,
+        "sample_count": 626313,
+        "scale": 0.0002010426671442782
+      },
+      "true_pv_camera_signed_z_m": {
+        "correlation": -0.9838352403747873,
+        "median_abs_residual_m": 0.08502541247947293,
+        "median_ratio": -0.00019695497727605966,
+        "p90_abs_residual_m": 0.1953643599161066,
+        "ratio_mad": 1.4855163858963947e-05,
+        "sample_count": 626313,
+        "scale": -0.0002010426671442782
+      },
+      "virtual_pinhole_euclidean_range_m": {
+        "correlation": 0.9891830681945699,
+        "median_abs_residual_m": 0.06011807564899052,
+        "median_ratio": 0.00022171530809973302,
+        "p90_abs_residual_m": 0.16467413526955893,
+        "ratio_mad": 1.088039258634549e-05,
+        "sample_count": 626313,
+        "scale": 0.0002248636086684176
+      },
+      "virtual_pinhole_optical_axis_z_m": {
+        "correlation": 0.9999999882608428,
+        "median_abs_residual_m": 5.156150902929646e-05,
+        "median_ratio": 0.00020001627466820072,
+        "p90_abs_residual_m": 0.00011392910462433293,
+        "ratio_mad": 9.021243761394866e-09,
+        "sample_count": 626313,
+        "scale": 0.00020001384482515934
+      }
+    }
+  },
+  "registered_quantity": "virtual Long Throw pinhole optical-axis Z, not radial range and not true PV-camera Z",
+  "source_pgm_quantity": "radial range in millimetres; unit ray norm is 1"
+}

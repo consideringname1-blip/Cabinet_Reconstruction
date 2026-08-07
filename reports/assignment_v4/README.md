@@ -2,6 +2,8 @@
 
 > **Critical follow-up (2026-08-07):** the formal run used `depth_scale_to_m=0.001`, but stored pinhole depth is approximately 5x the corresponding Long Throw PLY projection. The formal ownership result is retained as a failed diagnostic and must not be used for fusion. See `followup_depth_scale_diagnostic.md`.
 
+> **Physical-unit audit:** the matched Microsoft StreamRecorderConverter explicitly uses 5000 counts per metre of virtual Long Throw pinhole optical-axis Z. Exact execution revision remains partial. See `registered_depth_provenance_audit/README.md`.
+
 Status: extended research diagnostic; **not accepted for dual TSDF**.
 
 ## Scope and frozen inputs
