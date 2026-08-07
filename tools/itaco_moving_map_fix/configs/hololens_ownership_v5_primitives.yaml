@@ -1,0 +1,33 @@
+stage: assignment_v5_primitives_only
+ready_for_dual_tsdf: false
+frozen_inputs:
+  camera_pose: true
+  articulation_type: true
+  articulation_axis: true
+  articulation_q: true
+prohibited_stages:
+  - autoseg_integration
+  - sam2_dense_propagation
+  - dense_ownership
+  - geometry_fusion
+  - tsdf
+  - nksr
+  - mesh
+motion_state:
+  active_velocity_threshold: 0.002
+  active_dilation_frames: 0
+  velocity_edge_order: 1
+  plateau_q_tolerance: 0.002
+  closed_is_minimum_q: true
+active_transition:
+  minimum_transition_delta_q: 0.01
+  maximum_transition_frame_gap: 8
+finite_identity:
+  point_distance_threshold: 0.008
+  minimum_symmetric_overlap: 0.55
+causal_disocclusion:
+  maximum_local_depth_gap_m: 0.08
+  maximum_boundary_distance_px: 12.0
+  maximum_reveal_delay_frames: 2
+  minimum_persistent_frames: 3
+  maximum_world_residual_m: 0.01

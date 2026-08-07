@@ -631,3 +631,55 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 - Report: `reports/assignment_v4/verified_depth_rerun.md`
 - Output: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001`
 - Previous `0.001` outputs remain preserved and unchanged.
+
+## Assignment v5 physical-event primitives (2026-08-07)
+
+### Completed and verified
+
+- Added a separate v5 primitives package for frozen-q motion states, ACTIVE_MOTION transitions, immutable source-anchored finite-surface identity, local causal disocclusion, independent evidence families, and generic prismatic/revolute T(q).
+- Passed all 15 synthetic tests, including the 12 minimum conceptual cases in the architecture specification.
+- Ran a synthetic-only diagnostic; no real-data labels, AutoSeg/SAM2 integration, dense ownership, fusion, TSDF, NKSR, or Mesh ran.
+
+### In progress / known issues
+
+- The primitives are not connected to real HoloLens observations. They do not resolve drawer-side versus cabinet-inner-wall ownership.
+- Motion-state thresholds are explicit but remain unvalidated on the frozen real q_t sequence.
+
+### Next steps
+
+1. Review the primitive semantics and tests.
+2. If authorized, run a small read-only real-data diagnostic without dense propagation or reconstruction.
+3. Keep `ready_for_dual_tsdf=false`.
+
+### Git state and output
+
+- Implementation base: `cded4c6cb09d39c2ddd8c58e195bacc786a10104` on `agent/region-assignment-v4`.
+- Report: `reports/assignment_v5/primitives_diagnostic.md`
+- Output: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/primitives_diagnostic_001`
+
+## Assignment v5 diagnostic on 116 v4 unknown regions (2026-08-07)
+
+### Completed and verified
+
+- Connected only the v5 physical-event primitives to the existing 116 v4 both-supported unknown regions, with pose, depth scale, axis, q_t, moving map, masks, proposals, and formal labels frozen.
+- Preserved failed run `001`: it produced 24 moving regions, but visual review showed predominantly floor masks accepted through tangent-plane occupancy ambiguity.
+- Added a generic tangent-motion/finite-boundary observability hard gate and reran into separate `002` output.
+- Corrected result is 0 static, 0 moving, 116 unknown, 0 conflicting. All 24 pre-gate moving routes were rejected because the source plane moved tangentially while its apparent finite boundary was observation-clipped.
+- No valid local causal static-disocclusion event was found. V5 tests pass 23/23 and v4 regression tests pass 34/34.
+
+### In progress / known issues
+
+- The recording/proposal evidence does not provide trustworthy temporal finite-surface identity for these regions. AutoSeg occupancy cannot replace point/track identity.
+- Fourteen non-tangent layer3 observations have at most partial static compatibility but no causal drawer reveal, so they remain unknown.
+
+### Next steps
+
+1. Add a trustworthy feature/3D-track finite-surface identity signal across sufficiently large ACTIVE_MOTION transitions.
+2. Evaluate local disocclusion only where a verified moving silhouette actually reveals persistent world-static geometry.
+3. Keep `ready_for_dual_tsdf=false`; do not run reconstruction from these labels.
+
+### Outputs
+
+- Failed preserved output: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/unknown_116_physical_events_001`
+- Corrected output: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/unknown_116_physical_events_002`
+- Report: `reports/assignment_v5/unknown_116_physical_events.md`

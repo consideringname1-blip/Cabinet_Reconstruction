@@ -113,3 +113,19 @@ Last updated: 2026-08-06
   cabinet-inner-wall resolution without manually confirmed regions.
 - Consequence: `ready_for_dual_tsdf=false`; no Assignment v5, propagation, TSDF,
   NKSR, Mesh, or parameter refinement follows from this audit.
+
+## 2026-08-07 — Assignment v5 begins with physical-event primitives only
+
+- Status: primitive layer implemented and synthetically verified; no real-data classifier or reconstruction.
+- Decision: ownership creation requires an ACTIVE_MOTION transition and immutable source-anchored finite-surface identity. Target observations never become new anchors; failed identity is unknown rather than a nearby-surface substitution.
+- Decision: positive static disocclusion requires a local causal reveal chain. Large same-ray depth gaps, plateau-only support, occupancy compatibility, and propagation without an established identity cannot create ownership.
+- Decision: correlated metrics from one physical observation remain one evidence family. Independent positive static and moving families produce `CONFLICTING`, not a score-based winner.
+- Consequence: AutoSeg/SAM2 integration, dense ownership, object-scope filtering, TSDF, NKSR, and Mesh remain out of scope. `ready_for_dual_tsdf=false`.
+
+## 2026-08-07 — Tangent-plane occupancy cannot establish v5 moving ownership
+
+- Status: accepted correction from the 116-region real-data diagnostic; ownership remains unresolved.
+- Evidence: the first v5 adapter labeled 24 regions moving, including 19 repeated layer6 floor masks. Translation tangent to these planar surfaces found compatible occupied geometry without establishing finite physical identity.
+- Decision: when articulated motion is tangent to a source plane, positive moving ownership requires a reliably observable finite boundary. Proposal edges coincident with the RGB/depth observation footprint are truncation boundaries, not physical anchors.
+- Decision: preserve failed `001`; use corrected `002`, where all 116 regions remain unknown. The gate is geometry/observability based and must not use UID, color, floor height, object position, or fixed frame rules.
+- Consequence: compatibility counts remain diagnostic only. No valid causal static disocclusion was observed, and `ready_for_dual_tsdf=false` remains mandatory.

@@ -1,0 +1,31 @@
+{
+  "input_regions": 116,
+  "formal_v4_label": "unknown",
+  "v5_decisions": {
+    "STATIC": 0,
+    "MOVING": 24,
+    "UNKNOWN": 92,
+    "CONFLICTING": 0
+  },
+  "per_target_identity_states": {
+    "static": {
+      "IDENTITY_LOST": 1926,
+      "VERIFIED_SOURCE_ANCHOR": 864
+    },
+    "drawer": {
+      "IDENTITY_LOST": 2232,
+      "VERIFIED_SOURCE_ANCHOR": 558
+    }
+  },
+  "regions_with_causal_static_disocclusion": 0,
+  "regions_with_moving_transition_evidence": 24,
+  "interpretation": "diagnostic_only",
+  "formal_v4_modified": false,
+  "sam2_ran": false,
+  "dense_propagation_ran": false,
+  "camera_axis_q_modified": false,
+  "tsdf_ran": false,
+  "nksr_ran": false,
+  "mesh_ran": false,
+  "ready_for_dual_tsdf": false
+}

@@ -1,0 +1,65 @@
+stage: assignment_v5_116_region_read_only_diagnostic
+inputs:
+  primitives_config: tools/itaco_moving_map_fix/configs/hololens_ownership_v5_primitives.yaml
+  assignment_v4_config: tools/itaco_moving_map_fix/configs/hololens_region_assignment_v4_verified_depth.yaml
+  assignment_v4_output: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001
+  ambiguity_audit_output: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/near_contact_ambiguity_audit_002
+  v4_surface_audit_output: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/surface_identity_visibility_audit_001
+  v4_surface_audit_config: tools/itaco_moving_map_fix/configs/hololens_surface_identity_visibility_audit.yaml
+output_dir: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/unknown_116_physical_events_001
+expected_region_count: 116
+motion_state:
+  timestamp_ticks_per_second: 10000000.0
+  active_velocity_threshold: 0.002
+  active_dilation_frames: 0
+  velocity_edge_order: 1
+  plateau_q_tolerance: 0.002
+  closed_is_minimum_q: true
+active_transition:
+  minimum_transition_delta_q: 0.01
+  maximum_transition_frame_gap: 12
+finite_identity:
+  maximum_points_per_surface: 1600
+  minimum_valid_points: 40
+  point_distance_threshold_m: 0.015
+  minimum_predicted_overlap: 0.55
+  minimum_observed_overlap: 0.3
+  minimum_symmetric_overlap: 0.45
+  maximum_normal_angle_degrees: 10.0
+  maximum_plane_offset_m: 0.02
+  maximum_centroid_distance_m: 0.08
+  minimum_supported_membership_points: 8
+  minimum_supported_membership_fraction: 0.03
+  reject_multiple_anchor_compatible_candidates: true
+motion_evidence:
+  minimum_verified_active_observations: 2
+  minimum_verified_q_span_m: 0.02
+  minimum_verified_fraction_advantage: 0.25
+contradiction:
+  per_frame_fraction_threshold: 0.15
+  minimum_spatial_coherence_fraction: 0.25
+  minimum_consecutive_frames: 2
+  minimum_q_span_m: 0.015
+  spatial_dilation_pixels: 2
+causal_disocclusion:
+  maximum_local_depth_gap_m: 0.08
+  maximum_boundary_distance_px: 12.0
+  maximum_reveal_delay_frames: 2
+  minimum_persistent_frames: 3
+  maximum_world_residual_m: 0.01
+  minimum_revealed_point_count: 8
+  minimum_revealed_point_fraction: 0.03
+visualization:
+  contact_sheet_columns: 4
+  contact_sheet_thumbnail_width: 360
+  representative_per_decision: 5
+ready_for_dual_tsdf: false
+prohibited_stages:
+- sam2_rerun
+- dense_propagation
+- assignment_v4_modification
+- camera_optimization
+- articulation_optimization
+- tsdf
+- nksr
+- mesh
