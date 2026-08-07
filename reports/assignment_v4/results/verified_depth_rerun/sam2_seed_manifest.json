@@ -1,0 +1,67 @@
+{
+  "candidate_count": 76,
+  "selected_count": 6,
+  "seeds": [
+    {
+      "seed_id": "seed_000_195",
+      "original_frame_id": 195,
+      "proposal_id": "frame_195_layer_25",
+      "seed_kind": "front",
+      "combined_index": 18,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001/sam2_seed_masks/seed_000_195.npy",
+      "area_px": 2835,
+      "seed_overlap_ratio": 1.0
+    },
+    {
+      "seed_id": "seed_001_196",
+      "original_frame_id": 196,
+      "proposal_id": "frame_196_layer_25",
+      "seed_kind": "front",
+      "combined_index": 19,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001/sam2_seed_masks/seed_001_196.npy",
+      "area_px": 2796,
+      "seed_overlap_ratio": 1.0
+    },
+    {
+      "seed_id": "seed_002_197",
+      "original_frame_id": 197,
+      "proposal_id": "frame_197_layer_25",
+      "seed_kind": "front",
+      "combined_index": 20,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001/sam2_seed_masks/seed_002_197.npy",
+      "area_px": 2682,
+      "seed_overlap_ratio": 1.0
+    },
+    {
+      "seed_id": "seed_003_198",
+      "original_frame_id": 198,
+      "proposal_id": "frame_198_layer_25",
+      "seed_kind": "front",
+      "combined_index": 21,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001/sam2_seed_masks/seed_003_198.npy",
+      "area_px": 2672,
+      "seed_overlap_ratio": 1.0
+    },
+    {
+      "seed_id": "seed_004_211",
+      "original_frame_id": 211,
+      "proposal_id": "frame_211_layer_2",
+      "seed_kind": "revealed",
+      "combined_index": 34,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001/sam2_seed_masks/seed_004_211.npy",
+      "area_px": 899,
+      "seed_overlap_ratio": 0.0
+    },
+    {
+      "seed_id": "seed_005_213",
+      "original_frame_id": 213,
+      "proposal_id": "frame_213_layer_2",
+      "seed_kind": "revealed",
+      "combined_index": 36,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001/sam2_seed_masks/seed_005_213.npy",
+      "area_px": 846,
+      "seed_overlap_ratio": 0.0
+    }
+  ],
+  "prompt_source": "accepted drawer region masks; no point tracks or LoFTR prompts"
+}

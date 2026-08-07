@@ -3,7 +3,7 @@ import unittest
 import numpy as np
 
 from tools.itaco_region_assignment_v4 import LABEL_DRAWER,LABEL_STATIC,LABEL_UNKNOWN
-from tools.itaco_region_assignment_v4.frame_data import validity_masks
+from tools.itaco_region_assignment_v4.frame_data import evaluate_scale_consistency_gate,last_write_depth_projection,validity_masks
 from tools.itaco_region_assignment_v4.projective_models import CONTRADICTION,OCCLUDED,SUPPORTED,evaluate_model
 from tools.itaco_region_assignment_v4.region_assignment import merge_seed_propagations,resolve_interaction,resolve_positive_support
 from tools.itaco_region_assignment_v4.region_evidence import classify_region,deterministic_sample,eligible_target_indices,evaluate_region
@@ -35,6 +35,32 @@ def evidence(static_score=-.5,drawer_score=.7,seed=0.,static_fraction=.05,drawer
 
 
 class RegionAssignmentV4Tests(unittest.TestCase):
+    def scale_gate(self,configured=.0002,scales=None,iou=.995,median_error=.0001,p90_error=.0002):
+        rows=[{"fitted_scale_to_m":value,"valid_mask_iou":iou,"median_abs_error_m":median_error,"p90_abs_error_m":p90_error} for value in (scales or [.00020000,.00020001,.00019999])]
+        cfg={"enabled":True,"contract_scale_to_m":.0002,"minimum_frames":3,"maximum_scale_relative_error_to_contract":.01,
+             "maximum_per_frame_scale_drift":.005,"minimum_valid_mask_iou":.98,"maximum_median_abs_error_m":.001,"maximum_p90_abs_error_m":.005}
+        return evaluate_scale_consistency_gate(rows,configured,cfg)
+
+    def test_verified_registered_depth_scale_passes_hard_gate(self):
+        self.assertTrue(self.scale_gate()["passed"])
+
+    def test_millimetre_assumption_fails_hard_gate(self):
+        report=self.scale_gate(configured=.001)
+        self.assertFalse(report["passed"]); self.assertIn("configured_scale_mismatch",report["failure_codes"])
+
+    def test_frame_scale_drift_fails_hard_gate(self):
+        report=self.scale_gate(scales=[.0002,.0002,.000202])
+        self.assertFalse(report["passed"]); self.assertIn("per_frame_scale_drift",report["failure_codes"])
+
+    def test_depth_agreement_fails_hard_gate(self):
+        report=self.scale_gate(iou=.9,median_error=.002,p90_error=.01)
+        self.assertFalse(report["passed"]); self.assertIn("valid_mask_iou_below_threshold",report["failure_codes"])
+
+    def test_last_write_depth_projection(self):
+        points=np.asarray([[0.,0.,1.],[0.,0.,2.],[.1,0.,1.]])
+        depth,valid=last_write_depth_projection(points,K,(100,100))
+        self.assertTrue(valid[50,50]); self.assertEqual(depth[50,50],2.); self.assertEqual(depth[50,60],1.)
+
     def test_synthetic_static_plane_different_pose(self):
         target_pose=np.eye(4); target_pose[0,3]=.02; target=frame(pose=target_pose,q=.1)
         target["depth"][50,48]=1.; target["depth"][50,58]=2.

@@ -23,6 +23,114 @@ def load_poses(path: Path) -> np.ndarray:
     return np.stack([np.asarray([[float(value) for value in row.split()] for row in lines[i+1:i+5]]) for i in range(0,len(lines),5)])
 
 
+def parse_index(path: Path, root: Path) -> list[dict]:
+    rows=[]
+    for line_number,line in enumerate(path.read_text().splitlines(),1):
+        if not line.strip(): continue
+        parts=line.split(maxsplit=1)
+        if len(parts)!=2: raise ValueError(f"malformed index line {line_number}: {path}")
+        relative=parts[1].replace("\\","/")
+        rows.append({"association_timestamp":int(parts[0]),"path":root/relative})
+    return rows
+
+
+def transform_world_to_camera(points_world: np.ndarray, pose_world_camera: np.ndarray) -> np.ndarray:
+    return (np.asarray(points_world)-pose_world_camera[:3,3])@pose_world_camera[:3,:3]
+
+
+def last_write_depth_projection(points_camera: np.ndarray, intrinsic: np.ndarray, shape: tuple[int,int]) -> tuple[np.ndarray,np.ndarray]:
+    """Match StreamRecorderConverter's rounded-pixel, last-write optical-Z projection."""
+    points=np.asarray(points_camera,float); z=points[:,2]
+    with np.errstate(divide="ignore",invalid="ignore"):
+        uv=np.rint(np.column_stack((intrinsic[0,0]*points[:,0]/z+intrinsic[0,2],intrinsic[1,1]*points[:,1]/z+intrinsic[1,2]))).astype(np.int64)
+    h,w=shape; inside=np.isfinite(points).all(axis=1)&(z>0)&(uv[:,0]>=0)&(uv[:,0]<w)&(uv[:,1]>=0)&(uv[:,1]<h)
+    ids=np.flatnonzero(inside); flat=uv[ids,1]*w+uv[ids,0]
+    reverse_positions=np.unique(flat[::-1],return_index=True)[1]
+    chosen=ids[len(ids)-1-reverse_positions]
+    flat_chosen=uv[chosen,1]*w+uv[chosen,0]
+    depth=np.zeros(h*w,float); valid=np.zeros(h*w,bool)
+    depth[flat_chosen]=z[chosen]; valid[flat_chosen]=True
+    return depth.reshape(h,w),valid.reshape(h,w)
+
+
+def fit_scale_through_origin(raw: np.ndarray, reference: np.ndarray, iterations: int=12) -> dict:
+    x=np.asarray(raw,float); y=np.asarray(reference,float); valid=(x>0)&np.isfinite(x)&np.isfinite(y)
+    x=x[valid]; y=y[valid]
+    if not len(x): raise ValueError("no common registered-depth/PLY samples")
+    scale=float(np.median(y/x))
+    for _ in range(iterations):
+        residual=y-scale*x; sigma=1.4826*np.median(np.abs(residual-np.median(residual)))+1e-12
+        weight=np.minimum(1.0,1.345*sigma/np.maximum(np.abs(residual),1e-12))
+        scale=float(np.sum(weight*x*y)/np.sum(weight*x*x))
+    residual=y-scale*x
+    return {"scale_to_m":scale,"sample_count":int(len(x)),"median_abs_fit_error_m":float(np.median(np.abs(residual))),"p90_abs_fit_error_m":float(np.percentile(np.abs(residual),90))}
+
+
+def evaluate_scale_consistency_gate(per_frame: list[dict], configured_scale: float, gate_cfg: dict) -> dict:
+    required=("contract_scale_to_m","minimum_frames","maximum_scale_relative_error_to_contract","maximum_per_frame_scale_drift","minimum_valid_mask_iou","maximum_median_abs_error_m","maximum_p90_abs_error_m")
+    missing=[key for key in required if key not in gate_cfg]
+    if missing: raise ValueError(f"scale-consistency gate config missing: {missing}")
+    if gate_cfg.get("enabled") is not True: raise ValueError("scale-consistency hard gate must be enabled")
+    scales=np.asarray([row["fitted_scale_to_m"] for row in per_frame],float)
+    contract=float(gate_cfg["contract_scale_to_m"]); median_scale=float(np.median(scales)) if len(scales) else float("nan")
+    drift=float((scales.max()-scales.min())/median_scale) if len(scales) and median_scale>0 else float("inf")
+    scale_error=abs(median_scale-contract)/contract; configured_error=abs(float(configured_scale)-contract)/contract
+    minimum_iou=min((row["valid_mask_iou"] for row in per_frame),default=0.0)
+    maximum_median_error=max((row["median_abs_error_m"] for row in per_frame),default=float("inf"))
+    maximum_p90_error=max((row["p90_abs_error_m"] for row in per_frame),default=float("inf"))
+    failures=[]
+    checks=((len(per_frame)>=int(gate_cfg["minimum_frames"]),"insufficient_reference_frames"),
+            (configured_error<=float(gate_cfg["maximum_scale_relative_error_to_contract"]),"configured_scale_mismatch"),
+            (scale_error<=float(gate_cfg["maximum_scale_relative_error_to_contract"]),"fitted_scale_mismatch"),
+            (drift<=float(gate_cfg["maximum_per_frame_scale_drift"]),"per_frame_scale_drift"),
+            (minimum_iou>=float(gate_cfg["minimum_valid_mask_iou"]),"valid_mask_iou_below_threshold"),
+            (maximum_median_error<=float(gate_cfg["maximum_median_abs_error_m"]),"median_abs_error_above_threshold"),
+            (maximum_p90_error<=float(gate_cfg["maximum_p90_abs_error_m"]),"p90_abs_error_above_threshold"))
+    failures.extend(code for passed,code in checks if not passed)
+    return {"gate":"registered_depth_scale_consistency","passed":not failures,"status":"passed" if not failures else "failed",
+            "failure_message":None if not failures else "registered depth physical-unit mismatch","failure_codes":failures,
+            "configured_scale_to_m":float(configured_scale),"contract_scale_to_m":contract,
+            "metrics":{"frame_count":len(per_frame),"median_fitted_scale_to_m":median_scale,"configured_scale_relative_error_to_contract":configured_error,
+                       "fitted_scale_relative_error_to_contract":scale_error,"per_frame_scale_relative_peak_to_peak":drift,
+                       "minimum_valid_mask_iou":minimum_iou,"maximum_frame_median_abs_error_m":maximum_median_error,"maximum_frame_p90_abs_error_m":maximum_p90_error},
+            "thresholds":{key:gate_cfg[key] for key in required if key!="contract_scale_to_m"},"per_frame":per_frame}
+
+
+def validate_registered_depth_scale(cfg: dict) -> dict:
+    gate_cfg=cfg.get("scale_consistency_gate",{})
+    if gate_cfg.get("enabled") is not True: raise ValueError("scale-consistency hard gate must be configured and enabled")
+    raw=Path(cfg["inputs"]["raw_root"]); root=raw/"pinhole_projection"
+    rows=parse_index(root/"depth.txt",root); poses=load_poses(root/"odometry.log")
+    fx,fy,cx,cy=np.loadtxt(root/"calibration.txt").reshape(-1)[:4]; intrinsic=np.asarray([[fx,0,cx],[0,fy,cy],[0,0,1.]],float)
+    frame_ids=[int(value) for value in gate_cfg["representative_frame_ids"]]
+    if len(set(frame_ids))!=len(frame_ids): raise ValueError("scale-consistency representative frames must be unique")
+    import open3d as o3d
+    per_frame=[]; configured_scale=float(cfg["validity"]["depth_scale_to_m"])
+    depth_min=float(cfg["validity"]["depth_min_m"]); depth_max=float(cfg["validity"]["depth_max_m"])
+    for source in frame_ids:
+        if source<0 or source>=len(rows): raise IndexError(f"scale-consistency frame outside recording: {source}")
+        row=rows[source]; registered=cv2.imread(str(row["path"]),cv2.IMREAD_UNCHANGED)
+        if registered is None or registered.dtype!=np.uint16: raise ValueError(f"registered depth is not uint16: {row['path']}")
+        ply_path=raw/"Depth Long Throw"/f"{row['association_timestamp']}.ply"
+        if not ply_path.is_file(): raise FileNotFoundError(ply_path)
+        world=np.asarray(o3d.io.read_point_cloud(str(ply_path)).points)
+        reference,reference_file_valid=last_write_depth_projection(transform_world_to_camera(world,poses[source]),intrinsic,registered.shape)
+        common=(registered>0)&reference_file_valid; fit=fit_scale_through_origin(registered[common],reference[common])
+        decoded=registered.astype(float)*configured_scale
+        candidate_valid=(registered>0)&(decoded>=depth_min)&(decoded<=depth_max)
+        reference_valid=reference_file_valid&(reference>=depth_min)&(reference<=depth_max)
+        union=candidate_valid|reference_valid; comparable=candidate_valid&reference_valid
+        error=np.abs(decoded[comparable]-reference[comparable])
+        per_frame.append({"original_frame_id":source,"association_timestamp":row["association_timestamp"],"registered_depth_path":str(row["path"]),"reference_ply_path":str(ply_path),
+                          "common_fit_pixels":int(common.sum()),"fitted_scale_to_m":fit["scale_to_m"],"fit_median_abs_error_m":fit["median_abs_fit_error_m"],"fit_p90_abs_error_m":fit["p90_abs_fit_error_m"],
+                          "candidate_valid_pixels":int(candidate_valid.sum()),"reference_valid_pixels":int(reference_valid.sum()),"comparable_pixels":int(comparable.sum()),
+                          "valid_mask_iou":float(comparable.sum()/max(union.sum(),1)),"median_abs_error_m":float(np.median(error)) if len(error) else float("inf"),
+                          "p90_abs_error_m":float(np.percentile(error,90)) if len(error) else float("inf")})
+    report=evaluate_scale_consistency_gate(per_frame,configured_scale,gate_cfg)
+    report.update({"reference_quantity":"Long Throw world PLY projected as virtual-pinhole optical-axis Z","projection_semantics":"StreamRecorderConverter rounded-pixel last-write","evaluated_before_assignment_frame_loading":True})
+    return report
+
+
 def load_phase(path: Path) -> list[int]:
     ids=[int(value) for value in json.loads(path.read_text())["source_indices"]]
     if not ids or any(b<=a for a,b in zip(ids,ids[1:])): raise ValueError(f"phase is not nonempty forward order: {path}")

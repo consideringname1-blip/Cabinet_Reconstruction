@@ -1,0 +1,19 @@
+{
+  "automatic_definition": [
+    "unknown_mixed_surface",
+    "absolute evidence margin below configured threshold",
+    "accepted drawer/static canonical centroids within configured distance"
+  ],
+  "manual_roi_used": false,
+  "difficult_region_count": 131,
+  "mixed_region_count": 0,
+  "close_accepted_region_count": 0,
+  "accepted_pair_nearest_distance_m": {
+    "p10": 0.11041957496888063,
+    "p25": 0.11194376950635133,
+    "p50": 0.11818248454554359,
+    "p75": 0.21276602713240048,
+    "p90": 0.2444071769926211
+  },
+  "unknown_ratio": 1.0
+}

@@ -535,7 +535,8 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 - The exact HoloLens2ForCV checkout and literal conversion command used on the
   recording were not preserved. Producer family/formula are verified, but exact
   execution-revision provenance remains partial.
-- Corrected Assignment v4 has not run and is not authorized by this audit.
+- The provenance audit itself did not authorize a rerun. The user subsequently
+  authorized and completed the separate corrected v4 run documented below.
 
 ### Known issues
 
@@ -546,9 +547,9 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 
 ### Next steps
 
-1. Ask the user whether to authorize a separate corrected-v4 research rerun.
-2. Before that run, integrate and test the specified scale-consistency gate.
-3. Keep all failed 0.001-scale outputs intact and separate.
+1. Review the corrected v4 ownership visualizations described below.
+2. Keep all failed 0.001-scale outputs intact and separate.
+3. Do not run dual TSDF until corrected near-contact ownership passes review.
 
 ### Git state and outputs
 
@@ -556,3 +557,51 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 - Audit-start HEAD: `052094187789b1d78f1032e2572d1af015bcc434`
 - Output: `reports/assignment_v4/registered_depth_provenance_audit/`
 - No commit, push, merge, Assignment v4, SAM2, TSDF, NKSR or Mesh run occurred.
+
+## Assignment v4 verified-depth hard-gated rerun (2026-08-07)
+
+### Completed and verified
+
+- Integrated a mandatory pre-assignment scale-consistency gate using matching
+  registered PNG and Long Throw world PLY evidence. The gate checks configured
+  and fitted scale, per-frame drift, valid-mask IoU, and median/p90 depth error.
+- Added five hard-gate tests. Assignment v4 now passes 18/18 unit tests; the
+  explicit `0.001` case fails with `configured_scale_mismatch`.
+- Created a separate configuration with verified `0.0002 m/count` and a new,
+  non-overwriting output directory.
+- The real nine-frame gate passed: median fitted scale
+  0.000200012639 m/count, minimum IoU 99.9857%, maximum frame median/p90 error
+  0.101/0.181 mm, and 0.00438% relative scale drift.
+- Completed all Assignment v4 region evidence and conditional SAM2 propagation.
+  Results are 78 static, 76 drawer, 192 unknown, and 344 invalid regions from
+  690 proposals. The old invalid-scale result was 1/5/154/530.
+- SAM2 ran from six geometry-accepted drawer seeds. No LoFTR, LK, TAPIP3D,
+  camera/axis/`q_t`/moving-map optimization, TSDF, NKSR, Mesh, GLB, or URDF ran.
+
+### In progress / not accepted
+
+- `ready_for_dual_tsdf=false`: user visual ownership review is still absent.
+- The automatically defined near-contact set remains 100% unknown, so the
+  drawer-side versus cabinet-inner-wall interface is not resolved.
+
+### Known issues
+
+- Correct scale restores evidence coverage but cannot by itself rule out cabinet,
+  floor, hand, or drawer-interior ownership leakage.
+- SAM2 reported the known optional `_C` fill-hole extension warning.
+  Propagation completed; optional fill-hole post-processing did not run.
+- Exact original producer checkout/command provenance remains partial.
+
+### Next steps
+
+1. Inspect corrected drawer/static contact sheets and frames 181/195/207.
+2. Review the six seed masks and near-contact unknown regions.
+3. Keep dual TSDF blocked unless drawer-side/cabinet-wall ownership is accepted.
+
+### Git state and outputs
+
+- Implementation base commit: `f72ade23e0de56b25b4cb45e5bd5a692e82001cc`
+- Config: `tools/itaco_moving_map_fix/configs/hololens_region_assignment_v4_verified_depth.yaml`
+- Report: `reports/assignment_v4/verified_depth_rerun.md`
+- Output: `/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001`
+- Previous `0.001` outputs remain preserved and unchanged.

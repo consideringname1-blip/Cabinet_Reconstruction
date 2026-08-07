@@ -4,6 +4,11 @@
 
 > **Physical-unit audit:** the matched Microsoft StreamRecorderConverter explicitly uses 5000 counts per metre of virtual Long Throw pinhole optical-axis Z. Exact execution revision remains partial. See `registered_depth_provenance_audit/README.md`.
 
+> **Corrected full rerun:** the scale-consistency hard gate passed and Assignment
+> v4 completed with verified `0.0002 m/count` in a new output directory. The
+> corrected run is still not accepted for dual TSDF pending human ownership
+> review. See `verified_depth_rerun.md`.
+
 Status: extended research diagnostic; **not accepted for dual TSDF**.
 
 ## Scope and frozen inputs

@@ -15,7 +15,7 @@ import yaml
 from . import LABEL_DRAWER,LABEL_INVALID,LABEL_STATIC,LABEL_UNKNOWN,OUTPUT_KIND
 from .diagnostics import (assignment_overlay,json_ready_region,make_contact_sheet,projection_panel,proposal_overlay,
                           render_representative_frames,save_csv,sha_files,voxel_reduce,write_ply)
-from .frame_data import load_and_validate
+from .frame_data import load_and_validate,validate_registered_depth_scale
 from .projective_models import supported_template_pixels,unproject_pixels
 from .proposals import attach_interaction_proposals
 from .propagation import load_seed_masks,run_sam2
@@ -71,9 +71,15 @@ def fate(points: np.ndarray,current: dict[str,np.ndarray],threshold: float) -> d
 def main(config_path: Path) -> None:
     cfg=yaml.safe_load(config_path.read_text()); output=Path(cfg["inputs"]["output_dir"])
     if output.exists() and any(output.iterdir()): raise FileExistsError(f"non-overwrite output exists: {output}")
+    try:
+        scale_gate=validate_registered_depth_scale(cfg)
+    except Exception as error:
+        scale_gate={"gate":"registered_depth_scale_consistency","passed":False,"status":"failed","failure_message":"registered depth physical-unit mismatch","failure_codes":["gate_execution_error"],"error_type":type(error).__name__,"error":str(error),"evaluated_before_assignment_frame_loading":True}
     output.mkdir(parents=True); (output/"visualization").mkdir(); (output/"config_resolved.yaml").write_text(yaml.safe_dump(cfg,sort_keys=False))
     command={"argv":sys.argv,"cwd":str(Path.cwd()),"entry_script":"tools/fuse_hololens_articulation_assignment_v4.py","parent_commit":cfg["audit"]["parent_commit"]}
     (output/"execution_manifest.json").write_text(json.dumps(command,indent=2)+"\n")
+    (output/"scale_consistency_gate_report.json").write_text(json.dumps(scale_gate,indent=2)+"\n")
+    if not scale_gate["passed"]: raise RuntimeError(f"registered depth physical-unit mismatch: {scale_gate['failure_codes']}")
     context=load_and_validate(cfg); (output/"frozen_input_audit.json").write_text(json.dumps(context["audit"],indent=2)+"\n")
     dependency_audit={"formal_primary_ownership":"AutoSeg/SAM surface regions with fixed-model projective RGB-D evidence",
                       "point_tracking_primary":False,"loftr_called":False,"lk_called":False,"tapip3d_called":False,

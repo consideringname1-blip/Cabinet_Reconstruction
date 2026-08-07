@@ -1,0 +1,97 @@
+{
+  "output_kind": "extended_non_official_region_level_articulation_consistency_v4",
+  "proposal_count": 690,
+  "valid_region_count": 346,
+  "static_region_count": 78,
+  "drawer_region_count": 76,
+  "unknown_region_count": 192,
+  "invalid_region_count": 344,
+  "mixed_region_count": 0,
+  "drawer_region_with_seed_count": 37,
+  "drawer_region_without_seed_count": 39,
+  "region_reasons": {
+    "static_region_geometry": 78,
+    "invalid_insufficient_depth": 344,
+    "drawer_region_geometry_with_seed": 37,
+    "unknown_insufficient_evidence": 52,
+    "unknown_ambiguous": 140,
+    "drawer_region_geometry_revealed": 39
+  },
+  "per_phase_pixels": {
+    "closed": {
+      "static": 2146158,
+      "drawer": 74880,
+      "unknown": 1115641,
+      "invalid": 11501081
+    },
+    "interaction": {
+      "static": 187186,
+      "drawer": 118183,
+      "unknown": 306770,
+      "invalid": 2797781
+    },
+    "open": {
+      "static": 1647204,
+      "drawer": 101281,
+      "unknown": 991386,
+      "invalid": 10254689
+    }
+  },
+  "interaction_drawer_support_distribution": {
+    "p10": 0.0,
+    "p25": 0.19608661724541554,
+    "p50": 0.9901405610094159,
+    "p75": 1.0,
+    "p90": 1.0
+  },
+  "interaction_static_support_distribution": {
+    "p10": 0.0,
+    "p25": 0.20857558139534885,
+    "p50": 1.0,
+    "p75": 1.0,
+    "p90": 1.0
+  },
+  "evidence_margin_distribution": {
+    "p10": -2.0,
+    "p25": -1.3060694027113544,
+    "p50": 0.0,
+    "p75": 1.4254560062178907,
+    "p90": 1.7925720141318933
+  },
+  "sam2_seed_count": 6,
+  "sam2_propagation_ran": true,
+  "sam2_propagation_agreement": {
+    "p10": 0.5656447932970464,
+    "p25": 0.5810373001691597,
+    "p50": 0.6372039250008041,
+    "p75": 0.6598920806627614,
+    "p90": 0.6626858895329978
+  },
+  "open": {
+    "propagated_drawer_ratio": 0.036965608964801625,
+    "static_positive_ratio": 0.6011976476264759,
+    "unknown_open_only_ratio": 0.3618367434087225
+  },
+  "representative_interaction_frames": [
+    181,
+    195,
+    207
+  ],
+  "accepted_drawer_projection_pairs": [
+    {
+      "source": 184,
+      "target": 207,
+      "proposal_id": "frame_184_layer_25"
+    },
+    {
+      "source": 203,
+      "target": 177,
+      "proposal_id": "frame_203_layer_2"
+    },
+    {
+      "source": 207,
+      "target": 177,
+      "proposal_id": "frame_207_layer_2"
+    }
+  ]
+}

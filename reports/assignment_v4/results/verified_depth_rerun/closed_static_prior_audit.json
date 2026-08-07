@@ -1,0 +1,9 @@
+{
+  "policy": "v2 conservative closed cores only",
+  "static_core_points": 101097,
+  "drawer_core_points": 2878,
+  "v1_static_reused": false,
+  "official_interaction_surface_reused": false,
+  "static_is_remainder": false,
+  "closed_static_prior": "v2_static_core"
+}

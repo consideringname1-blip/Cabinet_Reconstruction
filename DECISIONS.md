@@ -68,4 +68,18 @@ Last updated: 2026-08-06
   recording were not preserved, so producer execution provenance is partial.
 - Consequence: Assignment v3 and v4 registered-PNG results require rerun; PLY-
   based official preprocess, moving-map, axis/q, v1/v2 geometry and GLB/URDF are
-  not invalidated by this unit issue. Corrected v4 still requires user approval.
+  not invalidated by this unit issue. Corrected v4 required separate user approval.
+
+## 2026-08-07 — Verified-depth v4 passes hard gate but remains blocked from fusion
+
+- Status: corrected Assignment v4 completed; not accepted for dual TSDF.
+- Decision: every Assignment v4 run must pass a pre-assignment comparison of
+  registered uint16 depth against matching Long Throw world PLY projections.
+  Missing or disabled gate configuration is a hard failure.
+- Evidence: the authorized `0.0002 m/count` run passed all nine reference
+  frames with 99.9857% minimum valid-mask IoU and 0.181 mm worst-frame p90
+  absolute error. It recovered 78 static and 76 drawer regions, versus 1 and 5
+  under the invalid `0.001` scale.
+- Consequence: the scale failure is resolved for this run, but near-contact
+  ownership remains completely unknown and human review is absent.
+  `ready_for_dual_tsdf=false`; no reconstruction stage may consume it yet.

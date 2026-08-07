@@ -1,0 +1,8 @@
+{
+  "region_evidence.json": "aab4ee687db7e48107e472f547f4e2bdc233ec6f2c349f59bf32ab0abb66fde6",
+  "region_evidence.csv": "28bb31f1e8e42c2c6ccbb02cb2a453c10934676e383b3da45fc4f0ebb8642ede",
+  "region_assignment_summary.json": "d0a74781ab4ae739a260b720e7f8491ba70502dd4ecd5793b678c1b83d31b4e8",
+  "static_v4_points.ply": "280e9bcdaaa58a34a4867e4c32f832124233bcbc515690dd9b9f09eac46dc592",
+  "drawer_v4_canonical_points.ply": "11b0b57e7291f6578d6894a4de91199193225575ae4e1489f184879a00f169b4",
+  "unknown_v4_points.ply": "c6c77eabed2dc305b71c7e031acf2bee1feb1b874b78391e690a2248005b347e"
+}

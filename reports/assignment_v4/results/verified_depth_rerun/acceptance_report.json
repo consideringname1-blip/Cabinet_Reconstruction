@@ -1,0 +1,18 @@
+{
+  "ready_for_dual_tsdf": false,
+  "human_inspection_passed": false,
+  "blocking_reasons": [
+    "explicit human review absent",
+    "human validation of drawer regions absent",
+    "human validation of static regions absent"
+  ],
+  "tsdf_ran": false,
+  "nksr_ran": false,
+  "mesh_ran": false,
+  "glb_ran": false,
+  "urdf_ran": false,
+  "pose_refinement_ran": false,
+  "axis_refinement_ran": false,
+  "q_refinement_ran": false,
+  "moving_map_refinement_ran": false
+}

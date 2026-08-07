@@ -1,0 +1,15 @@
+{
+  "formal_primary_ownership": "AutoSeg/SAM surface regions with fixed-model projective RGB-D evidence",
+  "point_tracking_primary": false,
+  "loftr_called": false,
+  "lk_called": false,
+  "tapip3d_called": false,
+  "reason": [
+    "cabinet surfaces are low-texture",
+    "long-lived point identity is unreliable",
+    "v3 depth-projective filtering reduced geometric outliers but reliable tracks remained sparse",
+    "v4 evaluates motion consistency at region/surface level"
+  ],
+  "sam2_role": "identity propagation only after direct geometry acceptance",
+  "official_baseline_modified": false
+}
