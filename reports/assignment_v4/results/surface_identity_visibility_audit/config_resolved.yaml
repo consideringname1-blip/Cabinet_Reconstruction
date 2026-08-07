@@ -1,0 +1,72 @@
+inputs:
+  assignment_v4_config: tools/itaco_moving_map_fix/configs/hololens_region_assignment_v4_verified_depth.yaml
+  assignment_v4_output: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001
+  ambiguity_audit_output: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/near_contact_ambiguity_audit_002
+output_dir: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/surface_identity_visibility_audit_001
+review_bundle_dir: reports/assignment_v4/results/surface_identity_visibility_audit
+controls:
+  maximum_drawer_front_controls: 4
+  maximum_static_controls: 8
+  maximum_comoving_controls: 2
+  minimum_static_seed_distance_pixels: 20
+  minimum_control_accuracy: 0.75
+  require_comoving_drawer_fraction: 0.5
+trusted_occluders:
+  front_seed_minimum_agreement: 3
+  front_seed_strict_agreement: 4
+  static_core_depth_support_threshold_m: 0.015
+surface_descriptor:
+  minimum_valid_points: 40
+  maximum_points: 1600
+  voxel_sizes_m:
+  - 0.005
+  - 0.01
+  - 0.02
+  primary_voxel_m: 0.01
+  overlap_radius_voxels: 1.5
+continuity:
+  minimum_supported_membership_points: 8
+  minimum_supported_membership_fraction: 0.03
+  normal_scale_degrees: 20.0
+  plane_offset_scale_m: 0.04
+  centroid_scale_m: 0.12
+  weights:
+    normal: 0.15
+    plane_offset: 0.2
+    centroid: 0.25
+    extent: 0.1
+    overlap: 0.3
+  support_emission_weight: 0.15
+  transition_weight: 0.35
+  missing_candidate_cost: 1.0
+  switch_normal_degrees: 18.0
+  switch_plane_offset_m: 0.035
+  switch_centroid_m: 0.1
+  compatible_score_threshold: 0.45
+  continuity_advantage_threshold: 0.12
+contradiction:
+  per_frame_fraction_threshold: 0.15
+  minimum_consecutive_frames: 2
+  minimum_q_span_m: 0.015
+  spatial_dilation_pixels: 2
+  minimum_spatial_coherence_fraction: 0.25
+temporal_cues:
+  early_q_fraction: 0.34
+  late_q_fraction: 0.34
+  minimum_early_drawer_occluded_fraction: 0.25
+  minimum_late_same_surface_support_fraction: 0.45
+  minimum_temporal_monotonicity: 0.1
+  minimum_drawer_attachment_score: 0.45
+preference:
+  minimum_independent_cues: 2
+acceptance:
+  maximum_unresolved_fraction_for_promising: 0.5
+visualization:
+  contact_sheet_columns: 3
+  contact_sheet_thumbnail_width: 420
+  representative_per_category: 3
+audit:
+  expected_both_supported_regions: 116
+  modifies_assignment: false
+  runs_sam2: false
+  runs_reconstruction: false

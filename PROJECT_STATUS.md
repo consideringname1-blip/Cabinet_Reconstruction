@@ -91,6 +91,10 @@ reproduction manifest and exact run configuration before rerunning.
   above 30 degrees increased from 3.09% to 71.87%.
 - Audited frame identity, validity masks, proposal identity, moving-map
   normalization, camera optimization, and initial-state assumptions.
+- Completed the fixed-input Assignment v4 surface-identity/visibility follow-up.
+  Drawer-front controls passed 4/4, static controls 6/8, and co-moving controls
+  2/2; the 116 ambiguity regions yielded 1 experimental static preference, 16
+  drawer preferences, and 99 unresolved. Formal labels remain unchanged.
 
 ### Tracks and moving map
 
@@ -155,6 +159,10 @@ surface hit visualizations are available under the documented independent
 output directory. The result remains a diagnostic and is not ready for dual
 TSDF.
 
+The surface-identity/visibility follow-up is also complete and is interpreted as
+inconclusive. It is not an active reconstruction job and did not run propagation,
+TSDF, NKSR, or Mesh.
+
 The following work is incomplete and must not be presented as completed:
 
 - Convert the final sequence of helper commands into a clean, deterministic
@@ -183,6 +191,10 @@ The following work is incomplete and must not be presented as completed:
   these, 116 are supported by both frozen motion hypotheses across cabinet,
   drawer, edge, and floor/background surfaces. This is a surface-identity and
   observability problem; threshold relaxation or region propagation is unsafe.
+- Surface continuity separates the controls but leaves 85.34% of the 116
+  both-supported regions unresolved. The 17 preferences are concentrated in
+  repeated layer-6/11/28 observations, and no manually confirmed drawer-side /
+  cabinet-inner-wall evaluation set exists.
 - Local output artifacts are large. A path in this document does not imply that
   its artifact is tracked by Git.
 
@@ -237,6 +249,8 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
    additional prismatic object before claiming generality.
 7. Validate revolute support on a real sequence under the same evidence and
    reproduction standards.
+8. Add a small manual drawer-side/cabinet-inner-wall evaluation set before using
+   surface-identity preferences in any ownership update; keep dual TSDF blocked.
 
 ## Key entry points
 

@@ -1,0 +1,12 @@
+{
+  "reason": "post-run diagnostic-output definition correction",
+  "assignment_preferences_changed": false,
+  "updated_region_json_count": 130,
+  "changes": [
+    "unique_dominant_target_descriptors now counts UID-independent 3D continuity segments (1+switch_count)",
+    "all contact sheets have a title and empty conflicting category is explicit",
+    "interpretation finalized from configured unresolved-fraction rule"
+  ],
+  "interpretation": "inconclusive",
+  "ready_for_dual_tsdf": false
+}

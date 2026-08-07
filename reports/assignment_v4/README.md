@@ -15,6 +15,12 @@
 > visualizations. The set is not confined to a literal contact boundary, and
 > remains unsafe for propagation or fusion. See `near_contact_ambiguity_audit.md`.
 
+> **Surface identity / explained visibility follow-up:** controls passed, but
+> 99/116 ambiguity regions remained unresolved; experimental results were 1
+> static, 16 drawer, 99 unresolved, and zero conflicting. The outcome is
+> inconclusive and does not change formal v4 ownership. See
+> `surface_identity_visibility_audit.md`.
+
 Status: extended research diagnostic; **not accepted for dual TSDF**.
 
 ## Scope and frozen inputs

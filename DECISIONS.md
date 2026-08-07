@@ -98,3 +98,18 @@ Last updated: 2026-08-06
   identity and negative evidence before ownership can be released.
 - Consequence: `ready_for_dual_tsdf=false`; pose, axis, `q_t`, moving map, and
   reconstruction remain frozen.
+
+## 2026-08-07 — Surface identity continuity is informative but inconclusive
+
+- Status: diagnostic complete; formal Assignment v4 labels remain unchanged.
+- Evidence: drawer-front controls pass 4/4, static controls 6/8, and layer2
+  co-moving controls 2/2. Among 116 both-supported ambiguity regions, the
+  experimental preference is 1 static, 16 drawer, 99 unresolved, 0 conflicting.
+- Decision: require two independent identity cues and retain all 116 formal
+  regions as unknown. Continuity advantage, visibility fraction, explained
+  occlusion, proposal UID, or a single contradiction interval cannot assign
+  ownership alone.
+- Decision: treat the result as inconclusive. Do not claim drawer-side versus
+  cabinet-inner-wall resolution without manually confirmed regions.
+- Consequence: `ready_for_dual_tsdf=false`; no Assignment v5, propagation, TSDF,
+  NKSR, Mesh, or parameter refinement follows from this audit.

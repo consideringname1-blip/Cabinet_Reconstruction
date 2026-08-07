@@ -1,0 +1,23 @@
+{
+  "argv": [
+    "tools/audit_assignment_v4_surface_identity_visibility.py",
+    "--config",
+    "tools/itaco_moving_map_fix/configs/hololens_surface_identity_visibility_audit.yaml"
+  ],
+  "cwd": "/workspace_whz_worktrees/funrec-assignment-v3",
+  "entry_script": "tools/audit_assignment_v4_surface_identity_visibility.py",
+  "parent_commit": "8f62bc3d09c9634588b63b800d2e1d9a5947c007",
+  "source_hashes": {
+    "region_evidence.json": "aab4ee687db7e48107e472f547f4e2bdc233ec6f2c349f59bf32ab0abb66fde6",
+    "config_resolved.yaml": "a0cebe1dd251ec0eec24c24aad081d15b03936cb12a72b24d724d8aa1756858c",
+    "scale_consistency_gate_report.json": "74fbda84bc32a9f6da7a529700d23e2d39c652422bf7cccd35cb7d0203527f1f",
+    "sam2_seed_manifest.json": "08d7a56eac38e898eae6ee043ce1e87fe95a46f2ea03ed6152aef55acb28f83a",
+    "frozen_input_audit.json": "313374a9b499def1adfe2be3716a8593ef315fd8698a08d0b45320215df5a44a",
+    "ambiguity_regions.json": "2dc55ed1f28a57dcc1f6602133b354ef9a2df1df95eb2a847b9b8171806cf514",
+    "ambiguity_audit_summary.json": "1839474f6d412a0078059e25352ddd6729fcf03299e667052baf266973dbd3ed"
+  },
+  "sam2_rerun": false,
+  "assignment_v4_full_rerun": false,
+  "loftr_lk_tapip3d_ran": false,
+  "reconstruction_ran": false
+}

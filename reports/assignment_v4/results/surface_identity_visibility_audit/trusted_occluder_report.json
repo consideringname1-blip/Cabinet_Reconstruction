@@ -1,0 +1,273 @@
+{
+  "front_seed_count": 4,
+  "front_seeds": [
+    {
+      "seed_id": "seed_000_195",
+      "original_frame_id": 195,
+      "proposal_id": "frame_195_layer_25",
+      "seed_kind": "front",
+      "combined_index": 18,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001/sam2_seed_masks/seed_000_195.npy",
+      "area_px": 2835,
+      "seed_overlap_ratio": 1.0
+    },
+    {
+      "seed_id": "seed_001_196",
+      "original_frame_id": 196,
+      "proposal_id": "frame_196_layer_25",
+      "seed_kind": "front",
+      "combined_index": 19,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001/sam2_seed_masks/seed_001_196.npy",
+      "area_px": 2796,
+      "seed_overlap_ratio": 1.0
+    },
+    {
+      "seed_id": "seed_002_197",
+      "original_frame_id": 197,
+      "proposal_id": "frame_197_layer_25",
+      "seed_kind": "front",
+      "combined_index": 20,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001/sam2_seed_masks/seed_002_197.npy",
+      "area_px": 2682,
+      "seed_overlap_ratio": 1.0
+    },
+    {
+      "seed_id": "seed_003_198",
+      "original_frame_id": 198,
+      "proposal_id": "frame_198_layer_25",
+      "seed_kind": "front",
+      "combined_index": 21,
+      "mask_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001/sam2_seed_masks/seed_003_198.npy",
+      "area_px": 2672,
+      "seed_overlap_ratio": 1.0
+    }
+  ],
+  "primary_agreement_required": 3,
+  "strict_agreement_required": 4,
+  "payload_seeds_used": false,
+  "sam2_rerun": false,
+  "per_frame": [
+    {
+      "original_frame_id": 177,
+      "trusted_front_pixels_3of4": 3224,
+      "trusted_front_pixels_4of4": 3153,
+      "trusted_static_core_pixels": 6731
+    },
+    {
+      "original_frame_id": 178,
+      "trusted_front_pixels_3of4": 3288,
+      "trusted_front_pixels_4of4": 3222,
+      "trusted_static_core_pixels": 6510
+    },
+    {
+      "original_frame_id": 179,
+      "trusted_front_pixels_3of4": 3294,
+      "trusted_front_pixels_4of4": 3272,
+      "trusted_static_core_pixels": 5864
+    },
+    {
+      "original_frame_id": 180,
+      "trusted_front_pixels_3of4": 3286,
+      "trusted_front_pixels_4of4": 3266,
+      "trusted_static_core_pixels": 6178
+    },
+    {
+      "original_frame_id": 181,
+      "trusted_front_pixels_3of4": 3288,
+      "trusted_front_pixels_4of4": 3241,
+      "trusted_static_core_pixels": 5972
+    },
+    {
+      "original_frame_id": 182,
+      "trusted_front_pixels_3of4": 3302,
+      "trusted_front_pixels_4of4": 3263,
+      "trusted_static_core_pixels": 5605
+    },
+    {
+      "original_frame_id": 183,
+      "trusted_front_pixels_3of4": 3407,
+      "trusted_front_pixels_4of4": 3341,
+      "trusted_static_core_pixels": 6048
+    },
+    {
+      "original_frame_id": 184,
+      "trusted_front_pixels_3of4": 3489,
+      "trusted_front_pixels_4of4": 3421,
+      "trusted_static_core_pixels": 5775
+    },
+    {
+      "original_frame_id": 185,
+      "trusted_front_pixels_3of4": 3592,
+      "trusted_front_pixels_4of4": 3549,
+      "trusted_static_core_pixels": 5709
+    },
+    {
+      "original_frame_id": 186,
+      "trusted_front_pixels_3of4": 3311,
+      "trusted_front_pixels_4of4": 3215,
+      "trusted_static_core_pixels": 5669
+    },
+    {
+      "original_frame_id": 187,
+      "trusted_front_pixels_3of4": 3282,
+      "trusted_front_pixels_4of4": 3193,
+      "trusted_static_core_pixels": 5349
+    },
+    {
+      "original_frame_id": 188,
+      "trusted_front_pixels_3of4": 3340,
+      "trusted_front_pixels_4of4": 3093,
+      "trusted_static_core_pixels": 5414
+    },
+    {
+      "original_frame_id": 189,
+      "trusted_front_pixels_3of4": 3276,
+      "trusted_front_pixels_4of4": 3211,
+      "trusted_static_core_pixels": 5526
+    },
+    {
+      "original_frame_id": 190,
+      "trusted_front_pixels_3of4": 3156,
+      "trusted_front_pixels_4of4": 3089,
+      "trusted_static_core_pixels": 5150
+    },
+    {
+      "original_frame_id": 191,
+      "trusted_front_pixels_3of4": 3045,
+      "trusted_front_pixels_4of4": 3025,
+      "trusted_static_core_pixels": 5232
+    },
+    {
+      "original_frame_id": 192,
+      "trusted_front_pixels_3of4": 2969,
+      "trusted_front_pixels_4of4": 2922,
+      "trusted_static_core_pixels": 5419
+    },
+    {
+      "original_frame_id": 193,
+      "trusted_front_pixels_3of4": 2892,
+      "trusted_front_pixels_4of4": 2828,
+      "trusted_static_core_pixels": 5551
+    },
+    {
+      "original_frame_id": 194,
+      "trusted_front_pixels_3of4": 2860,
+      "trusted_front_pixels_4of4": 2802,
+      "trusted_static_core_pixels": 5089
+    },
+    {
+      "original_frame_id": 195,
+      "trusted_front_pixels_3of4": 2856,
+      "trusted_front_pixels_4of4": 2756,
+      "trusted_static_core_pixels": 4884
+    },
+    {
+      "original_frame_id": 196,
+      "trusted_front_pixels_3of4": 2809,
+      "trusted_front_pixels_4of4": 2717,
+      "trusted_static_core_pixels": 4861
+    },
+    {
+      "original_frame_id": 197,
+      "trusted_front_pixels_3of4": 2717,
+      "trusted_front_pixels_4of4": 2603,
+      "trusted_static_core_pixels": 4972
+    },
+    {
+      "original_frame_id": 198,
+      "trusted_front_pixels_3of4": 2715,
+      "trusted_front_pixels_4of4": 2593,
+      "trusted_static_core_pixels": 5180
+    },
+    {
+      "original_frame_id": 199,
+      "trusted_front_pixels_3of4": 2789,
+      "trusted_front_pixels_4of4": 2721,
+      "trusted_static_core_pixels": 5673
+    },
+    {
+      "original_frame_id": 200,
+      "trusted_front_pixels_3of4": 2728,
+      "trusted_front_pixels_4of4": 2655,
+      "trusted_static_core_pixels": 5481
+    },
+    {
+      "original_frame_id": 201,
+      "trusted_front_pixels_3of4": 2812,
+      "trusted_front_pixels_4of4": 2756,
+      "trusted_static_core_pixels": 5801
+    },
+    {
+      "original_frame_id": 202,
+      "trusted_front_pixels_3of4": 2835,
+      "trusted_front_pixels_4of4": 2792,
+      "trusted_static_core_pixels": 5557
+    },
+    {
+      "original_frame_id": 203,
+      "trusted_front_pixels_3of4": 2849,
+      "trusted_front_pixels_4of4": 2803,
+      "trusted_static_core_pixels": 5512
+    },
+    {
+      "original_frame_id": 204,
+      "trusted_front_pixels_3of4": 2857,
+      "trusted_front_pixels_4of4": 2816,
+      "trusted_static_core_pixels": 5232
+    },
+    {
+      "original_frame_id": 205,
+      "trusted_front_pixels_3of4": 2829,
+      "trusted_front_pixels_4of4": 2777,
+      "trusted_static_core_pixels": 5298
+    },
+    {
+      "original_frame_id": 206,
+      "trusted_front_pixels_3of4": 2811,
+      "trusted_front_pixels_4of4": 2748,
+      "trusted_static_core_pixels": 5068
+    },
+    {
+      "original_frame_id": 207,
+      "trusted_front_pixels_3of4": 2837,
+      "trusted_front_pixels_4of4": 2785,
+      "trusted_static_core_pixels": 5262
+    },
+    {
+      "original_frame_id": 208,
+      "trusted_front_pixels_3of4": 2864,
+      "trusted_front_pixels_4of4": 2817,
+      "trusted_static_core_pixels": 5289
+    },
+    {
+      "original_frame_id": 209,
+      "trusted_front_pixels_3of4": 2884,
+      "trusted_front_pixels_4of4": 2840,
+      "trusted_static_core_pixels": 5245
+    },
+    {
+      "original_frame_id": 210,
+      "trusted_front_pixels_3of4": 2939,
+      "trusted_front_pixels_4of4": 2881,
+      "trusted_static_core_pixels": 5675
+    },
+    {
+      "original_frame_id": 211,
+      "trusted_front_pixels_3of4": 2958,
+      "trusted_front_pixels_4of4": 2922,
+      "trusted_static_core_pixels": 5783
+    },
+    {
+      "original_frame_id": 212,
+      "trusted_front_pixels_3of4": 3000,
+      "trusted_front_pixels_4of4": 2961,
+      "trusted_static_core_pixels": 6044
+    },
+    {
+      "original_frame_id": 213,
+      "trusted_front_pixels_3of4": 2889,
+      "trusted_front_pixels_4of4": 2825,
+      "trusted_static_core_pixels": 6951
+    }
+  ]
+}

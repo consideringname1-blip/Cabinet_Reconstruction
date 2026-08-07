@@ -1,0 +1,45 @@
+{
+  "input_both_supported_regions": 116,
+  "experimental_preference": {
+    "static": 1,
+    "drawer": 16,
+    "unresolved": 99,
+    "conflicting": 0
+  },
+  "controls": {
+    "drawer_front_count": 4,
+    "drawer_front_preference_accuracy": 1.0,
+    "static_control_count": 8,
+    "static_control_preference_accuracy": 0.75,
+    "layer2_comoving_count": 2,
+    "layer2_drawer_preference_fraction": 1.0
+  },
+  "continuity": {
+    "static_advantage_count": 60,
+    "drawer_advantage_count": 16,
+    "indistinguishable_count": 40
+  },
+  "occlusion": {
+    "explained_by_drawer_count": 36,
+    "explained_by_static_count": 116,
+    "unknown_occluder_count": 116
+  },
+  "disocclusion": {
+    "strong_static_disocclusion_count": 11,
+    "strong_drawer_attachment_count": 58
+  },
+  "contradiction": {
+    "coherent_static_contradiction_count": 0,
+    "coherent_drawer_contradiction_count": 2
+  },
+  "interpretation": "inconclusive",
+  "ready_for_dual_tsdf": false,
+  "assignment_v4_modified": false,
+  "camera_pose_axis_q_moving_map_modified": false,
+  "sam2_ran": false,
+  "loftr_lk_tapip3d_ran": false,
+  "tsdf_ran": false,
+  "nksr_ran": false,
+  "mesh_ran": false,
+  "unresolved_fraction": 0.853448275862069
+}
