@@ -4,7 +4,7 @@ This file is the canonical handoff summary for `/workspace_whz`.
 
 - Tracked workspace: `/workspace_whz`
 - Excluded workspace: `/workspace` — do not inspect, modify, or include it in project status
-- Last updated: 2026-08-07
+- Last updated: 2026-08-08
 - Verified project baseline before this status-only update: `7e394359d2b5a0412398fbd1743e5d8f47d43d4c`
 - Cabinet publication target: `whz/main` at `consideringname1-blip/Cabinet_Reconstruction.git`
 
@@ -772,3 +772,67 @@ checkout, run `git log -1 --oneline` to identify this status document's commit.
 - Report: reports/assignment_v5/multi_baseline_motion_discrimination.md
 - Review bundle:
   reports/assignment_v5/results/multi_baseline_motion_discrimination/
+
+## Assignment v5 observation censor (2026-08-08)
+
+### Completed and verified
+
+- Added a separate frozen-noise observation censor without modifying the
+  preserved multi-baseline failure. It loads the prior plateau residual arrays,
+  recomputes and verifies noise hash
+  d1c2a22cb4e26b05adafe1e08334d449d7b41e19f350ae5cecca9ae6e30f6d67,
+  and does not refit the noise model.
+- Each source-indexed observation is now WORLD_STATIC_EVIDENCE,
+  MOVING_LINK_EVIDENCE, AMBIGUOUS_COMPATIBLE, or
+  IDENTITY_LOST_CENSORED according to the frozen p95 mean-surprisal criterion.
+  Both-OOD observations are removed from likelihood, trend, posterior,
+  effective chain length, and baseline aggregation; the smaller OOD residual is
+  never selected.
+- All 63 v5 tests and 34 v4 regression tests pass. The registered-depth scale
+  gate passed again.
+- Previously seen control regression passed: drawer front 4/4 MOVING_LINK,
+  active box 5/5 MOVING_LINK with zero static, documented floor 0/21 moving,
+  and plateau-only 0/2 ownership.
+- Box short/medium observations are retained 26/26 as moving evidence. Long
+  observations are 77/85 censored and 8/85 retained moving evidence.
+- The conditional 116-region diagnostic ran after writing a freeze manifest:
+  0 moving, 56 world-static, 60 unknown, and 0 conflicting. Formal v4 labels
+  remain unchanged.
+- No SAM2, region propagation, camera/axis/q refinement, TSDF, NKSR, or Mesh
+  ran.
+
+### In progress / not accepted
+
+- The controls are a previously seen regression, not fresh held-out validation.
+- The 116 results are diagnostic only. WORLD_STATIC does not imply cabinet
+  membership, and the 56 static regions are not approved fusion masks.
+- ready_for_dual_tsdf=false.
+
+### Known issues
+
+- Of 1,857 observations across the 116 regions, 860 are identity-lost censored
+  and 322 are compatible under both models; only 466 enter final per-region
+  aggregation after motion-excitation filtering.
+- The 116 regions have no independent manual drawer-side/cabinet-inner-wall
+  ownership labels. Zero moving decisions therefore do not demonstrate
+  complete drawer ownership recovery.
+- The frozen edge category remains conservative and dominates the original
+  plateau-noise calibration sample count.
+
+### Next steps
+
+1. Add fresh held-out moving/static controls from a separate recording or
+   independently annotated frames before treating the regression as validation.
+2. Manually review representative examples from the 56 world-static and 60
+   unknown regions, especially drawer-side/cabinet-inner-wall interfaces.
+3. Keep propagation and reconstruction blocked until independent ownership
+   review passes.
+
+### Git state and outputs
+
+- Implementation parent: 57a9ef04b41b4496dc7760cd6225ac815daea349
+  on agent/region-assignment-v4.
+- Full local output:
+  /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/observation_censor_002
+- Report: reports/assignment_v5/observation_censor.md
+- Review bundle: reports/assignment_v5/results/observation_censor/

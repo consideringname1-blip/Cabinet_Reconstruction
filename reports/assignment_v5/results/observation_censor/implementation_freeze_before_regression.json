@@ -1,0 +1,26 @@
+{
+  "phase": "before_seen_control_regression",
+  "frozen": true,
+  "git_parent_revision": "57a9ef04b41b4496dc7760cd6225ac815daea349",
+  "config_path": "tools/itaco_moving_map_fix/configs/hololens_ownership_v5_observation_censor.yaml",
+  "config_sha256": "ae97820edcdd185522601ea87fc39c66821b0a5535db05d1df91e6f9c75905aa",
+  "module_sha256": {
+    "tools/itaco_ownership_v5/observation_censor.py": "0014d0d83680be5e45f6ce4731613010f03fda89548a5c60ffe5190c9048c979",
+    "tools/itaco_ownership_v5/observation_censor_diagnostic.py": "01beb5c5e7d7cba9eb5a42ce9bfcb8c6e253b930aeea38e83ab98a6f5bbf1ca0",
+    "tools/itaco_ownership_v5/motion_discrimination.py": "c678d387e0eb860c12feb1c0770e6e534cd1257ab12c0c4d1051c6df46f4c250",
+    "tools/itaco_ownership_v5/multi_baseline.py": "7d878a123a7ef885a0ee88c6caa166ef022de9d4ac6b10e36775daf7d0601c24",
+    "tools/itaco_ownership_v5/plateau_noise.py": "47c577ad99a8fae6c23e47a8cc889ffa3d639a9df4f90fb1f98f7a7ad0c88cd1"
+  },
+  "original_noise_model_hash": "d1c2a22cb4e26b05adafe1e08334d449d7b41e19f350ae5cecca9ae6e30f6d67",
+  "noise_model_refit": false,
+  "noise_criterion": {
+    "statistic": "mean_noise_surprisal",
+    "quantile": 0.95,
+    "threshold": 2.99549771060747,
+    "compatible_relation": "mean_noise_surprisal <= frozen p95",
+    "ood_relation": "mean_noise_surprisal > frozen p95"
+  },
+  "controls_evaluation_role": "previously_seen_regression_not_fresh_heldout",
+  "thresholds_tuned_to_controls": false,
+  "target_proposals_used_for_identity": false
+}

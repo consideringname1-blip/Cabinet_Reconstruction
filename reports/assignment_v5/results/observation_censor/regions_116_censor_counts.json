@@ -1,0 +1,32 @@
+{
+  "ambiguity_116": {
+    "short": {
+      "total": 147,
+      "WORLD_STATIC_EVIDENCE": 28,
+      "MOVING_LINK_EVIDENCE": 10,
+      "AMBIGUOUS_COMPATIBLE": 103,
+      "IDENTITY_LOST_CENSORED": 6
+    },
+    "medium": {
+      "total": 259,
+      "WORLD_STATIC_EVIDENCE": 42,
+      "MOVING_LINK_EVIDENCE": 17,
+      "AMBIGUOUS_COMPATIBLE": 161,
+      "IDENTITY_LOST_CENSORED": 39
+    },
+    "long": {
+      "total": 1451,
+      "WORLD_STATIC_EVIDENCE": 546,
+      "MOVING_LINK_EVIDENCE": 32,
+      "AMBIGUOUS_COMPATIBLE": 58,
+      "IDENTITY_LOST_CENSORED": 815
+    },
+    "all_baselines": {
+      "total": 1857,
+      "WORLD_STATIC_EVIDENCE": 616,
+      "MOVING_LINK_EVIDENCE": 59,
+      "AMBIGUOUS_COMPATIBLE": 322,
+      "IDENTITY_LOST_CENSORED": 860
+    }
+  }
+}

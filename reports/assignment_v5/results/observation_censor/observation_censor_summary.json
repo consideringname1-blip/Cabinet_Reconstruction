@@ -1,0 +1,198 @@
+{
+  "stage": "assignment_v5_observation_censor",
+  "original_noise_model_hash": "d1c2a22cb4e26b05adafe1e08334d449d7b41e19f350ae5cecca9ae6e30f6d67",
+  "noise_model_refit": false,
+  "control_evaluation_role": "previously_seen_regression_not_fresh_heldout",
+  "control_regression_passed": true,
+  "control_metrics": {
+    "drawer_front_count": 4,
+    "drawer_front_moving_link_count": 4,
+    "drawer_front_true_positive_rate": 1.0,
+    "active_comoving_box_count": 5,
+    "active_comoving_box_moving_link_count": 5,
+    "active_comoving_box_moving_link_fraction": 1.0,
+    "active_comoving_box_world_static_count": 0,
+    "documented_floor_count": 21,
+    "documented_floor_moving_link_count": 0,
+    "documented_floor_false_positive_rate": 0.0,
+    "plateau_only_count": 2,
+    "plateau_only_ownership_count": 0,
+    "synthetic_tests_passed": true
+  },
+  "control_censor_counts": {
+    "drawer_front": {
+      "short": {
+        "total": 1,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 1,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 0
+      },
+      "medium": {
+        "total": 17,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 17,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 0
+      },
+      "long": {
+        "total": 75,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 55,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 20
+      },
+      "all_baselines": {
+        "total": 93,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 73,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 20
+      }
+    },
+    "active_comoving_box": {
+      "short": {
+        "total": 14,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 14,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 0
+      },
+      "medium": {
+        "total": 12,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 12,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 0
+      },
+      "long": {
+        "total": 85,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 8,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 77
+      },
+      "all_baselines": {
+        "total": 111,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 34,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 77
+      }
+    },
+    "documented_floor_false_positive": {
+      "short": {
+        "total": 25,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 0,
+        "AMBIGUOUS_COMPATIBLE": 25,
+        "IDENTITY_LOST_CENSORED": 0
+      },
+      "medium": {
+        "total": 60,
+        "WORLD_STATIC_EVIDENCE": 1,
+        "MOVING_LINK_EVIDENCE": 0,
+        "AMBIGUOUS_COMPATIBLE": 59,
+        "IDENTITY_LOST_CENSORED": 0
+      },
+      "long": {
+        "total": 371,
+        "WORLD_STATIC_EVIDENCE": 173,
+        "MOVING_LINK_EVIDENCE": 0,
+        "AMBIGUOUS_COMPATIBLE": 17,
+        "IDENTITY_LOST_CENSORED": 181
+      },
+      "all_baselines": {
+        "total": 456,
+        "WORLD_STATIC_EVIDENCE": 174,
+        "MOVING_LINK_EVIDENCE": 0,
+        "AMBIGUOUS_COMPATIBLE": 101,
+        "IDENTITY_LOST_CENSORED": 181
+      }
+    },
+    "plateau_only": {
+      "short": {
+        "total": 0,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 0,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 0
+      },
+      "medium": {
+        "total": 0,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 0,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 0
+      },
+      "long": {
+        "total": 0,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 0,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 0
+      },
+      "all_baselines": {
+        "total": 0,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 0,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 0
+      }
+    },
+    "provisional_world_static": {
+      "short": {
+        "total": 0,
+        "WORLD_STATIC_EVIDENCE": 0,
+        "MOVING_LINK_EVIDENCE": 0,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 0
+      },
+      "medium": {
+        "total": 10,
+        "WORLD_STATIC_EVIDENCE": 10,
+        "MOVING_LINK_EVIDENCE": 0,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 0
+      },
+      "long": {
+        "total": 59,
+        "WORLD_STATIC_EVIDENCE": 32,
+        "MOVING_LINK_EVIDENCE": 0,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 27
+      },
+      "all_baselines": {
+        "total": 69,
+        "WORLD_STATIC_EVIDENCE": 42,
+        "MOVING_LINK_EVIDENCE": 0,
+        "AMBIGUOUS_COMPATIBLE": 0,
+        "IDENTITY_LOST_CENSORED": 27
+      }
+    }
+  },
+  "full_116_ran": true,
+  "full_116": {
+    "ran": true,
+    "evaluation_role": "diagnostic_not_fresh_heldout_validation",
+    "input_region_count": 116,
+    "decision_counts": {
+      "MOVING_LINK": 0,
+      "WORLD_STATIC": 56,
+      "UNKNOWN": 60,
+      "CONFLICTING": 0
+    },
+    "formal_v4_labels_modified": false,
+    "ready_for_dual_tsdf": false
+  },
+  "target_proposals_used_for_identity": false,
+  "source_anchor_immutable": true,
+  "formal_v4_labels_modified": false,
+  "sam2_ran": false,
+  "region_propagation_ran": false,
+  "camera_axis_q_modified": false,
+  "tsdf_ran": false,
+  "nksr_ran": false,
+  "mesh_ran": false,
+  "ready_for_dual_tsdf": false
+}

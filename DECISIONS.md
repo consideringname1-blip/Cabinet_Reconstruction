@@ -2,7 +2,7 @@
 
 Tracked workspace: workspace_whz/
 
-Last updated: 2026-08-06
+Last updated: 2026-08-08
 
 ## Decision log
 
@@ -161,3 +161,26 @@ Last updated: 2026-08-06
 - Consequence: the 116 regions remain unrun, formal v4 labels remain unchanged,
   and ready_for_dual_tsdf=false. A future source-identity-aware visibility
   design requires independent freezing and fresh held-out evaluation.
+
+## 2026-08-08 — Both-OOD observations are censored, not model-selected
+
+- Status: implemented and verified by previously seen control regression;
+  conditional 116-region diagnostic complete.
+- Decision: per-observation compatibility is determined only by the previously
+  frozen plateau-noise mean-surprisal p95 and original noise hash. Plateau noise
+  is loaded and hash-verified without refitting.
+- Decision: if exactly one hypothesis is compatible, the observation supplies
+  evidence for that model. If both are compatible it is neutral. If both are
+  OOD, the source identity is treated as lost and the observation is excluded
+  from likelihood, posterior, trend, baseline aggregation, and effective chain
+  length. The smaller of two OOD residuals is never selected.
+- Evidence: seen controls recover front 4/4 and active box 5/5 MOVING_LINK while
+  retaining zero floor moving false positives and zero plateau ownership. Box
+  retains all 26 short/medium moving observations and censors 77/85 long
+  observations.
+- Decision: controls are regression only, not fresh held-out validation.
+  Passing them permits a diagnostic 116 run but does not authorize formal v4
+  relabeling, propagation, or reconstruction.
+- Consequence: the 116 diagnostic yields 56 WORLD_STATIC and 60 UNKNOWN, with no
+  moving or conflicting result. WORLD_STATIC is a motion statement, not cabinet
+  membership. ready_for_dual_tsdf=false remains mandatory.

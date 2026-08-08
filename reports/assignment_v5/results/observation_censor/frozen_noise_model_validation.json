@@ -1,0 +1,13 @@
+{
+  "loaded_without_refit": true,
+  "summary_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/multi_baseline_motion_discrimination_001/plateau_noise_model.json",
+  "residual_path": "/workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/multi_baseline_motion_discrimination_001/plateau_noise_residuals.npz",
+  "original_noise_model_hash": "d1c2a22cb4e26b05adafe1e08334d449d7b41e19f350ae5cecca9ae6e30f6d67",
+  "hash_recomputed_and_verified": true,
+  "compatibility_statistic": "mean_noise_surprisal",
+  "compatibility_threshold_source": "frozen_summary.observation_mean_surprisal_p95",
+  "compatibility_threshold_quantile": 0.95,
+  "compatibility_threshold_value": 2.99549771060747,
+  "compatible_relation": "mean_noise_surprisal <= frozen p95",
+  "ood_relation": "mean_noise_surprisal > frozen p95"
+}

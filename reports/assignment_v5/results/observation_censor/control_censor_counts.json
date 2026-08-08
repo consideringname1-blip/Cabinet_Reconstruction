@@ -1,0 +1,152 @@
+{
+  "drawer_front": {
+    "short": {
+      "total": 1,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 1,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 0
+    },
+    "medium": {
+      "total": 17,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 17,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 0
+    },
+    "long": {
+      "total": 75,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 55,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 20
+    },
+    "all_baselines": {
+      "total": 93,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 73,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 20
+    }
+  },
+  "active_comoving_box": {
+    "short": {
+      "total": 14,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 14,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 0
+    },
+    "medium": {
+      "total": 12,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 12,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 0
+    },
+    "long": {
+      "total": 85,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 8,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 77
+    },
+    "all_baselines": {
+      "total": 111,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 34,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 77
+    }
+  },
+  "documented_floor_false_positive": {
+    "short": {
+      "total": 25,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 0,
+      "AMBIGUOUS_COMPATIBLE": 25,
+      "IDENTITY_LOST_CENSORED": 0
+    },
+    "medium": {
+      "total": 60,
+      "WORLD_STATIC_EVIDENCE": 1,
+      "MOVING_LINK_EVIDENCE": 0,
+      "AMBIGUOUS_COMPATIBLE": 59,
+      "IDENTITY_LOST_CENSORED": 0
+    },
+    "long": {
+      "total": 371,
+      "WORLD_STATIC_EVIDENCE": 173,
+      "MOVING_LINK_EVIDENCE": 0,
+      "AMBIGUOUS_COMPATIBLE": 17,
+      "IDENTITY_LOST_CENSORED": 181
+    },
+    "all_baselines": {
+      "total": 456,
+      "WORLD_STATIC_EVIDENCE": 174,
+      "MOVING_LINK_EVIDENCE": 0,
+      "AMBIGUOUS_COMPATIBLE": 101,
+      "IDENTITY_LOST_CENSORED": 181
+    }
+  },
+  "plateau_only": {
+    "short": {
+      "total": 0,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 0,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 0
+    },
+    "medium": {
+      "total": 0,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 0,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 0
+    },
+    "long": {
+      "total": 0,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 0,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 0
+    },
+    "all_baselines": {
+      "total": 0,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 0,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 0
+    }
+  },
+  "provisional_world_static": {
+    "short": {
+      "total": 0,
+      "WORLD_STATIC_EVIDENCE": 0,
+      "MOVING_LINK_EVIDENCE": 0,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 0
+    },
+    "medium": {
+      "total": 10,
+      "WORLD_STATIC_EVIDENCE": 10,
+      "MOVING_LINK_EVIDENCE": 0,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 0
+    },
+    "long": {
+      "total": 59,
+      "WORLD_STATIC_EVIDENCE": 32,
+      "MOVING_LINK_EVIDENCE": 0,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 27
+    },
+    "all_baselines": {
+      "total": 69,
+      "WORLD_STATIC_EVIDENCE": 42,
+      "MOVING_LINK_EVIDENCE": 0,
+      "AMBIGUOUS_COMPATIBLE": 0,
+      "IDENTITY_LOST_CENSORED": 27
+    }
+  }
+}

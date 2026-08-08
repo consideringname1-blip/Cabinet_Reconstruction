@@ -1,0 +1,290 @@
+[
+  {
+    "original_frame_id": 202,
+    "before": {
+      "role": "diagnostic_reconstruction_of_pre_censor_aggregation",
+      "observation_count": 18,
+      "aggregate_log_evidence_moving_over_static": -202.8975954681823,
+      "posterior_moving": 7.632975997851271e-89,
+      "contains_both_ood_observations": true
+    },
+    "after": {
+      "label": "MOVING_LINK",
+      "formal_ownership_label": "MOVING_LINK",
+      "reason": "retained_frozen_noise_observations_favor_drawer_model",
+      "informative_observation_count": 6,
+      "effective_chain_length": 6,
+      "retained_baseline_counts": {
+        "long": 1,
+        "medium": 3,
+        "short": 2
+      },
+      "retained_state_counts": {
+        "MOVING_LINK_EVIDENCE": 6
+      },
+      "censored_observation_count": 15,
+      "ambiguous_neutral_observation_count": 0,
+      "observation_state_counts": {
+        "MOVING_LINK_EVIDENCE": 6,
+        "IDENTITY_LOST_CENSORED": 15
+      },
+      "baseline_observation_state_counts": {
+        "short": {
+          "MOVING_LINK_EVIDENCE": 2
+        },
+        "medium": {
+          "MOVING_LINK_EVIDENCE": 3
+        },
+        "long": {
+          "MOVING_LINK_EVIDENCE": 1,
+          "IDENTITY_LOST_CENSORED": 15
+        }
+      },
+      "aggregate_log_evidence_moving_over_static": 54.65976868984795,
+      "posterior_moving": 1.0,
+      "moving_evidence_direction_consistency": 1.0,
+      "static_evidence_direction_consistency": 0.0,
+      "static_residual_vs_discriminative_slope": 1.720641614898047,
+      "moving_residual_vs_discriminative_slope": 0.023792948643109345,
+      "tangent_boundary_blocked": false,
+      "causal_static_positive": false,
+      "original_noise_model_hash": "d1c2a22cb4e26b05adafe1e08334d449d7b41e19f350ae5cecca9ae6e30f6d67",
+      "identity_lost_observations_excluded_from_likelihood": true,
+      "identity_lost_observations_excluded_from_trend": true,
+      "identity_lost_observations_excluded_from_chain_length": true,
+      "both_ood_smaller_residual_selected": false,
+      "target_proposals_used_for_identity": false,
+      "absolute_residual_margin_used_for_ood": false
+    }
+  },
+  {
+    "original_frame_id": 203,
+    "before": {
+      "role": "diagnostic_reconstruction_of_pre_censor_aggregation",
+      "observation_count": 17,
+      "aggregate_log_evidence_moving_over_static": -207.35506660387998,
+      "posterior_moving": 8.847870942227726e-91,
+      "contains_both_ood_observations": true
+    },
+    "after": {
+      "label": "MOVING_LINK",
+      "formal_ownership_label": "MOVING_LINK",
+      "reason": "retained_frozen_noise_observations_favor_drawer_model",
+      "informative_observation_count": 5,
+      "effective_chain_length": 5,
+      "retained_baseline_counts": {
+        "long": 2,
+        "medium": 1,
+        "short": 2
+      },
+      "retained_state_counts": {
+        "MOVING_LINK_EVIDENCE": 5
+      },
+      "censored_observation_count": 15,
+      "ambiguous_neutral_observation_count": 0,
+      "observation_state_counts": {
+        "MOVING_LINK_EVIDENCE": 6,
+        "IDENTITY_LOST_CENSORED": 15
+      },
+      "baseline_observation_state_counts": {
+        "short": {
+          "MOVING_LINK_EVIDENCE": 3
+        },
+        "medium": {
+          "MOVING_LINK_EVIDENCE": 1
+        },
+        "long": {
+          "MOVING_LINK_EVIDENCE": 2,
+          "IDENTITY_LOST_CENSORED": 15
+        }
+      },
+      "aggregate_log_evidence_moving_over_static": 48.4971067742288,
+      "posterior_moving": 1.0,
+      "moving_evidence_direction_consistency": 1.0,
+      "static_evidence_direction_consistency": 0.0,
+      "static_residual_vs_discriminative_slope": 1.646944008821385,
+      "moving_residual_vs_discriminative_slope": 0.03221497556320468,
+      "tangent_boundary_blocked": false,
+      "causal_static_positive": false,
+      "original_noise_model_hash": "d1c2a22cb4e26b05adafe1e08334d449d7b41e19f350ae5cecca9ae6e30f6d67",
+      "identity_lost_observations_excluded_from_likelihood": true,
+      "identity_lost_observations_excluded_from_trend": true,
+      "identity_lost_observations_excluded_from_chain_length": true,
+      "both_ood_smaller_residual_selected": false,
+      "target_proposals_used_for_identity": false,
+      "absolute_residual_margin_used_for_ood": false
+    }
+  },
+  {
+    "original_frame_id": 204,
+    "before": {
+      "role": "diagnostic_reconstruction_of_pre_censor_aggregation",
+      "observation_count": 20,
+      "aggregate_log_evidence_moving_over_static": -187.31121784629136,
+      "posterior_moving": 4.485095458453544e-82,
+      "contains_both_ood_observations": true
+    },
+    "after": {
+      "label": "MOVING_LINK",
+      "formal_ownership_label": "MOVING_LINK",
+      "reason": "retained_frozen_noise_observations_favor_drawer_model",
+      "informative_observation_count": 8,
+      "effective_chain_length": 8,
+      "retained_baseline_counts": {
+        "long": 2,
+        "medium": 2,
+        "short": 4
+      },
+      "retained_state_counts": {
+        "MOVING_LINK_EVIDENCE": 8
+      },
+      "censored_observation_count": 15,
+      "ambiguous_neutral_observation_count": 0,
+      "observation_state_counts": {
+        "MOVING_LINK_EVIDENCE": 8,
+        "IDENTITY_LOST_CENSORED": 15
+      },
+      "baseline_observation_state_counts": {
+        "short": {
+          "MOVING_LINK_EVIDENCE": 4
+        },
+        "medium": {
+          "MOVING_LINK_EVIDENCE": 2
+        },
+        "long": {
+          "MOVING_LINK_EVIDENCE": 2,
+          "IDENTITY_LOST_CENSORED": 15
+        }
+      },
+      "aggregate_log_evidence_moving_over_static": 66.60039051342491,
+      "posterior_moving": 1.0,
+      "moving_evidence_direction_consistency": 1.0,
+      "static_evidence_direction_consistency": 0.0,
+      "static_residual_vs_discriminative_slope": 1.590661469959756,
+      "moving_residual_vs_discriminative_slope": 0.032386660849444235,
+      "tangent_boundary_blocked": false,
+      "causal_static_positive": false,
+      "original_noise_model_hash": "d1c2a22cb4e26b05adafe1e08334d449d7b41e19f350ae5cecca9ae6e30f6d67",
+      "identity_lost_observations_excluded_from_likelihood": true,
+      "identity_lost_observations_excluded_from_trend": true,
+      "identity_lost_observations_excluded_from_chain_length": true,
+      "both_ood_smaller_residual_selected": false,
+      "target_proposals_used_for_identity": false,
+      "absolute_residual_margin_used_for_ood": false
+    }
+  },
+  {
+    "original_frame_id": 205,
+    "before": {
+      "role": "diagnostic_reconstruction_of_pre_censor_aggregation",
+      "observation_count": 22,
+      "aggregate_log_evidence_moving_over_static": -175.2049577319699,
+      "posterior_moving": 8.118086133694532e-77,
+      "contains_both_ood_observations": true
+    },
+    "after": {
+      "label": "MOVING_LINK",
+      "formal_ownership_label": "MOVING_LINK",
+      "reason": "retained_frozen_noise_observations_favor_drawer_model",
+      "informative_observation_count": 6,
+      "effective_chain_length": 6,
+      "retained_baseline_counts": {
+        "medium": 2,
+        "short": 4
+      },
+      "retained_state_counts": {
+        "MOVING_LINK_EVIDENCE": 6
+      },
+      "censored_observation_count": 17,
+      "ambiguous_neutral_observation_count": 0,
+      "observation_state_counts": {
+        "IDENTITY_LOST_CENSORED": 17,
+        "MOVING_LINK_EVIDENCE": 6
+      },
+      "baseline_observation_state_counts": {
+        "short": {
+          "MOVING_LINK_EVIDENCE": 4
+        },
+        "medium": {
+          "MOVING_LINK_EVIDENCE": 2
+        },
+        "long": {
+          "IDENTITY_LOST_CENSORED": 17
+        }
+      },
+      "aggregate_log_evidence_moving_over_static": 37.89744720271843,
+      "posterior_moving": 1.0,
+      "moving_evidence_direction_consistency": 1.0,
+      "static_evidence_direction_consistency": 0.0,
+      "static_residual_vs_discriminative_slope": 1.792168546055627,
+      "moving_residual_vs_discriminative_slope": 0.06235212855715161,
+      "tangent_boundary_blocked": false,
+      "causal_static_positive": false,
+      "original_noise_model_hash": "d1c2a22cb4e26b05adafe1e08334d449d7b41e19f350ae5cecca9ae6e30f6d67",
+      "identity_lost_observations_excluded_from_likelihood": true,
+      "identity_lost_observations_excluded_from_trend": true,
+      "identity_lost_observations_excluded_from_chain_length": true,
+      "both_ood_smaller_residual_selected": false,
+      "target_proposals_used_for_identity": false,
+      "absolute_residual_margin_used_for_ood": false
+    }
+  },
+  {
+    "original_frame_id": 206,
+    "before": {
+      "role": "diagnostic_reconstruction_of_pre_censor_aggregation",
+      "observation_count": 23,
+      "aggregate_log_evidence_moving_over_static": -194.15240400954667,
+      "posterior_moving": 4.7938262634826984e-85,
+      "contains_both_ood_observations": true
+    },
+    "after": {
+      "label": "MOVING_LINK",
+      "formal_ownership_label": "MOVING_LINK",
+      "reason": "retained_frozen_noise_observations_favor_drawer_model",
+      "informative_observation_count": 8,
+      "effective_chain_length": 8,
+      "retained_baseline_counts": {
+        "long": 3,
+        "medium": 4,
+        "short": 1
+      },
+      "retained_state_counts": {
+        "MOVING_LINK_EVIDENCE": 8
+      },
+      "censored_observation_count": 15,
+      "ambiguous_neutral_observation_count": 0,
+      "observation_state_counts": {
+        "MOVING_LINK_EVIDENCE": 8,
+        "IDENTITY_LOST_CENSORED": 15
+      },
+      "baseline_observation_state_counts": {
+        "short": {
+          "MOVING_LINK_EVIDENCE": 1
+        },
+        "medium": {
+          "MOVING_LINK_EVIDENCE": 4
+        },
+        "long": {
+          "MOVING_LINK_EVIDENCE": 3,
+          "IDENTITY_LOST_CENSORED": 15
+        }
+      },
+      "aggregate_log_evidence_moving_over_static": 80.88188005184892,
+      "posterior_moving": 1.0,
+      "moving_evidence_direction_consistency": 1.0,
+      "static_evidence_direction_consistency": 0.0,
+      "static_residual_vs_discriminative_slope": 1.3360720667350003,
+      "moving_residual_vs_discriminative_slope": -0.016739291763425417,
+      "tangent_boundary_blocked": false,
+      "causal_static_positive": false,
+      "original_noise_model_hash": "d1c2a22cb4e26b05adafe1e08334d449d7b41e19f350ae5cecca9ae6e30f6d67",
+      "identity_lost_observations_excluded_from_likelihood": true,
+      "identity_lost_observations_excluded_from_trend": true,
+      "identity_lost_observations_excluded_from_chain_length": true,
+      "both_ood_smaller_residual_selected": false,
+      "target_proposals_used_for_identity": false,
+      "absolute_residual_margin_used_for_ood": false
+    }
+  }
+]

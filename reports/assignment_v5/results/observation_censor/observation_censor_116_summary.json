@@ -1,0 +1,13 @@
+{
+  "ran": true,
+  "evaluation_role": "diagnostic_not_fresh_heldout_validation",
+  "input_region_count": 116,
+  "decision_counts": {
+    "MOVING_LINK": 0,
+    "WORLD_STATIC": 56,
+    "UNKNOWN": 60,
+    "CONFLICTING": 0
+  },
+  "formal_v4_labels_modified": false,
+  "ready_for_dual_tsdf": false
+}

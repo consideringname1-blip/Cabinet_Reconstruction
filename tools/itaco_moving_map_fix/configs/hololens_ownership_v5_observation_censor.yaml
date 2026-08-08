@@ -1,0 +1,146 @@
+stage: assignment_v5_observation_censor
+inputs:
+  assignment_v4_config: tools/itaco_moving_map_fix/configs/hololens_region_assignment_v4_verified_depth.yaml
+  assignment_v4_output: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/region_assignment_v4_verified_depth_0002_001
+  ambiguity_audit_output: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v4/near_contact_ambiguity_audit_002
+  control_annotations: tools/itaco_ownership_v5/annotations/hololens_transition_event_controls.json
+  failed_001_summary: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/unknown_116_physical_events_001/per_region_summary.json
+  v4_surface_audit_config: tools/itaco_moving_map_fix/configs/hololens_surface_identity_visibility_audit.yaml
+  frozen_noise_output: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/multi_baseline_motion_discrimination_001
+  frozen_noise_model_hash: d1c2a22cb4e26b05adafe1e08334d449d7b41e19f350ae5cecca9ae6e30f6d67
+output_dir: /workspace_whz_worktrees/funrec-assignment-v3_outputs/geometry_interior_v5/observation_censor_002
+review_bundle_dir: reports/assignment_v5/results/observation_censor
+expected_ambiguity_region_count: 116
+
+motion_state:
+  timestamp_ticks_per_second: 10000000.0
+  active_velocity_threshold: 0.002
+  active_dilation_frames: 0
+  velocity_edge_order: 1
+  plateau_q_tolerance: 0.002
+  closed_is_minimum_q: true
+
+multi_baseline:
+  short: {minimum_delta_q_m: 0.005, maximum_delta_q_m: 0.015}
+  medium: {minimum_delta_q_m: 0.020, maximum_delta_q_m: 0.050}
+  long: {minimum_delta_q_m: 0.050000001, maximum_delta_q_m: 0.350}
+  require_all_interval_frames_active: true
+  allow_backward_motion_discrimination: true
+
+local_transition:
+  minimum_delta_q_m: 0.005
+  maximum_delta_q_m: 0.060
+  maximum_frame_gap: 3
+  maximum_elapsed_s: 0.8
+  require_all_intermediate_frames_active: true
+
+source_patch:
+  maximum_source_samples: 1400
+
+projective_anchor:
+  depth_support_threshold_m: 0.030
+  residual_inlier_threshold_m: 0.035
+  occlusion_margin_m: 0.030
+  free_space_margin_m: 0.030
+  minimum_valid_projected_samples: 35
+  minimum_source_index_coverage: 0.20
+  minimum_spatial_coverage: 0.20
+  minimum_inlier_fraction: 0.45
+  maximum_median_residual_m: 0.030
+  maximum_p90_residual_m: 0.060
+  minimum_contradiction_fraction: 0.15
+  minimum_contradiction_spatial_coherence: 0.20
+  minimum_occlusion_fraction: 0.25
+  minimum_trusted_drawer_occlusion_fraction: 0.50
+  spatial_dilation_pixels: 2
+  coverage_grid_size: 4
+
+# This definition must equal the one embedded in the loaded frozen model. The
+# censor does not fit a new distribution.
+plateau_noise:
+  edge_definition:
+    depth_discontinuity_distance_pixels: 6.0
+    minimum_local_depth_gradient_m_per_pixel: 0.020
+
+visibility:
+  minimum_common_source_samples: 35
+  minimum_common_source_coverage: 0.15
+  minimum_spatial_coverage: 0.15
+  coverage_grid_size: 4
+
+observation_censor:
+  compatibility_statistic: mean_noise_surprisal
+  threshold_source: frozen_noise_model.observation_mean_surprisal_p95
+  frozen_quantile: 0.95
+  both_ood_action: IDENTITY_LOST_CENSORED
+  both_compatible_action: AMBIGUOUS_COMPATIBLE
+
+model_discrimination:
+  minimum_discriminative_to_plateau_p90_ratio: 1.0
+  minimum_informative_observations: 2
+  minimum_posterior_probability: 0.99
+  minimum_direction_consistency_fraction: 0.60
+
+transition_chain:
+  minimum_consecutive_verified_frames: 2
+  minimum_verified_q_span_m: 0.008
+  minimum_verified_elapsed_s: 0.20
+  maximum_chain_median_residual_m: 0.030
+  maximum_chain_p90_residual_m: 0.060
+
+physical_boundary:
+  observation_boundary_margin_pixels: 3.0
+  cross_boundary_sample_offset_pixels: 2
+  minimum_depth_jump_m: 0.045
+  minimum_normal_jump_degrees: 18.0
+  minimum_plane_offset_m: 0.025
+  maximum_normal_axis_alignment_for_tangent: 0.30
+  minimum_axis_edge_physical_confidence: 0.35
+  minimum_source_geometry_points: 35
+  minimum_moving_edge_support_fraction: 0.40
+
+causal_reveal:
+  minimum_silhouette_iou: 0.35
+  maximum_silhouette_boundary_displacement_px: 8.0
+  maximum_local_depth_gap_m: 0.080
+  maximum_boundary_distance_px: 12.0
+  maximum_reveal_frame_gap: 3
+  maximum_reveal_elapsed_s: 0.8
+  minimum_reveal_samples: 8
+  minimum_reveal_fraction: 0.15
+  minimum_trusted_occluder_pixels: 100
+  minimum_persistent_frames: 2
+  minimum_persistent_sample_fraction: 0.30
+  maximum_world_residual_m: 0.030
+  maximum_future_frames: 3
+  silhouette:
+    maximum_silhouette_samples: 6000
+    silhouette_dilation_pixels: 2
+
+controls:
+  drawer_front_required_moving: 4
+  active_comoving_minimum_moving_fraction: 0.80
+  active_comoving_maximum_world_static: 0
+  documented_floor_maximum_moving: 0
+  require_plateau_only_no_ownership: true
+  require_synthetic_tests: true
+
+visualization:
+  maximum_116_representatives_per_decision: 4
+
+audit:
+  branch: agent/region-assignment-v4
+  registered_depth_scale_to_m: 0.0002
+  controls_evaluation_role: previously_seen_regression_not_fresh_heldout
+  target_proposals_used_for_identity: false
+  assignment_v4_per_target_used: false
+  camera_axis_q_modified: false
+  noise_model_refit: false
+  thresholds_tuned_to_controls: false
+  sam2_ran: false
+  region_propagation_ran: false
+  tsdf_ran: false
+  nksr_ran: false
+  mesh_ran: false
+
+ready_for_dual_tsdf: false
